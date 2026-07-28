@@ -441,6 +441,7 @@ impl Installer {
             source,
         })?;
         let mut seen = HashSet::new();
+        let mut pending_symlinks = Vec::new();
         let mut total_unpacked = 0_u64;
         let mut entry_count = 0_usize;
 
@@ -463,7 +464,10 @@ impl Installer {
             let entry_name = archived_path.to_string_lossy().into_owned();
             let entry_type = entry.header().entry_type();
             let is_directory = entry_type.is_dir();
-            if (!entry_type.is_file() && !is_directory) || !is_safe_relative(&archived_path) {
+            let is_symlink = entry_type.is_symlink();
+            if (!entry_type.is_file() && !is_directory && !is_symlink)
+                || !is_safe_relative(&archived_path)
+            {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
             let Some(relative) =
@@ -481,6 +485,26 @@ impl Installer {
                     path: output_path,
                     source,
                 })?;
+                continue;
+            }
+            if is_symlink {
+                let link_target = entry
+                    .link_name()
+                    .map_err(|source| Error::ReadTarArchive {
+                        path: archive_path.to_path_buf(),
+                        source,
+                    })?
+                    .ok_or_else(|| Error::UnsafeArchiveEntry {
+                        entry: entry_name.clone(),
+                    })?
+                    .into_owned();
+                let resolved_target =
+                    resolve_archive_symlink(&relative, &link_target).ok_or_else(|| {
+                        Error::UnsafeArchiveEntry {
+                            entry: entry_name.clone(),
+                        }
+                    })?;
+                pending_symlinks.push((entry_name, output_path, link_target, resolved_target));
                 continue;
             }
 
@@ -558,6 +582,25 @@ impl Installer {
                     source,
                 })?;
             set_executable_permissions(&output_path, Some(mode)).map_err(|source| {
+                Error::ExtractArchiveEntry {
+                    entry: entry_name,
+                    path: output_path,
+                    source,
+                }
+            })?;
+        }
+        for (entry_name, output_path, link_target, resolved_target) in pending_symlinks {
+            if !destination.join(resolved_target).is_file() {
+                return Err(Error::UnsafeArchiveEntry { entry: entry_name });
+            }
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            create_archive_symlink(&link_target, &output_path).map_err(|source| {
                 Error::ExtractArchiveEntry {
                     entry: entry_name,
                     path: output_path,
@@ -667,6 +710,50 @@ fn strip_entry_path(
             .into_iter()
             .skip(strip_components)
             .collect::<PathBuf>(),
+    ))
+}
+
+fn resolve_archive_symlink(link_path: &Path, target: &Path) -> Option<PathBuf> {
+    if target.as_os_str().is_empty()
+        || target.is_absolute()
+        || target.to_string_lossy().contains('\\')
+    {
+        return None;
+    }
+    let mut resolved = link_path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for component in target.components() {
+        match component {
+            Component::Normal(value) => resolved.push(value.to_owned()),
+            Component::ParentDir => {
+                resolved.pop()?;
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    if resolved.is_empty() {
+        return None;
+    }
+    Some(resolved.into_iter().collect())
+}
+
+#[cfg(unix)]
+fn create_archive_symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(not(unix))]
+fn create_archive_symlink(_target: &Path, _link: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "archive symbolic links are only supported on Unix targets",
     ))
 }
 
@@ -896,6 +983,49 @@ mod tests {
         assert_transaction_root_is_empty(root.path());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn installs_tar_xz_with_safe_node_style_symlinks() {
+        let archive = tar_xz_with_symlink("../lib/node_modules/corepack/dist/corepack.js");
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.target = "linux-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarXz;
+        request.strip_components = 1;
+        request.required_paths = vec![PathBuf::from("bin/node"), PathBuf::from("bin/corepack")];
+
+        let outcome = test_installer().install(&request).expect("install");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read_link(outcome.install_dir.join("bin/corepack")).expect("link"),
+            PathBuf::from("../lib/node_modules/corepack/dist/corepack.js")
+        );
+        assert!(outcome.install_dir.join("bin/corepack").is_file());
+        assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn rejects_tar_xz_symlinks_that_escape_the_install_root() {
+        let archive = tar_xz_with_symlink("../../outside");
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.target = "linux-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarXz;
+        request.strip_components = 1;
+
+        let error = test_installer()
+            .install(&request)
+            .expect_err("escaping symlink");
+        server.join().expect("server");
+
+        assert!(matches!(error, Error::UnsafeArchiveEntry { .. }));
+        assert!(!final_dir(root.path()).exists());
+        assert_transaction_root_is_empty(root.path());
+    }
+
     #[test]
     fn falls_back_to_next_source_only_after_network_failure() {
         let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
@@ -1117,6 +1247,47 @@ mod tests {
                 .append(&header, Cursor::new(*content))
                 .expect("tar entry");
         }
+        let encoder = builder.into_inner().expect("tar finish");
+        encoder.finish().expect("xz finish")
+    }
+
+    fn tar_xz_with_symlink(link_target: &str) -> Vec<u8> {
+        let encoder = XzEncoder::new(Vec::new(), 6);
+        let mut builder = tar::Builder::new(encoder);
+        for (path, content, mode) in [
+            (
+                "node-v24.0.0-linux-x64/bin/node",
+                b"fake node".as_slice(),
+                0o755,
+            ),
+            (
+                "node-v24.0.0-linux-x64/lib/node_modules/corepack/dist/corepack.js",
+                b"fake corepack".as_slice(),
+                0o755,
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(path).expect("tar path");
+            header.set_size(content.len() as u64);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder
+                .append(&header, Cursor::new(content))
+                .expect("tar entry");
+        }
+        let mut link_header = tar::Header::new_gnu();
+        link_header
+            .set_path("node-v24.0.0-linux-x64/bin/corepack")
+            .expect("link path");
+        link_header.set_entry_type(tar::EntryType::Symlink);
+        link_header.set_link_name(link_target).expect("link target");
+        link_header.set_size(0);
+        link_header.set_mode(0o777);
+        link_header.set_cksum();
+        builder
+            .append(&link_header, io::empty())
+            .expect("tar symlink");
+
         let encoder = builder.into_inner().expect("tar finish");
         encoder.finish().expect("xz finish")
     }
