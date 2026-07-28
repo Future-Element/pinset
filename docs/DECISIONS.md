@@ -31,6 +31,9 @@
 | D-025 | Provisional | Node provider 首先只解析精确稳定版本 `x.y.z` | 浮动选择器必须等待可信版本索引与 lock 流程；预发布版本语义后续单独设计 |
 | D-026 | Accepted | canonical URL 与有序下载候选分别构造 | active/fallback 只能改变传输位置，不能改变官方产物路径和身份 |
 | D-027 | Accepted | 分发首选 GitHub Releases，不维护第三方 Homebrew Tap 或 Scoop Bucket | 避免长期维护额外仓库；中央包管理器渠道只在满足官方接收政策后评估 |
+| D-028 | Accepted | 先发布 Node-only `0.1.0-alpha.1` MVP，再扩展 Python 与 Flutter | 先证明锁定、镜像、校验、事务安装和项目执行的完整闭环，避免三个 provider 同时扩张 |
+| D-029 | Accepted | Node MVP 只接受精确稳定版本并锁定四个平台产物 | 避免浮动版本在不同时间解析出不同结果，同时允许同一锁文件跨团队平台复用 |
+| D-030 | Provisional | Node MVP 以官方 HTTPS `SHASUMS256.txt` 的 SHA-256 为信任值 | 已阻止镜像改变哈希；PGP 签名验证仍是进入稳定版前的供应链增强项 |
 
 ## 尚待决策
 

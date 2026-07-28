@@ -21,15 +21,45 @@ pub fn command_tool(command: &str) -> Option<&'static str> {
     }
 }
 
-pub fn pinset_home_from_env() -> Result<PathBuf> {
-    env::var_os("PINSET_HOME")
+pub fn pinset_home() -> Result<PathBuf> {
+    if let Some(path) = env::var_os("PINSET_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .ok_or(Error::PinsetHomeNotSet)
+    {
+        return Ok(path);
+    }
+
+    #[cfg(windows)]
+    {
+        env::var_os("LOCALAPPDATA")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .map(|path| path.join("Pinset"))
+            .ok_or(Error::PinsetHomeUnavailable)
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Some(path) = env::var_os("XDG_DATA_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        {
+            return Ok(path.join("pinset"));
+        }
+        env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .map(|path| path.join(".local").join("share").join("pinset"))
+            .ok_or(Error::PinsetHomeUnavailable)
+    }
+}
+
+pub fn pinset_home_from_env() -> Result<PathBuf> {
+    pinset_home()
 }
 
 pub fn resolve_from_env(command: &str, cwd: &Path) -> Result<CommandResolution> {
-    resolve_command(command, cwd, &pinset_home_from_env()?)
+    resolve_command(command, cwd, &pinset_home()?)
 }
 
 pub fn resolve_command(command: &str, cwd: &Path, pinset_home: &Path) -> Result<CommandResolution> {
@@ -47,12 +77,12 @@ pub fn resolve_command(command: &str, cwd: &Path, pinset_home: &Path) -> Result<
             config_path: config_path.clone(),
         })?;
 
-    let bin_dir = pinset_home
+    let install_dir = pinset_home
         .join("installs")
         .join(tool)
         .join(&version)
-        .join(current_target())
-        .join("bin");
+        .join(current_target());
+    let bin_dir = runtime_command_dir(&install_dir);
     let candidates = executable_candidates(&bin_dir, command);
     let executable = candidates
         .iter()
@@ -76,6 +106,14 @@ pub fn resolve_command(command: &str, cwd: &Path, pinset_home: &Path) -> Result<
         config_path,
         executable,
     })
+}
+
+fn runtime_command_dir(install_dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        install_dir.to_path_buf()
+    } else {
+        install_dir.join("bin")
+    }
 }
 
 fn executable_candidates(bin_dir: &Path, command: &str) -> Vec<PathBuf> {
@@ -115,12 +153,12 @@ mod tests {
         )
         .expect("project config");
 
-        let bin = home
+        let install_dir = home
             .join("installs")
             .join("node")
             .join("20.0.0")
-            .join(current_target())
-            .join("bin");
+            .join(current_target());
+        let bin = runtime_command_dir(&install_dir);
         fs::create_dir_all(&bin).expect("runtime bin");
         let executable = if cfg!(windows) {
             bin.join("node.exe")

@@ -12,11 +12,15 @@ installer = [
     "dep:hex",
     "dep:reqwest",
     "dep:sha2",
+    "dep:tar",
     "dep:tempfile",
+    "dep:xz2",
     "dep:zip",
 ]
+lockfile = ["node-provider", "dep:atomic-write-file"]
+node-metadata = ["lockfile", "dep:reqwest"]
 node-provider = ["sources"]
-project-write = ["dep:tempfile"]
+project-write = ["dep:atomic-write-file", "dep:tempfile"]
 sources = [
     "dep:atomic-write-file",
     "dep:url",
@@ -28,10 +32,12 @@ hex = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 serde.workspace = true
 sha2 = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 toml.workspace = true
 url = { workspace = true, optional = true }
+xz2 = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 
 [dev-dependencies]

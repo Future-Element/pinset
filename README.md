@@ -3,103 +3,79 @@
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
 [![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
 
-Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它计划用一套一致的命令管理 Node.js、CPython 和 Flutter，并重点解决跨平台差异、旧管理器冲突、可复现安装和供应链校验。
+Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-> 当前状态：Phase 0 技术验证中。Spike A 已完成 Windows x64 功能原型，但端到端 shim 性能尚未达到候选目标；Spike B 已完成本地 HTTP + ZIP 的事务安装内核、本机安装源配置和无网络 Node 产物计划，真实上游校验与 Linux/macOS `tar.xz` 安装仍待接入。
+当前 `0.1.0-alpha.1` 是 Node-first MVP：
 
-## 核心定位
+- 支持 Node.js 精确版本 `x.y.z`；
+- 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
+- 生成可提交的 `pinset.toml` 与 `pinset.lock`；
+- 从 Node 官方 HTTPS `SHASUMS256.txt` 取得哈希，镜像只改变传输位置；
+- 校验 SHA-256 后安全解压 ZIP/TAR.XZ，并以事务方式提交安装；
+- 提供 `use`、`install`、`current`、`which`、`exec`、`doctor` 和 shim；
+- 支持配置国内、企业内网或其他自定义镜像及有序回退。
 
-Pinset 不试图复制 mise/asdf 的全部能力。首版聚焦三个承诺：
+Python、Flutter、浮动版本选择器、PGP 验签、缓存管理和中央包管理器分发不属于这个 MVP，后续按路线图实现。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 
-1. **可预测**：项目配置是纯数据；选择优先级、实际命令来源和回退行为都可解释。
-2. **可验证**：锁文件记录精确版本、目标平台、下载来源和校验信息；安装失败不会留下半成品。
-3. **可迁移**：识别 fnm、nvm、nvm-windows、uv、FVM、mise、asdf、vfox 等既有环境，遵循 “detect many, activate one”，不静默删除或改写用户环境。
+## 五分钟开始
 
-国内或受限网络可以显式切换安装源。安装源只替换下载位置，精确版本、官方产物身份和预期哈希仍来自锁文件/可信 provider；网络失败可以按用户配置回退，校验失败必须停止。
-
-## 首版范围
-
-- 运行时：Node.js、CPython、Flutter（Flutter 自带 Dart）
-- 平台：Windows、macOS、Linux
-- 使用方式：全局选择、项目选择、锁文件安装、临时执行、冲突诊断
-- 明确不做：npm/pnpm/pip/pub 依赖管理、任务运行器、环境变量/密钥管理、远程同步、GUI、任意脚本插件
-
-当前已实现且不会下载运行时的项目初始化命令：
+从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 下载当前系统的归档，校验 `SHA256SUMS` 后解压。将 `pinset` 放入 `PATH`，再进入一个项目：
 
 ```shell
 pinset init
-```
-
-它只在当前目录原子创建最小 `pinset.toml`，已有文件时拒绝覆盖。
-
-后续规划中的命令示例：
-
-```shell
-pinset use node@24
-pinset use python@3.13
-pinset use flutter@3.44.8
-pinset install
+pinset use node@24.0.0
 pinset current
 pinset which node
-pinset exec node@22 -- node -v
+pinset exec -- node --version
 pinset doctor
-pinset import --dry-run
 ```
 
-当前 spike 已实现且不会下载运行时的安装源命令：
+`pinset use` 会解析并锁定四个平台的官方 Node 产物，然后只为当前平台安装。要先生成配置和锁文件、暂不下载运行时：
 
 ```shell
-pinset source list [provider]
-pinset source add <provider> <alias> --base-url <https-url>
-pinset source use <provider> <alias>
-pinset source fallback <provider> [aliases...]
-pinset source remove <provider> <alias>
+pinset use node@24.0.0 --no-install
+pinset install --locked
 ```
 
-这些命令只读写 `$PINSET_HOME/sources.toml`。`official` 是不可覆盖、不可删除的内置源；自定义源默认必须使用 HTTPS。`source test` 仍是规划命令，当前不会由 Pinset 主动探测或测速第三方源。
+完整的 Windows、macOS、Linux、WSL、shim、镜像切换和故障排查说明见 [MVP 使用指南](docs/USAGE.md)。
 
-## 项目文档
+## 安装源
 
+安装源是本机配置，不写入项目锁文件。下面只是格式示例，请使用你信任且与 Node 官方目录结构兼容的镜像：
+
+```shell
+pinset source add node my-mirror --base-url https://mirror.example/node/
+pinset source use node my-mirror
+pinset source fallback node official
+pinset source list node
+```
+
+网络错误可按用户配置回退；哈希不匹配会立即停止，不会换源重试来掩盖异常。内置 `official` 源不可覆盖或删除。
+
+首次生成锁文件仍需访问 Node 官方 HTTPS 校验清单；已有并提交的锁文件可以在受限网络中只通过镜像执行 `install --locked`。详见使用指南。
+
+## 开发
+
+```shell
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --release --locked -p pinset-cli -p pinset-shim
+```
+
+测试使用临时目录、本地假 HTTP 服务和假运行时，不会安装真实 Node、Python 或 Flutter。
+
+## 文档
+
+- [MVP 使用指南](docs/USAGE.md)
 - [项目章程](docs/PROJECT_CHARTER.md)
 - [深度调研](docs/RESEARCH.md)
 - [产品规格](docs/PRODUCT_SPEC.md)
 - [技术架构](docs/ARCHITECTURE.md)
-- [路线图与验证计划](docs/ROADMAP.md)
+- [路线图](docs/ROADMAP.md)
 - [决策记录](docs/DECISIONS.md)
-- [Spike A：跨平台 shim](docs/spikes/SPIKE_A_SHIM.md)
-- [Spike B：事务安装内核](docs/spikes/SPIKE_B_INSTALL_TRANSACTION.md)
-- [WSL 构建与安全测试](docs/WSL_TESTING.md)
+- [WSL 构建与测试](docs/WSL_TESTING.md)
 
-## 当前开发
+## 许可
 
-```shell
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo run --release -p pinset-core --example resolve_bench -- 5000
-cargo build --release -p pinset-cli -p pinset-shim
-cargo run --release -p pinset-shim --example process_bench -- 1000
-```
-
-每次推送到 `main` 或手动运行 workflow 时，GitHub Actions 会先运行格式、Clippy 和测试，再并行生成三个可下载 artifact：
-
-- `pinset-linux-x86_64`
-- `pinset-windows-x86_64`
-- `pinset-macos-aarch64`
-
-Pull Request 只运行质量检查，避免私有仓库重复消耗三平台构建分钟。构建文件保留 14 天。版本标签会在质量检查后构建三个归档、生成 `SHA256SUMS` 并发布 GitHub Release。当前 artifact 和 Release 尚未进行代码签名或公证。
-
-当前 workspace 包含：
-
-- `pinset`：用于项目初始化、`which`、`current`、安装多调用 shim 和管理本机安装源的最小 CLI；
-- `pinset-core`：项目配置的原子创建与严格读取、祖先目录查找、命令解析、安全 shim 安装、原子化安装源配置，以及 feature 隔离的事务安装内核；
-- `pinset-shim`：根据调用文件名选择运行时，并完整传递参数与退出码。
-
-这仍是技术 spike，不代表 v0.1 CLI 契约已经冻结。
-
-## 名称与分发
-
-产品名和命令名确定为 `Pinset` / `pinset`。npm 上已经存在同名旧包，因此 Pinset 不依赖无作用域的 npm 包名；首选 GitHub Releases 分发，不维护第三方 Homebrew Tap 或 Scoop Bucket，中央包管理器渠道仅在满足其官方接收政策后评估。如未来需要 npm 启动器，应使用组织作用域。商标和域名尚未完成法律层面的可用性检索。
-
-## 许可证
-
-开源许可证尚未决定。进入公开代码阶段前，需要在 Apache-2.0 与 MIT（或双许可证）之间做出明确选择。
+开源许可证尚未决定。在许可证文件加入仓库前，不应把当前代码视作已授予通用开源许可。

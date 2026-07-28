@@ -7,9 +7,10 @@ use std::{
 };
 
 use reqwest::blocking::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
+use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
 use crate::{Error, Result};
@@ -17,12 +18,14 @@ use crate::{Error, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
     Zip,
+    TarXz,
 }
 
 impl ArtifactFormat {
     fn receipt_name(self) -> &'static str {
         match self {
             Self::Zip => "zip",
+            Self::TarXz => "tar.xz",
         }
     }
 }
@@ -64,6 +67,7 @@ pub struct InstallRequest {
     pub version: String,
     pub target: String,
     pub artifact: ArtifactSpec,
+    pub strip_components: usize,
     pub required_paths: Vec<PathBuf>,
 }
 
@@ -119,7 +123,8 @@ impl Installer {
             .join(&request.version)
             .join(&request.target);
         if final_dir.exists() {
-            return Err(Error::InstallAlreadyExists { path: final_dir });
+            return existing_install_outcome(&final_dir, request)
+                .ok_or(Error::InstallAlreadyExists { path: final_dir });
         }
 
         let temporary_root = request.pinset_home.join("tmp");
@@ -167,7 +172,12 @@ impl Installer {
                     .unwrap_or_else(|| "no source was attempted".to_owned()),
             })?;
         match request.artifact.format {
-            ArtifactFormat::Zip => self.extract_zip(&download_path, &staging_dir)?,
+            ArtifactFormat::Zip => {
+                self.extract_zip(&download_path, &staging_dir, request.strip_components)?
+            }
+            ArtifactFormat::TarXz => {
+                self.extract_tar_xz(&download_path, &staging_dir, request.strip_components)?
+            }
         }
         validate_required_paths(&staging_dir, &request.required_paths)?;
         write_receipt(
@@ -280,7 +290,12 @@ impl Installer {
         Ok((total, actual_hex))
     }
 
-    fn extract_zip(&self, archive_path: &Path, destination: &Path) -> Result<()> {
+    fn extract_zip(
+        &self,
+        archive_path: &Path,
+        destination: &Path,
+        strip_components: usize,
+    ) -> Result<()> {
         let file = File::open(archive_path).map_err(|source| Error::ExtractArchiveEntry {
             entry: "<archive>".to_owned(),
             path: archive_path.to_path_buf(),
@@ -304,14 +319,23 @@ impl Installer {
                 .by_index(index)
                 .map_err(|source| Error::ReadZipEntry { index, source })?;
             let entry_name = entry.name().to_owned();
-            let relative = entry
+            let archived_path = entry
                 .enclosed_name()
                 .ok_or_else(|| Error::UnsafeArchiveEntry {
                     entry: entry_name.clone(),
                 })?;
-            if !is_safe_relative(&relative) || is_special_zip_entry(entry.unix_mode()) {
+            if !is_safe_relative(&archived_path) || is_special_zip_entry(entry.unix_mode()) {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
+            let Some(relative) = strip_entry_path(
+                &archived_path,
+                strip_components,
+                entry.is_dir(),
+                &entry_name,
+            )?
+            else {
+                continue;
+            };
             let collision_key = archive_collision_key(&relative);
             if !seen.insert(collision_key) {
                 return Err(Error::DuplicateArchiveEntry { entry: entry_name });
@@ -383,14 +407,188 @@ impl Installer {
             output
                 .sync_all()
                 .map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: output_path.clone(),
+                    source,
+                })?;
+            set_executable_permissions(&output_path, entry.unix_mode()).map_err(|source| {
+                Error::ExtractArchiveEntry {
                     entry: entry_name,
                     path: output_path,
                     source,
-                })?;
+                }
+            })?;
         }
 
         Ok(())
     }
+
+    fn extract_tar_xz(
+        &self,
+        archive_path: &Path,
+        destination: &Path,
+        strip_components: usize,
+    ) -> Result<()> {
+        let file = File::open(archive_path).map_err(|source| Error::ExtractArchiveEntry {
+            entry: "<archive>".to_owned(),
+            path: archive_path.to_path_buf(),
+            source,
+        })?;
+        let decoder = XzDecoder::new(file);
+        let mut archive = tar::Archive::new(decoder);
+        let entries = archive.entries().map_err(|source| Error::ReadTarArchive {
+            path: archive_path.to_path_buf(),
+            source,
+        })?;
+        let mut seen = HashSet::new();
+        let mut total_unpacked = 0_u64;
+        let mut entry_count = 0_usize;
+
+        for entry in entries {
+            entry_count += 1;
+            if entry_count > self.limits.max_archive_entries {
+                return Err(Error::TooManyArchiveEntries {
+                    actual: entry_count,
+                    limit: self.limits.max_archive_entries,
+                });
+            }
+            let mut entry = entry.map_err(|source| Error::ReadTarArchive {
+                path: archive_path.to_path_buf(),
+                source,
+            })?;
+            let archived_path = entry.path().map_err(|source| Error::ReadTarArchive {
+                path: archive_path.to_path_buf(),
+                source,
+            })?;
+            let entry_name = archived_path.to_string_lossy().into_owned();
+            let entry_type = entry.header().entry_type();
+            let is_directory = entry_type.is_dir();
+            if (!entry_type.is_file() && !is_directory) || !is_safe_relative(&archived_path) {
+                return Err(Error::UnsafeArchiveEntry { entry: entry_name });
+            }
+            let Some(relative) =
+                strip_entry_path(&archived_path, strip_components, is_directory, &entry_name)?
+            else {
+                continue;
+            };
+            if !seen.insert(archive_collision_key(&relative)) {
+                return Err(Error::DuplicateArchiveEntry { entry: entry_name });
+            }
+            let output_path = destination.join(&relative);
+            if is_directory {
+                fs::create_dir_all(&output_path).map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name,
+                    path: output_path,
+                    source,
+                })?;
+                continue;
+            }
+
+            let remaining = self
+                .limits
+                .max_unpacked_bytes
+                .checked_sub(total_unpacked)
+                .ok_or(Error::ArchiveTooLarge {
+                    limit: self.limits.max_unpacked_bytes,
+                })?;
+            let claimed_size = entry
+                .header()
+                .size()
+                .map_err(|source| Error::ReadTarArchive {
+                    path: archive_path.to_path_buf(),
+                    source,
+                })?;
+            if claimed_size > remaining {
+                return Err(Error::ArchiveTooLarge {
+                    limit: self.limits.max_unpacked_bytes,
+                });
+            }
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output_path)
+                .map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: output_path.clone(),
+                    source,
+                })?;
+            let mut limited_entry = (&mut entry).take(remaining.saturating_add(1));
+            let copied = io::copy(&mut limited_entry, &mut output).map_err(|source| {
+                Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: output_path.clone(),
+                    source,
+                }
+            })?;
+            if copied > remaining {
+                return Err(Error::ArchiveTooLarge {
+                    limit: self.limits.max_unpacked_bytes,
+                });
+            }
+            if copied != claimed_size {
+                return Err(Error::ExtractArchiveEntry {
+                    entry: entry_name,
+                    path: output_path,
+                    source: io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "TAR entry size did not match extracted bytes",
+                    ),
+                });
+            }
+            total_unpacked += copied;
+            output
+                .sync_all()
+                .map_err(|source| Error::ExtractArchiveEntry {
+                    entry: entry_name.clone(),
+                    path: output_path.clone(),
+                    source,
+                })?;
+            let mode = entry
+                .header()
+                .mode()
+                .map_err(|source| Error::ReadTarArchive {
+                    path: archive_path.to_path_buf(),
+                    source,
+                })?;
+            set_executable_permissions(&output_path, Some(mode)).map_err(|source| {
+                Error::ExtractArchiveEntry {
+                    entry: entry_name,
+                    path: output_path,
+                    source,
+                }
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Option<InstallOutcome> {
+    let content = fs::read_to_string(final_dir.join(".pinset-install.toml")).ok()?;
+    let receipt: ExistingInstallReceipt = toml::from_str(&content).ok()?;
+    if !receipt.complete
+        || receipt.tool != request.tool
+        || receipt.version != request.version
+        || receipt.target != request.target
+        || receipt.artifact_sha256 != request.artifact.sha256.to_ascii_lowercase()
+    {
+        return None;
+    }
+    if validate_required_paths(final_dir, &request.required_paths).is_err() {
+        return None;
+    }
+    Some(InstallOutcome {
+        install_dir: final_dir.to_path_buf(),
+        bytes_downloaded: 0,
+        sha256: receipt.artifact_sha256,
+        source_id: receipt.selected_source,
+    })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -410,6 +608,11 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("tool", &request.tool)?;
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
+    if request.strip_components > 8 {
+        return Err(Error::InvalidStripComponents {
+            value: request.strip_components,
+        });
+    }
     if request.required_paths.is_empty() {
         return Err(Error::RequiredPathsEmpty);
     }
@@ -440,6 +643,31 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn strip_entry_path(
+    path: &Path,
+    strip_components: usize,
+    is_directory: bool,
+    entry_name: &str,
+) -> Result<Option<PathBuf>> {
+    let components = path.components().collect::<Vec<_>>();
+    if components.len() < strip_components
+        || (components.len() == strip_components && !is_directory)
+    {
+        return Err(Error::UnsafeArchiveEntry {
+            entry: entry_name.to_owned(),
+        });
+    }
+    if components.len() == strip_components {
+        return Ok(None);
+    }
+    Ok(Some(
+        components
+            .into_iter()
+            .skip(strip_components)
+            .collect::<PathBuf>(),
+    ))
 }
 
 fn is_retryable_source_error(error: &Error) -> bool {
@@ -485,6 +713,21 @@ fn archive_collision_key(path: &Path) -> String {
     }
 }
 
+#[cfg(unix)]
+fn set_executable_permissions(path: &Path, mode: Option<u32>) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(mode) = mode {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_executable_permissions(_path: &Path, _mode: Option<u32>) -> io::Result<()> {
+    Ok(())
+}
+
 fn redacted_url(value: &str) -> String {
     let Ok(mut url) = reqwest::Url::parse(value) else {
         return "<invalid-url>".to_owned();
@@ -520,6 +763,16 @@ struct InstallReceipt<'a> {
     artifact_sha256: &'a str,
     artifact_format: &'a str,
     bytes_downloaded: u64,
+}
+
+#[derive(Deserialize)]
+struct ExistingInstallReceipt {
+    complete: bool,
+    tool: String,
+    version: String,
+    target: String,
+    selected_source: String,
+    artifact_sha256: String,
 }
 
 fn write_receipt(
@@ -570,6 +823,7 @@ mod tests {
     };
 
     use tempfile::tempdir;
+    use xz2::write::XzEncoder;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::*;
@@ -597,6 +851,48 @@ mod tests {
         assert!(!receipt.contains("must-not-be-recorded"));
         assert_eq!(outcome.bytes_downloaded, archive.len() as u64);
         assert_eq!(outcome.source_id, "local-mirror");
+        let repeated = test_installer()
+            .install(&request)
+            .expect("identical install is idempotent");
+        assert_eq!(repeated.install_dir, outcome.install_dir);
+        assert_eq!(repeated.bytes_downloaded, 0);
+        assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn installs_tar_xz_with_stripped_root_and_executable_permissions() {
+        let archive = tar_xz_bytes(&[
+            ("node-v24.0.0-linux-x64/bin/node", b"fake node", 0o755),
+            ("node-v24.0.0-linux-x64/bin/npm", b"fake npm", 0o755),
+        ]);
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.target = "linux-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarXz;
+        request.strip_components = 1;
+        request.required_paths = vec![PathBuf::from("bin/node"), PathBuf::from("bin/npm")];
+
+        let outcome = test_installer().install(&request).expect("install");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read(outcome.install_dir.join("bin/node")).expect("runtime"),
+            b"fake node"
+        );
+        assert!(!outcome.install_dir.join("node-v24.0.0-linux-x64").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(
+                fs::metadata(outcome.install_dir.join("bin/node"))
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0
+            );
+        }
         assert_transaction_root_is_empty(root.path());
     }
 
@@ -776,6 +1072,7 @@ mod tests {
                 sha256,
                 format: ArtifactFormat::Zip,
             },
+            strip_components: 0,
             required_paths: vec![PathBuf::from("bin/node.exe")],
         }
     }
@@ -805,6 +1102,23 @@ mod tests {
             writer.write_all(content).expect("zip content");
         }
         writer.finish().expect("zip finish").into_inner()
+    }
+
+    fn tar_xz_bytes(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+        let encoder = XzEncoder::new(Vec::new(), 6);
+        let mut builder = tar::Builder::new(encoder);
+        for (path, content, mode) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(path).expect("tar path");
+            header.set_size(content.len() as u64);
+            header.set_mode(*mode);
+            header.set_cksum();
+            builder
+                .append(&header, Cursor::new(*content))
+                .expect("tar entry");
+        }
+        let encoder = builder.into_inner().expect("tar finish");
+        encoder.finish().expect("xz finish")
     }
 
     fn serve_once(body: Vec<u8>, declared_length: usize) -> (String, thread::JoinHandle<()>) {
