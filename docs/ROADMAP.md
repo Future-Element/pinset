@@ -169,7 +169,7 @@ Phase 0 总体 go/no-go：
 
 - GitHub Releases；
 - SBOM、校验和、artifact attestation；
-- Homebrew、WinGet、Scoop 渠道；
+- 中央包管理器渠道仅在项目满足官方接收政策后评估，不维护第三方 Tap 或 Bucket；
 - 安装/卸载/迁移文档；
 - 匿名错误报告仅由用户手动导出，不启用遥测。
 

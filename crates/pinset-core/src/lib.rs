@@ -10,7 +10,11 @@ mod shim_install;
 mod source_config;
 mod target;
 
-pub use config::{ProjectConfig, find_project_config, load_project_config};
+#[cfg(feature = "project-write")]
+pub use config::create_project_config;
+pub use config::{
+    PROJECT_CONFIG_FILENAME, ProjectConfig, find_project_config, load_project_config,
+};
 pub use error::{Error, Result};
 #[cfg(feature = "installer")]
 pub use installer::{

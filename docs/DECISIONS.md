@@ -30,6 +30,7 @@
 | D-024 | Accepted | `official` 是不可覆盖和不可删除的内置别名 | 用户自定义源不能自行取得官方分类，避免来源身份混淆 |
 | D-025 | Provisional | Node provider 首先只解析精确稳定版本 `x.y.z` | 浮动选择器必须等待可信版本索引与 lock 流程；预发布版本语义后续单独设计 |
 | D-026 | Accepted | canonical URL 与有序下载候选分别构造 | active/fallback 只能改变传输位置，不能改变官方产物路径和身份 |
+| D-027 | Accepted | 分发首选 GitHub Releases，不维护第三方 Homebrew Tap 或 Scoop Bucket | 避免长期维护额外仓库；中央包管理器渠道只在满足官方接收政策后评估 |
 
 ## 尚待决策
 
@@ -41,7 +42,7 @@
 - Shell profile 是否由安装器修改，还是只提供复制命令；
 - `pinset.toml` 与旧版本文件冲突时的默认兼容开关；
 - 缓存保留与显式清理策略；
-- v0.1 是否同时发布所有包管理渠道，或先以 GitHub Releases 为准。
+- 首批申请哪些中央包管理器官方渠道，以及各渠道的接收时机。
 
 ## 变更规则
 

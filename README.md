@@ -1,6 +1,7 @@
 # Pinset
 
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
+[![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它计划用一套一致的命令管理 Node.js、CPython 和 Flutter，并重点解决跨平台差异、旧管理器冲突、可复现安装和供应链校验。
 
@@ -23,10 +24,17 @@ Pinset 不试图复制 mise/asdf 的全部能力。首版聚焦三个承诺：
 - 使用方式：全局选择、项目选择、锁文件安装、临时执行、冲突诊断
 - 明确不做：npm/pnpm/pip/pub 依赖管理、任务运行器、环境变量/密钥管理、远程同步、GUI、任意脚本插件
 
-规划中的命令示例：
+当前已实现且不会下载运行时的项目初始化命令：
 
 ```shell
 pinset init
+```
+
+它只在当前目录原子创建最小 `pinset.toml`，已有文件时拒绝覆盖。
+
+后续规划中的命令示例：
+
+```shell
 pinset use node@24
 pinset use python@3.13
 pinset use flutter@3.44.8
@@ -78,19 +86,19 @@ cargo run --release -p pinset-shim --example process_bench -- 1000
 - `pinset-windows-x86_64`
 - `pinset-macos-aarch64`
 
-Pull Request 只运行质量检查，避免私有仓库重复消耗三平台构建分钟。构建文件保留 14 天。当前 artifact 未进行代码签名、公证或 GitHub Release 发布，只用于 Phase 0 跨平台测试。
+Pull Request 只运行质量检查，避免私有仓库重复消耗三平台构建分钟。构建文件保留 14 天。版本标签会在质量检查后构建三个归档、生成 `SHA256SUMS` 并发布 GitHub Release。当前 artifact 和 Release 尚未进行代码签名或公证。
 
 当前 workspace 包含：
 
-- `pinset`：用于 `which`、`current`、安装多调用 shim 和管理本机安装源的最小 CLI；
-- `pinset-core`：严格配置读取、祖先目录查找、命令解析、安全 shim 安装、原子化安装源配置，以及 feature 隔离的事务安装内核；
+- `pinset`：用于项目初始化、`which`、`current`、安装多调用 shim 和管理本机安装源的最小 CLI；
+- `pinset-core`：项目配置的原子创建与严格读取、祖先目录查找、命令解析、安全 shim 安装、原子化安装源配置，以及 feature 隔离的事务安装内核；
 - `pinset-shim`：根据调用文件名选择运行时，并完整传递参数与退出码。
 
 这仍是技术 spike，不代表 v0.1 CLI 契约已经冻结。
 
 ## 名称与分发
 
-产品名和命令名确定为 `Pinset` / `pinset`。npm 上已经存在同名旧包，因此 Pinset 不依赖无作用域的 npm 包名；预期通过 GitHub Releases、Homebrew、WinGet、Scoop 等原生渠道分发。如未来需要 npm 启动器，应使用组织作用域。商标和域名尚未完成法律层面的可用性检索。
+产品名和命令名确定为 `Pinset` / `pinset`。npm 上已经存在同名旧包，因此 Pinset 不依赖无作用域的 npm 包名；首选 GitHub Releases 分发，不维护第三方 Homebrew Tap 或 Scoop Bucket，中央包管理器渠道仅在满足其官方接收政策后评估。如未来需要 npm 启动器，应使用组织作用域。商标和域名尚未完成法律层面的可用性检索。
 
 ## 许可证
 

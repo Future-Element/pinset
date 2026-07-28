@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-pinset-core = { path = "../pinset-core", features = ["node-provider", "sources"] }
+pinset-core = { path = "../pinset-core", features = ["node-provider", "project-write", "sources"] }
 
 [dev-dependencies]
 tempfile.workspace = true

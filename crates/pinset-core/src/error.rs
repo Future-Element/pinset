@@ -22,6 +22,18 @@ pub enum Error {
     #[error("unsupported pinset.toml schema {actual}; this spike supports schema 1")]
     UnsupportedSchema { actual: u32 },
 
+    #[cfg(feature = "project-write")]
+    #[error("refusing to overwrite existing project config: {path}")]
+    ProjectConfigAlreadyExists { path: PathBuf },
+
+    #[cfg(feature = "project-write")]
+    #[error("failed to atomically create project config {path}: {source}")]
+    WriteProjectConfig {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("command \"{command}\" is not handled by the Spike A shim")]
     UnsupportedCommand { command: String },
 

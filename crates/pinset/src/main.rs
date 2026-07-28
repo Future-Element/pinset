@@ -6,8 +6,9 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use pinset_core::{
-    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView, install_shims, load_source_config,
-    pinset_home_from_env, resolve_command, save_source_config, source_config_path,
+    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView, create_project_config,
+    install_shims, load_source_config, pinset_home_from_env, resolve_command, save_source_config,
+    source_config_path,
 };
 
 #[derive(Debug, Parser)]
@@ -19,6 +20,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Create a minimal pinset.toml in the current directory.
+    Init,
     /// Print the exact runtime executable selected for a command.
     Which {
         command: String,
@@ -96,6 +99,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Init => {
+            let path = create_project_config(&env::current_dir()?)?;
+            println!("created {}", path.display());
+        }
         Commands::Which { command, cwd } => {
             let cwd = effective_cwd(cwd)?;
             let resolution = resolve_command(&command, &cwd, &pinset_home_from_env()?)?;
