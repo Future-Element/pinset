@@ -1,0 +1,18 @@
+[package]
+name = "pinset-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "pinset"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+pinset-core = { path = "../pinset-core", features = ["node-provider", "sources"] }
+
+[dev-dependencies]
+tempfile.workspace = true

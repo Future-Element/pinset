@@ -1,0 +1,13 @@
+[package]
+name = "pinset-shim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+pinset-core = { path = "../pinset-core" }
+
+[dev-dependencies]
+tempfile.workspace = true

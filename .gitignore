@@ -1,0 +1,6 @@
+/target/
+/.pinset/
+*.tmp
+*.part
+.DS_Store
+Thumbs.db

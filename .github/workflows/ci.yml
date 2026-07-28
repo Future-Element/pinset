@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prepare Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup update stable
+          rustup default stable
+          rustup component add clippy rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+  build:
+    name: Build ${{ matrix.artifact }}
+    if: github.event_name != 'pull_request'
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: pinset-linux-x86_64
+            archive: pinset-linux-x86_64.tar.gz
+          - os: windows-2025
+            artifact: pinset-windows-x86_64
+            archive: pinset-windows-x86_64.zip
+          - os: macos-15
+            artifact: pinset-macos-aarch64
+            archive: pinset-macos-aarch64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prepare Rust toolchain
+        shell: bash
+        run: |
+          rustup set profile minimal
+          rustup update stable
+          rustup default stable
+
+      - name: Build release binaries
+        run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Package Unix binaries
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir package
+          cp target/release/pinset package/pinset
+          cp target/release/pinset-shim package/pinset-shim
+          tar -czf "${{ matrix.archive }}" -C package pinset pinset-shim
+
+      - name: Package Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path package
+          Copy-Item target/release/pinset.exe package/pinset.exe
+          Copy-Item target/release/pinset-shim.exe package/pinset-shim.exe
+          Compress-Archive `
+            -Path package/pinset.exe,package/pinset-shim.exe `
+            -DestinationPath "${{ matrix.archive }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 14

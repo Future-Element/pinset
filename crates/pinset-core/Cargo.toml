@@ -1,0 +1,37 @@
+[package]
+name = "pinset-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+default = []
+installer = [
+    "dep:hex",
+    "dep:reqwest",
+    "dep:sha2",
+    "dep:tempfile",
+    "dep:zip",
+]
+node-provider = ["sources"]
+sources = [
+    "dep:atomic-write-file",
+    "dep:url",
+]
+
+[dependencies]
+atomic-write-file = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+serde.workspace = true
+sha2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+thiserror.workspace = true
+toml.workspace = true
+url = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
