@@ -16,6 +16,7 @@ installer = [
     "dep:zip",
 ]
 node-provider = ["sources"]
+project-write = ["dep:tempfile"]
 sources = [
     "dep:atomic-write-file",
     "dep:url",

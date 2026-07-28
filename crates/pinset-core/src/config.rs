@@ -4,9 +4,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "project-write")]
+use std::io::Write;
+
 use serde::Deserialize;
 
 use crate::{Error, Result};
+
+pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
+#[cfg(feature = "project-write")]
+const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 1\n\n[tools]\n";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,7 +31,7 @@ pub fn find_project_config(start: &Path) -> Result<PathBuf> {
     };
 
     for directory in start.ancestors() {
-        let candidate = directory.join("pinset.toml");
+        let candidate = directory.join(PROJECT_CONFIG_FILENAME);
         if candidate.is_file() {
             return Ok(candidate);
         }
@@ -55,9 +62,42 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
     Ok(config)
 }
 
+#[cfg(feature = "project-write")]
+pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
+    let path = directory.join(PROJECT_CONFIG_FILENAME);
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".pinset.toml.")
+        .tempfile_in(directory)
+        .map_err(|source| Error::WriteProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+
+    temporary
+        .write_all(MINIMAL_PROJECT_CONFIG)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|source| Error::WriteProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+
+    match temporary.persist_noclobber(&path) {
+        Ok(_) => Ok(path),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(Error::ProjectConfigAlreadyExists { path })
+        }
+        Err(error) => Err(Error::WriteProjectConfig {
+            path,
+            source: error.error,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(feature = "project-write")]
+    use std::sync::{Arc, Barrier};
 
     use tempfile::tempdir;
 
@@ -109,5 +149,78 @@ mod tests {
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
         assert!(matches!(error, Error::UnsupportedSchema { actual: 2 }));
+    }
+
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn atomically_creates_a_minimal_project_config() {
+        let root = tempdir().expect("temp directory");
+        let path = create_project_config(root.path()).expect("create project config");
+
+        assert_eq!(path, root.path().join(PROJECT_CONFIG_FILENAME));
+        assert_eq!(
+            load_project_config(&path).expect("load created config"),
+            ProjectConfig {
+                schema: 1,
+                tools: BTreeMap::new(),
+            }
+        );
+        assert_eq!(
+            fs::read_to_string(path).expect("created config"),
+            "schema = 1\n\n[tools]\n"
+        );
+    }
+
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn refuses_to_overwrite_an_existing_project_config() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        let original = "schema = 1\n\n[tools]\nnode = \"24\"\n";
+        fs::write(&path, original).expect("existing config");
+
+        let error = create_project_config(root.path()).expect_err("must not overwrite");
+        assert!(matches!(error, Error::ProjectConfigAlreadyExists { .. }));
+        assert_eq!(fs::read_to_string(path).expect("existing config"), original);
+        assert_eq!(
+            fs::read_dir(root.path())
+                .expect("project directory")
+                .count(),
+            1
+        );
+    }
+
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn concurrent_initialization_has_exactly_one_winner() {
+        let root = tempdir().expect("temp directory");
+        let project = Arc::new(root.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+
+        for _ in 0..2 {
+            let project = Arc::clone(&project);
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                create_project_config(&project)
+            }));
+        }
+        barrier.wait();
+
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("init worker"))
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(Error::ProjectConfigAlreadyExists { .. })))
+                .count(),
+            1
+        );
+        load_project_config(&project.join(PROJECT_CONFIG_FILENAME))
+            .expect("winning config is complete");
     }
 }

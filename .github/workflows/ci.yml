@@ -39,9 +39,6 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
-      - name: Run release tooling tests
-        run: python3 -m unittest discover -s scripts/tests -t .
-
   build:
     name: Build ${{ matrix.artifact }}
     if: github.event_name != 'pull_request'

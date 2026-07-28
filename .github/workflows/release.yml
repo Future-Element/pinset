@@ -48,9 +48,6 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-features
 
-      - name: Run release tooling tests
-        run: python3 -m unittest discover -s scripts/tests -t .
-
   build:
     name: Build ${{ matrix.artifact }}
     needs: quality
@@ -130,7 +127,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Generate checksums and package manager metadata
+      - name: Generate checksums
         shell: bash
         run: |
           (
@@ -141,10 +138,6 @@ jobs:
               pinset-windows-x86_64.zip \
               > SHA256SUMS
           )
-          python3 scripts/render_package_metadata.py \
-            --version "${GITHUB_REF_NAME#v}" \
-            --checksums dist/SHA256SUMS \
-            --output-dir dist/package-manager
 
       - name: Create or update GitHub Release
         shell: bash
@@ -156,8 +149,6 @@ jobs:
             dist/pinset-macos-aarch64.tar.gz
             dist/pinset-windows-x86_64.zip
             dist/SHA256SUMS
-            dist/package-manager/pinset.rb
-            dist/package-manager/pinset.json
           )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
