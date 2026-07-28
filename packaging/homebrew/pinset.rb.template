@@ -1,0 +1,25 @@
+class Pinset < Formula
+  desc "Unified runtime version manager for multilingual projects"
+  homepage "https://github.com/Future-Element/pinset"
+  version "@VERSION@"
+
+  on_macos do
+    depends_on arch: :arm64
+    url "https://github.com/Future-Element/pinset/releases/download/v@VERSION@/pinset-macos-aarch64.tar.gz"
+    sha256 "@MACOS_AARCH64_SHA256@"
+  end
+
+  on_linux do
+    depends_on arch: :x86_64
+    url "https://github.com/Future-Element/pinset/releases/download/v@VERSION@/pinset-linux-x86_64.tar.gz"
+    sha256 "@LINUX_X86_64_SHA256@"
+  end
+
+  def install
+    bin.install "pinset", "pinset-shim"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/pinset --version")
+  end
+end

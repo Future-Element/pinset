@@ -1,6 +1,9 @@
 # Pinset
 
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
+[![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
+
+Homebrew Tap、Scoop Bucket 与正式版本发布说明：[docs/PACKAGE_MANAGERS.md](docs/PACKAGE_MANAGERS.md)
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它计划用一套一致的命令管理 Node.js、CPython 和 Flutter，并重点解决跨平台差异、旧管理器冲突、可复现安装和供应链校验。
 

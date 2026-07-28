@@ -1,0 +1,25 @@
+{
+  "version": "@VERSION@",
+  "description": "Unified runtime version manager for multilingual projects",
+  "homepage": "https://github.com/Future-Element/pinset",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/Future-Element/pinset/releases/download/v@VERSION@/pinset-windows-x86_64.zip",
+      "hash": "@WINDOWS_X86_64_SHA256@"
+    }
+  },
+  "bin": [
+    "pinset.exe",
+    "pinset-shim.exe"
+  ],
+  "checkver": {
+    "github": "https://github.com/Future-Element/pinset"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/Future-Element/pinset/releases/download/v$version/pinset-windows-x86_64.zip"
+      }
+    }
+  }
+}
