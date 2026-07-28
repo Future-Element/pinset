@@ -1,9 +1,12 @@
 use std::{
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     path::{Path, PathBuf},
     process::{self, Command},
 };
+
+#[cfg(windows)]
+use std::ffi::OsStr;
 
 use pinset_core::{CommandResolution, pinset_home_from_env, resolve_command};
 
