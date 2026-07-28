@@ -122,7 +122,7 @@ fn parse_shasums(manifest: &str) -> Result<HashMap<String, String>> {
         if parts.len() != 2
             || parts[0].len() != 64
             || !parts[0].bytes().all(|byte| byte.is_ascii_hexdigit())
-            || parts[1].contains(['/', '\\'])
+            || !is_safe_manifest_path(parts[1])
         {
             return Err(Error::InvalidNodeShasums {
                 reason: format!("invalid line {}", index + 1),
@@ -143,6 +143,15 @@ fn parse_shasums(manifest: &str) -> Result<HashMap<String, String>> {
         });
     }
     Ok(checksums)
+}
+
+fn is_safe_manifest_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 #[cfg(test)]
@@ -215,6 +224,32 @@ mod tests {
             .expect_err("missing target checksum");
         server.join().expect("server");
         assert!(matches!(error, Error::NodeChecksumMissing { .. }));
+    }
+
+    #[test]
+    fn accepts_safe_nested_paths_used_by_official_windows_entries() {
+        let hash = "a".repeat(64);
+        let checksums = parse_shasums(&format!(
+            "{hash}  node-v24.0.0-win-x64.zip\n{hash}  win-x64/node.exe"
+        ))
+        .expect("official manifest paths");
+
+        assert_eq!(
+            checksums.get("win-x64/node.exe").map(String::as_str),
+            Some(hash.as_str())
+        );
+        for unsafe_path in [
+            "../node.exe",
+            "win-x64/../node.exe",
+            "/win-x64/node.exe",
+            "win-x64\\node.exe",
+            "win-x64//node.exe",
+        ] {
+            assert!(matches!(
+                parse_shasums(&format!("{hash}  {unsafe_path}")),
+                Err(Error::InvalidNodeShasums { .. })
+            ));
+        }
     }
 
     fn serve_once(body: String) -> (String, thread::JoinHandle<()>) {
