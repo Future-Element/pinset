@@ -119,12 +119,16 @@ fn executes_through_an_installed_multicall_shim_name() {
 }
 
 fn create_fake_node(home: &Path, version: &str) -> PathBuf {
-    let bin = home
+    let install_dir = home
         .join("installs")
         .join("node")
         .join(version)
-        .join(current_target())
-        .join("bin");
+        .join(current_target());
+    let bin = if cfg!(windows) {
+        install_dir
+    } else {
+        install_dir.join("bin")
+    };
     fs::create_dir_all(&bin).expect("runtime bin");
 
     #[cfg(windows)]

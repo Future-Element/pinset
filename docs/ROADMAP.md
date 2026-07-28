@@ -2,9 +2,22 @@
 
 路线图以风险消除为顺序，不以功能数量为顺序。任何阶段通过前，不承诺具体发布日期。
 
+## Node-first MVP：`0.1.0-alpha.1`
+
+当前状态：实现完成，等待 GitHub 三平台 CI 验证。
+
+已交付精确 Node 版本锁定、四目标产物清单、官方 HTTPS 哈希获取、镜像传输、安全 ZIP/TAR.XZ 解压、事务安装、重复安装复用、`current/which/exec/doctor`、多调用 shim 和使用文档。自动化测试不安装真实运行时。
+
+MVP 发布门槛：
+
+- Ubuntu 上格式、Clippy 和全 workspace 测试通过；
+- Windows x64、Linux x64、macOS arm64 Release 构建通过；
+- shim 依赖图不包含 HTTP、TLS、归档和临时文件依赖；
+- 在隔离的 WSL 环境完成一次真实 Node 安装观察性测试。
+
 ## Phase 0：立项与关键技术验证
 
-当前状态：进行中。Spike A 已完成 Windows x64 功能原型，但性能门槛暂未通过；macOS/Linux 尚未运行。详见 [Spike A 记录](spikes/SPIKE_A_SHIM.md)。
+当前状态：Node 路径已进入 MVP 验证；Python、Flutter 与 shim 性能认证仍在进行。详见 [Spike A 记录](spikes/SPIKE_A_SHIM.md)。
 
 ### Spike A：跨平台 shim
 

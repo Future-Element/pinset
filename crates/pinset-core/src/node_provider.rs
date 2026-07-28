@@ -34,7 +34,7 @@ pub fn plan_node_artifact(
 ) -> Result<NodeArtifactPlan> {
     validate_exact_version(version)?;
     let platform = node_platform(target)?;
-    let format = if platform.ends_with("win-x64") || platform.ends_with("win-arm64") {
+    let format = if platform.starts_with("win-") {
         NodeArchiveFormat::Zip
     } else {
         NodeArchiveFormat::TarXz
@@ -119,6 +119,17 @@ mod tests {
         assert_eq!(plan.format, NodeArchiveFormat::TarXz);
         assert_eq!(plan.artifact_path, "v24.0.0/node-v24.0.0-linux-x64.tar.xz");
         assert_eq!(plan.node_executable, "node-v24.0.0-linux-x64/bin/node");
+    }
+
+    #[test]
+    fn plans_macos_as_tar_xz_not_windows_zip() {
+        for target in ["macos-x86_64", "macos-aarch64"] {
+            let plan =
+                plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
+            assert_eq!(plan.format, NodeArchiveFormat::TarXz);
+            assert!(plan.artifact_path.ends_with(".tar.xz"));
+            assert!(plan.node_executable.ends_with("/bin/node"));
+        }
     }
 
     #[test]

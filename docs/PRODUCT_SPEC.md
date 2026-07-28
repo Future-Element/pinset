@@ -1,7 +1,13 @@
-# Pinset v0.1 产品规格
+# Pinset 产品规格
 
-状态：方案候选，关键技术验证后冻结  
+状态：Node-first MVP 已实现；多语言 v0.1 仍在验证
 更新日期：2026-07-28
+
+## 0. MVP 冻结范围
+
+`0.1.0-alpha.1` 先交付一个可独立使用的 Node.js 闭环：只接受精确版本，生成四平台锁文件，使用官方 HTTPS `SHASUMS256.txt` 建立 SHA-256 信任值，支持官方源/自定义镜像传输、安全 ZIP/TAR.XZ 解压、事务安装、项目解析、临时执行、shim 和只读诊断。
+
+Python、Flutter、浮动选择器、PGP 验签和自动 PATH 修改不在这个 MVP 内。下文未特别标注的多语言能力仍是后续 v0.1 目标，不应当作当前实现声明。
 
 ## 1. 支持矩阵
 
@@ -60,7 +66,7 @@ target = "windows-x86_64"
 canonical_url = "https://nodejs.org/dist/..."
 artifact_path = "v24.x.y/node-v24.x.y-win-x64.zip"
 sha256 = "..."
-verification = "signed-shasums"
+verification = "nodejs-shasums-https"
 ```
 
 最终 schema 必须满足：
@@ -152,7 +158,7 @@ base_url = "https://npmmirror.com/mirrors/node/"
 
 ### `pinset source`
 
-当前 spike 已实现：
+当前 MVP 已实现：
 
 ```shell
 pinset source list [provider]

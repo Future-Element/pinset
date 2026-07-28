@@ -126,13 +126,13 @@ trait Provider {
 
 - 版本索引：Node.js 官方 `dist/index.json`；
 - 产物：官方归档；
-- 信任链：授权发布密钥 → 签名 SHASUMS → 归档哈希；
+- MVP 信任链：官方 HTTPS `SHASUMS256.txt` → 归档 SHA-256；稳定版目标为授权发布密钥 → 签名 SHASUMS → 归档哈希；
 - 布局映射：`node`、`npm`、`npx`、`corepack`。
 
-当前 provider 原型已经实现无网络的产物计划：
+当前 Node-first MVP 已实现：
 
 - 只接受不带前导 `v` 的精确稳定版本 `x.y.z`；
-- 支持 `windows/linux/macos` 的 `x86_64/aarch64` target 映射；
+- 锁定 `windows-x86_64`、`linux-x86_64`、`macos-x86_64` 和 `macos-aarch64` 四个目标；
 - Windows 生成官方 `.zip` 路径，Linux/macOS 生成官方 `.tar.xz` 路径；
 - canonical URL 始终来自内置 official 源；
 - 实际下载候选按本机 active → ordered fallback 构造；
@@ -140,7 +140,7 @@ trait Provider {
 - artifact path 必须是 ASCII 安全相对 URL 路径，拒绝前导 `/`、`..`、反斜杠、百分号编码、scheme、query 和 fragment；
 - 归档内部布局使用 `/` 分隔的 target 路径字符串，不使用宿主机 `PathBuf` 语义规划其他平台产物。
 
-该原型目前只生成计划，不访问网络。事务安装器仍仅支持 ZIP，因此 Linux/macOS 的 `tar.xz` 不能宣称已经可安装。
+元数据客户端只接受精确稳定版本，在联网前验证输入，从 Node 官方 HTTPS 发布目录解析 `SHASUMS256.txt`，并要求四个平台产物的哈希全部存在。事务安装器支持安全 ZIP 与 TAR.XZ 解压、归档根目录剥离、路径穿越和特殊条目拒绝、展开上限、SHA-256 强制校验及原子提交。PGP 签名验证尚未实现，因此文档不会把 HTTPS 清单描述为已签名验证。
 
 ### Python provider
 

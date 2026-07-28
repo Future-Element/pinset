@@ -7,7 +7,9 @@ use std::{
 #[cfg(feature = "project-write")]
 use std::io::Write;
 
-use serde::Deserialize;
+#[cfg(feature = "project-write")]
+use atomic_write_file::AtomicWriteFile;
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
@@ -15,12 +17,18 @@ pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
 #[cfg(feature = "project-write")]
 const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 1\n\n[tools]\n";
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     pub schema: u32,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+}
+
+impl ProjectConfig {
+    pub fn set_tool(&mut self, tool: &str, version: &str) {
+        self.tools.insert(tool.to_owned(), version.to_owned());
+    }
 }
 
 pub fn find_project_config(start: &Path) -> Result<PathBuf> {
@@ -91,6 +99,30 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
             source: error.error,
         }),
     }
+}
+
+#[cfg(feature = "project-write")]
+pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
+    if config.schema != 1 {
+        return Err(Error::UnsupportedSchema {
+            actual: config.schema,
+        });
+    }
+    let serialized = toml::to_string_pretty(config)
+        .map_err(|source| Error::SerializeProjectConfig { source })?;
+    let mut file =
+        AtomicWriteFile::options()
+            .open(path)
+            .map_err(|source| Error::WriteProjectConfig {
+                path: path.to_path_buf(),
+                source,
+            })?;
+    file.write_all(serialized.as_bytes())
+        .and_then(|()| file.commit())
+        .map_err(|source| Error::WriteProjectConfig {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 #[cfg(test)]
@@ -222,5 +254,25 @@ mod tests {
         );
         load_project_config(&project.join(PROJECT_CONFIG_FILENAME))
             .expect("winning config is complete");
+    }
+
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn atomically_updates_project_tools() {
+        let root = tempdir().expect("temp directory");
+        let path = create_project_config(root.path()).expect("create config");
+        let mut config = load_project_config(&path).expect("load config");
+        config.set_tool("node", "24.0.0");
+
+        save_project_config(&path, &config).expect("save config");
+
+        assert_eq!(
+            load_project_config(&path)
+                .expect("reload config")
+                .tools
+                .get("node")
+                .map(String::as_str),
+            Some("24.0.0")
+        );
     }
 }

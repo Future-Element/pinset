@@ -48,6 +48,15 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-features
 
+      - name: Keep the shim dependency graph lightweight
+        shell: bash
+        run: |
+          cargo tree -p pinset-shim -e normal > shim-dependencies.txt
+          if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile' shim-dependencies.txt; then
+            echo "pinset-shim unexpectedly includes download or archive dependencies" >&2
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.artifact }}
     needs: quality
