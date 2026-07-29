@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{env::JoinPathsError, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -112,6 +112,15 @@ pub enum Error {
         version: String,
         command: String,
         searched: String,
+    },
+
+    #[error("runtime executable has no parent directory: {path}")]
+    RuntimeCommandDirectoryMissing { path: PathBuf },
+
+    #[error("failed to construct PATH for the selected runtime: {source}")]
+    RuntimePathJoin {
+        #[source]
+        source: JoinPathsError,
     },
 
     #[error("cannot determine Pinset data directory; set PINSET_HOME explicitly")]
