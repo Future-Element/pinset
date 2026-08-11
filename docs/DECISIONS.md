@@ -34,10 +34,10 @@
 | D-028 | Accepted | 先发布 Node-only `0.1.0-alpha.1` MVP，再扩展 Python 与 Flutter | 先证明锁定、镜像、校验、事务安装和项目执行的完整闭环，避免三个 provider 同时扩张 |
 | D-029 | Accepted | Node MVP 只接受精确稳定版本并锁定四个平台产物 | 避免浮动版本在不同时间解析出不同结果，同时允许同一锁文件跨团队平台复用 |
 | D-030 | Provisional | Node MVP 以官方 HTTPS `SHASUMS256.txt` 的 SHA-256 为信任值 | 已阻止镜像改变哈希；PGP 签名验证仍是进入稳定版前的供应链增强项 |
+| D-031 | Accepted | Pinset 使用 MIT License 开源 | 授权简洁、采用门槛低，允许个人与商业项目使用、修改和分发，同时保留版权与免责声明 |
 
 ## 尚待决策
 
-- 开源许可证：MIT、Apache-2.0 或双许可证；
 - 默认数据目录的精确跨平台约定；
 - Node 发布密钥轮换和离线密钥环；
 - Python provider 清单的发布/签名方式；

@@ -95,4 +95,4 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 
 ## 许可
 
-开源许可证尚未决定。在许可证文件加入仓库前，不应把当前代码视作已授予通用开源许可。
+Pinset 使用 [MIT License](LICENSE) 开源。

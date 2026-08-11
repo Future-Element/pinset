@@ -266,5 +266,5 @@ Phase 0 总体 go/no-go：
 3. 冻结本机 source config schema 和 `pinset source` CLI；
 4. 接入一个固定 Node.js Windows x64 官方 ZIP，并用显式社区镜像验证相同 lock/哈希；
 5. 准备 Python、Flutter 固定真实产物及验证规则；
-6. 决定开源许可证；
+6. ~~决定开源许可证；~~ 已选择 MIT License；
 7. 每个 spike 完成后写 ADR，再冻结 v0.1 实现计划。
