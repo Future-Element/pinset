@@ -77,7 +77,7 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 
 测试使用临时目录、本地假 HTTP 服务和假运行时，不会安装真实 Node、Python 或 Flutter。
 
-开发分支应优先在本机或 WSL 使用增量编译和测试。Pull Request 只有从草稿转为 Ready 时自动运行一次 Quality；后续按需手动触发，避免每次 push 消耗 GitHub Actions。推送到 `main` 运行质量门禁，版本标签执行完整三平台构建并自动发布 GitHub Release。
+开发分支应优先在本机或 WSL 使用增量编译和测试。非草稿 Pull Request 在新建、重新打开和后续推送时自动运行 Quality，草稿 PR 跳过检查。推送到 `main` 运行质量门禁，版本标签执行完整三平台构建并自动发布 GitHub Release。
 
 ## 文档
 
