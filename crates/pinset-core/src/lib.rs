@@ -40,8 +40,8 @@ pub use node_provider::{NodeArchiveFormat, NodeArtifactPlan, plan_node_artifact}
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 pub use node_runtime::{install_locked_node, node_command_directory};
 pub use resolver::{
-    CommandResolution, command_tool, pinset_home, pinset_home_from_env, resolve_command,
-    resolve_from_env,
+    CommandResolution, command_tool, path_with_selected_runtime, pinset_home, pinset_home_from_env,
+    resolve_command, resolve_from_env,
 };
 pub use shim_install::{ShimInstallMethod, ShimInstallResult, install_shims};
 #[cfg(feature = "sources")]

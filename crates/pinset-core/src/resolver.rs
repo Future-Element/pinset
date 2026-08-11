@@ -1,5 +1,6 @@
 use std::{
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -106,6 +107,22 @@ pub fn resolve_command(command: &str, cwd: &Path, pinset_home: &Path) -> Result<
         config_path,
         executable,
     })
+}
+
+pub fn path_with_selected_runtime(executable: &Path) -> Result<OsString> {
+    let command_dir = executable
+        .parent()
+        .ok_or_else(|| Error::RuntimeCommandDirectoryMissing {
+            path: executable.to_path_buf(),
+        })?;
+    let inherited = env::var_os("PATH");
+    let entries = std::iter::once(command_dir.to_path_buf()).chain(
+        inherited
+            .as_ref()
+            .into_iter()
+            .flat_map(|value| env::split_paths(value)),
+    );
+    env::join_paths(entries).map_err(|source| Error::RuntimePathJoin { source })
 }
 
 fn runtime_command_dir(install_dir: &Path) -> PathBuf {

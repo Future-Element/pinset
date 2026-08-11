@@ -17,6 +17,44 @@ WSL 是独立的 Linux 环境，不与 Windows 原生安装目录或 PATH 混用
 
 ## 2. 安装 Pinset
 
+### curl 安装（Linux x64 / macOS Apple Silicon）
+
+当前预发布版：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.1/install.sh |
+  sh -s -- --version 0.1.0-alpha.1
+```
+
+稳定版发布后安装 latest：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/latest/download/install.sh | sh
+```
+
+指定安装目录：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/latest/download/install.sh |
+  sh -s -- --install-dir "$HOME/bin"
+```
+
+默认安装目录是 `$HOME/.local/bin`。脚本会：
+
+- 只接受 HTTPS；
+- 识别当前支持的平台和架构；
+- 同时下载平台归档与 `SHA256SUMS`；
+- 在解压前强制核对 SHA-256；
+- 只接受包含 `pinset` 与 `pinset-shim` 两个普通文件的归档；
+- 不请求 `sudo`，不修改 PATH/shell profile，不安装任何语言运行时。
+
+`latest` 只代表 GitHub 的最新稳定 Release；alpha/beta 等预发布版必须使用固定版本命令。
+
+### 手动安装
+
 在 GitHub Releases 下载当前平台的归档和 `SHA256SUMS`：
 
 - Windows x64：`pinset-windows-x86_64.zip`

@@ -48,6 +48,9 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-features
 
+      - name: Test curl installer without network or runtime installation
+        run: sh scripts/tests/install_sh_test.sh
+
       - name: Keep the shim dependency graph lightweight
         shell: bash
         run: |
@@ -88,6 +91,11 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Test Unix curl installer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh scripts/tests/install_sh_test.sh
 
       - name: Package Unix binaries
         if: runner.os != 'Windows'
@@ -139,9 +147,12 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: |
+          cp install.sh dist/install.sh
+          chmod 755 dist/install.sh
           (
             cd dist
             sha256sum \
+              install.sh \
               pinset-linux-x86_64.tar.gz \
               pinset-macos-aarch64.tar.gz \
               pinset-windows-x86_64.zip \
@@ -154,6 +165,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           assets=(
+            dist/install.sh
             dist/pinset-linux-x86_64.tar.gz
             dist/pinset-macos-aarch64.tar.gz
             dist/pinset-windows-x86_64.zip

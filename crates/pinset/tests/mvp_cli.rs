@@ -30,6 +30,13 @@ fn current_which_exec_and_doctor_share_the_locked_fake_runtime() {
     let exec = pinset(&project, &home, &["exec", "--", "node", "hello", "mvp"]);
     assert_success_contains(&exec, "24.0.0:hello mvp");
 
+    #[cfg(not(windows))]
+    {
+        let npm = pinset(&project, &home, &["exec", "--", "npm", "--version"]);
+        assert_success_contains(&npm, "24.0.0:");
+        assert_success_contains(&npm, "npm --version");
+    }
+
     let doctor = pinset(&project, &home, &["doctor"]);
     assert_success_contains(&doctor, "lockfile");
     assert_success_contains(&doctor, "matches node@24.0.0");
@@ -130,6 +137,11 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake node permissions");
+        let npm = command_dir.join("npm");
+        fs::write(&npm, "#!/usr/bin/env node\n").expect("fake npm");
+        let mut npm_permissions = fs::metadata(&npm).expect("fake npm metadata").permissions();
+        npm_permissions.set_mode(0o755);
+        fs::set_permissions(&npm, npm_permissions).expect("fake npm permissions");
         executable
     }
 }

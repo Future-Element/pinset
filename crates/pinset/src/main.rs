@@ -14,8 +14,9 @@ use pinset_core::{
     Error, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
     ShimInstallMethod, SourceView, create_project_config, current_target, find_project_config,
     install_locked_node, install_shims, load_lockfile, load_project_config, load_source_config,
-    lockfile_path, node_command_directory, pinset_home, resolve_command, save_lockfile,
-    save_project_config, save_source_config, source_config_path, validate_lock_matches_project,
+    lockfile_path, node_command_directory, path_with_selected_runtime, pinset_home,
+    resolve_command, save_lockfile, save_project_config, save_source_config, source_config_path,
+    validate_lock_matches_project,
 };
 
 #[derive(Debug, Parser)]
@@ -305,10 +306,12 @@ fn execute_selected(
         .and_then(|value| value.to_str())
         .ok_or("command name must be valid UTF-8")?;
     let resolution = resolve_command(command_name, cwd, &pinset_home()?)?;
+    let runtime_path = path_with_selected_runtime(&resolution.executable)?;
     let mut child = command_for_runtime(&resolution.executable);
     child
         .args(&command[1..])
         .current_dir(cwd)
+        .env("PATH", runtime_path)
         .env("PINSET_SELECTED_TOOL", &resolution.tool)
         .env("PINSET_SELECTED_VERSION", &resolution.version)
         .env("PINSET_CONFIG_PATH", &resolution.config_path);

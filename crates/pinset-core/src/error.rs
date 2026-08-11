@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{env::JoinPathsError, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -112,6 +112,15 @@ pub enum Error {
         version: String,
         command: String,
         searched: String,
+    },
+
+    #[error("runtime executable has no parent directory: {path}")]
+    RuntimeCommandDirectoryMissing { path: PathBuf },
+
+    #[error("failed to construct PATH for the selected runtime: {source}")]
+    RuntimePathJoin {
+        #[source]
+        source: JoinPathsError,
     },
 
     #[error("cannot determine Pinset data directory; set PINSET_HOME explicitly")]
@@ -389,23 +398,23 @@ pub enum Error {
     },
 
     #[cfg(feature = "installer")]
-    #[error("unsafe ZIP entry rejected: {entry}")]
+    #[error("unsafe archive entry rejected: {entry}")]
     UnsafeArchiveEntry { entry: String },
 
     #[cfg(feature = "installer")]
-    #[error("duplicate or case-colliding ZIP entry rejected: {entry}")]
+    #[error("duplicate or case-colliding archive entry rejected: {entry}")]
     DuplicateArchiveEntry { entry: String },
 
     #[cfg(feature = "installer")]
-    #[error("ZIP contains {actual} entries, exceeding limit {limit}")]
+    #[error("archive contains {actual} entries, exceeding limit {limit}")]
     TooManyArchiveEntries { actual: usize, limit: usize },
 
     #[cfg(feature = "installer")]
-    #[error("ZIP expanded size exceeds limit {limit} bytes")]
+    #[error("archive expanded size exceeds limit {limit} bytes")]
     ArchiveTooLarge { limit: u64 },
 
     #[cfg(feature = "installer")]
-    #[error("failed to extract ZIP entry {entry} to {path}: {source}")]
+    #[error("failed to extract archive entry {entry} to {path}: {source}")]
     ExtractArchiveEntry {
         entry: String,
         path: PathBuf,
