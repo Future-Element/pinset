@@ -41,6 +41,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+      - name: Test curl installer without network or runtime installation
+        run: sh scripts/tests/install_sh_test.sh
+
       - name: Keep the shim dependency graph lightweight
         shell: bash
         run: |
@@ -52,7 +55,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.artifact }}
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     needs: quality
     strategy:
       fail-fast: false
@@ -82,6 +85,11 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Test Unix curl installer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh scripts/tests/install_sh_test.sh
 
       - name: Package Unix binaries
         if: runner.os != 'Windows'

@@ -19,7 +19,19 @@ Python、Flutter、浮动版本选择器、PGP 验签、缓存管理和中央包
 
 ## 五分钟开始
 
-从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 下载当前系统的归档，校验 `SHA256SUMS` 后解压。将 `pinset` 放入 `PATH`，再进入一个项目：
+当前预发布版在 Linux x64 和 macOS Apple Silicon 上可以执行：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.1/install.sh |
+  sh -s -- --version 0.1.0-alpha.1
+```
+
+安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把 `pinset` 与 `pinset-shim` 原子安装到 `$HOME/.local/bin`。它不使用 `sudo`、不改 shell profile，也不安装 Node。
+
+稳定版本发布后可以把固定版本 URL 换成 `https://github.com/Future-Element/pinset/releases/latest/download/install.sh`。也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载当前系统的归档。
+
+安装后将 `pinset` 放入 `PATH`，再进入一个项目：
 
 ```shell
 pinset init
@@ -65,7 +77,7 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 
 测试使用临时目录、本地假 HTTP 服务和假运行时，不会安装真实 Node、Python 或 Flutter。
 
-开发分支应优先在本机或 WSL 使用增量编译和测试。Pull Request 只有从草稿转为 Ready 时自动运行一次 Quality；后续按需手动触发，避免每次 push 消耗 GitHub Actions。推送到 `main` 和版本标签仍执行发布所需的完整检查与构建。
+开发分支应优先在本机或 WSL 使用增量编译和测试。Pull Request 只有从草稿转为 Ready 时自动运行一次 Quality；后续按需手动触发，避免每次 push 消耗 GitHub Actions。推送到 `main` 运行质量门禁，版本标签执行完整三平台构建并自动发布 GitHub Release。
 
 ## 文档
 
@@ -77,6 +89,9 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 - [路线图](docs/ROADMAP.md)
 - [决策记录](docs/DECISIONS.md)
 - [WSL 构建与测试](docs/WSL_TESTING.md)
+- [发布流程](docs/RELEASING.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
 
 ## 许可
 
