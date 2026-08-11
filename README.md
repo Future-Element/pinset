@@ -49,7 +49,7 @@ pinset use node@24.0.0 --no-install
 pinset install --locked
 ```
 
-完整的 Windows、macOS、Linux、WSL、shim、镜像切换和故障排查说明见 [MVP 使用指南](docs/USAGE.md)。
+完整的 Windows、macOS、Linux、WSL、shim、镜像切换和故障排查说明见 [PRD 使用指南](docs/PRD.md#17-当前版本使用指南)。
 
 ## 安装源
 
@@ -81,15 +81,9 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 
 ## 文档
 
-- [MVP 使用指南](docs/USAGE.md)
-- [项目章程](docs/PROJECT_CHARTER.md)
-- [深度调研](docs/RESEARCH.md)
-- [产品规格](docs/PRODUCT_SPEC.md)
-- [技术架构](docs/ARCHITECTURE.md)
-- [路线图](docs/ROADMAP.md)
-- [决策记录](docs/DECISIONS.md)
-- [WSL 构建与测试](docs/WSL_TESTING.md)
-- [发布流程](docs/RELEASING.md)
+- [PRD](docs/PRD.md)：产品、功能契约、技术架构、使用与故障排查的统一基线。
+- [Plans](docs/PLANS.md)：版本范围、研究与决策、验证证据、开发和发布流程。
+- [发布说明](docs/RELEASE_NOTES.md)：已经交付的用户可见变化、安装和已知限制。
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 
