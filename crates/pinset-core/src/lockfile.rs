@@ -147,13 +147,22 @@ pub fn validate_lock_matches_project<'a>(
     lockfile: &'a Lockfile,
     project_node_version: &str,
 ) -> Result<&'a LockedTool> {
+    validate_lock_matches_selection(lockfile, project_node_version, Path::new("pinset.toml"))
+}
+
+pub fn validate_lock_matches_selection<'a>(
+    lockfile: &'a Lockfile,
+    selected_node_version: &str,
+    selection_path: &Path,
+) -> Result<&'a LockedTool> {
     let tool = lockfile.tool("node").ok_or(Error::LockedToolMissing {
         tool: "node".to_owned(),
     })?;
-    if tool.requested != project_node_version || tool.version != project_node_version {
+    if tool.requested != selected_node_version || tool.version != selected_node_version {
         return Err(Error::LockfileMismatch {
+            selection_path: selection_path.to_path_buf(),
             tool: "node".to_owned(),
-            configured: project_node_version.to_owned(),
+            configured: selected_node_version.to_owned(),
             locked: tool.version.clone(),
         });
     }

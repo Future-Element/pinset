@@ -32,22 +32,30 @@ impl ProjectConfig {
 }
 
 pub fn find_project_config(start: &Path) -> Result<PathBuf> {
-    let start = if start.is_file() {
-        start.parent().unwrap_or(start)
-    } else {
-        start
-    };
+    find_optional_project_config(start)?.ok_or_else(|| Error::ProjectConfigNotFound {
+        start: normalized_search_start(start).to_path_buf(),
+    })
+}
+
+pub fn find_optional_project_config(start: &Path) -> Result<Option<PathBuf>> {
+    let start = normalized_search_start(start);
 
     for directory in start.ancestors() {
         let candidate = directory.join(PROJECT_CONFIG_FILENAME);
         if candidate.is_file() {
-            return Ok(candidate);
+            return Ok(Some(candidate));
         }
     }
 
-    Err(Error::ProjectConfigNotFound {
-        start: start.to_path_buf(),
-    })
+    Ok(None)
+}
+
+fn normalized_search_start(start: &Path) -> &Path {
+    if start.is_file() {
+        start.parent().unwrap_or(start)
+    } else {
+        start
+    }
 }
 
 pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {

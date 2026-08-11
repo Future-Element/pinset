@@ -6,8 +6,9 @@ use std::{
 };
 
 use pinset_core::{
-    LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS, NodeArchiveFormat,
-    ProjectConfig, SourceConfig, current_target, plan_node_artifact, save_lockfile,
+    GlobalConfig, LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS,
+    NodeArchiveFormat, ProjectConfig, SourceConfig, current_target, global_config_path,
+    global_lockfile_path, plan_node_artifact, save_global_config, save_global_state, save_lockfile,
     save_project_config,
 };
 use tempfile::tempdir;
@@ -29,6 +30,7 @@ fn current_which_exec_and_doctor_share_the_locked_fake_runtime() {
 
     let exec = pinset(&project, &home, &["exec", "--", "node", "hello", "mvp"]);
     assert_success_contains(&exec, "24.0.0:hello mvp");
+    assert_success_contains(&exec, "source=project");
 
     #[cfg(not(windows))]
     {
@@ -41,6 +43,39 @@ fn current_which_exec_and_doctor_share_the_locked_fake_runtime() {
     assert_success_contains(&doctor, "lockfile");
     assert_success_contains(&doctor, "matches node@24.0.0");
     assert_success_contains(&doctor, "runtime");
+}
+
+#[test]
+fn which_and_exec_use_the_global_fake_runtime_without_a_project() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+    write_global(&home, "24.0.0", "24.0.0");
+    let executable = create_fake_node(&home, "24.0.0");
+
+    let which = pinset(&workspace, &home, &["which", "node"]);
+    assert_success_contains(&which, &executable.display().to_string());
+
+    let exec = pinset(&workspace, &home, &["exec", "--", "node", "global"]);
+    assert_success_contains(&exec, "24.0.0:global");
+    assert_success_contains(&exec, "source=global");
+}
+
+#[test]
+fn project_selection_overrides_the_global_fake_runtime() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    write_global(&home, "24.0.0", "24.0.0");
+    write_project(&project, "20.0.0", "20.0.0");
+    create_fake_node(&home, "24.0.0");
+    create_fake_node(&home, "20.0.0");
+
+    let exec = pinset(&project, &home, &["exec", "--", "node", "priority"]);
+    assert_success_contains(&exec, "20.0.0:priority");
+    assert_success_contains(&exec, "source=project");
 }
 
 #[test]
@@ -62,6 +97,25 @@ fn locked_install_rejects_config_mismatch_before_network_or_installation() {
     assert!(!home.exists());
 }
 
+#[test]
+fn global_locked_install_rejects_mismatch_before_network_or_installation() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+    write_global_mismatch(&home, "23.0.0", "24.0.0");
+
+    let output = pinset(&workspace, &home, &["install", "--global", "--locked"]);
+
+    assert!(!output.status.success(), "mismatched global lock must fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("global.toml selects node@23.0.0"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!home.join("installs").exists());
+}
+
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
@@ -80,6 +134,37 @@ fn write_project(project: &Path, configured_version: &str, locked_version: &str)
         artifacts,
     );
     save_lockfile(&project.join("pinset.lock"), &lockfile).expect("lockfile");
+}
+
+fn write_global(home: &Path, configured_version: &str, locked_version: &str) {
+    let config = GlobalConfig {
+        schema: 1,
+        tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
+    };
+    let lockfile = test_lockfile(locked_version);
+    save_global_state(home, &config, &lockfile).expect("global state");
+}
+
+fn write_global_mismatch(home: &Path, configured_version: &str, locked_version: &str) {
+    let config = GlobalConfig {
+        schema: 1,
+        tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
+    };
+    save_global_config(&global_config_path(home), &config).expect("global config");
+    save_lockfile(&global_lockfile_path(home), &test_lockfile(locked_version))
+        .expect("global lockfile");
+}
+
+fn test_lockfile(version: &str) -> Lockfile {
+    let artifacts = MVP_NODE_TARGETS
+        .into_iter()
+        .map(|target| locked_artifact(version, target))
+        .collect();
+    Lockfile::new_node(
+        "pinset integration test".to_owned(),
+        version.to_owned(),
+        artifacts,
+    )
 }
 
 fn locked_artifact(version: &str, target: &str) -> LockedArtifact {
@@ -116,7 +201,7 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         let executable = command_dir.join("node.cmd");
         fs::write(
             &executable,
-            "@echo off\r\necho %PINSET_SELECTED_VERSION%:%*\r\n",
+            "@echo off\r\necho %PINSET_SELECTED_VERSION%:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
         )
         .expect("fake node");
         executable
@@ -129,7 +214,7 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         let executable = command_dir.join("node");
         fs::write(
             &executable,
-            "#!/bin/sh\nprintf '%s:%s\\n' \"$PINSET_SELECTED_VERSION\" \"$*\"\n",
+            "#!/bin/sh\nprintf '%s:%s\\nsource=%s\\n' \"$PINSET_SELECTED_VERSION\" \"$*\" \"$PINSET_SELECTION_SOURCE\"\n",
         )
         .expect("fake node");
         let mut permissions = fs::metadata(&executable)

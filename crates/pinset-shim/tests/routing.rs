@@ -36,6 +36,39 @@ fn executes_fake_node_selected_by_nearest_project_config() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("20.0.0:hello pinset"), "stdout: {stdout}");
+    assert!(stdout.contains("source=project"), "stdout: {stdout}");
+}
+
+#[test]
+fn executes_fake_node_selected_by_global_config_without_a_project() {
+    let root = tempdir().expect("temp directory");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir_all(&workspace).expect("workspace");
+    fs::create_dir_all(home.join("state")).expect("global state");
+    fs::write(
+        home.join("state").join("global.toml"),
+        "schema = 1\n[tools]\nnode = \"24.0.0\"\n",
+    )
+    .expect("global config");
+    create_fake_node(&home, "24.0.0");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
+        .args(["--as", "node", "--cwd"])
+        .arg(&workspace)
+        .args(["--", "hello", "global"])
+        .env("PINSET_HOME", &home)
+        .output()
+        .expect("run shim");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("24.0.0:hello global"), "stdout: {stdout}");
+    assert!(stdout.contains("source=global"), "stdout: {stdout}");
 }
 
 #[test]
@@ -136,7 +169,7 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         let executable = bin.join("node.cmd");
         fs::write(
             &executable,
-            "@echo off\r\nif \"%1\"==\"exit42\" exit /b 42\r\necho %PINSET_SELECTED_VERSION%:%*\r\n",
+            "@echo off\r\nif \"%1\"==\"exit42\" exit /b 42\r\necho %PINSET_SELECTED_VERSION%:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
         )
         .expect("fake node");
         executable
@@ -149,7 +182,7 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         let executable = bin.join("node");
         fs::write(
             &executable,
-            "#!/bin/sh\nif [ \"$1\" = \"exit42\" ]; then exit 42; fi\nprintf '%s:%s\\n' \"$PINSET_SELECTED_VERSION\" \"$*\"\n",
+            "#!/bin/sh\nif [ \"$1\" = \"exit42\" ]; then exit 42; fi\nprintf '%s:%s\\nsource=%s\\n' \"$PINSET_SELECTED_VERSION\" \"$*\" \"$PINSET_SELECTION_SOURCE\"\n",
         )
         .expect("fake node");
         let mut permissions = fs::metadata(&executable)

@@ -22,6 +22,49 @@ pub enum Error {
     #[error("unsupported pinset.toml schema {actual}; this spike supports schema 1")]
     UnsupportedSchema { actual: u32 },
 
+    #[error("global config does not exist: {path}")]
+    GlobalConfigNotFound { path: PathBuf },
+
+    #[error("failed to read global config {path}: {source}")]
+    ReadGlobalConfig {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("global config {path} is invalid: {source}")]
+    ParseGlobalConfig {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+
+    #[error("unsupported global.toml schema {actual}; this version supports schema 1")]
+    UnsupportedGlobalConfigSchema { actual: u32 },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to serialize global config: {source}")]
+    SerializeGlobalConfig {
+        #[source]
+        source: toml::ser::Error,
+    },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to create global state directory {path}: {source}")]
+    CreateGlobalStateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to atomically write global config {path}: {source}")]
+    WriteGlobalConfig {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[cfg(feature = "lockfile")]
     #[error("failed to read lockfile {path}: {source}")]
     ReadLockfile {
@@ -71,9 +114,10 @@ pub enum Error {
 
     #[cfg(feature = "lockfile")]
     #[error(
-        "pinset.toml selects {tool}@{configured}, but pinset.lock contains {tool}@{locked}; run `pinset use {tool}@{configured}`"
+        "{selection_path} selects {tool}@{configured}, but its lockfile contains {tool}@{locked}; regenerate the matching lockfile"
     )]
     LockfileMismatch {
+        selection_path: PathBuf,
         tool: String,
         configured: String,
         locked: String,
@@ -103,6 +147,15 @@ pub enum Error {
 
     #[error("tool \"{tool}\" is not declared in {config_path}")]
     ToolNotConfigured { tool: String, config_path: PathBuf },
+
+    #[error(
+        "no version selected for tool \"{tool}\"; checked project ancestors from {start} and global config {global_config_path}"
+    )]
+    ToolSelectionNotFound {
+        tool: String,
+        start: PathBuf,
+        global_config_path: PathBuf,
+    },
 
     #[error(
         "runtime command \"{command}\" for {tool}@{version} is not installed; searched: {searched}"

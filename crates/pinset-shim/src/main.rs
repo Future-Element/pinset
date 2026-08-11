@@ -15,6 +15,7 @@ use pinset_core::{
 const SHIM_DEPTH_ENV: &str = "PINSET_SHIM_DEPTH";
 const SELECTED_TOOL_ENV: &str = "PINSET_SELECTED_TOOL";
 const SELECTED_VERSION_ENV: &str = "PINSET_SELECTED_VERSION";
+const SELECTION_SOURCE_ENV: &str = "PINSET_SELECTION_SOURCE";
 const CONFIG_PATH_ENV: &str = "PINSET_CONFIG_PATH";
 
 fn main() {
@@ -42,6 +43,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         .env(SHIM_DEPTH_ENV, "1")
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
+        .env(SELECTION_SOURCE_ENV, resolution.source.as_str())
         .env(CONFIG_PATH_ENV, &resolution.config_path);
 
     let status = child.status()?;

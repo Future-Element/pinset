@@ -11,12 +11,14 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand};
 use pinset_core::{
-    Error, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
+    Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
     ShimInstallMethod, SourceView, create_project_config, current_target, find_project_config,
-    install_locked_node, install_shims, load_lockfile, load_project_config, load_source_config,
-    lockfile_path, node_command_directory, path_with_selected_runtime, pinset_home,
-    resolve_command, save_lockfile, save_project_config, save_source_config, source_config_path,
-    validate_lock_matches_project,
+    global_config_path, global_lockfile_path, install_locked_node, install_shims,
+    load_global_config, load_lockfile, load_optional_global_config, load_project_config,
+    load_source_config, lockfile_path, node_command_directory, path_with_selected_runtime,
+    pinset_home, resolve_command, save_global_state, save_lockfile, save_project_config,
+    save_source_config, source_config_path, validate_lock_matches_project,
+    validate_lock_matches_selection,
 };
 
 #[derive(Debug, Parser)]
@@ -34,20 +36,26 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
-    /// Select and lock an exact Node.js version for the current project.
+    /// Select and lock an exact Node.js version for the current project or globally.
     Use {
         /// Selection in the form node@x.y.z.
         selection: String,
-        /// Update pinset.toml and pinset.lock without downloading the runtime.
+        /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
         no_install: bool,
+        /// Save the selection under PINSET_HOME instead of pinset.toml.
+        #[arg(long)]
+        global: bool,
     },
-    /// Install the current target from pinset.lock.
+    /// Install the current target from the project or global lockfile.
     Install {
-        /// Require pinset.toml and pinset.lock to match. This is the MVP default.
+        /// Require the selected config and lockfile to match. This is the default.
         #[arg(long)]
         locked: bool,
-        #[arg(long)]
+        /// Install the globally selected runtime.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        #[arg(long, conflicts_with = "global")]
         cwd: Option<PathBuf>,
     },
     /// Print the exact runtime executable selected for a command.
@@ -146,19 +154,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Commands::Use {
             selection,
             no_install,
+            global,
         } => {
             let version = parse_node_selection(&selection)?;
-            let cwd = env::current_dir()?;
-            let config_path = find_project_config(&cwd)?;
-            let mut project = load_project_config(&config_path)?;
             let lockfile = NodeMetadataClient::official()?
                 .resolve_exact_lock(&version, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-            let lock_path = lockfile_path(&config_path);
-            save_lockfile(&lock_path, &lockfile)?;
-            project.set_tool("node", &version);
-            save_project_config(&config_path, &project)?;
+            let (scope, lock_path) = if global {
+                let home = pinset_home()?;
+                let config_path = global_config_path(&home);
+                let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
+                config.set_tool("node", &version);
+                save_global_state(&home, &config, &lockfile)?;
+                ("global", global_lockfile_path(&home))
+            } else {
+                let cwd = env::current_dir()?;
+                let config_path = find_project_config(&cwd)?;
+                let mut project = load_project_config(&config_path)?;
+                let lock_path = lockfile_path(&config_path);
+                save_lockfile(&lock_path, &lockfile)?;
+                project.set_tool("node", &version);
+                save_project_config(&config_path, &project)?;
+                ("project", lock_path)
+            };
             println!(
-                "selected node@{version}; locked {} targets in {}",
+                "selected {scope} node@{version}; locked {} targets in {}",
                 lockfile
                     .tool("node")
                     .expect("generated lock contains node")
@@ -167,11 +186,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 lock_path.display()
             );
             if !no_install {
-                install_project(&cwd)?;
+                if global {
+                    install_global(&pinset_home()?)?;
+                } else {
+                    install_project(&env::current_dir()?)?;
+                }
             }
         }
-        Commands::Install { locked: _, cwd } => {
-            install_project(&effective_cwd(cwd)?)?;
+        Commands::Install {
+            locked: _,
+            global,
+            cwd,
+        } => {
+            if global {
+                install_global(&pinset_home()?)?;
+            } else {
+                install_project(&effective_cwd(cwd)?)?;
+            }
         }
         Commands::Which { command, cwd } => {
             let cwd = effective_cwd(cwd)?;
@@ -237,12 +268,34 @@ fn install_project(cwd: &Path) -> Result<(), Box<dyn std::error::Error>> {
             config_path: config_path.clone(),
         })?;
     let lock_path = lockfile_path(&config_path);
-    let lockfile = load_lockfile(&lock_path)?;
-    let locked_node = validate_lock_matches_project(&lockfile, configured)?;
     let home = pinset_home()?;
-    let sources = load_source_config(&source_config_path(&home))?;
+    install_locked_selection(&home, configured, &config_path, &lock_path)
+}
+
+fn install_global(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = global_config_path(home);
+    let config: GlobalConfig = load_global_config(&config_path)?;
+    let configured = config
+        .tools
+        .get("node")
+        .ok_or_else(|| Error::ToolNotConfigured {
+            tool: "node".to_owned(),
+            config_path: config_path.clone(),
+        })?;
+    install_locked_selection(home, configured, &config_path, &global_lockfile_path(home))
+}
+
+fn install_locked_selection(
+    home: &Path,
+    configured: &str,
+    config_path: &Path,
+    lock_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let lockfile = load_lockfile(lock_path)?;
+    let locked_node = validate_lock_matches_selection(&lockfile, configured, config_path)?;
+    let sources = load_source_config(&source_config_path(home))?;
     let installer = Installer::new(InstallLimits::default())?;
-    let outcome = install_locked_node(&installer, &home, &sources, locked_node, &current_target())?;
+    let outcome = install_locked_node(&installer, home, &sources, locked_node, &current_target())?;
     if outcome.bytes_downloaded == 0 {
         println!(
             "already installed node@{} for {} at {}",
@@ -314,6 +367,7 @@ fn execute_selected(
         .env("PATH", runtime_path)
         .env("PINSET_SELECTED_TOOL", &resolution.tool)
         .env("PINSET_SELECTED_VERSION", &resolution.version)
+        .env("PINSET_SELECTION_SOURCE", resolution.source.as_str())
         .env("PINSET_CONFIG_PATH", &resolution.config_path);
     let status = child.status()?;
     Ok(ExitCode::from(
