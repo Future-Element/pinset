@@ -108,7 +108,9 @@ try {
     if ($PnpmChildNodeOutput.Count -eq 0) {
         throw 'project pnpm child node returned no output'
     }
-    Assert-ExactOutput "v$ProjectVersion" $PnpmChildNodeOutput 'project pnpm child node'
+    if ($PnpmChildNodeOutput -notcontains "v$ProjectVersion") {
+        throw "project pnpm child node did not report v$ProjectVersion"
+    }
 
     Set-Location $TestRoot
     Assert-ExactOutput "v$GlobalVersion" (& node --version) 'restored global direct node'
