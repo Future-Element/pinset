@@ -93,14 +93,8 @@ fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInsta
             format,
         },
         strip_components: 1,
-        include_prefixes: vec![
-            PathBuf::from("dist"),
-            PathBuf::from("package.json"),
-        ],
-        required_paths: vec![
-            PathBuf::from("dist/pnpm.mjs"),
-            PathBuf::from("package.json"),
-        ],
+        include_prefixes: vec![PathBuf::from("dist"), PathBuf::from("package.json")],
+        required_paths: vec![PathBuf::from("dist/pnpm.mjs"), PathBuf::from("package.json")],
     })
 }
 
