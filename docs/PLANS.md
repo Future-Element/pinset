@@ -1,9 +1,9 @@
 # Pinset Plans
 
 当前发布版本：`v0.1.0-alpha.3`
-下一开发目标：`v0.1.0-alpha.4`
+下一开发目标：`v0.1.0-alpha.5`
 目标稳定版本：`v0.1.0`
-状态：`alpha.3 published — alpha.4 implementation`
+状态：`alpha.4 release candidate`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -345,7 +345,7 @@ alpha.2 不包含：
 
 ## 4. v0.1.0-alpha.4 — Node Workflow Hardening
 
-状态：**功能完成，待用户验收与发布冻结**
+状态：**发布候选**
 
 目标：先把 Node 的全局默认、项目覆盖和命令发现体验收口，再扩展第二种运行时。
 
@@ -356,6 +356,7 @@ alpha.2 不包含：
 - 在项目覆盖全局默认时明确显示全局值、项目值和生效配置路径。
 - `pinset current` 继续代表当前目录的最终生效结果，`pinset global` 代表用户默认值。
 - `pinset shim install` 自动推导发布包内的 shim 二进制和用户级目标目录，并提供 `shim path`。
+- Node 归档下载在交互终端显示进度条、百分比和字节数，非交互环境输出简洁状态。
 - 完善中英文顶层帮助、README 全局/项目流程和临时目录回归测试。
 
 不包含：
@@ -375,7 +376,8 @@ alpha.2 不包含：
 
 - `cargo fmt --all -- --check` 通过。
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` 通过。
-- `cargo test --workspace --all-features` 共 100 项测试通过。
+- 安装器测试验证下载开始、字节推进、SHA-256 校验完成事件；缓存命中不产生下载事件。
+- `cargo test --workspace --all-features` 共 102 项测试通过；三平台结果待标签工作流完成后记录。
 - `git diff --check` 通过。
 - 自动化仅写临时目录、假 shim 与假运行时；未下载或安装真实 Node，未触发 GitHub CI。
 
@@ -668,8 +670,8 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 标签必须与 workspace 版本完全一致：
 
 ```bash
-git tag -a v0.1.0-alpha.3 -m "Pinset 0.1.0-alpha.3"
-git push origin v0.1.0-alpha.3
+git tag -a v0.1.0-alpha.4 -m "Pinset 0.1.0-alpha.4"
+git push origin v0.1.0-alpha.4
 ```
 
 Release workflow：

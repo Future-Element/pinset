@@ -5,7 +5,7 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前 `0.1.0-alpha.3` 是 Node-first 预发布版：
+当前 `0.1.0-alpha.4` 是 Node-first 预发布版：
 
 - 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
 - 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
@@ -18,10 +18,8 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
-alpha.3 已通过官方 GitHub Release 提供，目标系统功能由用户继续验收。`main` 已进入下一版
-Node 工作流完善阶段；`pinset global` 和带默认路径的 `pinset shim install` 当前需要从
-`main` 构建，尚未包含在 alpha.3 Release 中。Python、Flutter、PGP 验签和中央包管理器
-分发仍按路线图推进。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
+alpha.4 新增一等全局默认命令、便捷 shim 安装和 Node 归档下载进度显示。Python、Flutter、
+PGP 验签和中央包管理器分发仍按路线图推进。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 
 ## 安装 Pinset
 
@@ -29,8 +27,8 @@ Linux x64 和 macOS Apple Silicon 可以执行：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.3/install.sh |
-  sh -s -- --version 0.1.0-alpha.3
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.4/install.sh |
+  sh -s -- --version 0.1.0-alpha.4
 ```
 
 安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把 `pinset` 与 `pinset-shim` 原子安装到 `$HOME/.local/bin`。它不使用 `sudo`、不改 shell profile，也不安装 Node。
@@ -72,7 +70,7 @@ pinset --lang zh-CN
 
 ### 3. 设置全局 Node 版本
 
-当前 `main`/下一版推荐：
+推荐使用：
 
 ```shell
 pinset global node@24
@@ -88,7 +86,7 @@ pinset global node@lts --no-install
 pinset install --global --locked
 ```
 
-已发布的 alpha.3 使用完全兼容的原有入口：
+原有入口继续兼容：
 
 ```shell
 pinset use node@24 --global
@@ -141,7 +139,7 @@ pinset exec node@24.0.0 -- node --version
 
 ### 6. 直接使用 node、npm、npx 和 corepack
 
-当前 `main`/下一版可自动找到与 `pinset` 同目录的 `pinset-shim`，并安装到用户级目录：
+Pinset 可以自动找到与 `pinset` 同目录的 `pinset-shim`，并安装到用户级目录：
 
 ```shell
 pinset shim install
@@ -167,10 +165,21 @@ npm --version
 ```
 
 目标目录已有任意同名文件时，Pinset 会拒绝整组安装，不覆盖 fnm、nvm、Volta 或用户文件。
-alpha.3 仍需显式传入 `--binary` 和 `--dir`，具体命令见
+高级场景仍可显式传入 `--binary` 和 `--dir`，具体说明见
 [PRD 使用指南](docs/PRD.md#175-安装-shim)。
 
-### 7. 查询、卸载和缓存
+### 7. 下载进度
+
+下载 Node 归档时，交互终端会显示进度条、百分比、已下载大小和总大小：
+
+```text
+downloading node-v24.0.0-linux-x64.tar.xz [============            ]  50% 15.0 MiB/30.0 MiB
+```
+
+只有 SHA-256 校验通过后才显示完成。重定向输出或 CI 环境使用简洁的开始/完成行；缓存命中
+不会显示伪下载进度。
+
+### 8. 查询、卸载和缓存
 
 ```shell
 pinset list node

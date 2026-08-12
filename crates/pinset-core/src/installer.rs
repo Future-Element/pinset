@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -88,6 +89,22 @@ pub struct InstallLimits {
     pub request_timeout: Duration,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadProgressEvent {
+    Started {
+        url: String,
+        total_bytes: Option<u64>,
+    },
+    Advanced {
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    Finished {
+        downloaded_bytes: u64,
+    },
+    Failed,
+}
+
 impl Default for InstallLimits {
     fn default() -> Self {
         Self {
@@ -99,10 +116,10 @@ impl Default for InstallLimits {
     }
 }
 
-#[derive(Debug)]
 pub struct Installer {
     client: Client,
     limits: InstallLimits,
+    progress_reporter: Option<Arc<dyn Fn(DownloadProgressEvent) + Send + Sync>>,
 }
 
 #[derive(Debug)]
@@ -121,7 +138,19 @@ impl Installer {
             .timeout(limits.request_timeout)
             .build()
             .map_err(|source| Error::HttpClient { source })?;
-        Ok(Self { client, limits })
+        Ok(Self {
+            client,
+            limits,
+            progress_reporter: None,
+        })
+    }
+
+    pub fn with_progress_reporter(
+        mut self,
+        reporter: impl Fn(DownloadProgressEvent) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress_reporter = Some(Arc::new(reporter));
+        self
     }
 
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
@@ -353,6 +382,19 @@ impl Installer {
         expected_hash: &[u8; 32],
         destination: &Path,
     ) -> Result<(u64, String)> {
+        let result = self.download_verified_inner(url, expected_hash, destination);
+        if result.is_err() {
+            self.report_progress(DownloadProgressEvent::Failed);
+        }
+        result
+    }
+
+    fn download_verified_inner(
+        &self,
+        url: &str,
+        expected_hash: &[u8; 32],
+        destination: &Path,
+    ) -> Result<(u64, String)> {
         let display_url = redacted_url(url);
         let mut response = self
             .client
@@ -363,15 +405,17 @@ impl Installer {
                 url: display_url.clone(),
                 source,
             })?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.limits.max_download_bytes)
-        {
+        let total_bytes = response.content_length();
+        if total_bytes.is_some_and(|length| length > self.limits.max_download_bytes) {
             return Err(Error::DownloadTooLarge {
                 url: display_url.clone(),
                 limit: self.limits.max_download_bytes,
             });
         }
+        self.report_progress(DownloadProgressEvent::Started {
+            url: display_url.clone(),
+            total_bytes,
+        });
 
         let mut file = OpenOptions::new()
             .write(true)
@@ -407,6 +451,10 @@ impl Installer {
                     source,
                 })?;
             hasher.update(&buffer[..count]);
+            self.report_progress(DownloadProgressEvent::Advanced {
+                downloaded_bytes: total,
+                total_bytes,
+            });
         }
         file.sync_all().map_err(|source| Error::WriteDownload {
             path: destination.to_path_buf(),
@@ -422,7 +470,17 @@ impl Installer {
             });
         }
 
+        self.report_progress(DownloadProgressEvent::Finished {
+            downloaded_bytes: total,
+        });
+
         Ok((total, actual_hex))
+    }
+
+    fn report_progress(&self, event: DownloadProgressEvent) {
+        if let Some(reporter) = &self.progress_reporter {
+            reporter(event);
+        }
     }
 
     fn extract_zip(
@@ -1039,7 +1097,7 @@ mod tests {
     use std::{
         io::{Cursor, Read as _, Write as _},
         net::TcpListener,
-        sync::{Arc, Barrier},
+        sync::{Arc, Barrier, Mutex},
         thread,
     };
 
@@ -1056,9 +1114,39 @@ mod tests {
         let url = format!("{base_url}?token=must-not-be-recorded");
         let root = tempdir().expect("temp root");
         let request = request(root.path(), url, sha256_hex(&archive));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let reported = Arc::clone(&progress);
 
-        let outcome = test_installer().install(&request).expect("install");
+        let outcome = test_installer()
+            .with_progress_reporter(move |event| {
+                reported.lock().expect("progress lock").push(event);
+            })
+            .install(&request)
+            .expect("install");
         server.join().expect("server");
+
+        let progress = progress.lock().expect("progress events");
+        assert!(matches!(
+            progress.first(),
+            Some(DownloadProgressEvent::Started {
+                total_bytes: Some(total),
+                ..
+            }) if *total == archive.len() as u64
+        ));
+        assert!(progress.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::Advanced {
+                downloaded_bytes,
+                total_bytes: Some(total),
+            } if *downloaded_bytes == archive.len() as u64 && *total == archive.len() as u64
+        )));
+        assert_eq!(
+            progress.last(),
+            Some(&DownloadProgressEvent::Finished {
+                downloaded_bytes: archive.len() as u64,
+            })
+        );
+        drop(progress);
 
         assert_eq!(
             fs::read(outcome.install_dir.join("bin/node.exe")).expect("runtime"),
@@ -1270,11 +1358,22 @@ mod tests {
         let (url, server) = serve_once(archive.clone(), archive.len());
         let root = tempdir().expect("temp root");
         let request = request(root.path(), url, "00".repeat(32));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let reported = Arc::clone(&progress);
 
-        let error = test_installer().install(&request).expect_err("bad hash");
+        let error = test_installer()
+            .with_progress_reporter(move |event| {
+                reported.lock().expect("progress lock").push(event);
+            })
+            .install(&request)
+            .expect_err("bad hash");
         server.join().expect("server");
 
         assert!(matches!(error, Error::ChecksumMismatch { .. }));
+        assert_eq!(
+            progress.lock().expect("progress events").last(),
+            Some(&DownloadProgressEvent::Failed)
+        );
         assert!(!final_dir(root.path()).exists());
         assert_transaction_root_is_empty(root.path());
     }

@@ -1,7 +1,7 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布版本：`v0.1.0-alpha.3`
+当前发布版本：`v0.1.0-alpha.4`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -10,7 +10,7 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“当前”均指 `v0.1.0-alpha.3`；标记为“计划”的契约尚不能当作可用命令。
+- 本文件中的“当前”均指 `v0.1.0-alpha.4`；标记为“计划”的契约尚不能当作可用命令。
 
 ## 1. 产品定位
 
@@ -264,7 +264,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前 `v0.1.0-alpha.3` 的产物矩阵：
+当前 `v0.1.0-alpha.4` 的产物矩阵：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
@@ -310,11 +310,13 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-`v0.1.0-alpha.3` 已经完成 Node 精确和浮动版本选择、项目/全局/PATH 解析、
-安全卸载、内容寻址下载缓存、来源测试、JSON 诊断、中英文界面和旧管理器只读迁移预览。
-该版本已通过本地自动化与三平台 Release 构建，用户目标系统功能验收留待发布后执行；
+`v0.1.0-alpha.4` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH 解析、
+安全卸载、带进度显示的归档下载、内容寻址下载缓存、来源测试、JSON 诊断、中英文界面和
+旧管理器只读迁移预览。
+该版本已通过本地自动化，三平台构建与公开资产由 Release 标签工作流完成；用户目标系统
+功能验收留待发布后执行；
 CPython 与 Flutter 仍未交付。完整范围和发布门禁见
-[Plans](PLANS.md#3-v010-alpha3--node-lifecycle-and-migration)。
+[Plans](PLANS.md#4-v010-alpha4--node-workflow-hardening)。
 
 ## 14. 命令契约与交付状态
 
@@ -325,7 +327,7 @@ CPython 与 Flutter 仍未交付。完整范围和发布门禁见
 | `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
 | `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
-| `pinset global [node@selector]` | 已实现，待发布 | 显式查看或设置全局默认版本，并提示项目覆盖 |
+| `pinset global [node@selector]` | 已实现 | 显式查看或设置全局默认版本，并提示项目覆盖 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
 | `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
 | `pinset current` | 已实现 | 显示当前目录最终生效的项目、全局或系统选择 |
@@ -391,7 +393,7 @@ node = "24.0.0"
 
 ```toml
 schema = 1
-generated_by = "pinset 0.1.0-alpha.3"
+generated_by = "pinset 0.1.0-alpha.4"
 
 [[tool]]
 name = "node"
@@ -529,7 +531,7 @@ Node semver、Python 构建标签和 Flutter channel/ref 不能强制共用同�
 ### 17.1 安装 Pinset
 
 Linux x64 和 macOS Apple Silicon 的固定预发布安装命令、Release 资产和校验方式见
-[v0.1.0-alpha.3 发布说明](RELEASE_NOTES.md#v010-alpha3)。
+[v0.1.0-alpha.4 发布说明](RELEASE_NOTES.md#v010-alpha4)。
 
 默认安装器把 `pinset` 与 `pinset-shim` 放到 `$HOME/.local/bin`，不使用 `sudo`，不修改
 PATH，也不安装 Node。
@@ -745,6 +747,19 @@ pinset import --dry-run
 Pinset 数据目录之外、缺少收据或收据身份不匹配的目录。`cache clean` 只删除
 `downloads/sha256/<SHA-256>.archive` 普通文件。`import --dry-run` 只读取当前目录中的旧管理器
 配置并报告冲突，不会写入 `pinset.toml`。
+
+### 17.10 alpha.4 新增功能
+
+```bash
+pinset global node@24
+pinset global
+pinset shim install
+pinset shim path
+```
+
+`global` 不带参数时只读查看用户默认，带参数时解析精确版本、写入全局配置和锁，并默认安装
+当前平台。下载 Node 归档时，交互终端显示进度条、百分比和字节数；完成提示只在 SHA-256
+校验通过后出现。非交互环境输出简洁状态，内容寻址缓存命中不产生伪下载进度。
 
 ## 18. 诊断与常见问题
 

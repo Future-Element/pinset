@@ -45,8 +45,8 @@ pub use global_state::{
 };
 #[cfg(feature = "installer")]
 pub use installer::{
-    ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, InstallLimits,
-    InstallOutcome, InstallRequest, Installer, sha256_hex,
+    ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, DownloadProgressEvent,
+    InstallLimits, InstallOutcome, InstallRequest, Installer, sha256_hex,
 };
 #[cfg(feature = "lockfile")]
 pub use lockfile::{

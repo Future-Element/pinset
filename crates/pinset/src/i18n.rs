@@ -492,6 +492,65 @@ impl Catalog {
         }
     }
 
+    pub fn download_started(self, artifact: &str, total: Option<String>) -> String {
+        let total = total.unwrap_or_else(|| "unknown size".to_owned());
+        match self.language {
+            Language::English => format!("downloading {artifact} ({total})"),
+            Language::SimplifiedChinese => {
+                let total = if total == "unknown size" {
+                    "大小未知".to_owned()
+                } else {
+                    total
+                };
+                format!("正在下载 {artifact}（{total}）")
+            }
+        }
+    }
+
+    pub fn download_progress(
+        self,
+        artifact: &str,
+        bar: &str,
+        percent: u8,
+        downloaded: &str,
+        total: Option<String>,
+    ) -> String {
+        match total {
+            Some(total) => match self.language {
+                Language::English => {
+                    format!("downloading {artifact} [{bar}] {percent:>3}% {downloaded}/{total}")
+                }
+                Language::SimplifiedChinese => {
+                    format!("正在下载 {artifact} [{bar}] {percent:>3}% {downloaded}/{total}")
+                }
+            },
+            None => match self.language {
+                Language::English => {
+                    format!("downloading {artifact} [{bar}] {downloaded}")
+                }
+                Language::SimplifiedChinese => {
+                    format!("正在下载 {artifact} [{bar}] {downloaded}")
+                }
+            },
+        }
+    }
+
+    pub fn download_finished(self, artifact: &str, downloaded: &str) -> String {
+        match self.language {
+            Language::English => format!("downloaded {artifact} ({downloaded}); SHA-256 verified"),
+            Language::SimplifiedChinese => {
+                format!("已下载 {artifact}（{downloaded}）；SHA-256 校验通过")
+            }
+        }
+    }
+
+    pub fn download_failed(self, artifact: &str) -> String {
+        match self.language {
+            Language::English => format!("download failed: {artifact}"),
+            Language::SimplifiedChinese => format!("下载失败：{artifact}"),
+        }
+    }
+
     pub fn current_installed(
         self,
         version: &str,

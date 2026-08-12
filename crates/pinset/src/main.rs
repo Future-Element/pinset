@@ -2,8 +2,11 @@ use std::{
     env,
     ffi::OsString,
     fs,
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, ExitCode},
+    sync::Mutex,
+    time::{Duration, Instant},
 };
 
 mod i18n;
@@ -13,14 +16,14 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, error::ErrorKind};
 use pinset_core::{
-    Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
-    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
-    current_target, find_optional_project_config, find_project_config, global_config_path,
-    global_lockfile_path, install_locked_node, install_shims, list_download_cache,
-    list_installed_node_versions, load_global_config, load_lockfile, load_optional_global_config,
-    load_project_config, load_source_config, load_user_settings, lockfile_path,
-    node_command_directory, path_with_selected_runtime, pinset_home, resolve_command,
-    resolve_tool_selection, save_global_state, save_lockfile, save_project_config,
+    DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient,
+    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView, clean_download_cache, command_tool,
+    create_project_config, current_target, find_optional_project_config, find_project_config,
+    global_config_path, global_lockfile_path, install_locked_node, install_shims,
+    list_download_cache, list_installed_node_versions, load_global_config, load_lockfile,
+    load_optional_global_config, load_project_config, load_source_config, load_user_settings,
+    lockfile_path, node_command_directory, path_with_selected_runtime, pinset_home,
+    resolve_command, resolve_tool_selection, save_global_state, save_lockfile, save_project_config,
     save_source_config, save_user_settings, source_config_path, uninstall_node_version,
     user_settings_path, validate_exact_node_version, validate_lock_matches_selection,
 };
@@ -644,7 +647,8 @@ fn install_locked_selection(
     let lockfile = load_lockfile(lock_path)?;
     let locked_node = validate_lock_matches_selection(&lockfile, configured, config_path)?;
     let sources = load_source_config(&source_config_path(home))?;
-    let installer = Installer::new(InstallLimits::default())?;
+    let installer = Installer::new(InstallLimits::default())?
+        .with_progress_reporter(download_progress_reporter(catalog));
     let outcome = install_locked_node(&installer, home, &sources, locked_node, &current_target())?;
     if outcome.reused_existing {
         println!(
@@ -667,6 +671,144 @@ fn install_locked_selection(
         );
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct DownloadProgressDisplay {
+    interactive: bool,
+    active: bool,
+    artifact: String,
+    last_render: Option<Instant>,
+}
+
+fn download_progress_reporter(
+    catalog: Catalog,
+) -> impl Fn(DownloadProgressEvent) + Send + Sync + 'static {
+    let state = Mutex::new(DownloadProgressDisplay {
+        interactive: io::stderr().is_terminal(),
+        active: false,
+        artifact: String::new(),
+        last_render: None,
+    });
+    move |event| {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match event {
+            DownloadProgressEvent::Started { url, total_bytes } => {
+                state.active = true;
+                state.artifact = download_artifact_name(&url);
+                state.last_render = Some(Instant::now());
+                if state.interactive {
+                    render_download_progress(catalog, &state.artifact, 0, total_bytes);
+                } else {
+                    eprintln!(
+                        "{}",
+                        catalog.download_started(&state.artifact, total_bytes.map(format_bytes))
+                    );
+                }
+            }
+            DownloadProgressEvent::Advanced {
+                downloaded_bytes,
+                total_bytes,
+            } if state.active && state.interactive => {
+                let now = Instant::now();
+                let complete = total_bytes.is_some_and(|total| downloaded_bytes >= total);
+                if complete
+                    || state
+                        .last_render
+                        .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(80))
+                {
+                    render_download_progress(
+                        catalog,
+                        &state.artifact,
+                        downloaded_bytes,
+                        total_bytes,
+                    );
+                    state.last_render = Some(now);
+                }
+            }
+            DownloadProgressEvent::Advanced { .. } => {}
+            DownloadProgressEvent::Finished { downloaded_bytes } if state.active => {
+                if state.interactive {
+                    clear_progress_line();
+                }
+                eprintln!(
+                    "{}",
+                    catalog.download_finished(&state.artifact, &format_bytes(downloaded_bytes))
+                );
+                state.active = false;
+            }
+            DownloadProgressEvent::Failed if state.active => {
+                if state.interactive {
+                    clear_progress_line();
+                }
+                eprintln!("{}", catalog.download_failed(&state.artifact));
+                state.active = false;
+            }
+            DownloadProgressEvent::Finished { .. } | DownloadProgressEvent::Failed => {}
+        }
+    }
+}
+
+fn download_artifact_name(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("runtime archive")
+        .to_owned()
+}
+
+fn render_download_progress(
+    catalog: Catalog,
+    artifact: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+) {
+    const WIDTH: usize = 24;
+    let line = if let Some(total) = total_bytes.filter(|total| *total > 0) {
+        let ratio = (downloaded_bytes as f64 / total as f64).clamp(0.0, 1.0);
+        let filled = (ratio * WIDTH as f64).round() as usize;
+        let bar = format!("{}{}", "=".repeat(filled), " ".repeat(WIDTH - filled));
+        catalog.download_progress(
+            artifact,
+            &bar,
+            (ratio * 100.0).round() as u8,
+            &format_bytes(downloaded_bytes),
+            Some(format_bytes(total)),
+        )
+    } else {
+        catalog.download_progress(
+            artifact,
+            &"-".repeat(WIDTH),
+            0,
+            &format_bytes(downloaded_bytes),
+            None,
+        )
+    };
+    eprint!("\r{line}\x1b[K");
+    let _ = io::stderr().flush();
+}
+
+fn clear_progress_line() {
+    eprint!("\r\x1b[2K");
+    let _ = io::stderr().flush();
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{bytes:.0} B")
+    }
 }
 
 fn print_global_current(catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
@@ -1435,4 +1577,28 @@ fn default_commands() -> Vec<String> {
         .into_iter()
         .map(str::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_download_sizes_for_progress_output() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(3 * 1024 * 1024), "3.0 MiB");
+    }
+
+    #[test]
+    fn derives_artifact_name_from_redacted_download_url() {
+        assert_eq!(
+            download_artifact_name("https://nodejs.org/dist/v24.0.0/node-v24.0.0-linux-x64.tar.xz"),
+            "node-v24.0.0-linux-x64.tar.xz"
+        );
+        assert_eq!(
+            download_artifact_name("https://nodejs.org/"),
+            "runtime archive"
+        );
+    }
 }
