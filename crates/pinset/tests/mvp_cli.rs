@@ -671,6 +671,7 @@ fn locked_artifact(version: &str, target: &str) -> LockedArtifact {
         },
         archive_root: plan.archive_root,
         verification: "nodejs-shasums-https".to_owned(),
+        overlays: Vec::new(),
     }
 }
 

@@ -114,6 +114,7 @@ impl NodeMetadataClient {
                         },
                         archive_root: plan.archive_root,
                         verification: self.verification.clone(),
+                        overlays: Vec::new(),
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;

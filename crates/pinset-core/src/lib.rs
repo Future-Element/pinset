@@ -53,17 +53,17 @@ pub use global_state::{
 };
 #[cfg(feature = "installer")]
 pub use installer::{
-    ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, DownloadProgressEvent,
-    InstallLimits, InstallOutcome, InstallRequest, Installer, sha256_hex,
+    ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
+    DownloadProgressEvent, InstallLimits, InstallOutcome, InstallRequest, Installer, sha256_hex,
 };
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
 pub use integrity::{ArtifactIntegrity, IntegrityAlgorithm};
 #[cfg(feature = "lockfile")]
 pub use lockfile::{
-    LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat, LockedTool, Lockfile,
-    MVP_NODE_TARGETS, load_lockfile, load_optional_lockfile, lockfile_path, save_lockfile,
-    validate_lock_matches_project, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools,
+    LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat,
+    LockedArtifactOverlay, LockedTool, Lockfile, MVP_NODE_TARGETS, load_lockfile,
+    load_optional_lockfile, lockfile_path, save_lockfile, validate_lock_matches_project,
+    validate_lock_matches_selection, validate_lock_matches_tool, validate_lock_matches_tools,
 };
 #[cfg(feature = "node-provider")]
 pub use node_lifecycle::{

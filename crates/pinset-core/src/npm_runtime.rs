@@ -4,8 +4,9 @@ use std::{
 };
 
 use crate::{
-    ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error, InstallOutcome,
-    InstallRequest, Installer, LockedArtifactFormat, LockedTool, Result, tool_targets,
+    ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error,
+    InstallOutcome, InstallRequest, Installer, LockedArtifactFormat, LockedArtifactOverlay,
+    LockedTool, Result, tool_targets,
 };
 
 pub fn install_locked_npm_tool(
@@ -37,6 +38,16 @@ pub fn install_locked_npm_tool(
         LockedArtifactFormat::Zip => ArtifactFormat::Zip,
         LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
     };
+    let base_artifacts = artifact
+        .overlays
+        .iter()
+        .map(overlay_install_spec)
+        .collect::<Result<Vec<_>>>()?;
+    let executable_paths = if locked_tool.name == "pnpm" && !target.starts_with("windows-") {
+        vec![PathBuf::from(target_manifest.required_path)]
+    } else {
+        Vec::new()
+    };
     let request = InstallRequest {
         pinset_home: pinset_home.to_path_buf(),
         tool: locked_tool.name.clone(),
@@ -54,12 +65,37 @@ pub fn install_locked_npm_tool(
         },
         strip_components: 1,
         required_paths: vec![PathBuf::from(target_manifest.required_path)],
+        base_artifacts,
+        executable_paths,
     };
     let outcome = installer.install(&request)?;
     if locked_tool.name == "bun" {
         ensure_bunx_alias(&outcome.install_dir, target)?;
     }
     Ok(outcome)
+}
+
+fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInstallSpec> {
+    let format = match overlay.format {
+        LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
+        LockedArtifactFormat::Zip => ArtifactFormat::Zip,
+        LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
+    };
+    Ok(ArtifactInstallSpec {
+        artifact: ArtifactSpec {
+            canonical_url: overlay.canonical_url.clone(),
+            sources: vec![ArtifactSource {
+                id: "npm-official-overlay".to_owned(),
+                url: overlay.canonical_url.clone(),
+                kind: ArtifactSourceKind::Official,
+            }],
+            integrity: overlay.artifact_integrity()?.canonical(),
+            format,
+        },
+        strip_components: 1,
+        include_prefixes: vec![PathBuf::from("dist")],
+        required_paths: vec![PathBuf::from("dist/pnpm.mjs")],
+    })
 }
 
 fn ensure_bunx_alias(install_dir: &Path, target: &str) -> Result<()> {

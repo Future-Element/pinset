@@ -54,6 +54,19 @@ pub struct LockedArtifact {
     pub format: LockedArtifactFormat,
     pub archive_root: String,
     pub verification: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "overlay")]
+    pub overlays: Vec<LockedArtifactOverlay>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockedArtifactOverlay {
+    pub canonical_url: String,
+    pub artifact_path: String,
+    pub integrity: String,
+    pub format: LockedArtifactFormat,
+    pub archive_root: String,
+    pub verification: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +139,12 @@ impl LockedArtifact {
             .filter(|value| !value.is_empty())
             .unwrap_or(&self.sha256);
         ArtifactIntegrity::parse(value)
+    }
+}
+
+impl LockedArtifactOverlay {
+    pub fn artifact_integrity(&self) -> Result<ArtifactIntegrity> {
+        ArtifactIntegrity::parse(&self.integrity)
     }
 }
 
@@ -364,6 +383,11 @@ fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Re
             reason: format!("unsupported verification for {}", artifact.target),
         });
     }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("Node artifact {} cannot contain overlays", artifact.target),
+        });
+    }
     Ok(())
 }
 
@@ -398,6 +422,41 @@ fn validate_locked_npm_artifact(tool: &LockedTool, artifact: &LockedArtifact) ->
     if artifact.verification != "npm-registry-signature-sha512" {
         return Err(Error::InvalidLockfile {
             reason: format!("unsupported npm verification for {}", artifact.target),
+        });
+    }
+    if tool.name == "pnpm" {
+        if artifact.overlays.len() != 1 {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "pnpm artifact {} must contain the @pnpm/exe overlay",
+                    artifact.target
+                ),
+            });
+        }
+        validate_pnpm_overlay(&tool.version, &artifact.overlays[0])?;
+    } else if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "{} artifact {} cannot contain overlays",
+                tool.name, artifact.target
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_pnpm_overlay(version: &str, overlay: &LockedArtifactOverlay) -> Result<()> {
+    let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
+    let canonical_url = format!("https://registry.npmjs.org/{artifact_path}");
+    if overlay.canonical_url != canonical_url
+        || overlay.artifact_path != artifact_path
+        || overlay.archive_root != "package"
+        || overlay.format != LockedArtifactFormat::TarGz
+        || overlay.verification != "npm-registry-signature-sha512"
+        || overlay.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha512
+    {
+        return Err(Error::InvalidLockfile {
+            reason: "invalid @pnpm/exe overlay identity".to_owned(),
         });
     }
     Ok(())
@@ -515,6 +574,7 @@ mod tests {
             },
             archive_root: plan.archive_root,
             verification: "nodejs-shasums-https".to_owned(),
+            overlays: Vec::new(),
         }
     }
 }
