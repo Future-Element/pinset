@@ -1,12 +1,12 @@
 # Pinset 发布说明
 
-本文档记录 Pinset 已发布版本及明确标注的发布候选。未来范围与开发状态请参阅
+本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
 [Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
 
 ## v0.1.0-alpha.3
 
 - 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布候选
+- 发布阶段：Alpha 预发布
 - 许可证：MIT License
 - Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
 - Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
@@ -29,6 +29,10 @@
 
 - 97 项 workspace 测试、本地格式、严格 Clippy、锁定 Release 构建、下载缓存并发复验和
   shim 轻依赖检查通过。
+- GitHub Release 工作流完成版本/tag 校验、质量门禁和 Linux x64、Windows x64、macOS
+  Apple Silicon 构建，并发布五个预期资产。
+- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档和 Windows ZIP
+  只包含预期的 CLI 与 shim，Windows CLI 输出 `pinset 0.1.0-alpha.3`。
 - 自动化仅使用临时目录、假运行时、本地 HTTP 和构造归档；没有安装真实 Node。
 - 真实目标系统功能验收由用户在发布后自行执行。
 

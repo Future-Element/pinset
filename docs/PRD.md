@@ -1,7 +1,7 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布候选：`v0.1.0-alpha.3`
+当前发布版本：`v0.1.0-alpha.3`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -10,8 +10,7 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“当前”均指 `v0.1.0-alpha.3` 发布候选；标记为“计划”的契约尚不能当作
-  可用命令。
+- 本文件中的“当前”均指 `v0.1.0-alpha.3`；标记为“计划”的契约尚不能当作可用命令。
 
 ## 1. 产品定位
 
@@ -265,7 +264,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前公开 Release `v0.1.0-alpha.2` 的产物矩阵：
+当前 `v0.1.0-alpha.3` 的产物矩阵：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
@@ -311,10 +310,10 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-`v0.1.0-alpha.3` 发布候选已经完成 Node 精确和浮动版本选择、项目/全局/PATH 解析、
+`v0.1.0-alpha.3` 已经完成 Node 精确和浮动版本选择、项目/全局/PATH 解析、
 安全卸载、内容寻址下载缓存、来源测试、JSON 诊断、中英文界面和旧管理器只读迁移预览。
-该候选已通过本地自动化与 Release 构建，用户目标系统功能验收留待发布后执行；CPython
-与 Flutter 仍未交付。完整范围和发布门禁见
+该版本已通过本地自动化与三平台 Release 构建，用户目标系统功能验收留待发布后执行；
+CPython 与 Flutter 仍未交付。完整范围和发布门禁见
 [Plans](PLANS.md#3-v010-alpha3--node-lifecycle-and-migration)。
 
 ## 14. 命令契约与交付状态
@@ -323,7 +322,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | --- | --- | --- |
 | `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
 | `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
-| `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | alpha.3 发布候选 | 联网解析为精确稳定版本后写锁 |
+| `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
 | `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
@@ -333,15 +332,15 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
 | `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
-| `pinset exec node@<selector> -- ...` | alpha.3 发布候选 | 一次性选择已安装版本，不修改项目或全局状态 |
+| `pinset exec node@<selector> -- ...` | 已实现 | 一次性选择已安装版本，不修改项目或全局状态 |
 | `pinset doctor` | 已实现基础版 | 扩展 PATH、全局、旧管理器与 IDE 诊断 |
-| `pinset doctor --json` | alpha.3 发布候选 | schema 1 稳定机器可读诊断结构 |
+| `pinset doctor --json` | 已实现 | schema 1 稳定机器可读诊断结构 |
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
-| `pinset source test node [alias]` | alpha.3 发布候选 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
-| `pinset list node [--available]` | alpha.3 发布候选 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
-| `pinset uninstall node@x.y.z` | alpha.3 发布候选 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
-| `pinset cache list/clean` | alpha.3 发布候选 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
-| `pinset import --dry-run` | alpha.3 发布候选 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
+| `pinset source test node [alias]` | 已实现 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
+| `pinset list node [--available]` | 已实现 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
+| `pinset uninstall node@x.y.z` | 已实现 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
+| `pinset cache list/clean` | 已实现 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
+| `pinset import --dry-run` | 已实现 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
 | `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
@@ -701,7 +700,7 @@ cargo test --workspace --all-features
 
 ### 17.9 alpha.3 新增功能
 
-以下命令已经冻结到 `0.1.0-alpha.3` 发布候选：
+以下命令已随 `0.1.0-alpha.3` 发布：
 
 ```bash
 pinset list node

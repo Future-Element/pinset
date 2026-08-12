@@ -5,7 +5,7 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前 `0.1.0-alpha.3` 是 Node-first 预发布候选：
+当前 `0.1.0-alpha.3` 是 Node-first 预发布版：
 
 - 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
 - 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
@@ -18,8 +18,8 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
-alpha.3 将通过官方 GitHub Release 提供给用户自行验收。Python、Flutter、PGP 验签和中央
-包管理器分发仍按路线图推进。项目不维护
+alpha.3 已通过官方 GitHub Release 提供，目标系统功能由用户继续验收。Python、Flutter、
+PGP 验签和中央包管理器分发仍按路线图推进。项目不维护
 第三方 Homebrew Tap 或 Scoop Bucket。
 
 设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
@@ -40,7 +40,7 @@ pinset --lang zh-CN
 
 ## 五分钟开始
 
-alpha.3 发布后，Linux x64 和 macOS Apple Silicon 可以执行：
+Linux x64 和 macOS Apple Silicon 可以执行：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \

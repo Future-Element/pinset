@@ -1,9 +1,9 @@
 # Pinset Plans
 
-当前发布候选：`v0.1.0-alpha.3`
+当前发布版本：`v0.1.0-alpha.3`
 下一开发目标：`v0.1.0-alpha.4`
 目标稳定版本：`v0.1.0`
-状态：`alpha.3 release candidate — publishing pending`
+状态：`alpha.3 published — alpha.4 planning`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -298,7 +298,7 @@ alpha.2 不包含：
 
 目标：完成 Node provider 的日常版本发现、安装生命周期和旧管理器共存闭环。
 
-状态：**发布候选 — 功能与本地质量门禁已冻结，正在发布**
+状态：**已发布**
 
 当前实现：
 
@@ -315,7 +315,7 @@ alpha.2 不包含：
 - [x] `.nvmrc`、`.node-version`、Volta、asdf 和 mise 的 `import --dry-run` 只读检测与冲突报告。
 - [x] `pinset exec node@<selector> -- <command>` 一次性选择已安装版本，不修改项目或全局配置。
 - [x] workspace 版本冻结为 `0.1.0-alpha.3`，本地格式、Clippy、测试和 Release 构建通过。
-- [ ] 发布 `v0.1.0-alpha.3` 标签并复核公开 Release 资产、SHA-256、归档内容与版本输出。
+- [x] 发布 `v0.1.0-alpha.3` 标签并复核公开 Release 资产、SHA-256、归档内容与版本输出。
 
 这一切片的索引信任规则：版本发现固定读取 Node 官方 HTTPS `index.json`；镜像仍只改变归档
 传输位置，不能提供或替换版本身份。索引中的预发布版本和缺少任一支持目标产物的版本不会
