@@ -3,6 +3,60 @@
 本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
 [Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
 
+## v0.1.0-alpha.5
+
+- 版本日期：2026-08-12
+- 发布阶段：Alpha 预发布
+- 许可证：MIT License
+- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
+- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- GitHub Release：[v0.1.0-alpha.5](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.5)
+
+### 更新内容
+
+- Node Provider 统一声明 `node`、`npm`、`npx`、`corepack`；选择或安装 Node 后自动注册整组
+  命令入口，正常使用不再要求手动执行 `shim install`。
+- curl 安装器继续只安装 `pinset` 与通用 `pinset-shim`，不创建语言命令、不安装 Node，确保
+  后续扩展其他运行时时安装器仍保持中立。
+- 新增 `pinset install node@<selector>`，可预装精确或浮动选择器对应版本，不修改项目配置或
+  全局默认。
+- 新增 `pinset unset node [--global]`，只清除项目或全局选择并回退上一层，不隐式删除安装和缓存。
+- 新增 `pinset import --apply [--from <source>] [--global] [--no-install]`，在用户明确确认后导入
+  nvm、`.node-version`、Volta、asdf 或 mise 配置；冲突时拒绝猜测，原文件始终保留。
+- 新增 `pinset shim migrate --provider node`，为 alpha.4 用户显式准备新路由目录，同时报告并
+  保留旧 shim。
+- 新增 Bash、Zsh、Fish 和 PowerShell 的 `pinset activate <shell>`，仅输出通用 PATH 操作，
+  不写 shell profile，也不包含 Node 专用逻辑。
+- Windows 使用稳定 `.cmd` 路由，Unix 使用指向通用调度器的符号链接；升级调度器后无需复制
+  四份命令二进制。
+- `doctor` 与 `doctor --json` 现在检查四个 Node 命令的 PATH 候选、生效顺序、Pinset 所有权、
+  外部遮蔽、旧 shim 与旧管理器，并给出可逆建议。
+
+### 验证范围
+
+- Windows 格式、严格 Clippy、117 项锁定 workspace 全功能测试、锁定 Release 构建和差异检查通过。
+- WSL 在独立 `/tmp` target 中完成同一组 117 项 Linux 测试；离线安装器假归档测试通过。
+- 自动化只使用临时目录、假运行时、本地构造归档和假 shim；未在开发机下载或安装真实 Node。
+- Release 标签工作流执行同一质量门禁，并构建 Linux x64、Windows x64、macOS Apple Silicon
+  三个平台归档；实际工作流与公开资产复核结果见本节后续发布记录。
+
+### Linux x64 / macOS Apple Silicon 安装
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.5/install.sh |
+  sh -s -- --version 0.1.0-alpha.5
+```
+
+默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
+不安装 Node，并强制校验 Release 的 SHA-256。Windows 使用 Release ZIP。
+
+### 已知限制
+
+- Python、Flutter、PGP 验签和中央包管理器分发尚未交付。
+- Pinset 不自动修改 shell profile、系统 PATH、IDE 配置，也不覆盖其他管理器的同名命令。
+- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+
 ## v0.1.0-alpha.4
 
 - 版本日期：2026-08-12

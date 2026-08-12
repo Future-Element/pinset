@@ -1,8 +1,8 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布版本：`v0.1.0-alpha.4`
-当前开发版本：`v0.1.0-alpha.5`
+当前发布版本：`v0.1.0-alpha.5`
+当前开发版本：`v0.1.0-alpha.6`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -11,8 +11,8 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“已发布”指 `v0.1.0-alpha.4`；标记为“开发中”的命令只代表本地源码状态，
-  在发布 `v0.1.0-alpha.5` 前不能作为公开兼容承诺。
+- 本文件中的“已发布”指 `v0.1.0-alpha.5`；下一版本只处理真实环境验收发现的兼容问题，
+  不再扩张 Node 命令面。
 
 ## 1. 产品定位
 
@@ -269,7 +269,7 @@ Installer 负责下载限制、哈希校验、安全解压、临时目录、原�
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前 `v0.1.0-alpha.4` 的产物矩阵：
+当前 `v0.1.0-alpha.5` 的产物矩阵：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
@@ -315,16 +315,12 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-已发布的 `v0.1.0-alpha.4` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH 解析、
-安全卸载、带进度显示的归档下载、内容寻址下载缓存、来源测试、JSON 诊断、中英文界面和
-旧管理器只读迁移预览。
-该版本已通过本地自动化、三平台 Release 构建和公开资产复核；用户目标系统完整功能验收
-留待发布后执行。
-
-开发中的 `v0.1.0-alpha.5` 一次性收口 Node 运行时管理：增加 Provider 命令清单、选择/安装后的
-自动命令注册、通用 `activate`、独立版本安装、显式旧配置导入、旧 shim 迁移和四命令 PATH
-诊断；curl 仍严格只安装两个 Pinset 二进制。CPython 与 Flutter 仍未交付。完整范围和发布门禁见
-[Plans](PLANS.md#5-v010-alpha5--provider-driven-command-routing)。
+已发布的 `v0.1.0-alpha.5` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH
+解析、安全卸载、带进度显示的归档下载、内容寻址下载缓存、来源测试、中英文界面和旧管理器
+迁移；并增加 Provider 命令清单、选择/安装后的自动命令注册、通用 `activate`、独立版本安装、
+旧 shim 迁移和四命令 PATH 诊断。curl 仍严格只安装两个 Pinset 二进制。CPython 与 Flutter
+仍未交付。完整范围和发布门禁见
+[Plans](PLANS.md#5-v010-alpha5--node-runtime-closure)。
 
 ## 14. 命令契约与交付状态
 
@@ -333,33 +329,33 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
 | `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
 | `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
-| `pinset use node@x.y.z --no-install` | 已实现 | 更新项目配置和锁但不下载；alpha.5 同时准备 Provider 命令路由 |
+| `pinset use node@x.y.z --no-install` | 已实现 | 更新项目配置和锁但不下载，同时准备 Provider 命令路由 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
 | `pinset global [node@selector]` | 已实现 | 显式查看或设置全局默认版本，并提示项目覆盖 |
-| `pinset unset node [--global]` | alpha.5 开发中 | 清除项目/全局选择并回退上一层，不卸载运行时 |
+| `pinset unset node [--global]` | 已实现 | 清除项目/全局选择并回退上一层，不卸载运行时 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
 | `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
-| `pinset install node@<selector>` | alpha.5 开发中 | 安装精确或浮动选择器对应版本，不修改项目/全局选择 |
+| `pinset install node@<selector>` | 已实现 | 安装精确或浮动选择器对应版本，不修改项目/全局选择 |
 | `pinset current` | 已实现 | 显示当前目录最终生效的项目、全局或系统选择 |
 | `pinset current [tool]` | 已实现 | 显示工具、精确版本、来源和路径 |
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
 | `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
 | `pinset exec node@<selector> -- ...` | 已实现 | 一次性选择已安装版本，不修改项目或全局状态 |
-| `pinset doctor` | alpha.5 开发中 | 检查四个 Node 命令、PATH 顺序、受管入口、旧 shim 与旧管理器 |
-| `pinset doctor --json` | alpha.5 开发中 | schema 1 机器可读诊断结构，增加命令候选与可逆修复问题码 |
+| `pinset doctor` | 已实现 | 检查四个 Node 命令、PATH 顺序、受管入口、旧 shim 与旧管理器 |
+| `pinset doctor --json` | 已实现 | schema 1 机器可读诊断结构，增加命令候选与可逆修复问题码 |
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
 | `pinset source test node [alias]` | 已实现 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
 | `pinset list node [--available]` | 已实现 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
 | `pinset uninstall node@x.y.z` | 已实现 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
 | `pinset cache list/clean` | 已实现 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
 | `pinset import --dry-run` | 已实现 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
-| `pinset import --apply [--from <source>]` | alpha.5 开发中 | 显式导入项目或全局选择；冲突不猜测，保留旧文件 |
+| `pinset import --apply [--from <source>]` | 已实现 | 显式导入项目或全局选择；冲突不猜测，保留旧文件 |
 | `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
-| `pinset activate <shell>` | alpha.5 开发中 | 输出运行时无关的当前 Shell PATH 设置，不修改 profile |
-| Provider 自动命令注册 | alpha.5 开发中 | 选择/安装后注册 Provider 声明的命令，冲突时整组停止 |
-| `pinset shim install --provider <tool>` | alpha.5 开发中 | 幂等修复 Provider 命令入口，不作为正常安装步骤 |
-| `pinset shim migrate --provider node` | alpha.5 开发中 | 在当前路由目录准备入口，报告并保留旧 shim |
+| `pinset activate <shell>` | 已实现 | 输出运行时无关的当前 Shell PATH 设置，不修改 profile |
+| Provider 自动命令注册 | 已实现 | 选择/安装后注册 Provider 声明的命令，冲突时整组停止 |
+| `pinset shim install --provider <tool>` | 已实现 | 幂等修复 Provider 命令入口，不作为正常安装步骤 |
+| `pinset shim migrate --provider node` | 已实现 | 在当前路由目录准备入口，报告并保留旧 shim |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
 
@@ -408,7 +404,7 @@ node = "24.0.0"
 
 ```toml
 schema = 1
-generated_by = "pinset 0.1.0-alpha.4"
+generated_by = "pinset 0.1.0-alpha.5"
 
 [[tool]]
 name = "node"
@@ -551,7 +547,7 @@ Node semver、Python 构建标签和 Flutter channel/ref 不能强制共用同�
 ### 17.1 安装 Pinset
 
 Linux x64 和 macOS Apple Silicon 的固定预发布安装命令、Release 资产和校验方式见
-[v0.1.0-alpha.4 发布说明](RELEASE_NOTES.md#v010-alpha4)。
+[v0.1.0-alpha.5 发布说明](RELEASE_NOTES.md#v010-alpha5)。
 
 默认安装器把 `pinset` 与 `pinset-shim` 放到 `$HOME/.local/bin`，不使用 `sudo`，不修改
 PATH，也不安装 Node。

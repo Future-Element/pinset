@@ -5,7 +5,7 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前开发版本是 `0.1.0-alpha.5`，最新公开版本是 `0.1.0-alpha.4`。这一阶段继续完善
+最新公开版本是 `0.1.0-alpha.5`，下一开发目标是 `0.1.0-alpha.6`。当前继续完善
 Node-first 闭环，不接入 Python 或 Flutter：
 
 - 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
@@ -22,8 +22,9 @@ Node-first 闭环，不接入 Python 或 Flutter：
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 - 由内置 Provider 统一声明运行时命令，选择或安装运行时后自动准备命令路由。
 
-alpha.5 正在一次性收口 Node 运行时管理：Provider 自动命令路由、独立版本安装、显式旧配置导入、
-旧 shim 迁移和完整 PATH 诊断。Python、Flutter、PGP 验签和中央包管理器分发继续延期；项目不维护
+alpha.5 已经一次性收口 Node 运行时管理：Provider 自动命令路由、独立版本安装、显式旧配置导入、
+旧 shim 迁移和完整 PATH 诊断。alpha.6 只处理跨 Shell/平台真实验收发现的兼容问题。
+Python、Flutter、PGP 验签和中央包管理器分发继续延期；项目不维护
 第三方 Homebrew Tap 或 Scoop Bucket。
 
 ## 安装 Pinset
@@ -32,8 +33,8 @@ Linux x64 和 macOS Apple Silicon 可以执行：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.4/install.sh |
-  sh -s -- --version 0.1.0-alpha.4
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.5/install.sh |
+  sh -s -- --version 0.1.0-alpha.5
 ```
 
 安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把

@@ -1,9 +1,9 @@
 # Pinset Plans
 
-当前发布版本：`v0.1.0-alpha.4`
-下一开发目标：`v0.1.0-alpha.5`
+当前发布版本：`v0.1.0-alpha.5`
+下一开发目标：`v0.1.0-alpha.6`
 目标稳定版本：`v0.1.0`
-状态：`alpha.4 published — alpha.5 implemented locally, release pending`
+状态：`alpha.5 published — alpha.6 acceptance fixes next`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -388,7 +388,7 @@ alpha.2 不包含：
 
 ## 5. v0.1.0-alpha.5 — Node Runtime Closure
 
-状态：**本地实现完成，尚未发布**
+状态：**已发布**
 
 目标：在增加第二种运行时前一次性收口 Node 运行时管理功能，并去掉正常流程中的手动
 `shim install`；curl 安装器和 Shell 激活保持完全运行时无关。
@@ -725,8 +725,8 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 标签必须与 workspace 版本完全一致：
 
 ```bash
-git tag -a v0.1.0-alpha.4 -m "Pinset 0.1.0-alpha.4"
-git push origin v0.1.0-alpha.4
+git tag -a v0.1.0-alpha.5 -m "Pinset 0.1.0-alpha.5"
+git push origin v0.1.0-alpha.5
 ```
 
 Release workflow：
