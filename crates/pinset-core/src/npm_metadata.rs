@@ -10,7 +10,9 @@ use reqwest::{Url, blocking::Client};
 use semver::Version;
 use serde::Deserialize;
 
-use crate::{Error, LockedArtifact, LockedArtifactFormat, LockedTool, Result};
+use crate::{
+    Error, LockedArtifact, LockedArtifactFormat, LockedArtifactOverlay, LockedTool, Result,
+};
 
 const OFFICIAL_NPM_REGISTRY: &str = "https://registry.npmjs.org/";
 const MAX_METADATA_BYTES: u64 = 32 * 1024 * 1024;
@@ -252,6 +254,22 @@ impl NpmMetadataClient {
         let manifest = self.package_version(wrapper, version)?;
         validate_manifest_identity(wrapper, version, &manifest)?;
         let keys = self.registry_keys()?;
+        verify_package_signature(&manifest, &keys)?;
+        let wrapper_overlay = if tool == "pnpm" {
+            let (canonical_url, artifact_path) =
+                official_tarball(wrapper, version, &manifest.dist)?;
+            crate::ArtifactIntegrity::parse(&manifest.dist.integrity)?;
+            Some(LockedArtifactOverlay {
+                canonical_url,
+                artifact_path,
+                integrity: manifest.dist.integrity.clone(),
+                format: LockedArtifactFormat::TarGz,
+                archive_root: "package".to_owned(),
+                verification: SIGNATURE_VERIFICATION.to_owned(),
+            })
+        } else {
+            None
+        };
         let mut artifacts = Vec::new();
         for target in tool_targets(tool)? {
             let dependency = manifest
@@ -269,31 +287,19 @@ impl NpmMetadataClient {
             let platform = self.package_version(target.package, package_version)?;
             validate_manifest_identity(target.package, package_version, &platform)?;
             verify_package_signature(&platform, &keys)?;
-            let tarball =
-                Url::parse(&platform.dist.tarball).map_err(|source| Error::InvalidNpmMetadata {
-                    package: target.package.to_owned(),
-                    reason: format!("invalid tarball URL: {source}"),
-                })?;
-            if tarball.scheme() != "https"
-                || tarball.host_str() != Some("registry.npmjs.org")
-                || !tarball.username().is_empty()
-                || tarball.password().is_some()
-            {
-                return Err(Error::InvalidNpmMetadata {
-                    package: target.package.to_owned(),
-                    reason: "tarball must use the official HTTPS npm registry".to_owned(),
-                });
-            }
+            let (canonical_url, artifact_path) =
+                official_tarball(target.package, package_version, &platform.dist)?;
             crate::ArtifactIntegrity::parse(&platform.dist.integrity)?;
             artifacts.push(LockedArtifact {
                 target: target.target.to_owned(),
-                canonical_url: tarball.to_string(),
-                artifact_path: tarball.path().trim_start_matches('/').to_owned(),
+                canonical_url,
+                artifact_path,
                 sha256: String::new(),
                 integrity: Some(platform.dist.integrity),
                 format: LockedArtifactFormat::TarGz,
                 archive_root: "package".to_owned(),
                 verification: SIGNATURE_VERIFICATION.to_owned(),
+                overlays: wrapper_overlay.clone().into_iter().collect(),
             });
         }
         Ok(LockedTool {
@@ -382,6 +388,27 @@ impl NpmMetadataClient {
             reason: source.to_string(),
         })
     }
+}
+
+fn official_tarball(package: &str, version: &str, dist: &PackageDist) -> Result<(String, String)> {
+    let tarball = Url::parse(&dist.tarball).map_err(|source| Error::InvalidNpmMetadata {
+        package: package.to_owned(),
+        reason: format!("invalid tarball URL: {source}"),
+    })?;
+    let package_base = package.rsplit('/').next().expect("npm package is nonempty");
+    let expected_path = format!("{package}/-/{package_base}-{version}.tgz");
+    if tarball.scheme() != "https"
+        || tarball.host_str() != Some("registry.npmjs.org")
+        || !tarball.username().is_empty()
+        || tarball.password().is_some()
+        || tarball.path().trim_start_matches('/') != expected_path
+    {
+        return Err(Error::InvalidNpmMetadata {
+            package: package.to_owned(),
+            reason: "tarball must use the exact official HTTPS npm registry path".to_owned(),
+        });
+    }
+    Ok((tarball.to_string(), expected_path))
 }
 
 pub fn tool_targets(tool: &str) -> Result<&'static [NpmToolTarget]> {

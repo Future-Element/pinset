@@ -72,6 +72,14 @@ pub struct ArtifactSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactInstallSpec {
+    pub artifact: ArtifactSpec,
+    pub strip_components: usize,
+    pub include_prefixes: Vec<PathBuf>,
+    pub required_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallRequest {
     pub pinset_home: PathBuf,
     pub tool: String,
@@ -80,6 +88,8 @@ pub struct InstallRequest {
     pub artifact: ArtifactSpec,
     pub strip_components: usize,
     pub required_paths: Vec<PathBuf>,
+    pub base_artifacts: Vec<ArtifactInstallSpec>,
+    pub executable_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,7 +186,6 @@ impl Installer {
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
         validate_request(request)?;
         let _install_lock = acquire_install_lock(request)?;
-        let expected_integrity = ArtifactIntegrity::parse(&request.artifact.integrity)?;
         let final_dir = request
             .pinset_home
             .join("installs")
@@ -206,82 +215,31 @@ impl Installer {
             source,
         })?;
 
-        let cache_path =
-            download_cache_path_for_integrity(&request.pinset_home, &expected_integrity)?;
-        let selected = if self.cached_artifact_is_valid(&cache_path, &expected_integrity)? {
-            SelectedArtifact {
-                source_id: "cache".to_owned(),
-                source_kind: "cache".to_owned(),
-                source_url: format!(
-                    "cache:{}:{}",
-                    expected_integrity.algorithm().as_str(),
-                    expected_integrity.cache_key()
-                ),
-                path: cache_path,
-                bytes_downloaded: 0,
-                actual_integrity: expected_integrity.canonical(),
-            }
-        } else {
-            let mut attempted = Vec::with_capacity(request.artifact.sources.len());
-            let mut last_retryable_error = None;
-            let mut selected = None;
-            let download_path =
-                download_partial_path_for_integrity(&request.pinset_home, &expected_integrity)?;
-            for source in &request.artifact.sources {
-                attempted.push(source.id.clone());
-                match self.download_verified(&source.url, &expected_integrity, &download_path) {
-                    Ok((bytes_downloaded, actual_integrity)) => {
-                        self.persist_cache_artifact(
-                            &download_path,
-                            &cache_path,
-                            &expected_integrity,
-                        )?;
-                        fs::remove_file(&download_path).map_err(|source| Error::WriteDownload {
-                            path: download_path.clone(),
-                            source,
-                        })?;
-                        selected = Some(SelectedArtifact {
-                            source_id: source.id.clone(),
-                            source_kind: source.kind.receipt_name().to_owned(),
-                            source_url: redacted_url(&source.url),
-                            path: cache_path.clone(),
-                            bytes_downloaded,
-                            actual_integrity,
-                        });
-                        break;
-                    }
-                    Err(error) if is_retryable_source_error(&error) => {
-                        last_retryable_error = Some(error);
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            selected.ok_or_else(|| Error::ArtifactSourcesExhausted {
-                attempted: attempted.join(", "),
-                last_error: last_retryable_error
-                    .map(|error| error.to_string())
-                    .unwrap_or_else(|| "no source was attempted".to_owned()),
-            })?
-        };
-        match request.artifact.format {
-            ArtifactFormat::Zip => {
-                self.extract_zip(&selected.path, &staging_dir, request.strip_components)?
-            }
-            ArtifactFormat::TarXz => self.extract_tar(
-                &selected.path,
+        let mut selected_bases = Vec::with_capacity(request.base_artifacts.len());
+        for base in &request.base_artifacts {
+            let selected = self.select_artifact(&request.pinset_home, &base.artifact)?;
+            self.extract_selected(
+                &selected,
                 &staging_dir,
-                request.strip_components,
-                ArtifactFormat::TarXz,
-            )?,
-            ArtifactFormat::TarGz => self.extract_tar(
-                &selected.path,
-                &staging_dir,
-                request.strip_components,
-                ArtifactFormat::TarGz,
-            )?,
+                base.artifact.format,
+                base.strip_components,
+                &base.include_prefixes,
+            )?;
+            validate_required_paths(&staging_dir, &base.required_paths)?;
+            selected_bases.push(selected);
         }
+
+        let selected = self.select_artifact(&request.pinset_home, &request.artifact)?;
+        self.extract_selected(
+            &selected,
+            &staging_dir,
+            request.artifact.format,
+            request.strip_components,
+            &[],
+        )?;
         validate_required_paths(&staging_dir, &request.required_paths)?;
-        write_receipt(&staging_dir, request, &selected)?;
+        ensure_executable_paths(&staging_dir, &request.executable_paths)?;
+        write_receipt(&staging_dir, request, &selected, &selected_bases)?;
 
         let final_parent = final_dir
             .parent()
@@ -301,11 +259,95 @@ impl Installer {
 
         Ok(InstallOutcome {
             install_dir: final_dir,
-            bytes_downloaded: selected.bytes_downloaded,
+            bytes_downloaded: selected.bytes_downloaded
+                + selected_bases
+                    .iter()
+                    .map(|artifact| artifact.bytes_downloaded)
+                    .sum::<u64>(),
             integrity: selected.actual_integrity,
             source_id: selected.source_id,
             reused_existing: false,
         })
+    }
+
+    fn select_artifact(
+        &self,
+        pinset_home: &Path,
+        artifact: &ArtifactSpec,
+    ) -> Result<SelectedArtifact> {
+        let expected_integrity = ArtifactIntegrity::parse(&artifact.integrity)?;
+        let cache_path = download_cache_path_for_integrity(pinset_home, &expected_integrity)?;
+        if self.cached_artifact_is_valid(&cache_path, &expected_integrity)? {
+            return Ok(SelectedArtifact {
+                source_id: "cache".to_owned(),
+                source_kind: "cache".to_owned(),
+                source_url: format!(
+                    "cache:{}:{}",
+                    expected_integrity.algorithm().as_str(),
+                    expected_integrity.cache_key()
+                ),
+                path: cache_path,
+                bytes_downloaded: 0,
+                actual_integrity: expected_integrity.canonical(),
+            });
+        }
+
+        let mut attempted = Vec::with_capacity(artifact.sources.len());
+        let mut last_retryable_error = None;
+        let download_path = download_partial_path_for_integrity(pinset_home, &expected_integrity)?;
+        for source in &artifact.sources {
+            attempted.push(source.id.clone());
+            match self.download_verified(&source.url, &expected_integrity, &download_path) {
+                Ok((bytes_downloaded, actual_integrity)) => {
+                    self.persist_cache_artifact(&download_path, &cache_path, &expected_integrity)?;
+                    fs::remove_file(&download_path).map_err(|source| Error::WriteDownload {
+                        path: download_path.clone(),
+                        source,
+                    })?;
+                    return Ok(SelectedArtifact {
+                        source_id: source.id.clone(),
+                        source_kind: source.kind.receipt_name().to_owned(),
+                        source_url: redacted_url(&source.url),
+                        path: cache_path,
+                        bytes_downloaded,
+                        actual_integrity,
+                    });
+                }
+                Err(error) if is_retryable_source_error(&error) => {
+                    last_retryable_error = Some(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(Error::ArtifactSourcesExhausted {
+            attempted: attempted.join(", "),
+            last_error: last_retryable_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "no source was attempted".to_owned()),
+        })
+    }
+
+    fn extract_selected(
+        &self,
+        selected: &SelectedArtifact,
+        staging_dir: &Path,
+        format: ArtifactFormat,
+        strip_components: usize,
+        include_prefixes: &[PathBuf],
+    ) -> Result<()> {
+        match format {
+            ArtifactFormat::Zip => {
+                debug_assert!(include_prefixes.is_empty());
+                self.extract_zip(&selected.path, staging_dir, strip_components)
+            }
+            ArtifactFormat::TarXz | ArtifactFormat::TarGz => self.extract_tar(
+                &selected.path,
+                staging_dir,
+                strip_components,
+                format,
+                include_prefixes,
+            ),
+        }
     }
 
     fn cached_artifact_is_valid(
@@ -802,6 +844,7 @@ impl Installer {
         destination: &Path,
         strip_components: usize,
         format: ArtifactFormat,
+        include_prefixes: &[PathBuf],
     ) -> Result<()> {
         let file = File::open(archive_path).map_err(|source| Error::ExtractArchiveEntry {
             entry: "<archive>".to_owned(),
@@ -853,6 +896,13 @@ impl Installer {
             else {
                 continue;
             };
+            if !include_prefixes.is_empty()
+                && !include_prefixes
+                    .iter()
+                    .any(|prefix| relative.starts_with(prefix))
+            {
+                continue;
+            }
             if !seen.insert(archive_collision_key(&relative)) {
                 return Err(Error::DuplicateArchiveEntry { entry: entry_name });
             }
@@ -1024,15 +1074,28 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
     let expected_integrity = ArtifactIntegrity::parse(&request.artifact.integrity)
         .ok()?
         .canonical();
+    let expected_base_integrities = request
+        .base_artifacts
+        .iter()
+        .map(|artifact| {
+            ArtifactIntegrity::parse(&artifact.artifact.integrity)
+                .ok()
+                .map(|integrity| integrity.canonical())
+        })
+        .collect::<Option<Vec<_>>>()?;
     if !receipt.complete
         || receipt.tool != request.tool
         || receipt.version != request.version
         || receipt.target != request.target
         || receipt_integrity != expected_integrity
+        || receipt.base_artifact_integrities != expected_base_integrities
     {
         return None;
     }
     if validate_required_paths(final_dir, &request.required_paths).is_err() {
+        return None;
+    }
+    if ensure_executable_paths(final_dir, &request.executable_paths).is_err() {
         return None;
     }
     Some(InstallOutcome {
@@ -1052,19 +1115,50 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("tool", &request.tool)?;
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
-    if request.strip_components > 8 {
-        return Err(Error::InvalidStripComponents {
-            value: request.strip_components,
-        });
+    validate_artifact_request(&request.artifact, request.strip_components)?;
+    for base in &request.base_artifacts {
+        validate_artifact_request(&base.artifact, base.strip_components)?;
+        debug_assert!(
+            base.artifact.format != ArtifactFormat::Zip || base.include_prefixes.is_empty()
+        );
+        for path in &base.include_prefixes {
+            if !is_safe_relative(path) {
+                return Err(Error::InvalidRequiredPath { path: path.clone() });
+            }
+        }
+        for path in &base.required_paths {
+            if !is_safe_relative(path) {
+                return Err(Error::InvalidRequiredPath { path: path.clone() });
+            }
+        }
     }
     if request.required_paths.is_empty() {
         return Err(Error::RequiredPathsEmpty);
     }
-    if request.artifact.sources.is_empty() {
+    for path in &request.required_paths {
+        if !is_safe_relative(path) {
+            return Err(Error::InvalidRequiredPath { path: path.clone() });
+        }
+    }
+    for path in &request.executable_paths {
+        if !is_safe_relative(path) {
+            return Err(Error::InvalidRequiredPath { path: path.clone() });
+        }
+    }
+    Ok(())
+}
+
+fn validate_artifact_request(artifact: &ArtifactSpec, strip_components: usize) -> Result<()> {
+    if strip_components > 8 {
+        return Err(Error::InvalidStripComponents {
+            value: strip_components,
+        });
+    }
+    if artifact.sources.is_empty() {
         return Err(Error::ArtifactSourcesEmpty);
     }
-    let mut source_ids = HashSet::with_capacity(request.artifact.sources.len());
-    for source in &request.artifact.sources {
+    let mut source_ids = HashSet::with_capacity(artifact.sources.len());
+    for source in &artifact.sources {
         if source.id.is_empty()
             || !source
                 .id
@@ -1079,11 +1173,6 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
             return Err(Error::DuplicateArtifactSourceId {
                 value: source.id.clone(),
             });
-        }
-    }
-    for path in &request.required_paths {
-        if !is_safe_relative(path) {
-            return Err(Error::InvalidRequiredPath { path: path.clone() });
         }
     }
     Ok(())
@@ -1237,6 +1326,23 @@ fn validate_required_paths(staging: &Path, required_paths: &[PathBuf]) -> Result
     Ok(())
 }
 
+fn ensure_executable_paths(staging: &Path, executable_paths: &[PathBuf]) -> Result<()> {
+    for relative in executable_paths {
+        let path = staging.join(relative);
+        if !path.is_file() {
+            return Err(Error::RequiredPathMissing { path });
+        }
+        set_executable_permissions(&path, Some(0o755)).map_err(|source| {
+            Error::ExtractArchiveEntry {
+                entry: relative.display().to_string(),
+                path,
+                source,
+            }
+        })?;
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct InstallReceipt<'a> {
     schema: u32,
@@ -1252,6 +1358,8 @@ struct InstallReceipt<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     artifact_sha256: Option<&'a str>,
     artifact_format: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    base_artifact_integrities: Vec<&'a str>,
     bytes_downloaded: u64,
 }
 
@@ -1266,12 +1374,15 @@ struct ExistingInstallReceipt {
     artifact_integrity: Option<String>,
     #[serde(default)]
     artifact_sha256: Option<String>,
+    #[serde(default)]
+    base_artifact_integrities: Vec<String>,
 }
 
 fn write_receipt(
     staging: &Path,
     request: &InstallRequest,
     selected: &SelectedArtifact,
+    selected_bases: &[SelectedArtifact],
 ) -> Result<()> {
     let canonical_url = redacted_url(&request.artifact.canonical_url);
     let legacy_sha256 = selected.actual_integrity.strip_prefix("sha256:");
@@ -1288,7 +1399,15 @@ fn write_receipt(
         artifact_integrity: &selected.actual_integrity,
         artifact_sha256: legacy_sha256,
         artifact_format: request.artifact.format.receipt_name(),
-        bytes_downloaded: selected.bytes_downloaded,
+        base_artifact_integrities: selected_bases
+            .iter()
+            .map(|artifact| artifact.actual_integrity.as_str())
+            .collect(),
+        bytes_downloaded: selected.bytes_downloaded
+            + selected_bases
+                .iter()
+                .map(|artifact| artifact.bytes_downloaded)
+                .sum::<u64>(),
     };
     let serialized =
         toml::to_string(&receipt).map_err(|source| Error::SerializeInstallReceipt { source })?;
@@ -1567,6 +1686,81 @@ mod tests {
         assert!(receipt.contains("artifact_integrity = \"sha512-"));
     }
 
+    #[test]
+    fn merges_a_verified_npm_base_archive_before_the_platform_binary() {
+        let base_archive = tar_gz_bytes(&[
+            ("package/dist/pnpm.mjs", b"shared pnpm runtime", 0o644),
+            ("package/setup.js", b"must not be installed", 0o644),
+        ]);
+        let platform_archive = tar_gz_bytes(&[("package/pnpm", b"native pnpm", 0o644)]);
+        let base_integrity = format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&base_archive))
+        );
+        let platform_integrity = format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&platform_archive))
+        );
+        let (base_url, base_server) = serve_once(base_archive.clone(), base_archive.len());
+        let (platform_url, platform_server) =
+            serve_once(platform_archive.clone(), platform_archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), platform_url, platform_integrity);
+        request.tool = "pnpm".to_owned();
+        request.version = "11.21.0".to_owned();
+        request.target = "linux-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarGz;
+        request.strip_components = 1;
+        request.required_paths = vec![PathBuf::from("pnpm")];
+        request.executable_paths = vec![PathBuf::from("pnpm")];
+        request.base_artifacts = vec![ArtifactInstallSpec {
+            artifact: ArtifactSpec {
+                canonical_url: "https://registry.npmjs.org/@pnpm/exe/-/exe-11.21.0.tgz".to_owned(),
+                sources: vec![ArtifactSource {
+                    id: "local-base".to_owned(),
+                    url: base_url,
+                    kind: ArtifactSourceKind::Mirror,
+                }],
+                integrity: base_integrity.clone(),
+                format: ArtifactFormat::TarGz,
+            },
+            strip_components: 1,
+            include_prefixes: vec![PathBuf::from("dist")],
+            required_paths: vec![PathBuf::from("dist/pnpm.mjs")],
+        }];
+
+        let outcome = test_installer()
+            .install(&request)
+            .expect("install merged pnpm");
+        base_server.join().expect("base server");
+        platform_server.join().expect("platform server");
+
+        assert_eq!(
+            fs::read(outcome.install_dir.join("pnpm")).expect("platform binary"),
+            b"native pnpm"
+        );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("dist/pnpm.mjs")).expect("shared runtime"),
+            b"shared pnpm runtime"
+        );
+        assert!(!outcome.install_dir.join("setup.js").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(
+                fs::metadata(outcome.install_dir.join("pnpm"))
+                    .expect("pnpm metadata")
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0
+            );
+        }
+        let receipt =
+            fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
+        assert!(receipt.contains(&base_integrity));
+    }
+
     #[cfg(unix)]
     #[test]
     fn installs_tar_xz_with_safe_node_style_symlinks() {
@@ -1799,6 +1993,8 @@ mod tests {
             },
             strip_components: 0,
             required_paths: vec![PathBuf::from("bin/node.exe")],
+            base_artifacts: Vec::new(),
+            executable_paths: Vec::new(),
         }
     }
 

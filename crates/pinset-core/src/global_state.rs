@@ -298,6 +298,7 @@ mod tests {
                     },
                     archive_root: plan.archive_root,
                     verification: "nodejs-shasums-https".to_owned(),
+                    overlays: Vec::new(),
                 }
             })
             .collect();
