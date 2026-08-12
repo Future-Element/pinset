@@ -138,7 +138,13 @@ mod tests {
     fn custom_source_changes_transport_but_not_canonical_identity() {
         let mut config = SourceConfig::default();
         config
-            .add("node", "mirror", "https://mirror.example/node/", false)
+            .add(
+                "node",
+                "mirror",
+                "https://mirror.example/node/",
+                false,
+                false,
+            )
             .expect("mirror");
         config.use_source("node", "mirror").expect("active");
         config

@@ -50,7 +50,7 @@ printf '%s  %s\n' "$HASH" "$ARCHIVE" > "$RELEASE_DIR/SHA256SUMS"
 
 PINSET_INSTALL_TEST_MODE=1 \
 PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$INSTALL_DIR"
+sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
 
 [ -x "$INSTALL_DIR/pinset" ]
 [ -x "$INSTALL_DIR/pinset-shim" ]

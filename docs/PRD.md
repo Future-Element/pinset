@@ -1,902 +1,416 @@
 # Pinset PRD
 
-文档状态：`产品基线`
-当前发布版本：`v0.1.0-alpha.6`
-当前开发版本：`待真实环境验收后确定`
-更新时间：2026-08-12
+文档版本：`v0.1.0-beta.1`
+产品阶段：`Node-first Beta`
+更新时间：`2026-08-12`
 
-## 文档关系
+## 1. 产品定义
 
-- 本文件是产品、功能契约、技术架构和用户操作的统一基线，定义 Pinset 是什么、服务谁、
-  如何工作以及明确不做什么。
-- [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
-- [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“已发布”指 `v0.1.0-alpha.6`；下一版本根据完整卸载和跨平台真实环境验收结果确定，
-  不提前扩张 Node 命令面或接入新语言。
+Pinset 是一个本地优先、跨平台、面向多语言项目的运行时版本管理 CLI。它提供统一的选择、锁定、安装、执行、镜像、缓存和诊断模型，减少用户在 nvm/fnm、uv、FVM 等多个管理器之间切换的成本。
 
-## 1. 产品定位
+产品最终可以接入多种 Provider，但 `v0.1.0-beta.1` 只承诺 Node.js 闭环。Python、Flutter 和其他语言不得以半成品形式进入 Node Beta。
 
-Pinset 是一个本地优先、跨平台、可验证的多语言运行时版本管理 CLI。
+### 1.1 核心价值
 
-它用统一的项目配置、锁文件、安装来源和命令解析规则管理 Node.js、CPython 与 Flutter，
-减少开发者同时维护 fnm/nvm、uv/pyenv、FVM 等工具时产生的版本、PATH、镜像和平台差异。
+- 一套一致命令管理全局和项目运行时；
+- 项目配置与精确锁文件可提交、可复现、可解释；
+- 安装、镜像、缓存和卸载具有明确的安全边界；
+- 不接管 shell profile，不覆盖外部管理器，不隐藏回退；
+- 架构对 Provider 开放，安装器本身保持运行时中立。
 
-一句话表达：
+### 1.2 目标用户
 
-> 一个配置锁定项目运行时，一个命令解释当前到底用了哪个版本。
+- 同时维护多个 Node 项目的开发者；
+- Windows、WSL、Linux 和 macOS 混合环境用户；
+- 需要国内镜像、企业内网镜像或离线安装的团队；
+- 希望把运行时版本随项目提交并在 CI 中复现的团队；
+- 后续需要统一管理多种语言运行时的个人或组织。
 
-Pinset 的差异化不是支持最多语言或插件，而是：
+### 1.3 当前非目标
 
-- 项目配置只包含数据，不执行项目钩子或任意脚本；
-- 锁文件从首版开始记录精确产物身份和校验信息；
-- 项目、全局、旧管理器和系统 PATH 的选择结果唯一且可解释；
-- 镜像只改变传输位置，不能替换可信哈希或 canonical 产物身份；
-- Windows、macOS、Linux 使用同一产品语义，不把 Windows 作为后补平台；
-- 日常使用无需账户、云服务、管理员权限或隐藏遥测。
+- 不在 Beta 接入 Python、Flutter、Java 等新 Provider；
+- 不替代 npm、pnpm、yarn 等包管理器；
+- 不管理项目依赖包或全局 npm 包；
+- 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
+- 不维护第三方 Homebrew Tap、Scoop Bucket 或其他外部包仓库；
+- 不删除 nvm、fnm、Volta、系统 Node 或用户文件；
+- 不提供后台服务、GUI、账号同步或云端状态。
 
-## 2. 目标用户
+## 2. 产品原则
 
-核心用户：
+### 2.1 可预测
 
-- 同时维护多个 Node.js 项目，并需要在版本之间可靠切换的开发者。
-- 同时使用 Node.js、Python 和 Flutter，厌倦每种语言维护一套版本管理器的个人开发者。
-- 在 Windows、macOS、Linux 或 WSL 间切换，需要团队项目配置一致的开发者。
-- 需要国内镜像、企业代理、离线缓存或可审计下载来源的用户。
-- 已安装 nvm、fnm、uv、FVM、mise、asdf 或 vfox，希望渐进迁移而不是破坏原环境的用户。
+项目配置优先于 Pinset 全局配置，全局配置优先于系统 PATH。已声明但缺失的版本必须失败关闭，不能静默使用低优先级 Node。
 
-后续用户：
+### 2.2 精确锁定
 
-- 需要通过同一锁文件在本地和 CI 复现运行时的小型团队。
-- 对供应链来源、许可证、哈希和构建证明有审计要求的团队。
+用户可以输入主版本、主次版本、LTS 或 Current；锁文件必须保存精确版本、目标平台、归档、校验值和校验来源。
 
-首版不以大型企业集中策略下发、容器编排或无限语言插件生态为主要用户场景。
+### 2.3 本地优先
 
-## 3. 用户问题
+配置、状态、安装和缓存全部保存在本机。项目文件可通过普通版本控制同步，不依赖 Pinset 服务器。
 
-- 每种运行时管理器都有不同命令、配置文件、Shell 初始化和安装目录。
-- 同一项目在不同开发者或不同操作系统上可能实际使用不同运行时版本。
-- PATH 被多个管理器修改后，用户难以知道 `node`、`python` 或 `flutter` 来自哪里。
-- 本地终端、CI 与 IDE 可能使用不同 SDK，问题只在部分环境出现。
-- 国内或企业网络下载缓慢，但切换镜像常常同时改变了信任来源。
-- 旧项目缺少可提交的精确产物锁，未来无法确认当时使用了什么归档和校验值。
-- 迁移新工具时，用户担心旧管理器、系统运行时和项目配置被自动删除或改写。
-- 下载中断、损坏归档或路径穿越可能留下半安装或污染后续选择。
+### 2.4 安全默认
 
-## 4. 产品目标
+- 默认只接受 HTTPS 下载源；
+- 自定义源默认只替换归档传输，不替换官方校验元数据；
+- SHA-256 不匹配立即停止，不继续 fallback；
+- 安装在临时目录完成校验和解压后再原子提交；
+- 不覆盖无法证明由 Pinset 所有的命令或目录；
+- 删除只发生在经过解析和所有权验证的明确路径内。
 
-1. 用统一命令管理 Node.js、CPython 和 Flutter 的安装与版本选择。
-2. 让项目通过可提交的配置和锁文件获得跨平台可复现运行时。
-3. 让用户设置本机全局默认版本，并由最近项目配置进行明确覆盖。
-4. 让 `current`、`which` 和 `doctor` 解释请求版本、精确版本、来源和真实可执行文件。
-5. 让下载、校验、解压和安装具备失败关闭、事务提交和安全重试能力。
-6. 让官方源、国内镜像和企业代理共享同一可信产物身份与校验值。
-7. 与现有管理器渐进共存，不静默删除、覆盖或执行不可逆迁移。
-8. 在 Windows、macOS、Linux 和 WSL 上保持一致的配置与命令语义。
+### 2.5 运行时中立
 
-## 5. 非目标
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 在用户选择或安装 Node 时注册 `node`、`npm`、`npx`、`corepack`；未来其他 Provider 使用同一注册模型。
 
-Pinset 不做：
+## 3. 支持矩阵
 
-- 管理 npm/pnpm/yarn、pip/uv、pub 等包依赖。
-- 自动创建或激活 Python 虚拟环境。
-- 充当任务运行器、环境变量管理器、Secret Vault 或容器管理器。
-- 读取项目配置时执行脚本、钩子、插件或远程代码。
-- 自动修改 shell profile、IDE 配置或系统级 PATH。
-- 自动卸载 nvm、fnm、pyenv、uv、FVM、mise、asdf、vfox 或系统运行时。
-- 默认选择未由用户批准的第三方镜像。
-- 依赖账号、云同步、订阅或遥测才能使用核心功能。
-- 首版覆盖所有语言、CPU 架构、历史版本和操作系统组合。
-- 维护第三方 Homebrew Tap 或 Scoop Bucket。
+### 3.1 Pinset Release
 
-## 6. 产品结构
-
-### CLI
-
-负责初始化、版本选择、锁定安装、来源配置、查询、诊断和生命周期管理。CLI 的写操作必须
-明确，查询和诊断默认只读。
-
-### Project Contract
-
-项目根目录使用：
-
-```text
-pinset.toml
-pinset.lock
-```
-
-`pinset.toml` 表达用户希望使用的工具与版本；`pinset.lock` 保存解析后的精确版本、跨平台
-产物、canonical 身份、哈希和验证信息。二者应提交版本控制。
-
-### Global State
-
-用户级默认选择保存在 `$PINSET_HOME/state`，只影响当前用户和当前操作系统，不写入项目，
-也不依赖 `$HOME/pinset.toml` 充当伪全局配置。
-
-### Provider
-
-Node.js、CPython 和 Flutter 使用内置 Provider。Provider 负责版本元数据、目标映射、产物
-布局、可信校验、安装后的必要文件验证，以及该运行时拥有的命令清单。命令解析和命令入口
-注册必须读取同一份 Provider 元数据，不能在 curl 安装器或 CLI 分支中分别硬编码。首版不开放
-任意脚本插件；当前只有 Node Provider 已实现。
-
-### Installer
-
-Installer 负责下载限制、哈希校验、安全解压、临时目录、原子提交、收据和幂等复用。
-只有完整且经过验证的安装才能进入可解析目录。
-
-### Shim and Exec
-
-通用 shim 让 Provider 声明的命令根据当前目录选择运行时；curl 只安装调度器本体，不创建任何
-语言命令。Provider 在用户选择或安装对应运行时后注册命令入口。`pinset exec` 为 CI、脚本和
-不启用直接命令路由的用户提供显式入口，二者共享同一个核心解析器。
-
-### Source Configuration
-
-安装源属于机器本地配置。内置 `official` 不可覆盖或删除；用户可显式增加 HTTPS 镜像、
-受信任局域网 HTTP 服务和有序回退。源只改变传输位置，不改变锁文件中的可信身份。
-
-### Doctor
-
-`doctor` 解释配置优先级、安装完整性、PATH、shim、旧管理器和 IDE 常见冲突，只给出
-精确、可逆的建议，不自动修复或卸载。
-
-## 7. 功能需求
-
-### 配置与锁文件
-
-- 项目配置采用不可执行 TOML，未知字段和未知 schema 必须明确失败。
-- 版本选择最终写入精确版本，锁文件序列化结果确定。
-- 锁文件包含所有认证目标需要的产物，而安装只处理当前平台。
-- `install --locked` 在配置和锁不一致时失败，不得偷偷更新。
-- 机器相关绝对路径和活动镜像不得写入项目锁文件。
-- schema 变更必须有兼容或迁移说明，不能静默重写用户项目。
-
-### 解析与执行
-
-- 项目版本从当前目录向上查找最近的 `pinset.toml`。
-- 正式解析顺序为：显式一次性选择、项目、兼容文件、全局、系统 PATH。
-- 当前层明确声明但不可用时失败关闭，不得静默降级到低优先级版本。
-- 同一次命令的主程序和附带命令必须使用同一运行时目录。
-- shim 不能递归调用自己，不能在执行阶段访问网络。
-- `exec` 和 shim 必须保留工作目录、参数和子进程退出码。
-
-### 安装与完整性
-
-- 下载前确定 canonical 产物身份和可信校验信息。
-- 自定义镜像不能提供或替换项目锁中的可信哈希。
-- SHA-256 不匹配、归档截断、路径穿越、非法链接和展开超限必须失败。
-- 只有网络类失败可以尝试用户批准的下一个源；校验失败立即停止。
-- 解压和验证在 Pinset 数据根中的临时事务目录完成。
-- 最终提交原子化；中断后不能出现可被选择的半安装。
-- 安装收据不得保存 URL 凭据、查询参数、fragment 或其他 Secret。
-
-### Node.js
-
-- 当前已支持精确稳定版本 `x.y.z`。
-- 路由 `node`、`npm`、`npx` 和 `corepack`。
-- 支持 Windows x64、Linux x64、macOS x64 和 macOS arm64 官方预编译产物。
-- npm/corepack 通过 `/usr/bin/env node` 启动时，子进程 PATH 必须包含所选 Node。
-- 支持 major/minor、LTS 和 current 选择器，写锁结果始终是精确版本。
-
-### CPython
-
-- 计划使用版本化、可审计的 python-build-standalone 清单。
-- 锁文件记录来源、许可证、哈希和目标。
-- 路由 Python 解释器及归档实际包含的 pip 命令。
-- 与 uv/pip 共存，Pinset 不创建虚拟环境、不管理项目依赖。
-
-### Flutter
-
-- 计划支持 Flutter stable 与同 SDK 内 Dart。
-- 提供稳定 SDK 根目录查询供 IDE 和脚本使用。
-- 镜像兼容不改变可信 release 元数据与校验边界。
-- Pinset 不自动改写 VS Code、Android Studio 或 Xcode 配置。
-
-### 查询、诊断与生命周期
-
-- `current` 展示请求版本、精确版本、选择来源、配置路径和安装路径。
-- `which` 展示最终将执行的真实文件；SDK 型工具可查询 SDK 根目录。
-- `list` 明确区分 installed、selected、cached 和 system。
-- `uninstall` 只删除 Pinset 登记的精确安装；被配置引用时默认拒绝。
-- `doctor --json` 提供稳定机器可读结果，但普通诊断不收集或上传遥测。
-- 缓存清理和卸载使用不同显式命令，避免删除语义混淆。
-
-## 8. 核心流程
-
-### 首次安装 Pinset
-
-1. 用户从 GitHub Release 或官方安装脚本取得 Pinset。
-2. 安装器识别平台并下载对应归档与 `SHA256SUMS`。
-3. 校验通过后把 `pinset` 与 `pinset-shim` 安装到用户目录。
-4. 安装器不创建任何 Node、Python、Flutter 或其他运行时命令，并展示通用 PATH 建议。
-5. 用户执行 `pinset --version` 和 `pinset doctor` 验证环境。
-
-### 设置全局默认版本
-
-1. 用户执行 `pinset global node@24`；兼容入口为 `pinset use node@24 --global`。
-2. Pinset 读取可信元数据并生成用户级全局锁。
-3. 当前平台缺失时执行校验和事务安装。
-4. Node Provider 注册自己声明的命令；已有外部同名文件时停止注册且不覆盖。
-5. `current` 展示来源为 `global`。
-
-### 初始化项目
-
-1. 用户在项目根目录执行 `pinset init`。
-2. Pinset 创建最小 `pinset.toml`，已有文件时拒绝覆盖。
-3. 用户执行 `pinset use node@<exact-version>`。
-4. Pinset 生成跨平台锁并安装当前平台产物。
-5. 用户提交 `pinset.toml` 与 `pinset.lock`。
-6. 项目及其子目录自动覆盖全局版本。
-
-### 克隆项目与 CI
-
-1. 用户或 CI 克隆包含配置和锁文件的项目。
-2. 配置受信任镜像或使用 official 源。
-3. 执行 `pinset install --locked`。
-4. Pinset 在写入前校验配置、锁、目标和哈希。
-5. 使用 shim 或 `pinset exec -- <command>` 执行构建和测试。
-
-### 国内或企业网络
-
-1. 用户显式添加与官方目录结构兼容的源别名。
-2. 用户选择活动源并配置需要的网络回退顺序。
-3. Pinset 仍从可信元数据或已有锁取得 canonical 身份与哈希。
-4. 网络失败可以切换下一个已批准源；哈希失败立即停止。
-5. 项目成员可以使用不同源，但共享同一项目配置和锁。
-
-### 与旧管理器共存
-
-1. `doctor` 枚举 PATH 和已知配置文件。
-2. 展示每个候选命令的来源和实际优先级。
-3. 多个配置冲突时停止并解释。
-4. 用户明确选择迁移后再生成候选 Pinset 配置。
-5. Pinset 不卸载旧工具，也不删除旧配置。
-
-## 9. 数据与安全原则
-
-- Local-first：已安装运行时的日常选择和执行不依赖账号或网络。
-- Data, not code：进入项目、读取配置或解析版本不执行项目代码。
-- Fail closed：哈希异常、损坏归档、配置冲突和已声明版本缺失默认阻断。
-- Trust separation：官方元数据和锁是信任来源，镜像只是传输来源。
-- Atomic visibility：只有完整验证并原子提交的安装对解析器可见。
-- Least privilege：不使用 sudo 完成用户级日常操作，不写系统目录。
-- Ownership boundary：卸载和清理不能越过 Pinset 数据根或删除外部管理器文件。
-- Secret minimization：配置、锁、收据、日志和诊断不保存凭据或敏感 URL 部分。
-- Explicit change：PATH、shell profile、IDE 和旧管理器只给建议，不静默修改。
-- No hidden telemetry：默认不收集或上传命令、路径、版本和使用行为。
-
-## 10. 平台与发布原则
-
-Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
-
-当前 `v0.1.0-alpha.6` 的产物矩阵：
-
-| 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
-| --- | --- | --- | --- | --- |
-| Node 项目锁定与安装 | 支持 | 支持 | 支持 | 支持 |
-| Pinset 官方 Release 产物 | ZIP | TAR.GZ | 暂未发布 | TAR.GZ |
-| 官方 curl 安装器 | 不适用 | 支持 | 不适用 | 支持 |
-| 官方完整卸载脚本（alpha.6） | PowerShell | POSIX sh | POSIX sh | POSIX sh |
-
-平台支持声明必须区分“代码可构建”“CI 构建通过”“真实安装通过”和“完整用户流程验收”。
-未执行的层级不得用更低层级结果代替。
-
-## 11. 非功能需求
-
-- shim 热路径不访问网络，解析开销需持续基准测试并公开认证结果。
-- 锁文件对同一输入产生确定输出，避免无意义 diff。
-- 大归档、慢网络和中断不会造成无限内存、磁盘或临时文件增长。
-- 并发安装和并发配置写入具备互斥、幂等或明确冲突结果。
-- 错误信息包含工具、版本、来源、目标和可操作建议，不只输出底层异常。
-- Windows 路径大小写、长路径、文件占用和链接权限必须有明确行为。
-- Unix 归档符号链接必须保持在归档根内，并指向已验证的普通文件。
-- 日志、诊断和 Issue 模板不得默认包含完整用户路径、凭据或 URL Secret。
-- 每个认证平台都有构建、自动化测试和相称的真实环境验收边界。
-
-## 12. 成功指标
-
-质量指标：
-
-- 认证矩阵中每个 provider 至少一个固定版本完成真实下载、校验、安装和执行。
-- 项目、全局和系统 PATH 解析矩阵无歧义、无静默降级。
-- 错误哈希、恶意归档、中断和并发安装不会产生可选择的半安装。
-- 已提交锁文件在支持平台和批准源上能够复现。
-- Release 资产、SHA-256、版本号和 Git tag 保持一致。
-
-使用指标：
-
-- 新用户可在五分钟内安装 Pinset、初始化项目并执行一次所选运行时。
-- 用户能通过 `current`、`which` 或 `doctor` 回答当前版本及其选择原因。
-- 同一用户可以在全局版本和两个不同项目版本之间切换，不手动重写 PATH。
-- 国内或企业网络用户可以切换传输源而不修改项目锁。
-- 旧管理器用户可以先诊断再迁移，且不需要卸载原工具完成试用。
-
-Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主动反馈、可复现测试和明确同意
-的访谈，不以隐藏采集换取指标。
-
-## 13. 当前版本边界
-
-已发布的 `v0.1.0-alpha.5` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH
-解析、安全卸载、带进度显示的归档下载、内容寻址下载缓存、来源测试、中英文界面和旧管理器
-迁移；并增加 Provider 命令清单、选择/安装后的自动命令注册、通用 `activate`、独立版本安装、
-旧 shim 迁移和四命令 PATH 诊断。curl 仍严格只安装两个 Pinset 二进制。CPython 与 Flutter
-仍未交付。完整范围和发布门禁见
-[Plans](PLANS.md#5-v010-alpha5--node-runtime-closure)。
-
-`v0.1.0-alpha.6` 增加独立于 CLI 的 Unix 与 Windows 完整卸载脚本：在明确确认后删除
-Pinset 二进制、可验证的受管命令路由和整个 `PINSET_HOME`（包括所有受管语言运行时），但保留
-项目配置/锁、shell profile、系统运行时和其他管理器文件。完整范围见
-[Plans](PLANS.md#6-v010-alpha6--full-uninstall-and-acceptance-fixes)。
-
-## 14. 命令契约与交付状态
-
-| 命令 | 交付状态 | 目标契约 |
+| 平台 | Beta 状态 | 归档 |
 | --- | --- | --- |
-| `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
-| `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
-| `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
-| `pinset use node@x.y.z --no-install` | 已实现 | 更新项目配置和锁但不下载，同时准备 Provider 命令路由 |
-| `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
-| `pinset global [node@selector]` | 已实现 | 显式查看或设置全局默认版本，并提示项目覆盖 |
-| `pinset unset node [--global]` | 已实现 | 清除项目/全局选择并回退上一层，不卸载运行时 |
-| `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
-| `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
-| `pinset install node@<selector>` | 已实现 | 安装精确或浮动选择器对应版本，不修改项目/全局选择 |
-| `pinset current` | 已实现 | 显示当前目录最终生效的项目、全局或系统选择 |
-| `pinset current [tool]` | 已实现 | 显示工具、精确版本、来源和路径 |
-| `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
-| `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
-| `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
-| `pinset exec node@<selector> -- ...` | 已实现 | 一次性选择已安装版本，不修改项目或全局状态 |
-| `pinset doctor` | 已实现 | 检查四个 Node 命令、PATH 顺序、受管入口、旧 shim 与旧管理器 |
-| `pinset doctor --json` | 已实现 | schema 1 机器可读诊断结构，增加命令候选与可逆修复问题码 |
-| `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
-| `pinset source test node [alias]` | 已实现 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
-| `pinset list node [--available]` | 已实现 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
-| `pinset uninstall node@x.y.z` | 已实现 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
-| `pinset cache list/clean` | 已实现 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
-| `pinset import --dry-run` | 已实现 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
-| `pinset import --apply [--from <source>]` | 已实现 | 显式导入项目或全局选择；冲突不猜测，保留旧文件 |
-| `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
-| `pinset activate <shell>` | 已实现 | 输出运行时无关的当前 Shell PATH 设置，不修改 profile |
-| Provider 自动命令注册 | 已实现 | 选择/安装后注册 Provider 声明的命令，冲突时整组停止 |
-| `pinset shim install --provider <tool>` | 已实现 | 幂等修复 Provider 命令入口，不作为正常安装步骤 |
-| `pinset shim migrate --provider node` | 已实现 | 在当前路由目录准备入口，报告并保留旧 shim |
-| `uninstall.sh` / `uninstall.ps1` | 已实现 | 预览并经显式确认后完整删除 Pinset 与所有受管运行时 |
+| Linux x64 | 支持 | `pinset-linux-x86_64.tar.gz` |
+| Windows x64 | 支持 | `pinset-windows-x86_64.zip` |
+| macOS Apple Silicon | 支持 | `pinset-macos-aarch64.tar.gz` |
+| Linux arm64 | 未发布 | 可从源码构建，尚无正式归档 |
+| macOS Intel | 未发布 | 可从源码构建，尚无正式归档 |
 
-计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
+### 3.2 Node 官方归档目标
 
-建议的退出码分类为：
+| 目标 | 状态 |
+| --- | --- |
+| `windows-x86_64` | 支持 ZIP |
+| `linux-x86_64` | 支持 TAR.XZ |
+| `macos-x86_64` | Provider 支持 |
+| `macos-aarch64` | Provider 支持 |
 
-- `0`：成功；
-- `2`：使用方式或配置错误；
-- `3`：版本无法解析；
-- `4`：网络或上游错误；
-- `5`：校验或供应链错误；
-- `6`：本地文件系统或权限错误；
-- `7`：锁文件不一致；
-- `8`：冲突、递归或其他管理器遮蔽。
+WSL 使用 Linux 归档，不得运行 Windows `.exe` 或复用 Windows Node 安装。
 
-当前只冻结已经实现命令的实际退出行为；完整分类需要在稳定版前由集成测试固定。
+## 4. 核心对象
 
-## 15. 配置、锁与本机状态
+### 4.1 项目配置 `pinset.toml`
 
-### 15.1 当前项目配置
-
-`pinset.toml` 是不可执行数据，应提交版本控制。当前只接受精确 Node 版本：
+表达用户意图，可提交：
 
 ```toml
 schema = 1
 
 [tools]
-node = "24.0.0"
+node = "24"
 ```
 
-配置禁止 Shell 命令、安装后脚本、任务、动态表达式和远程 include。未知字段或未知 schema
-默认拒绝，不能把未来字段误当成安全默认值。
+### 4.2 项目锁文件 `pinset.lock`
 
-### 15.2 当前项目锁
+表达解析结果，可提交。至少包含：
 
-`pinset.lock` 应提交版本控制，包含：
+- schema；
+- Provider 和精确版本；
+- 每个目标平台的归档 URL、格式和 SHA-256；
+- 校验元数据来源；
+- 生成信息。
 
-- schema 和生成器版本；
-- 工具、用户请求和精确版本；
-- Windows x64、Linux x64、macOS x64、macOS arm64 产物；
-- canonical URL、artifact path、SHA-256 和验证方式。
+`install --locked` 必须拒绝配置与锁文件不一致的状态。
 
-锁文件不记录当前机器活动镜像、下载缓存路径或安装绝对路径。`install --locked` 不修改锁，
-也不访问“最新版本”重新解析。
+### 4.3 全局状态
 
-概念示例：
+位于 `PINSET_HOME/state/global.toml` 和 `global.lock`。其数据结构与项目选择模型一致，但不会在 `$HOME` 或当前目录伪造项目文件。
 
-```toml
-schema = 1
-generated_by = "pinset 0.1.0-alpha.5"
+### 4.4 Provider
 
-[[tool]]
-name = "node"
-requested = "24.0.0"
-version = "24.0.0"
-provider = "nodejs-official"
+Provider 声明：
 
-[[tool.artifact]]
-target = "linux-x86_64"
-canonical_url = "https://nodejs.org/dist/v24.0.0/node-v24.0.0-linux-x64.tar.xz"
-artifact_path = "v24.0.0/node-v24.0.0-linux-x64.tar.xz"
-sha256 = "..."
-verification = "nodejs-shasums-https"
-```
+- 支持的选择器；
+- 官方版本元数据；
+- 平台归档和必须路径；
+- 运行时命令集合；
+- 安装、验证和命令路由规则。
 
-### 15.3 本机源配置
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`。
 
-源配置位于 `PINSET_HOME`，项目不能声明任意下载 URL。概念结构：
+### 4.5 通用命令路由
 
-```toml
-schema = 1
+`pinset-shim` 是与运行时无关的轻量调度器。命令入口只负责把命令名、当前目录和环境交给 Pinset 的统一解析逻辑，不复制网络、解压或 Provider 业务代码。
 
-[providers.node]
-active = "company-mirror"
-fallback = ["official"]
+### 4.6 安装源
 
-[providers.node.sources.company-mirror]
-base_url = "https://mirror.example/node/"
-```
+安装源是本机设置，保存在 `PINSET_HOME/sources.toml`，不进入项目锁文件。每个 Provider 包含：
 
-`official` 是只读内置源。自定义源不能使用凭据 URL、query 或 fragment；HTTPS 是默认要求，
-受信任局域网 HTTP 必须逐源显式批准。
+- 内置不可修改的 `official`；
+- 一个 active 来源；
+- 零个或多个有序 fallback；
+- 自定义源的 URL、HTTP 例外和元数据信任标记。
 
-### 15.4 数据目录
+### 4.7 下载缓存
 
-默认位置：
+- 完整归档：`PINSET_HOME/downloads/sha256/<hash>.archive`；
+- 断点文件：`PINSET_HOME/downloads/partial/<hash>.part`；
+- 相同 SHA-256 跨来源、跨项目复用；
+- 未知文件和非普通文件不得被静默当作缓存处理。
 
-| 系统 | `PINSET_HOME` 默认值 |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%\Pinset` |
-| Linux/macOS | `$XDG_DATA_HOME/pinset`，未设置时为 `$HOME/.local/share/pinset` |
+## 5. Node Beta 功能需求
 
-可用 `PINSET_HOME` 覆盖。Windows 与 WSL 是两个独立系统，不共享安装目录、PATH 或状态。
+### 5.1 初始化
 
-目标布局：
+`pinset init` 在当前目录创建最小 `pinset.toml`。已有文件时不得覆盖。
 
-```text
-PINSET_HOME/
-├─ settings.toml                      # 本机界面语言等用户偏好
-├─ downloads/                         # 已验证下载缓存，后续交付
-├─ installs/<tool>/<version>/<target>/
-├─ shims/
-├─ state/                             # 全局选择、安装索引
-├─ locks/                             # 跨进程锁，后续完善
-└─ tmp/                               # 唯一事务目录
-```
+### 5.2 版本选择
 
-## 16. 技术架构
+接受：
 
-### 16.1 Workspace 与职责
+- 精确版本 `node@x.y.z`；
+- 主版本 `node@x`；
+- 主次版本 `node@x.y`；
+- `node@lts`；
+- `node@current`。
 
-```text
-crates/
-├─ pinset/          # 用户 CLI、参数和人类输出
-├─ pinset-core/     # 配置、锁、解析、provider、安装器和诊断
-└─ pinset-shim/     # 高频、无网络的轻量命令路由程序
-```
+浮动选择必须访问当前可信元数据索引，并写入精确锁定结果。
 
-安装器能力通过 Cargo feature 与 shim 隔离。单独构建 `pinset-shim` 时，正常依赖图不得包含
-HTTP、TLS、归档、哈希和临时文件依赖。
-
-### 16.2 命令解析
-
-```text
-调用 node/npm/python/flutter
-  → Pinset shim 从 argv[0] 识别命令
-  → 规范化 cwd 与命令名
-  → 读取同一配置快照
-  → 按显式/项目/兼容/全局/系统优先级解析
-  → 定位已验证安装
-  → 构造最小子进程环境
-  → 执行真实二进制并返回退出码
-```
-
-解析热路径不访问网络。shim 使用深度标记和路径排除防止自递归；缓存只能优化性能，不能
-改变正确性或使旧配置继续生效。
-
-### 16.3 安装事务
-
-```text
-解析精确版本与目标
-  → 获取可信元数据或读取已有锁
-  → 在 PINSET_HOME/tmp 创建唯一事务目录
-  → 按 active/fallback 下载并流式计算 SHA-256
-  → 验证归档大小、类型与哈希
-  → 安全解压并验证必要文件
-  → 写入脱敏安装收据
-  → 原子提交到 installs/<tool>/<version>/<target>
-```
-
-任何步骤失败都不能暴露最终安装。网络错误可以尝试下一个用户批准源；Content-Length/
-大小限制、哈希、签名、provenance、写入、权限或解压错误必须硬停止。
-
-归档至少拒绝：
-
-- 绝对路径、`..`、设备文件和目标根逃逸；
-- Windows 大小写碰撞、保留名和危险路径；
-- 重复条目、非法特殊文件和越界链接；
-- 超过文件数量、单文件大小、总展开大小或下载上限的内容。
-
-Unix Node TAR.XZ 只允许归档根内的安全相对符号链接，且提交前目标必须是已验证普通文件。
-
-### 16.4 Provider 契约
-
-每个内置 provider 负责：
-
-- 将自己的版本语义解析为精确版本；
-- 根据目标构造 canonical artifact path；
-- 提供可信元数据和校验方式；
-- 描述归档布局、命令映射和必要文件；
-- 声明自己拥有的用户命令，供解析器和命令注册共同使用；
-- 验证安装后的运行时结构。
-
-通用安装器和 `curl | sh` 不得包含 `node`、`python`、`flutter` 等 Provider 专属命令清单。
-Provider 注册前必须预检整组目标：受 Pinset 管理且内容一致的入口可幂等复用，任何外部同名
-文件都使注册在写入前停止。失败不得覆盖旧文件，也不得留下部分新入口。
-
-Node semver、Python 构建标签和 Flutter channel/ref 不能强制共用同一个字符串比较器。
-首版只有内置 provider，不加载第三方代码；未来插件只有在能力隔离、签名和信任模型通过
-安全评审后才考虑。
-
-### 16.5 IDE 边界
-
-终端 shim 不能自动解决 IDE SDK 路径。Flutter 阶段计划提供 `which --sdk` 和稳定项目 SDK
-别名；Windows junction、Unix symlink 和 IDE 缓存必须先通过真实验证。Pinset 不自动提交
-机器绝对路径，也不在未授权时修改 VS Code、Android Studio 或 Xcode 设置。
-
-## 17. 当前版本使用指南
-
-### 17.1 安装 Pinset
-
-Linux x64 和 macOS Apple Silicon 的固定预发布安装命令、Release 资产和校验方式见
-[v0.1.0-alpha.5 发布说明](RELEASE_NOTES.md#v010-alpha5)。
-
-默认安装器把 `pinset` 与 `pinset-shim` 放到 `$HOME/.local/bin`，不使用 `sudo`，不修改
-PATH，也不安装 Node。
-
-### 17.2 项目选择与安装
-
-设置或查看用户全局默认版本：
-
-```bash
-pinset global node@24
-pinset global
-```
-
-带选择器时会解析并保存精确版本，默认安装当前平台；不带参数时只读查看全局默认。项目中的
-`pinset.toml` 优先级更高，此时 `pinset global` 会提示覆盖关系，`pinset current` 显示真正
-生效的项目版本。兼容命令 `pinset use node@24 --global` 仍然可用。
-
-只写入全局配置和锁、不安装：
-
-```bash
-pinset global node@lts --no-install
-pinset install --global --locked
-```
-
-全局操作不要求 `pinset init`，也不会创建或修改当前目录中的项目文件。
-
-#### 项目版本
-
-```bash
-cd /path/to/project
-pinset init
-pinset use node@24.0.0
-```
-
-这会创建/更新 `pinset.toml` 与 `pinset.lock`，并为当前平台安装 Node。建议提交两个文件。
-
-只锁定、不安装：
-
-```bash
-pinset use node@24.0.0 --no-install
-```
-
-根据已有锁安装：
-
-```bash
-pinset install --locked
-```
-
-清除项目选择并恢复全局默认，或清除全局默认并恢复系统 PATH：
+### 5.3 全局版本
 
 ```shell
-pinset unset node
-pinset unset node --global
+pinset global node@24
+pinset global
+pinset use node@24 --global
 ```
 
-`unset` 只更新 Pinset 配置与对应锁，保留已安装版本、下载缓存和命令路由。
+要求：
 
-#### 只安装、不改变选择
+- 设置时默认安装；
+- `--no-install` 只写选择和锁；
+- 无参数只读显示全局选择，并在项目覆盖存在时解释最终生效版本；
+- 不在当前目录创建项目文件。
 
-如果只想预装一个版本供后续一次性执行，不修改项目配置或全局默认：
+### 5.4 项目版本
+
+```shell
+pinset use node@22
+pinset install --locked
+pinset unset node
+```
+
+要求：
+
+- 使用最近的上级 `pinset.toml`；
+- 同时更新配置与锁文件；
+- 默认安装当前目标；
+- `unset` 只移除选择，不卸载运行时；
+- 离开项目后自动恢复全局选择。
+
+### 5.5 独立安装和一次性执行
 
 ```shell
 pinset install node@20
 pinset exec node@20.19.0 -- node --version
 ```
 
-浮动选择器在安装时解析为精确版本；该命令不会创建或改写 `pinset.toml`、全局状态。
+独立安装不得修改项目或全局选择。一次性执行只接受已安装的精确版本，不隐式修改持久状态。
 
-### 17.3 执行与查询
+### 5.6 统一解析
 
-不启用直接命令路由也可以通过显式入口完整使用 Pinset：
+`current`、`which`、`exec`、shim 和 `doctor` 必须使用同一解析函数：
 
-```bash
-pinset current
-pinset which node
-pinset exec -- node --version
-pinset exec -- npm --version
-pinset exec -- node ./scripts/build.mjs
-```
+1. 最近项目选择；
+2. Pinset 全局选择；
+3. 排除 Pinset 路由入口后的系统 PATH。
 
-从其他目录检查指定项目：
+命令子进程 PATH 必须把所选 Node 的 `bin` 目录置于前面，保证 npm 脚本中的 `/usr/bin/env node` 或 Windows wrapper 能找到同一版本。
 
-```bash
-pinset current --cwd /path/to/project
-pinset doctor --cwd /path/to/project
-```
+### 5.7 命令路由
 
-当前解析顺序为最近项目配置、正式全局选择、排除 Pinset shim 后的系统 PATH。项目或
-全局已经声明 Node 时，即使安装缺失也不会静默回退。
+正常 `global`、`use`、`install` 成功后自动准备 Node Provider 的四个入口。要求：
 
-### 17.4 界面语言
+- Unix 使用可验证的符号链接；
+- Windows 使用内容和所有权可验证的 `.cmd` wrapper；
+- 一组入口写入前先验证全部目标；
+- 任一同名文件非 Pinset 所有时整组停止；
+- 不覆盖外部管理器或用户命令；
+- `activate` 只输出当前 shell 的 PATH 调整，不写 profile；
+- `shim install` 保留为显式修复入口，不作为日常必需步骤。
 
-保存简体中文为默认界面语言：
+### 5.8 版本列表
 
 ```shell
-pinset --lang zh-CN
-```
-
-之后的正常提示、帮助和诊断默认使用中文。临时对单个命令使用英文但不修改持久设置：
-
-```shell
-pinset --lang en doctor
-```
-
-也可以通过 `PINSET_LANG=zh-CN` 覆盖当前进程。优先级为命令行参数、环境变量、
-`$PINSET_HOME/settings.toml`、英文默认值。语言设置属于本机用户，不写入项目。
-
-### 17.5 Provider 命令路由
-
-curl 安装器只放置 `pinset` 和通用 `pinset-shim`，不会创建任何语言命令。用户执行
-`pinset global node@24`、`pinset use node@22` 或锁定安装后，Node Provider 才注册自己声明的
-`node`、`npm`、`npx` 和 `corepack`。
-
-如果 `pinset` 所在目录已经位于 PATH，命令入口默认放在同一目录，可立即直接使用。源码运行、
-自定义布局或回退到 `$PINSET_HOME/shims` 时，只为当前 Shell 启用通用路由目录：
-
-```bash
-eval "$(pinset activate bash)"
-# Zsh 使用：eval "$(pinset activate zsh)"
-```
-
-Windows PowerShell：
-
-```powershell
-pinset activate powershell | Out-String | Invoke-Expression
-```
-
-`activate` 输出只包含 PATH 操作，不包含 Node 或其他 Provider 命令，也不写 shell profile。
-`pinset shim path` 可只读查看当前默认路由目录；显式修复使用：
-
-```shell
-pinset shim install --provider node
-```
-
-从 alpha.4 的 `$PINSET_HOME/shims` 布局升级时，可显式迁移到当前路由目录：
-
-```shell
-pinset shim migrate --provider node
-```
-
-迁移只在目标目录创建或复用受管入口；旧目录中的文件会被报告并保留，不会自动删除。
-
-不传 `--provider` 和命令名时，修复命令从最近项目配置与全局配置发现已选择 Provider；高级
-场景可显式传入命令名、`--binary` 和 `--dir`。注册先预检整组目标，已由同一调度器管理的入口
-幂等复用；任何外部同名文件都会使整组注册停止，且不会留下部分入口或覆盖其他管理器。
-Unix 使用指向通用路由器的符号链接；Windows 使用稳定 `.cmd` 包装器，升级
-`pinset-shim.exe` 后无需复制四份新二进制。同目录已有任一同名 `.exe`、`.cmd`、`.bat` 或
-无扩展入口都会被视为冲突。
-
-### 17.6 国内或企业镜像
-
-镜像必须保持 Node 官方发布目录的相对路径结构：
-
-```bash
-pinset source add node company-mirror --base-url https://mirror.example/node/
-pinset source use node company-mirror
-pinset source fallback node official
-pinset source list node
-```
-
-恢复 official：
-
-```bash
-pinset source use node official
-pinset source fallback node
-```
-
-删除未被 active/fallback 引用的源：
-
-```bash
-pinset source remove node company-mirror
-```
-
-Pinset 不内置或自动启用公共第三方镜像。首次 `use` 仍需要从 Node 官方 HTTPS 清单取得
-哈希；如果项目已经提交锁文件，受限网络可以只通过批准镜像执行 `install --locked`。
-
-### 17.7 CI
-
-```bash
-pinset install --locked
-pinset exec -- node --version
-pinset exec -- npm ci
-pinset exec -- npm test
-```
-
-重复安装同一版本和目标时会验证收据及必要路径并直接复用。
-
-真实 Node 验收使用 CI 中仅手动触发的 `Ubuntu real runtime acceptance`，运行位置是 GitHub 一次性
-Ubuntu runner，所有状态写入临时 `PINSET_HOME`。普通 PR 和本地测试仍只使用假运行时，
-避免无意下载或修改开发者环境。
-
-### 17.8 Ubuntu/WSL 构建与测试
-
-Windows 编译的 PE 文件不能作为 Linux 原生 Pinset 使用。Ubuntu/WSL 应下载 Linux Release
-或在 Linux 文件系统中构建 ELF；源码建议放在 `$HOME` 下而不是 `/mnt/c`。
-
-构建依赖：
-
-```bash
-sudo apt update
-sudo apt install -y build-essential curl ca-certificates git pkg-config liblzma-dev
-curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
-source "$HOME/.cargo/env"
-rustup update stable
-```
-
-最低 Rust 版本为 1.85。构建和验证：
-
-```bash
-git clone git@github.com:Future-Element/pinset.git "$HOME/src/Pinset"
-cd "$HOME/src/Pinset"
-cargo build --release --locked -p pinset-cli -p pinset-shim
-file target/release/pinset target/release/pinset-shim
-ldd target/release/pinset
-target/release/pinset --version
-```
-
-开发测试：
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-```
-
-自动化测试只使用临时目录、本地假 HTTP 服务、构造归档和假运行时，不安装真实语言运行时。
-
-### 17.9 alpha.3 新增功能
-
-以下命令已随 `0.1.0-alpha.3` 发布：
-
-```bash
 pinset list node
 pinset list node --available
-pinset use node@24 --no-install
-pinset exec node@24.0.0 -- node --version
-pinset uninstall node@24.0.0
-pinset cache list
-pinset cache clean
-pinset source test node company-mirror
-pinset doctor --json
-pinset import --dry-run
 ```
 
-`uninstall` 默认拒绝删除当前项目或全局仍引用的版本；`--force` 只跳过引用检查，不会删除
-Pinset 数据目录之外、缺少收据或收据身份不匹配的目录。`cache clean` 只删除
-`downloads/sha256/<SHA-256>.archive` 普通文件。`import --dry-run` 只读取当前目录中的旧管理器
-配置并报告冲突，不会写入 `pinset.toml`。
+本地列表只读安装收据；可用列表读取可信版本索引。损坏或无收据目录不得伪装成受管安装。
 
-alpha.5 可在确认后显式导入，并始终保留原文件：
+### 5.9 安装事务
+
+安装流程：
+
+1. 验证工具、版本和目标路径段；
+2. 对 `tool + version + target` 获取跨进程文件锁；
+3. 检查已有安装收据；
+4. 检查内容寻址缓存；
+5. 按来源下载或断点续传；
+6. 校验下载大小和 SHA-256；
+7. 在随机临时目录安全解压；
+8. 验证必需命令；
+9. 写完整安装收据；
+10. 原子发布到最终目录。
+
+ZIP/TAR.XZ 必须拒绝路径穿越、绝对路径、特殊文件、逃逸符号链接、冲突路径、条目数超限和展开大小超限。
+
+### 5.10 下载体验
+
+- TTY 在一行内刷新进度；
+- 进度宽度根据终端列数和 Unicode 显示宽度调整；
+- 长文件名中间截断；
+- 最后一列留空，避免终端自动换行；
+- 非 TTY 只输出有限的开始/完成事件；
+- 断点续传验证 `Content-Range`；
+- 服务器忽略 Range 时从头安全下载；
+- 校验失败删除不可信断点文件。
+
+### 5.11 镜像和回退
+
+普通镜像只替换归档 URL，官方 HTTPS `SHASUMS256.txt` 仍是信任根。`--trust-metadata` 允许 HTTPS 自定义源同时提供 `index.json` 和 SHASUMS；这是显式扩大信任边界，必须在列表和文档中可见。
+
+`--allow-insecure` 只用于明确可信的 HTTP 内网服务，不能与 `--trust-metadata` 同时使用。
+
+只有网络和传输错误可以 fallback。大小限制、哈希不匹配、格式错误和安全解压错误必须停止。
+
+### 5.12 离线缓存导入
 
 ```shell
-pinset import --apply --from nvm
-pinset import --apply --from volta --global --no-install
+pinset cache import <archive> --sha256 <hash>
 ```
 
-多个旧文件给出不同版本且没有 `--from` 时，导入会在写入前失败。
+要求：
 
-### 17.10 alpha.4 新增功能
+- 输入必须是普通非符号链接文件；
+- 限制最大输入大小；
+- 流式复制并计算 SHA-256；
+- 不匹配时不写缓存；
+- 使用临时文件和 no-clobber 原子提交；
+- 并发提交已存在相同哈希时重新验证；
+- `cache clean` 同时清理识别的完整归档与断点文件，保留未知项。
 
-```bash
-pinset global node@24
-pinset global
-pinset shim install
-pinset shim path
-```
+### 5.13 卸载
 
-`global` 不带参数时只读查看用户默认，带参数时解析精确版本、写入全局配置和锁，并默认安装
-当前平台。下载 Node 归档时，交互终端显示进度条、百分比和字节数；完成提示只在 SHA-256
-校验通过后出现。非交互环境输出简洁状态，内容寻址缓存命中不产生伪下载进度。
+单版本卸载只接受精确版本并验证 Pinset 收据。项目或全局仍引用时默认拒绝；`--force` 只允许引用暂时失效，不能跳过路径和所有权保护。
 
-### 17.11 alpha.6 完整卸载
+完整卸载脚本：
 
-完整卸载与 `pinset uninstall node@<version>` 不同：后者只删除一个已安装版本，并保护仍被项目
-或全局状态引用的版本；前者用于从当前操作系统移除整个 Pinset 用户安装，包括所有受管语言。
+- 默认要求二次确认；
+- 支持 dry-run；
+- 删除 Pinset CLI、通用路由、受管 Provider 入口和整个标准 `PINSET_HOME`；
+- 自定义 `PINSET_HOME` 需要额外授权；
+- 不扫描项目，不改 profile，不删外部管理器或系统运行时。
 
-Release 提供两个独立脚本：
+### 5.14 迁移
 
-- Linux、macOS、WSL：`uninstall.sh`；
-- Windows：`uninstall.ps1`。
+检测 `.nvmrc`、`.node-version`、Volta、asdf 和 mise。`--dry-run` 只读；`--apply` 明确写入 Pinset，保留旧文件。冲突时必须要求 `--from`。
 
-两个脚本默认只输出即将删除和保留的目标，不执行删除；`--dry-run` / `-DryRun` 明确表示只读
-预览，`--yes` / `-Yes` 才授权执行。执行顺序为：
+### 5.15 诊断
 
-1. 解析平台默认安装目录、默认 `PINSET_HOME` 和显式覆盖；
-2. 拒绝文件系统根、HOME、XDG/LocalAppData 根、符号链接或 junction 数据根；
-3. 对自定义 `PINSET_HOME` 要求额外的 `--allow-nonstandard-home` / `-AllowNonstandardHome`；
-4. 在删除通用路由器前，通过符号链接目标、Windows wrapper 精确内容、硬链接或文件哈希验证
-   当前 Provider 命令入口确实由 Pinset 管理；
-5. 删除 CLI、通用路由器、已验证路由和整个 `PINSET_HOME`。`installs/` 下的 Node 及未来其他
-   Provider 运行时、下载缓存、全局状态和本机设置全部随数据根删除。
+`doctor` 和 schema 1 的 `doctor --json` 报告：
 
-脚本不会搜索工作区，因此项目中的 `pinset.toml` 与 `pinset.lock` 会保留；也不编辑 shell/
-PowerShell profile，不删除系统运行时、nvm/fnm/Volta 等外部管理器或无法验证所有权的同名命令。
-用户需要自行删除曾手动写入 profile 的 Pinset PATH 行或持久化的 `PINSET_*` 环境变量。
+- `PINSET_HOME`；
+- 项目和全局配置/锁文件；
+- 生效来源和安装状态；
+- 四个 Node 命令的 PATH 候选和遮挡；
+- Pinset 路由所有权；
+- 旧 shim 和已知旧管理器；
+- 可执行的修复建议。
 
-固定预发布用法：
+诊断不得修改状态。
 
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
-  sh -s -- --dry-run
-```
+## 6. 国际化
 
-确认输出后将 `--dry-run` 改为 `--yes`。Windows 应先下载 `uninstall.ps1`，运行
-`./uninstall.ps1 -DryRun`，确认后运行 `./uninstall.ps1 -Yes`，避免把远程脚本与删除授权合并成
-无法复核的一步。
+Beta 支持：
 
-## 18. 诊断与常见问题
+- `en`；
+- `zh-CN`。
 
-```bash
-pinset doctor
-```
+无子命令的 `pinset --lang <lang>` 持久保存到 `PINSET_HOME/settings.toml`；有子命令时只覆盖当前进程。`PINSET_LANG` 可做环境级临时覆盖。
 
-alpha.3 会只读检查数据目录、最近项目配置、正式全局状态、锁匹配、当前目标安装、shim PATH
-和其他 Node 候选。常见问题：
+正常提示、帮助、诊断、常见错误和进度信息应接入统一目录；底层操作系统错误、路径、URL 和哈希保留原值。
 
-- `pinset.toml was not found`：进入项目目录或先执行 `pinset init`。
-- `lockfile does not match`：执行 `pinset use node@完整版本 --no-install` 并审查锁文件。
-- `runtime ... missing`：执行 `pinset install --locked`。
-- shim 目标已存在：先确认来源；Pinset 不覆盖其他管理器或用户文件。
-- 镜像返回 404：检查 base URL 是否指向 Node 发布目录根，或该版本是否已同步。
-- 哈希不匹配：停止使用该源并调查；Pinset 没有关闭校验的选项。
-- npm/corepack 报 `/usr/bin/env: node: No such file`：确认使用包含所选 runtime PATH 修复的
-  `v0.1.0-alpha.1` 或更高版本，并通过 `pinset exec -- npm --version` 复验。
-- Ubuntu 源码构建报 `linker cc not found`：安装 `build-essential`。
-- WSL 运行 Windows 产物失败：改用 Linux x64 Release 或在 WSL 中构建 ELF。
+## 7. 安全和供应链
 
-诊断输出和提交 Issue 前应移除凭据、代理 Token、完整敏感 URL 和不必要的用户路径。
+### 7.1 Node 归档
 
-## 19. 安全与供应链威胁模型
+- 从可信元数据源获得预期 SHA-256；
+- 下载源不得改变锁文件中的预期哈希；
+- 所有归档在解压前校验；
+- Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，这是稳定版门禁。
 
-必须持续覆盖：
+### 7.2 Pinset Release
 
-- 哈希不匹配、签名身份混淆、镜像替换和元数据回滚；
-- ZIP/TAR 路径穿越、绝对路径、链接逃逸、压缩炸弹和磁盘耗尽；
-- 下载截断、并发安装、进程崩溃、锁损坏和断电持久性；
-- 企业 TLS 代理、自定义 CA、离线缓存污染和敏感 URL 泄露；
-- Windows 长路径、保留名、ADS、Unicode/大小写碰撞和文件占用；
-- 卸载或缓存清理越过 Pinset 数据所有权边界；
-- shim 自递归、PATH 遮蔽和项目配置诱导执行代码。
+- tag 必须与 workspace 版本和安装器默认版本一致；
+- Linux、Windows、macOS 在独立 Runner 构建；
+- Release 归档包含且只包含 CLI 与通用 shim；
+- Release 发布 SHA256SUMS；
+- 发布 CycloneDX JSON SBOM；
+- GitHub Actions 为归档和发布元数据生成构建来源证明；
+- Release tag 使用维护者签名；
+- GitHub Actions 引用固定完整 commit SHA。
 
-发布物目标包括 SHA-256、SBOM 和 artifact attestation。Attestation 只能关联产物、源码和
-构建工作流，不代表代码没有漏洞。Node 稳定版前仍需完成授权发布密钥、签名 SHASUMS 和
-离线密钥轮换策略。
+### 7.3 密钥和凭据
+
+- URL 写入收据前移除用户名、密码、query 和 fragment；
+- 日志不得输出 GitHub token、镜像凭据或代理密码；
+- Pinset 不保存包管理器凭据。
+
+## 8. 架构
+
+### 8.1 Workspace
+
+- `pinset-core`：配置、锁文件、Provider、来源、安装、缓存、解析和安全边界；
+- `pinset-cli`：命令解析、交互、国际化、进度和用户输出；
+- `pinset-shim`：轻量命令调度入口。
+
+### 8.2 数据目录
+
+默认：
+
+- Linux/macOS/WSL：`$XDG_DATA_HOME/pinset` 或 `$HOME/.local/share/pinset`；
+- Windows：`%LOCALAPPDATA%\pinset`。
+
+测试和 CI 必须显式设置随机临时 `PINSET_HOME`。除完整卸载专项测试外，不得对真实用户目录执行删除。
+
+## 9. Beta 验收标准
+
+### 9.1 本地门禁
+
+- `cargo fmt --all -- --check`；
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`；
+- `cargo test --workspace --all-features`；
+- 锁定 release build；
+- POSIX 安装/卸载脚本隔离测试；
+- PowerShell 卸载脚本隔离测试；
+- shim 轻依赖检查；
+- `git diff --check`。
+
+这些检查只使用临时目录、假归档和本地服务，不在开发机安装真实 Node。
+
+### 9.2 Release 门禁
+
+每个支持平台必须在隔离 Runner 中：
+
+- 构建 locked release 二进制；
+- 设置中文并验证持久化；
+- 安装一个全局 Node 和一个项目 Node；
+- 验证项目覆盖与离开项目后的全局恢复；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack；
+- 验证 PATH 直接调用的 node/npm/npx/corepack；
+- 运行安装器/卸载器隔离测试；
+- 生成并发布归档、校验、SBOM 和来源证明。
+
+任一平台失败不得创建完整 Release。
+
+## 10. 稳定版前待办
+
+`v0.1.0` 稳定门禁：
+
+- 验证 Node 上游 SHASUMS OpenPGP 签名，并定义密钥轮换策略；
+- 冻结 schema 1 兼容承诺和迁移策略；
+- 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
+- 决定 Linux arm64 与 macOS Intel 正式归档策略；
+- 完成发布回滚、撤回和安全公告流程；
+- 不增加新 Provider，除非 Node 稳定门禁已全部满足。
+
+Python、Flutter 的研究和实现排在 `v0.1.0` 稳定之后，必须复用 Provider、来源、缓存、路由和安全模型，而不是在 CLI 中写新的特例。

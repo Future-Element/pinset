@@ -70,6 +70,48 @@ fn cache_list_and_clean_leave_unknown_files_untouched() {
     assert!(!cache.join(format!("{hash}.archive")).exists());
 }
 
+#[test]
+fn cache_import_requires_and_records_the_declared_sha256() {
+    let root = tempdir().expect("temporary root");
+    let home = root.path().join("home");
+    let project = root.path().join("project");
+    let archive = root.path().join("node.tar.xz");
+    fs::create_dir_all(&project).expect("project");
+    fs::write(&archive, b"offline archive").expect("archive");
+    let hash = "057057782a64b95b5932387e720906f95b9524d21984e0494f0db565abf37c8b";
+
+    let imported = pinset(
+        &project,
+        &home,
+        &[
+            "cache",
+            "import",
+            archive.to_str().expect("UTF-8 archive"),
+            "--sha256",
+            hash,
+        ],
+    );
+    assert_success_contains(&imported, hash);
+    assert_eq!(
+        fs::read(home.join(format!("downloads/sha256/{hash}.archive"))).expect("cached archive"),
+        b"offline archive"
+    );
+
+    let rejected = pinset(
+        &project,
+        &home,
+        &[
+            "cache",
+            "import",
+            archive.to_str().expect("UTF-8 archive"),
+            "--sha256",
+            &"0".repeat(64),
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert!(stderr(&rejected).contains("SHA-256 mismatch"));
+}
+
 fn create_install_receipt(home: &Path, version: &str, target: &str) {
     let directory = home
         .join("installs")

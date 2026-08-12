@@ -3,7 +3,8 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-VERSION="${PINSET_VERSION:-}"
+DEFAULT_VERSION="0.1.0-beta.1"
+VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
 PINSET_TEMP=""
@@ -17,8 +18,8 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 0.1.0.
-                          Without this option, install the latest stable release.
+  --version VERSION       Install an exact release, for example 0.1.0-beta.1.
+                          Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
   -h, --help              Show this help.
 
@@ -86,17 +87,12 @@ case "$INSTALL_DIR" in
     *) fail "install directory must be an absolute path: $INSTALL_DIR" ;;
 esac
 
-if [ -n "$VERSION" ]; then
-    VERSION=${VERSION#v}
-    case "$VERSION" in
-        ''|[!0-9A-Za-z]*|*[!0-9A-Za-z.-]*) fail "invalid version: $VERSION" ;;
-    esac
-    RELEASE_BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
-    RELEASE_LABEL="v$VERSION"
-else
-    RELEASE_BASE_URL="https://github.com/$REPOSITORY/releases/latest/download"
-    RELEASE_LABEL="latest stable release"
-fi
+VERSION=${VERSION#v}
+case "$VERSION" in
+    ''|[!0-9A-Za-z]*|*[!0-9A-Za-z.-]*) fail "invalid version: $VERSION" ;;
+esac
+RELEASE_BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
+RELEASE_LABEL="v$VERSION"
 
 # Reserved for the repository's offline installer tests. It is deliberately
 # unavailable unless test mode is explicitly enabled.

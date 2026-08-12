@@ -38,6 +38,7 @@ struct NodeIndexEntry {
 pub struct NodeMetadataClient {
     client: Client,
     metadata_base_url: Url,
+    verification: String,
 }
 
 impl NodeMetadataClient {
@@ -50,10 +51,15 @@ impl NodeMetadataClient {
             client,
             metadata_base_url: Url::parse(OFFICIAL_NODE_DIST_URL)
                 .expect("built-in Node distribution URL is valid"),
+            verification: "nodejs-shasums-https".to_owned(),
         })
     }
 
     pub fn for_base_url(base_url: &str) -> Result<Self> {
+        Self::for_source(base_url, "custom")
+    }
+
+    pub fn for_source(base_url: &str, alias: &str) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -66,6 +72,7 @@ impl NodeMetadataClient {
         Ok(Self {
             client,
             metadata_base_url,
+            verification: format!("nodejs-shasums-https-source:{alias}"),
         })
     }
 
@@ -105,7 +112,7 @@ impl NodeMetadataClient {
                             NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
                         },
                         archive_root: plan.archive_root,
-                        verification: "nodejs-shasums-https".to_owned(),
+                        verification: self.verification.clone(),
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -463,6 +470,7 @@ mod tests {
                 .build()
                 .expect("client"),
             metadata_base_url: Url::parse(&base_url).expect("base URL"),
+            verification: "nodejs-shasums-https-test".to_owned(),
         };
 
         let lockfile = client
@@ -497,6 +505,7 @@ mod tests {
                 .build()
                 .expect("client"),
             metadata_base_url: Url::parse(&base_url).expect("base URL"),
+            verification: "nodejs-shasums-https-test".to_owned(),
         };
         let error = client
             .resolve_exact_lock("24.0.0", "pinset test")
@@ -556,6 +565,7 @@ mod tests {
                 .build()
                 .expect("client"),
             metadata_base_url: Url::parse(base_url).expect("base URL"),
+            verification: "nodejs-shasums-https-test".to_owned(),
         }
     }
 }

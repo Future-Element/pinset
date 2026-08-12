@@ -32,7 +32,7 @@ pub use config::{create_project_config, save_project_config};
 #[cfg(feature = "installer")]
 pub use download_cache::{
     DownloadCacheCleanOutcome, DownloadCacheEntry, clean_download_cache, download_cache_path,
-    list_download_cache,
+    import_download_cache, list_download_cache,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "state-write")]

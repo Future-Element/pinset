@@ -1,55 +1,122 @@
-# Pinset 发布说明
+# Pinset Release Notes
 
-本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
-[Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
+本文件记录公开版本的用户可见变化、安装方式、验证边界和已知限制。计划中的功能不写成已交付；候选版本在 GitHub Release 实际完成前明确标注为待发布。
 
-## v0.1.0-alpha.6
+## v0.1.0-beta.1（待发布）
 
-- 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- 完整卸载脚本：Unix/WSL/macOS `uninstall.sh`、Windows `uninstall.ps1`
-- GitHub Release：[v0.1.0-alpha.6](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.6)
+- 目标日期：`2026-08-12`
+- 阶段：Node-first Beta / GitHub prerelease
+- 许可证：MIT
+- Pinset 归档：Linux x64、Windows x64、macOS Apple Silicon
+- Node 目标：Windows x64、Linux x64、macOS x64、macOS arm64
 
-### 更新内容
+### 重点变化
 
-- 新增不依赖 Pinset CLI 仍可运行的官方完整卸载脚本；默认只显示清理计划，必须通过
-  `--yes` / `-Yes` 显式确认。
-- 完整卸载会删除 `pinset`、`pinset-shim`、可验证为 Pinset 所有的 Provider 命令入口，以及
-  整个 `PINSET_HOME`；其中包括全局状态、设置、缓存和 `installs/` 下的全部受管语言运行时。
-- Provider 命令入口在通用路由器删除前，通过 Unix 符号链接目标/文件内容或 Windows wrapper
-  精确内容/文件哈希验证；不能证明所有权的同名命令始终保留。
-- 拒绝文件系统根、HOME、XDG/LocalAppData 根、`.`/`..` 路径穿越、符号链接或 junction 数据根。
-  自定义 `PINSET_HOME` 必须增加 `--allow-nonstandard-home` / `-AllowNonstandardHome` 二次授权。
-- 项目中的 `pinset.toml`、`pinset.lock`、shell/PowerShell profile、系统运行时和 nvm/fnm/Volta
-  等外部管理器文件不会被搜索或删除。
-- Release 工作流把两个卸载脚本作为独立资产发布，并与安装器和三平台归档一起写入
-  `SHA256SUMS`。
+#### 更短的 curl 安装命令
 
-### 验证范围
-
-- Windows PowerShell 隔离测试和 WSL POSIX Shell 隔离测试覆盖未确认、dry-run、自定义目录授权、
-  宽路径/路径穿越拒绝、全部假语言运行时删除、外部命令及项目文件保留。
-- 117 项锁定 workspace 测试、严格 Clippy、PowerShell/POSIX 语法、锁定 Windows Release 构建和
-  差异检查通过。
-- 所有卸载测试只处理随机临时目录中的假 CLI、假路由、假 Node/Python 安装；没有修改真实
-  `PINSET_HOME`、PATH、shell profile 或语言运行时。
-- `main` Quality [run 31579128737](https://github.com/Future-Element/pinset/actions/runs/31579128737)
-  和 tag Release [run 31579293998](https://github.com/Future-Element/pinset/actions/runs/31579293998)
-  全部成功。
-- 发布后重新下载 7 个公开资产并复算 `SHA256SUMS` 六项；Linux/macOS 归档只包含 `pinset`、
-  `pinset-shim`，Windows ZIP 只包含对应的两个 `.exe`，公开 Windows CLI 输出
-  `pinset 0.1.0-alpha.6`。
-- 公开下载的 `uninstall.sh` 与 `uninstall.ps1` 均在独立临时目录完成 dry-run 和确认删除，模拟
-  CLI、路由器及整个模拟 `PINSET_HOME` 被删除，项目 `pinset.toml` 被保留。
-
-### Linux x64 / macOS Apple Silicon 安装
+Linux x64、macOS Apple Silicon 和 WSL 的推荐入口变为：
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/install.sh |
-  sh -s -- --version 0.1.0-alpha.6
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh
+```
+
+安装器内置当前推荐版本，仍支持 `--version` 或 `PINSET_VERSION` 覆盖。安装器内部继续强制 HTTPS/TLS、下载同一 Release 的 `SHA256SUMS` 并验证归档，因此简化的是用户输入，不是校验流程。
+
+固定 Beta Release：
+
+```bash
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.1.0-beta.1/install.sh | sh
+```
+
+curl 仍然只安装 `pinset` 与通用 `pinset-shim`，不安装 Node，不创建 node/npm/npx/corepack 文件，不修改 shell profile。
+
+#### 下载进度不再逐行刷屏
+
+- TTY 进度只在同一行刷新；
+- 根据终端列数动态调整进度条；
+- 使用 Unicode 显示宽度正确处理中文；
+- 长归档名从中间截断；
+- 保留终端最后一列，避免自动折行；
+- 非交互环境保持有限的开始/完成日志。
+
+#### 断点续传和并发安装
+
+- 相同 `tool + version + target` 使用跨进程文件锁；
+- 多个 Pinset 进程同时安装同一 Node 时只执行一次下载和提交；
+- 未完成归档保存在按预期 SHA-256 命名的断点缓存中；
+- 重试发送 HTTP Range，并验证 `Content-Range` 起点；
+- 服务端忽略 Range 或拒绝范围时安全从头下载；
+- SHA-256 不匹配会删除不可信断点并停止安装。
+
+#### 离线缓存导入
+
+新增：
+
+```shell
+pinset cache import <archive> --sha256 <64位SHA-256>
+```
+
+导入会验证普通文件边界、最大大小和完整 SHA-256，再原子写入内容寻址缓存。之后可通过 `pinset install --locked` 离线复用。`cache clean` 同时清理完整归档和可识别的断点文件。
+
+#### 国内和企业镜像
+
+普通自定义镜像仍只替换归档传输：
+
+```shell
+pinset source add node cn-mirror --base-url https://mirror.example/node/
+pinset source use node cn-mirror
+pinset source fallback node official
+```
+
+新增显式可信元数据镜像，可同时读取 Node `index.json` 和 `SHASUMS256.txt`：
+
+```shell
+pinset source add node cn-trusted \
+  --base-url https://mirror.example/node/ \
+  --trust-metadata
+pinset source use node cn-trusted
+```
+
+`--trust-metadata` 只允许 HTTPS，并在 `source list` 中标记。它会扩大本机信任边界，只应对经过审阅或组织控制的镜像使用。
+
+#### Node 工作流完成 Beta 收口
+
+- 全局版本：`pinset global node@lts`；
+- 项目版本：`pinset init && pinset use node@22`；
+- 独立预装：`pinset install node@20`；
+- 精确、主版本、主次版本、LTS、Current 选择器；
+- 项目 > 全局 > 系统 PATH 的统一解析；
+- `node`、`npm`、`npx`、`corepack` 自动命令路由；
+- `pinset exec` 和 PATH 直接执行使用相同 Node bin；
+- 旧 nvm/Volta/asdf/mise 只读检测和显式导入；
+- 单版本安全卸载和完整 Pinset 卸载；
+- 英文与简体中文提示。
+
+#### Release 供应链
+
+Release 工作流新增：
+
+- Linux、Windows、macOS 各自隔离构建；
+- 每个平台安装真实 Node 24.0.0 全局版本和 22.0.0 项目版本；
+- 每个平台验证 node/npm/npx/corepack 的 `pinset exec` 与 PATH 直接调用；
+- 发布 `pinset-cli.cdx.json`、`pinset-core.cdx.json`、`pinset-shim.cdx.json`；
+- 对三平台归档生成 GitHub 构建来源证明；
+- 对安装器、卸载器、校验和与 SBOM 生成来源证明；
+- `SHA256SUMS` 覆盖全部公开资产。
+
+### 升级
+
+重复运行短安装命令会原子替换 Pinset 的两个二进制，不会删除配置、缓存或已安装 Node：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh
+```
+
+原有 `pinset.toml`、`pinset.lock`、全局选择和 Node 安装继续使用 schema 1，无需项目迁移。来自早期 `$PINSET_HOME/shims` 布局的用户可以执行：
+
+```shell
+pinset shim migrate --provider node
+pinset doctor
 ```
 
 ### 完整卸载
@@ -57,411 +124,86 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 Linux、macOS、WSL 先预览：
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/uninstall.sh |
   sh -s -- --dry-run
 ```
 
-确认计划后把 `--dry-run` 改为 `--yes`。Windows 从 Release 下载 `uninstall.ps1`，依次执行
-`./uninstall.ps1 -DryRun` 和 `./uninstall.ps1 -Yes`。
+确认后：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/uninstall.sh |
+  sh -s -- --yes
+```
+
+Windows 从 Release 下载 `uninstall.ps1`，依次执行 `./uninstall.ps1 -DryRun` 与 `./uninstall.ps1 -Yes`。
+
+### 候选验证边界
+
+发布前本地门禁计划包括：
+
+- Rust 格式检查；
+- workspace 全目标、全 feature 严格 Clippy；
+- workspace 全 feature 测试；
+- locked release build；
+- POSIX 安装/卸载脚本隔离测试；
+- PowerShell 卸载器隔离测试；
+- shim 依赖图和 `git diff --check`。
+
+这些本地检查使用临时目录、假归档、本地 HTTP 和假运行时，不会在开发机安装真实 Node。三平台真实 Node 验收只在 tag Release 工作流的隔离 Runner 中执行。
+
+GitHub Release、Actions run、最终测试数量、资产复算和 attestation 验证结果将在发布完成后补充；在此之前不声称 Beta 已发布。
 
 ### 已知限制
 
-- 脚本不修改 shell profile 或持久化环境变量；用户需自行删除曾手动添加的 PATH 行和
-  `PINSET_*` 环境变量。
-- Python、Flutter、PGP 验签和中央包管理器分发仍未交付。
-- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+- 当前只完整支持 Node.js，未接入 Python 和 Flutter；
+- Pinset 暂无 Linux arm64 和 macOS Intel 官方归档；
+- 不维护 Homebrew Tap、Scoop Bucket 或其他第三方分发仓库；
+- Pinset 校验 Node HTTPS SHASUMS 中的 SHA-256，但尚未验证上游 OpenPGP 签名；
+- 不自动修改 shell profile、系统 PATH 或 IDE；
+- 这是预发布版本，schema 和兼容承诺将在稳定版前冻结。
+
+## v0.1.0-alpha.6
+
+- 发布日期：`2026-08-12`
+- GitHub Release：[v0.1.0-alpha.6](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.6)
+
+新增 Linux/macOS/WSL 与 Windows 完整卸载脚本；支持 dry-run、二次确认、自定义 `PINSET_HOME` 额外授权、Provider 路由所有权验证，以及清理 Pinset 安装的全部语言运行时。卸载器不搜索项目文件、不改 profile、不删除外部管理器或系统运行时。
+
+同时修复 alpha.5 在跨 Shell 和目标平台验收中发现的兼容问题。公开 Release 包含三平台归档、安装器、两个卸载器和 SHA256SUMS。
 
 ## v0.1.0-alpha.5
 
-- 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- 发布日期：`2026-08-12`
 - GitHub Release：[v0.1.0-alpha.5](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.5)
 
-### 更新内容
+Node Provider 统一声明和自动注册 `node`、`npm`、`npx`、`corepack`，正常使用不再要求先执行 `shim install`。新增独立版本安装、项目/全局选择清除、旧配置显式导入、旧 shim 迁移和 Bash/Zsh/Fish/PowerShell 临时激活。
 
-- Node Provider 统一声明 `node`、`npm`、`npx`、`corepack`；选择或安装 Node 后自动注册整组
-  命令入口，正常使用不再要求手动执行 `shim install`。
-- curl 安装器继续只安装 `pinset` 与通用 `pinset-shim`，不创建语言命令、不安装 Node，确保
-  后续扩展其他运行时时安装器仍保持中立。
-- 新增 `pinset install node@<selector>`，可预装精确或浮动选择器对应版本，不修改项目配置或
-  全局默认。
-- 新增 `pinset unset node [--global]`，只清除项目或全局选择并回退上一层，不隐式删除安装和缓存。
-- 新增 `pinset import --apply [--from <source>] [--global] [--no-install]`，在用户明确确认后导入
-  nvm、`.node-version`、Volta、asdf 或 mise 配置；冲突时拒绝猜测，原文件始终保留。
-- 新增 `pinset shim migrate --provider node`，为 alpha.4 用户显式准备新路由目录，同时报告并
-  保留旧 shim。
-- 新增 Bash、Zsh、Fish 和 PowerShell 的 `pinset activate <shell>`，仅输出通用 PATH 操作，
-  不写 shell profile，也不包含 Node 专用逻辑。
-- Windows 使用稳定 `.cmd` 路由，Unix 使用指向通用调度器的符号链接；升级调度器后无需复制
-  四份命令二进制。
-- `doctor` 与 `doctor --json` 现在检查四个 Node 命令的 PATH 候选、生效顺序、Pinset 所有权、
-  外部遮蔽、旧 shim 与旧管理器，并给出可逆建议。
-
-### 验证范围
-
-- Windows 格式、严格 Clippy、117 项锁定 workspace 全功能测试、锁定 Release 构建和差异检查通过。
-- WSL 在独立 `/tmp` target 中完成同一组 117 项 Linux 测试；离线安装器假归档测试通过。
-- 自动化只使用临时目录、假运行时、本地构造归档和假 shim；未在开发机下载或安装真实 Node。
-- main 质量门禁 [#31576332545](https://github.com/Future-Element/pinset/actions/runs/31576332545)
-  通过；标签 Release 工作流
-  [#31576490916](https://github.com/Future-Element/pinset/actions/runs/31576490916) 完成同一质量门禁、
-  Linux x64、Windows x64、macOS Apple Silicon 构建并发布五个预期资产。
-- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档各只包含 `pinset` 与
-  `pinset-shim`，Windows ZIP 只包含两个 `.exe`。Windows CLI 输出 `pinset 0.1.0-alpha.5`，
-  并确认 `activate`、`global`、`import`、`install`、`shim`、`unset` 命令存在。
-
-### Linux x64 / macOS Apple Silicon 安装
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.5/install.sh |
-  sh -s -- --version 0.1.0-alpha.5
-```
-
-默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
-不安装 Node，并强制校验 Release 的 SHA-256。Windows 使用 Release ZIP。
-
-### 已知限制
-
-- Python、Flutter、PGP 验签和中央包管理器分发尚未交付。
-- Pinset 不自动修改 shell profile、系统 PATH、IDE 配置，也不覆盖其他管理器的同名命令。
-- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+curl 安装器只安装 Pinset 与通用调度器，保持对未来 Provider 中立。
 
 ## v0.1.0-alpha.4
 
-- 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- 发布日期：`2026-08-12`
 - GitHub Release：[v0.1.0-alpha.4](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.4)
 
-### 更新内容
-
-- 新增 `pinset global [node@selector]` 一等入口：不带参数只读查看全局默认，带参数设置、
-  锁定并默认安装；原有 `pinset use node@... --global` 保持兼容。
-- 在项目 Node 覆盖全局默认时，`pinset global` 明确显示两个版本和生效项目配置路径；
-  `pinset current` 继续显示当前目录最终生效结果。
-- `pinset shim install` 默认寻找与 CLI 同目录的 `pinset-shim` 并安装到
-  `$PINSET_HOME/shims`；新增只读 `pinset shim path`，仍不覆盖已有文件或修改 PATH。
-- Node 归档下载在交互终端显示进度条、百分比、已下载/总大小；非交互环境输出简洁状态，
-  缓存命中不显示伪下载进度。
-- 下载完成提示仅在 SHA-256 校验成功后出现；网络、大小限制或哈希错误保持失败关闭。
-- README 新增从安装、PATH、语言、全局/项目版本、shim、进度、镜像到诊断的完整使用说明。
-
-### 验证范围
-
-- 本地格式、严格 Clippy、102 项 workspace 全功能测试、锁定 Release 构建和差异检查通过。
-- 自动化使用临时目录、本地假 HTTP、构造归档、假 shim 和假运行时，不安装真实 Node。
-- 安装器测试覆盖已知内容长度的开始、字节推进、校验完成事件，以及缓存、回退和失败关闭。
-- GitHub Release 工作流完成质量门禁和 Linux x64、Windows x64、macOS Apple Silicon
-  构建，并发布五个预期资产。
-- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；三个归档只包含预期 CLI 与 shim，
-  Windows CLI 输出 `pinset 0.1.0-alpha.4` 并确认包含 `global` 命令。
-
-### Linux x64 / macOS Apple Silicon 安装
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.4/install.sh |
-  sh -s -- --version 0.1.0-alpha.4
-```
-
-默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
-不安装 Node，并强制校验 Release 的 SHA-256。Windows 使用 Release ZIP。
-
-### 已知限制
-
-- Python、Flutter、PGP 验签和中央包管理器分发尚未交付。
-- Pinset 不自动修改 shell profile；直接调用 `node` 前仍需把 shim 目录加入 PATH。
-- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+新增一等 `pinset global` 入口、项目覆盖解释、shim 路径查看和首次下载进度条。README 收口全局与项目 Node 的用户流程。
 
 ## v0.1.0-alpha.3
 
-- 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- 发布日期：`2026-08-12`
 - GitHub Release：[v0.1.0-alpha.3](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.3)
 
-### 更新内容
-
-- 支持 `node@24`、`node@24.12`、`node@lts` 和 `node@current`，解析后写入精确版本。
-- 新增本地安装列表与显式官方可用版本查询。
-- 新增精确版本安全卸载；当前项目或全局仍引用时默认拒绝，`--force` 仍不越过 Pinset
-  数据所有权边界。
-- 新增按 SHA-256 内容寻址的下载缓存、校验后离线复用、缓存查看和安全清理。
-- 新增 `source test node [alias]`，只读检查版本索引和最新稳定版 SHASUMS。
-- 新增 `doctor --json` schema 1 机器可读诊断。
-- 新增 `.nvmrc`、`.node-version`、Volta、asdf 和 mise 的 `import --dry-run` 只读检测。
-- 新增 `exec node@<selector> -- <command>` 一次性选择已安装版本，不修改项目或全局状态。
-- 所有新增正常提示、帮助和常见错误均支持英文与简体中文。
-
-### 验证范围
-
-- 97 项 workspace 测试、本地格式、严格 Clippy、锁定 Release 构建、下载缓存并发复验和
-  shim 轻依赖检查通过。
-- GitHub Release 工作流完成版本/tag 校验、质量门禁和 Linux x64、Windows x64、macOS
-  Apple Silicon 构建，并发布五个预期资产。
-- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档和 Windows ZIP
-  只包含预期的 CLI 与 shim，Windows CLI 输出 `pinset 0.1.0-alpha.3`。
-- 自动化仅使用临时目录、假运行时、本地 HTTP 和构造归档；没有安装真实 Node。
-- 真实目标系统功能验收由用户在发布后自行执行。
-
-### Linux x64 / macOS Apple Silicon 安装
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.3/install.sh |
-  sh -s -- --version 0.1.0-alpha.3
-```
-
-默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
-不安装 Node，并强制校验 Release 的 SHA-256。Windows 使用 Release ZIP。
-
-### 已知限制
-
-- Python、Flutter、PGP 验签和中央包管理器分发尚未交付。
-- 一次性 `exec node@<selector>` 只执行已经安装的版本，不隐式安装运行时。
-- `import --dry-run` 只检测当前目录，不自动写入或删除旧管理器配置。
-- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+新增主版本/主次版本/LTS/Current 浮动选择、本地和官方版本列表、精确版本卸载、内容寻址缓存、来源测试、`doctor --json`、旧管理器只读检测和一次性精确版本执行。
 
 ## v0.1.0-alpha.2
 
-- 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- 发布日期：`2026-08-12`
 - GitHub Release：[v0.1.0-alpha.2](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.2)
 
-### 更新内容
-
-- 新增正式全局 Node 选择：
-
-  ```shell
-  pinset use node@24.0.0 --global
-  pinset install --global --locked
-  ```
-
-  全局状态保存在 `$PINSET_HOME/state/global.toml` 和 `global.lock`，不会写入当前项目或
-  `$HOME/pinset.toml`。
-- 统一 Node 解析顺序：最近项目配置优先，其次是 Pinset 全局选择，最后才是排除 Pinset
-  shim 后的系统 PATH。离开项目后自动恢复全局选择。
-- 项目或全局已经声明 Node、但对应安装缺失或损坏时失败关闭，不会静默使用低优先级版本。
-- `current`、`which`、`exec`、`doctor` 和 shim 共用同一来源感知解析结果，可区分
-  `project`、`global` 与 `system`。
-- `node`、`npm`、`npx` 和 `corepack` 使用同一所选 Node 命令目录；子进程 PATH 支持
-  `/usr/bin/env node` 启动方式。
-- 系统 Node 透传会排除 Pinset shim 目录和当前 shim 文件，防止直接或间接递归。
-- 新增英文与简体中文界面。无子命令时持久保存语言：
-
-  ```shell
-  pinset --lang zh-CN
-  ```
-
-  带子命令时只覆盖本次输出：`pinset --lang en doctor`。也可使用 `PINSET_LANG` 覆盖当前
-  进程；持久设置保存在 `$PINSET_HOME/settings.toml`，不修改项目文件。
-- 正常提示、诊断、帮助、参数错误和常见运行错误均接入同一语言目录；路径、版本和底层系统
-  错误仍保留原始技术值。
-- 保持 alpha.1 的 `schema = 1` 项目配置和锁文件兼容，不要求迁移现有项目。
-- CI 新增仅手动触发的隔离 Ubuntu 真实运行时验收，普通 PR 不重复下载真实 Node。
-
-### 验证范围
-
-- 78 项 workspace 测试、格式、Clippy、锁定 Release 构建、curl 安装器离线测试与 shim
-  轻依赖检查通过。
-- Linux x64、Windows x64、macOS arm64 Release 归档构建通过。
-- 一次性 Ubuntu Runner 使用临时 `PINSET_HOME` 安装 Node 24.0.0 全局版本与 Node 22.0.0
-  项目版本，验证项目覆盖、离开项目恢复全局版本、node/npm/corepack 和中文提示。
-- GitHub Release 工作流完成版本/tag 校验、质量门禁和三平台构建，并发布五个预期资产。
-- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档和 Windows ZIP
-  只包含预期的 CLI 与 shim，Windows CLI 输出 `pinset 0.1.0-alpha.2`。
-- 未在开发者 Windows 或 WSL 环境安装真实运行时。
-- 尚未完成 Windows 与 macOS 真实 Node 的人工流程验收；三平台构建通过不等同于三平台
-  真实运行时安装均已验收。
-
-### Linux x64 / macOS Apple Silicon 安装
-
-该版本发布后使用固定预发布 URL：
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.2/install.sh |
-  sh -s -- --version 0.1.0-alpha.2
-```
-
-默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
-不安装 Node，并强制校验 Release 的 SHA-256。
-
-### 全局与项目版本
-
-设置全局版本：
-
-```shell
-pinset use node@24.0.0 --global
-pinset current
-pinset exec -- node --version
-```
-
-在项目中覆盖全局版本：
-
-```shell
-mkdir demo && cd demo
-pinset init
-pinset use node@22.0.0
-pinset current
-pinset exec -- node --version
-```
-
-离开项目后，`pinset current` 与 shim 会重新解析到全局版本。若没有项目和全局声明，Pinset
-才会安全透传系统 PATH 中的相应 Node 命令。
-
-### 说明与已知限制
-
-- 仍只接受完整精确版本 `x.y.z`，不支持 `node@24`、`lts`、`latest` 或 `current`。
-- Python、Flutter、版本列表、卸载、浮动选择器和旧管理器导入尚未发布。
-- macOS x64 Node 产物可以写入锁文件，但本版本没有 macOS Intel Pinset CLI 归档。
-- curl 安装器支持 Linux x64 和 macOS Apple Silicon；Windows 使用 Release ZIP。
-- shim 仍需用户显式安装到自有目录并加入 PATH；Pinset 不修改 shell profile。
-- `$HOME/pinset.toml` 仍按普通最近项目配置处理，不会自动迁移或删除。
-- 系统 PATH 透传限于当前 Node-first 命令集合，不代表任意工具或 Shell activation。
-- Node 信任值仍来自官方 HTTPS `SHASUMS256.txt`；PGP 验签属于稳定版前的供应链增强。
-- 项目不维护第三方 Homebrew Tap、Scoop Bucket 或社区镜像 preset。
+新增正式全局 Node 选择、项目 > 全局 > 系统 PATH 的统一解析、Node 子进程 PATH 修复，以及英文/简体中文界面。Ubuntu 隔离 Runner 首次验收真实全局与项目 Node 切换。
 
 ## v0.1.0-alpha.1
 
-- 版本日期：2026-08-11
-- 发布阶段：Alpha 预发布
-- 许可证：MIT License
-- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
-- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- 发布日期：`2026-08-11`
 - GitHub Release：[v0.1.0-alpha.1](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.1)
 
-### 更新内容
-
-- 发布 Node-first MVP，支持用精确稳定版本 `node@x.y.z` 初始化、锁定和安装项目 Node.js。
-- 新增可提交的 `pinset.toml` 与 `pinset.lock`；锁文件包含四个平台的 canonical 产物、
-  SHA-256 和验证信息，当前机器只安装对应目标。
-- `pinset use` 从 Node 官方 HTTPS `SHASUMS256.txt` 获取可信哈希，并在配置和锁文件落盘
-  后安装当前平台产物。
-- `pinset install --locked` 在配置与锁不一致时提前失败，适合克隆项目和 CI 复现。
-- 安装器支持 ZIP 与 TAR.XZ，执行路径穿越、非法归档链接、展开限制、必要文件和哈希校验，
-  只有完整安装才会原子提交到最终目录。
-- 重复安装已验证版本时直接复用，不重复下载。
-- 新增 `pinset current`、`pinset which`、`pinset exec` 和 `pinset doctor`，用于查看当前项目
-  选择、真实可执行文件、显式运行和只读环境诊断。
-- 新增独立轻量 `pinset-shim`，可为 `node`、`npm`、`npx` 和 `corepack` 创建用户目录入口。
-- npm、npx 和 corepack 子进程会获得所选 Node 命令目录，支持 `/usr/bin/env node` 启动方式。
-- 新增本机安装源管理：
-
-  ```shell
-  pinset source list [provider]
-  pinset source add <provider> <alias> --base-url <url>
-  pinset source use <provider> <alias>
-  pinset source fallback <provider> <aliases...>
-  pinset source remove <provider> <alias>
-  ```
-
-- 内置 `official` 源不可覆盖或删除；自定义源默认要求 HTTPS，只有显式
-  `--allow-insecure` 才允许受信任局域网 HTTP。
-- 只有网络类失败可以按用户配置尝试下一来源；哈希失败立即停止，不通过换源掩盖异常。
-- 修复 Node 官方校验清单中带嵌套目录的合法条目无法解析的问题。
-- 支持 Node Unix TAR.XZ 中经过边界验证的相对符号链接，并拒绝绝对、越界或悬空链接。
-- GitHub Actions 在 PR 与 `main` 执行格式、Clippy、workspace 测试、安装器离线测试和 shim
-  依赖约束检查。
-- 版本标签自动构建 Linux x64、Windows x64 和 macOS arm64 归档，生成 `SHA256SUMS` 并
-  发布 GitHub Release。
-- 仓库以 MIT License 公开发布，并启用主分支质量门禁和安全报告渠道。
-
-### Release 资产
-
-```text
-install.sh
-pinset-linux-x86_64.tar.gz
-pinset-windows-x86_64.zip
-pinset-macos-aarch64.tar.gz
-SHA256SUMS
-```
-
-Release 发布后已重新下载全部资产并复算 SHA-256；Linux 归档也已通过公开 URL 的临时
-WSL `curl | sh` 安装与 `pinset --version` 验证。CI 构建通过不等同于所有平台均已完成
-真实 Node 安装验收。
-
-### Linux x64 / macOS Apple Silicon 安装
-
-当前版本是预发布版，必须使用固定版本 URL：
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.1/install.sh |
-  sh -s -- --version 0.1.0-alpha.1
-```
-
-默认安装到 `$HOME/.local/bin`。安装器：
-
-- 不使用 `sudo`；
-- 不修改 shell profile 或 PATH；
-- 不安装 Node.js；
-- 强制校验 Release 的 SHA-256；
-- 只接受包含 `pinset` 与 `pinset-shim` 的预期归档。
-
-安装后按当前 shell 配置 PATH，例如 Bash：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-pinset --version
-```
-
-### 项目使用
-
-```bash
-cd /path/to/project
-pinset init
-pinset use node@24.0.0
-pinset current
-pinset which node
-pinset exec -- node --version
-pinset exec -- npm --version
-```
-
-建议提交：
-
-```text
-pinset.toml
-pinset.lock
-```
-
-只生成配置和锁、不下载当前平台运行时：
-
-```bash
-pinset use node@24.0.0 --no-install
-```
-
-之后可以根据已有锁执行：
-
-```bash
-pinset install --locked
-```
-
-### 说明与已知限制
-
-- 当前只支持项目级 Node 选择，尚未正式支持 `pinset use node@... --global`。
-- 当前只接受完整精确版本 `x.y.z`，不支持 `node@24`、`lts`、`latest` 或 `current`。
-- Python 和 Flutter provider 尚未发布。
-- macOS x64 Node 产物可以写入项目锁，但本版本没有发布 macOS Intel Pinset CLI 归档。
-- curl 安装器当前支持 Linux x64 和 macOS Apple Silicon；Windows 使用 Release ZIP。
-- shim 必须由用户显式安装到自有目录并加入 PATH；Pinset 不自动编辑 shell profile。
-- 当前 shim 需要项目配置；正式全局选择和安全系统 PATH 透传计划在 alpha.2 完成。
-- 第一次生成项目锁仍需访问 Node 官方 HTTPS 校验清单。已有锁可以在受限网络中通过用户
-  批准的镜像执行锁定安装。
-- Node 信任值当前来自官方 HTTPS `SHASUMS256.txt`；PGP 验签属于稳定版前的供应链增强。
-- 项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
-- 本版本没有配置格式迁移；这是 Pinset 的首个公开预发布版本。
-
-完整命令、配置、架构、使用和故障排查见 [PRD](PRD.md#17-当前版本使用指南)。
+交付 Node project MVP：精确版本、`pinset.toml`、`pinset.lock`、官方 SHASUMS SHA-256、镜像、安全 ZIP/TAR.XZ 解压、事务安装、初版 shim，以及 Linux x64、Windows x64、macOS Apple Silicon 自动 Release。

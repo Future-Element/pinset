@@ -41,6 +41,45 @@ fn manages_sources_only_inside_explicit_temporary_home() {
 }
 
 #[test]
+fn trusted_metadata_mirrors_require_https_and_are_visible_in_source_list() {
+    let root = tempdir().expect("temporary PINSET_HOME");
+    let home = root.path().join("isolated-home");
+
+    pinset(
+        &home,
+        &[
+            "source",
+            "add",
+            "node",
+            "trusted",
+            "--base-url",
+            "https://mirror.example/node/",
+            "--trust-metadata",
+        ],
+    )
+    .assert_success("added node trusted");
+    let listed = pinset(&home, &["source", "list", "node"]);
+    listed.assert_success_contains(
+        "node trusted custom - https://mirror.example/node/ trusted-metadata",
+    );
+
+    let rejected = pinset(
+        &home,
+        &[
+            "source",
+            "add",
+            "node",
+            "insecure",
+            "--base-url",
+            "http://127.0.0.1:8080/node/",
+            "--trust-metadata",
+        ],
+    );
+    assert!(!rejected.success);
+    assert!(rejected.stderr.contains("invalid base URL"));
+}
+
+#[test]
 fn removes_only_inactive_unreferenced_custom_sources() {
     let root = tempdir().expect("temporary PINSET_HOME");
     let home = root.path().join("isolated-home");

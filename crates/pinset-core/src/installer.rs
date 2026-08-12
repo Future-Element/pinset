@@ -7,14 +7,18 @@ use std::{
     time::Duration,
 };
 
-use reqwest::blocking::Client;
+use reqwest::{
+    StatusCode,
+    blocking::Client,
+    header::{CONTENT_RANGE, RANGE},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
-use crate::{Error, Result, download_cache_path};
+use crate::{Error, Result, download_cache::download_partial_path, download_cache_path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
@@ -132,6 +136,16 @@ struct SelectedArtifact {
     actual_hash: String,
 }
 
+struct InstallLock {
+    file: File,
+}
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = fs4::FileExt::unlock(&self.file);
+    }
+}
+
 impl Installer {
     pub fn new(limits: InstallLimits) -> Result<Self> {
         let client = Client::builder()
@@ -155,6 +169,7 @@ impl Installer {
 
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
         validate_request(request)?;
+        let _install_lock = acquire_install_lock(request)?;
         let expected_hash = parse_sha256(&request.artifact.sha256)?;
         let final_dir = request
             .pinset_home
@@ -200,14 +215,16 @@ impl Installer {
             let mut attempted = Vec::with_capacity(request.artifact.sources.len());
             let mut last_retryable_error = None;
             let mut selected = None;
-            for (index, source) in request.artifact.sources.iter().enumerate() {
+            let download_path = download_partial_path(&request.pinset_home, &expected_hex)?;
+            for source in &request.artifact.sources {
                 attempted.push(source.id.clone());
-                let download_path = transaction
-                    .path()
-                    .join(format!("artifact-{index}.download"));
                 match self.download_verified(&source.url, &expected_hash, &download_path) {
                     Ok((bytes_downloaded, actual_hash)) => {
                         self.persist_cache_artifact(&download_path, &cache_path, &expected_hash)?;
+                        fs::remove_file(&download_path).map_err(|source| Error::WriteDownload {
+                            path: download_path.clone(),
+                            source,
+                        })?;
                         selected = Some(SelectedArtifact {
                             source_id: source.id.clone(),
                             source_kind: source.kind.receipt_name().to_owned(),
@@ -396,16 +413,136 @@ impl Installer {
         destination: &Path,
     ) -> Result<(u64, String)> {
         let display_url = redacted_url(url);
-        let mut response = self
-            .client
-            .get(url)
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|source| Error::DownloadRequest {
-                url: display_url.clone(),
+        let parent = destination
+            .parent()
+            .expect("partial download path always has a parent");
+        fs::create_dir_all(parent).map_err(|source| Error::WriteDownload {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        let mut resume_from = match fs::symlink_metadata(destination) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                if metadata.len() > self.limits.max_download_bytes {
+                    fs::remove_file(destination).map_err(|source| Error::WriteDownload {
+                        path: destination.to_path_buf(),
+                        source,
+                    })?;
+                    0
+                } else {
+                    metadata.len()
+                }
+            }
+            Ok(_) => {
+                return Err(Error::UnsafeDownloadCacheEntry {
+                    path: destination.to_path_buf(),
+                });
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => 0,
+            Err(source) => {
+                return Err(Error::ReadDownloadCache {
+                    path: destination.to_path_buf(),
+                    source,
+                });
+            }
+        };
+
+        let mut hasher = Sha256::new();
+        if resume_from > 0 {
+            let mut existing =
+                File::open(destination).map_err(|source| Error::ReadDownloadCache {
+                    path: destination.to_path_buf(),
+                    source,
+                })?;
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let count =
+                    existing
+                        .read(&mut buffer)
+                        .map_err(|source| Error::ReadDownloadCache {
+                            path: destination.to_path_buf(),
+                            source,
+                        })?;
+                if count == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..count]);
+            }
+            let existing_hash: [u8; 32] = hasher.clone().finalize().into();
+            if existing_hash == *expected_hash {
+                self.report_progress(DownloadProgressEvent::Started {
+                    url: display_url,
+                    total_bytes: Some(resume_from),
+                });
+                self.report_progress(DownloadProgressEvent::Finished {
+                    downloaded_bytes: resume_from,
+                });
+                return Ok((resume_from, hex::encode(existing_hash)));
+            }
+        }
+
+        let mut request = self.client.get(url);
+        if resume_from > 0 {
+            request = request.header(RANGE, format!("bytes={resume_from}-"));
+        }
+        let mut response = request.send().map_err(|source| Error::DownloadRequest {
+            url: display_url.clone(),
+            source,
+        })?;
+        if resume_from > 0 && response.status() == StatusCode::OK {
+            resume_from = 0;
+            hasher = Sha256::new();
+        } else if resume_from > 0 && response.status() == StatusCode::RANGE_NOT_SATISFIABLE {
+            fs::remove_file(destination).map_err(|source| Error::WriteDownload {
+                path: destination.to_path_buf(),
                 source,
             })?;
-        let total_bytes = response.content_length();
+            resume_from = 0;
+            hasher = Sha256::new();
+            response = self
+                .client
+                .get(url)
+                .send()
+                .map_err(|source| Error::DownloadRequest {
+                    url: display_url.clone(),
+                    source,
+                })?;
+        } else if resume_from > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
+            let expected_prefix = format!("bytes {resume_from}-");
+            let valid_content_range = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with(&expected_prefix));
+            if !valid_content_range {
+                fs::remove_file(destination).map_err(|source| Error::WriteDownload {
+                    path: destination.to_path_buf(),
+                    source,
+                })?;
+                resume_from = 0;
+                hasher = Sha256::new();
+                response =
+                    self.client
+                        .get(url)
+                        .send()
+                        .map_err(|source| Error::DownloadRequest {
+                            url: display_url.clone(),
+                            source,
+                        })?;
+            }
+        }
+        let resumed = resume_from > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+        let mut response =
+            response
+                .error_for_status()
+                .map_err(|source| Error::DownloadRequest {
+                    url: display_url.clone(),
+                    source,
+                })?;
+        let total_bytes = response
+            .content_length()
+            .and_then(|length| length.checked_add(resume_from));
         if total_bytes.is_some_and(|length| length > self.limits.max_download_bytes) {
             return Err(Error::DownloadTooLarge {
                 url: display_url.clone(),
@@ -419,14 +556,21 @@ impl Installer {
 
         let mut file = OpenOptions::new()
             .write(true)
-            .create_new(true)
+            .create(true)
+            .append(resumed)
+            .truncate(!resumed)
             .open(destination)
             .map_err(|source| Error::WriteDownload {
                 path: destination.to_path_buf(),
                 source,
             })?;
-        let mut hasher = Sha256::new();
-        let mut total = 0_u64;
+        let mut total = resume_from;
+        if resumed {
+            self.report_progress(DownloadProgressEvent::Advanced {
+                downloaded_bytes: total,
+                total_bytes,
+            });
+        }
         let mut buffer = [0_u8; 64 * 1024];
         loop {
             let count = response
@@ -464,6 +608,10 @@ impl Installer {
         let actual: [u8; 32] = hasher.finalize().into();
         let actual_hex = hex::encode(actual);
         if actual != *expected_hash {
+            fs::remove_file(destination).map_err(|source| Error::WriteDownload {
+                path: destination.to_path_buf(),
+                source,
+            })?;
             return Err(Error::ChecksumMismatch {
                 expected: hex::encode(expected_hash),
                 actual: actual_hex,
@@ -803,6 +951,29 @@ impl Installer {
         }
         Ok(())
     }
+}
+
+fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
+    let identity = format!("{}\0{}\0{}", request.tool, request.version, request.target);
+    let name = hex::encode(Sha256::digest(identity.as_bytes()));
+    let directory = request.pinset_home.join("locks").join("installs");
+    fs::create_dir_all(&directory).map_err(|source| Error::OpenInstallLock {
+        path: directory.clone(),
+        source,
+    })?;
+    let path = directory.join(format!("{name}.lock"));
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|source| Error::OpenInstallLock {
+            path: path.clone(),
+            source,
+        })?;
+    fs4::FileExt::lock(&file).map_err(|source| Error::AcquireInstallLock { path, source })?;
+    Ok(InstallLock { file })
 }
 
 fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Option<InstallOutcome> {
@@ -1226,6 +1397,63 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_installs_of_the_same_runtime_download_only_once() {
+        let root = tempdir().expect("temp root");
+        let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let request = request(root.path(), url, sha256_hex(&archive));
+        let installer = Arc::new(test_installer());
+        let barrier = Arc::new(Barrier::new(2));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let installer = Arc::clone(&installer);
+            let barrier = Arc::clone(&barrier);
+            let request = request.clone();
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                installer.install(&request)
+            }));
+        }
+
+        let outcomes = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("install worker").expect("install"))
+            .collect::<Vec<_>>();
+        server.join().expect("server");
+
+        assert_eq!(outcomes[0].install_dir, outcomes[1].install_dir);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| outcome.reused_existing)
+                .count(),
+            1
+        );
+        assert!(final_dir(root.path()).join("bin/node.exe").is_file());
+        assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn resumes_a_verified_partial_download_with_an_http_range_request() {
+        let root = tempdir().expect("temp root");
+        let archive = zip_bytes(&[("bin/node.exe", b"fake node with enough bytes")]);
+        let hash = sha256_hex(&archive);
+        let split = archive.len() / 2;
+        let partial_path = download_partial_path(root.path(), &hash).expect("partial path");
+        fs::create_dir_all(partial_path.parent().expect("partial parent")).expect("partial root");
+        fs::write(&partial_path, &archive[..split]).expect("partial content");
+        let (url, server) = serve_range_once(archive[split..].to_vec(), split, archive.len());
+        let request = request(root.path(), url, hash);
+
+        let outcome = test_installer().install(&request).expect("resumed install");
+        server.join().expect("range server");
+
+        assert_eq!(outcome.bytes_downloaded, archive.len() as u64);
+        assert!(outcome.install_dir.join("bin/node.exe").is_file());
+        assert!(!partial_path.exists());
+    }
+
+    #[test]
     fn installs_tar_xz_with_stripped_root_and_executable_permissions() {
         let archive = tar_xz_bytes(&[
             ("node-v24.0.0-linux-x64/bin/node", b"fake node", 0o755),
@@ -1599,6 +1827,38 @@ mod tests {
             .expect("response headers");
             stream.write_all(&body).expect("response body");
             stream.flush().expect("flush response");
+        });
+        (format!("http://{address}/artifact.zip"), handle)
+    }
+
+    fn serve_range_once(
+        body: Vec<u8>,
+        range_start: usize,
+        total_length: usize,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind range server");
+        let address = listener.local_addr().expect("range server address");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept range request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("range read timeout");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("read range request");
+            let request = String::from_utf8_lossy(&request[..length]).to_ascii_lowercase();
+            assert!(
+                request.contains(&format!("range: bytes={range_start}-")),
+                "missing expected Range header in {request:?}"
+            );
+            let range_end = total_length - 1;
+            write!(
+                stream,
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {range_start}-{range_end}/{total_length}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .expect("range response headers");
+            stream.write_all(&body).expect("range response body");
+            stream.flush().expect("flush range response");
         });
         (format!("http://{address}/artifact.zip"), handle)
     }

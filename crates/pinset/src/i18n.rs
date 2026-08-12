@@ -440,6 +440,19 @@ impl Catalog {
         }
     }
 
+    pub fn cache_imported(self, sha256: &str, size: u64, path: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "imported verified cache archive sha256={sha256} bytes={size} path={}",
+                path.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "已导入校验通过的缓存归档：SHA-256={sha256}；字节数={size}；路径={}",
+                path.display()
+            ),
+        }
+    }
+
     pub fn source_test_ok(
         self,
         provider: &str,

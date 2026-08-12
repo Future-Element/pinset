@@ -39,6 +39,7 @@ pub struct SourceView {
     pub active: bool,
     pub fallback_position: Option<usize>,
     pub allow_insecure: bool,
+    pub trust_metadata: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +74,8 @@ struct CustomSource {
     base_url: String,
     #[serde(default, skip_serializing_if = "is_false")]
     allow_insecure: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    trust_metadata: bool,
 }
 
 impl Default for SourceConfig {
@@ -105,6 +108,7 @@ impl SourceConfig {
                 .position(|alias| alias == OFFICIAL_ALIAS)
                 .map(|index| index + 1),
             allow_insecure: false,
+            trust_metadata: false,
         }];
 
         if let Some(configured) = configured {
@@ -120,6 +124,7 @@ impl SourceConfig {
                         .position(|fallback_alias| fallback_alias == alias)
                         .map(|index| index + 1),
                     allow_insecure: source.allow_insecure,
+                    trust_metadata: source.trust_metadata,
                 }
             }));
         }
@@ -185,10 +190,17 @@ impl SourceConfig {
         alias: &str,
         base_url: &str,
         allow_insecure: bool,
+        trust_metadata: bool,
     ) -> Result<()> {
         validate_provider(provider)?;
         validate_custom_alias(alias)?;
         let normalized_url = normalize_base_url(base_url, allow_insecure)?;
+        if trust_metadata && normalized_url.starts_with("http://") {
+            return Err(Error::InvalidSourceBaseUrl {
+                url: base_url.to_owned(),
+                reason: "trusted metadata sources must use HTTPS".to_owned(),
+            });
+        }
         let configured = self.providers.entry(provider.to_owned()).or_default();
         if configured.sources.contains_key(alias) {
             return Err(Error::SourceAlreadyExists {
@@ -202,9 +214,18 @@ impl SourceConfig {
             CustomSource {
                 base_url: normalized_url,
                 allow_insecure: uses_insecure_http,
+                trust_metadata,
             },
         );
         Ok(())
+    }
+
+    pub fn metadata_source(&self, provider: &str) -> Result<SourceView> {
+        let active = self.source(provider, None)?;
+        if active.kind == SourceKind::Custom && active.trust_metadata {
+            return Ok(active);
+        }
+        self.source(provider, Some(OFFICIAL_ALIAS))
     }
 
     pub fn use_source(&mut self, provider: &str, alias: &str) -> Result<()> {
@@ -380,6 +401,12 @@ fn validate_loaded_config(config: &mut SourceConfig) -> Result<()> {
         for (alias, source) in &mut sources.sources {
             validate_custom_alias(alias)?;
             source.base_url = normalize_base_url(&source.base_url, source.allow_insecure)?;
+            if source.trust_metadata && source.base_url.starts_with("http://") {
+                return Err(Error::InvalidSourceBaseUrl {
+                    url: source.base_url.clone(),
+                    reason: "trusted metadata sources must use HTTPS".to_owned(),
+                });
+            }
         }
         let active = sources.active.as_deref().unwrap_or(OFFICIAL_ALIAS);
         if active != OFFICIAL_ALIAS && !sources.sources.contains_key(active) {
@@ -546,10 +573,22 @@ mod tests {
         let path = root.path().join("config").join("sources.toml");
         let mut config = SourceConfig::default();
         config
-            .add("node", "mirror-a", "https://mirror.example/node", false)
+            .add(
+                "node",
+                "mirror-a",
+                "https://mirror.example/node",
+                false,
+                true,
+            )
             .expect("add source");
         config
-            .add("node", "mirror-b", "https://backup.example/node/", false)
+            .add(
+                "node",
+                "mirror-b",
+                "https://backup.example/node/",
+                false,
+                false,
+            )
             .expect("add backup");
         config.use_source("node", "mirror-a").expect("use source");
         config
@@ -581,10 +620,22 @@ mod tests {
     fn resolves_only_active_and_fallback_sources_in_declared_order() {
         let mut config = SourceConfig::default();
         config
-            .add("node", "primary", "https://primary.example/node/", false)
+            .add(
+                "node",
+                "primary",
+                "https://primary.example/node/",
+                false,
+                false,
+            )
             .expect("primary");
         config
-            .add("node", "unused", "https://unused.example/node/", false)
+            .add(
+                "node",
+                "unused",
+                "https://unused.example/node/",
+                false,
+                false,
+            )
             .expect("unused");
         config.use_source("node", "primary").expect("active");
         config
@@ -649,6 +700,7 @@ mod tests {
                 "mirror",
                 "https://mirror.example/flutter/",
                 false,
+                false,
             )
             .expect("add source");
         save_source_config(&path, &config).expect("replacement save");
@@ -666,7 +718,7 @@ mod tests {
     fn official_source_cannot_be_added_or_removed() {
         let mut config = SourceConfig::default();
         assert!(matches!(
-            config.add("node", "official", "https://example.test/", false),
+            config.add("node", "official", "https://example.test/", false, false,),
             Err(Error::BuiltinSourceMutation)
         ));
         assert!(matches!(
@@ -679,7 +731,7 @@ mod tests {
     fn rejects_insecure_or_credentialed_urls_by_default() {
         let mut config = SourceConfig::default();
         assert!(matches!(
-            config.add("node", "http", "http://mirror.example/", false),
+            config.add("node", "http", "http://mirror.example/", false, false,),
             Err(Error::InvalidSourceBaseUrl { .. })
         ));
         assert!(matches!(
@@ -687,12 +739,19 @@ mod tests {
                 "node",
                 "secret",
                 "https://user:password@mirror.example/",
-                false
+                false,
+                false,
             ),
             Err(Error::InvalidSourceBaseUrl { .. })
         ));
         assert!(matches!(
-            config.add("node", "query", "https://mirror.example/?token=x", false),
+            config.add(
+                "node",
+                "query",
+                "https://mirror.example/?token=x",
+                false,
+                false,
+            ),
             Err(Error::InvalidSourceBaseUrl { .. })
         ));
     }
@@ -701,7 +760,7 @@ mod tests {
     fn insecure_http_requires_explicit_opt_in() {
         let mut config = SourceConfig::default();
         config
-            .add("node", "lan", "http://127.0.0.1:8080/node", true)
+            .add("node", "lan", "http://127.0.0.1:8080/node", true, false)
             .expect("explicit insecure source");
 
         let source = config
@@ -718,7 +777,7 @@ mod tests {
     fn fallback_must_exist_be_unique_and_exclude_active() {
         let mut config = SourceConfig::default();
         config
-            .add("node", "backup", "https://backup.example/", false)
+            .add("node", "backup", "https://backup.example/", false, false)
             .expect("add backup");
         assert!(matches!(
             config.set_fallback("node", &["missing".to_owned()]),
@@ -738,7 +797,7 @@ mod tests {
     fn source_in_use_cannot_be_removed() {
         let mut config = SourceConfig::default();
         config
-            .add("node", "mirror", "https://mirror.example/", false)
+            .add("node", "mirror", "https://mirror.example/", false, false)
             .expect("add");
         config.use_source("node", "mirror").expect("use");
         assert!(matches!(
@@ -758,6 +817,30 @@ mod tests {
                 usage: "in the fallback list",
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn trusted_https_metadata_is_explicit_and_insecure_metadata_is_rejected() {
+        let mut config = SourceConfig::default();
+        config
+            .add(
+                "node",
+                "trusted",
+                "https://mirror.example/node/",
+                false,
+                true,
+            )
+            .expect("trusted source");
+        config.use_source("node", "trusted").expect("active");
+        let metadata = config.metadata_source("node").expect("metadata source");
+        assert_eq!(metadata.alias, "trusted");
+        assert!(metadata.trust_metadata);
+
+        let mut insecure = SourceConfig::default();
+        assert!(matches!(
+            insecure.add("node", "lan", "http://127.0.0.1:8080/node/", true, true,),
+            Err(Error::InvalidSourceBaseUrl { .. })
         ));
     }
 

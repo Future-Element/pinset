@@ -34,7 +34,15 @@ grep -F "Node.js $GLOBAL_VERSION" global-current.txt
 grep -F '来源=全局' global-current.txt
 "$PINSET_BIN" exec -- node --version | grep -Fx "v$GLOBAL_VERSION"
 "$PINSET_BIN" exec -- npm --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+"$PINSET_BIN" exec -- npx --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
 "$PINSET_BIN" exec -- corepack --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+
+SHIM_DIR="$("$PINSET_BIN" shim path)"
+export PATH="$SHIM_DIR:$PATH"
+node --version | grep -Fx "v$GLOBAL_VERSION"
+npm --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+npx --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+corepack --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
 
 mkdir project
 cd project
@@ -47,12 +55,18 @@ grep -F "Node.js $PROJECT_VERSION" project-current.txt
 grep -F '来源=项目' project-current.txt
 "$PINSET_BIN" exec -- node --version | grep -Fx "v$PROJECT_VERSION"
 "$PINSET_BIN" exec -- npm --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+"$PINSET_BIN" exec -- npx --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
 "$PINSET_BIN" exec -- corepack --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+node --version | grep -Fx "v$PROJECT_VERSION"
+npm --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+npx --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
+corepack --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
 
 cd "$TEST_ROOT"
 "$PINSET_BIN" current node | tee restored-global-current.txt
 grep -F "Node.js $GLOBAL_VERSION" restored-global-current.txt
 grep -F '来源=全局' restored-global-current.txt
 "$PINSET_BIN" exec -- node --version | grep -Fx "v$GLOBAL_VERSION"
+node --version | grep -Fx "v$GLOBAL_VERSION"
 
-echo "Ubuntu real runtime acceptance passed"
+echo "Unix real runtime acceptance passed"

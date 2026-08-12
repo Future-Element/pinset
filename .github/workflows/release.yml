@@ -16,7 +16,7 @@ jobs:
   quality:
     name: Validate release
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,6 +29,11 @@ jobs:
           )"
           if [[ "${GITHUB_REF_NAME}" != "v${workspace_version}" ]]; then
             echo "release tag ${GITHUB_REF_NAME} does not match workspace version v${workspace_version}" >&2
+            exit 1
+          fi
+          installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
+          if [[ "${installer_version}" != "${workspace_version}" ]]; then
+            echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
             exit 1
           fi
 
@@ -63,6 +68,27 @@ jobs:
             exit 1
           fi
 
+      - name: Generate CycloneDX SBOMs
+        shell: bash
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          cargo cyclonedx --format json --all --all-features --target all
+          mkdir sbom
+          cp crates/pinset/pinset-cli.cdx.json sbom/pinset-cli.cdx.json
+          cp crates/pinset-core/pinset-core.cdx.json sbom/pinset-core.cdx.json
+          cp crates/pinset-shim/pinset-shim.cdx.json sbom/pinset-shim.cdx.json
+          for document in sbom/*.cdx.json; do
+            jq -e '.bomFormat == "CycloneDX" and (.specVersion | length > 0)' "$document" >/dev/null
+          done
+
+      - name: Upload release SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pinset-sboms
+          path: sbom/*.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     name: Build ${{ matrix.artifact }}
     needs: quality
@@ -80,7 +106,12 @@ jobs:
             artifact: pinset-macos-aarch64
             archive: pinset-macos-aarch64.tar.gz
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +125,24 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Run real Node acceptance on Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PINSET_BIN: ${{ github.workspace }}/target/release/pinset
+          PINSET_GLOBAL_VERSION: 24.0.0
+          PINSET_PROJECT_VERSION: 22.0.0
+        run: bash scripts/tests/ubuntu_runtime_acceptance.sh
+
+      - name: Run real Node acceptance on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PINSET_BIN: ${{ github.workspace }}\target\release\pinset.exe
+          PINSET_GLOBAL_VERSION: 24.0.0
+          PINSET_PROJECT_VERSION: 22.0.0
+        run: ./scripts/tests/windows_runtime_acceptance.ps1
 
       - name: Test Unix curl installer
         if: runner.os != 'Windows'
@@ -130,6 +179,11 @@ jobs:
             -Path package/pinset.exe,package/pinset-shim.exe `
             -DestinationPath "${{ matrix.archive }}"
 
+      - name: Attest release archive provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ matrix.archive }}
+
       - name: Upload release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -147,6 +201,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,8 +230,23 @@ jobs:
               pinset-linux-x86_64.tar.gz \
               pinset-macos-aarch64.tar.gz \
               pinset-windows-x86_64.zip \
+              pinset-cli.cdx.json \
+              pinset-core.cdx.json \
+              pinset-shim.cdx.json \
               > SHA256SUMS
           )
+
+      - name: Attest release metadata provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/install.sh
+            dist/uninstall.sh
+            dist/uninstall.ps1
+            dist/SHA256SUMS
+            dist/pinset-cli.cdx.json
+            dist/pinset-core.cdx.json
+            dist/pinset-shim.cdx.json
 
       - name: Create or update GitHub Release
         shell: bash
@@ -188,6 +260,9 @@ jobs:
             dist/pinset-linux-x86_64.tar.gz
             dist/pinset-macos-aarch64.tar.gz
             dist/pinset-windows-x86_64.zip
+            dist/pinset-cli.cdx.json
+            dist/pinset-core.cdx.json
+            dist/pinset-shim.cdx.json
             dist/SHA256SUMS
           )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then

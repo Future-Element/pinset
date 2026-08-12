@@ -20,7 +20,7 @@ use pinset_core::{
     NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
     clean_download_cache, command_tool, create_project_config, current_target, ensure_shims,
     find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
-    install_locked_node, is_managed_command_shim, list_download_cache,
+    import_download_cache, install_locked_node, is_managed_command_shim, list_download_cache,
     list_installed_node_versions, load_global_config, load_lockfile, load_optional_global_config,
     load_project_config, load_source_config, load_user_settings, lockfile_path,
     node_command_directory, path_with_selected_runtime, pinset_home, resolve_command,
@@ -30,6 +30,8 @@ use pinset_core::{
     validate_lock_matches_selection,
 };
 use serde::Serialize;
+use terminal_size::{Width, terminal_size_of};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::i18n::{Catalog, Language};
 
@@ -233,6 +235,13 @@ enum CacheCommands {
     List,
     /// Remove content-addressed archives from the Pinset download cache.
     Clean,
+    /// Import a verified runtime archive into the content-addressed offline cache.
+    Import {
+        archive: PathBuf,
+        /// Expected SHA-256 from a reviewed pinset.lock or upstream manifest.
+        #[arg(long)]
+        sha256: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -251,6 +260,9 @@ enum SourceCommands {
         /// Allow an HTTP source, intended only for explicitly trusted LAN services.
         #[arg(long)]
         allow_insecure: bool,
+        /// Trust this HTTPS source for Node index and SHASUMS metadata as well as archives.
+        #[arg(long, conflicts_with = "allow_insecure")]
+        trust_metadata: bool,
     },
     /// Select the active source.
     Use { provider: String, alias: String },
@@ -409,7 +421,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 return Err(catalog.node_only_error().into());
             }
             if available {
-                let releases = NodeMetadataClient::official()?.available_releases()?;
+                let releases = node_metadata_client(&pinset_home()?)?.available_releases()?;
                 for release in releases {
                     println!(
                         "{}",
@@ -466,6 +478,14 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             CacheCommands::Clean => {
                 let outcome = clean_download_cache(&pinset_home()?)?;
                 println!("{}", catalog.cache_cleaned(outcome.entries, outcome.bytes));
+            }
+            CacheCommands::Import { archive, sha256 } => {
+                let archive = absolutize(&archive)?;
+                let entry = import_download_cache(&pinset_home()?, &archive, &sha256)?;
+                println!(
+                    "{}",
+                    catalog.cache_imported(&entry.sha256, entry.size, &entry.path)
+                );
             }
         },
         Commands::Exec { cwd, command } => {
@@ -595,7 +615,7 @@ fn select_node(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let selector = parse_node_selection(selection, catalog)?;
-    let lockfile = NodeMetadataClient::official()?
+    let lockfile = node_metadata_client(&pinset_home()?)?
         .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
     let locked_node = lockfile.tool("node").expect("generated lock contains node");
     let version = locked_node.version.clone();
@@ -646,7 +666,7 @@ fn install_node_selection(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let selector = parse_node_selection(selection, catalog)?;
-    let lockfile = NodeMetadataClient::official()?
+    let lockfile = node_metadata_client(&pinset_home()?)?
         .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
     let locked_node = lockfile.tool("node").expect("generated lock contains node");
     if selector != locked_node.version {
@@ -982,29 +1002,149 @@ fn render_download_progress(
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
 ) {
-    const WIDTH: usize = 24;
-    let line = if let Some(total) = total_bytes.filter(|total| *total > 0) {
-        let ratio = (downloaded_bytes as f64 / total as f64).clamp(0.0, 1.0);
-        let filled = (ratio * WIDTH as f64).round() as usize;
-        let bar = format!("{}{}", "=".repeat(filled), " ".repeat(WIDTH - filled));
-        catalog.download_progress(
-            artifact,
-            &bar,
-            (ratio * 100.0).round() as u8,
-            &format_bytes(downloaded_bytes),
-            Some(format_bytes(total)),
-        )
-    } else {
-        catalog.download_progress(
-            artifact,
-            &"-".repeat(WIDTH),
-            0,
-            &format_bytes(downloaded_bytes),
-            None,
-        )
-    };
-    eprint!("\r{line}\x1b[K");
+    const FALLBACK_TERMINAL_COLUMNS: usize = 80;
+    let terminal_columns = terminal_size_of(io::stderr())
+        .map(|(Width(columns), _)| usize::from(columns))
+        .unwrap_or(FALLBACK_TERMINAL_COLUMNS);
+    let line = download_progress_line(
+        catalog,
+        artifact,
+        downloaded_bytes,
+        total_bytes,
+        terminal_columns,
+    );
+    eprint!("\r\x1b[2K{line}");
     let _ = io::stderr().flush();
+}
+
+fn download_progress_line(
+    catalog: Catalog,
+    artifact: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    terminal_columns: usize,
+) -> String {
+    const MAX_BAR_WIDTH: usize = 24;
+    const MIN_BAR_WIDTH: usize = 6;
+    const PREFERRED_ARTIFACT_WIDTH: usize = 20;
+
+    // Leave the final terminal column unused. Writing into it can enable
+    // automatic line wrapping before the next carriage return is processed.
+    let available_columns = terminal_columns.saturating_sub(1);
+    if available_columns == 0 {
+        return String::new();
+    }
+
+    let downloaded = format_bytes(downloaded_bytes);
+    let (percent, ratio, total) = match total_bytes.filter(|total| *total > 0) {
+        Some(total) => {
+            let ratio = (downloaded_bytes as f64 / total as f64).clamp(0.0, 1.0);
+            (
+                (ratio * 100.0).round() as u8,
+                Some(ratio),
+                Some(format_bytes(total)),
+            )
+        }
+        None => (0, None, None),
+    };
+
+    let fixed = catalog.download_progress("", "", percent, &downloaded, total.clone());
+    let fixed_width = UnicodeWidthStr::width(fixed.as_str());
+    if fixed_width >= available_columns {
+        let compact = match &total {
+            Some(total) => format!("{percent:>3}% {downloaded}/{total}"),
+            None => downloaded,
+        };
+        return truncate_end_to_width(&compact, available_columns);
+    }
+
+    let variable_width = available_columns - fixed_width;
+    let preferred_artifact_width = UnicodeWidthStr::width(artifact).min(PREFERRED_ARTIFACT_WIDTH);
+    let remaining_for_bar = variable_width.saturating_sub(preferred_artifact_width);
+    let bar_width = if remaining_for_bar >= MIN_BAR_WIDTH {
+        remaining_for_bar.min(MAX_BAR_WIDTH)
+    } else if variable_width > MIN_BAR_WIDTH {
+        MIN_BAR_WIDTH
+    } else {
+        0
+    };
+    let artifact_width = variable_width - bar_width;
+    let artifact = truncate_middle_to_width(artifact, artifact_width);
+    let bar = match ratio {
+        Some(ratio) => {
+            let filled = (ratio * bar_width as f64).round() as usize;
+            format!("{}{}", "=".repeat(filled), " ".repeat(bar_width - filled))
+        }
+        None => "-".repeat(bar_width),
+    };
+    let line = catalog.download_progress(&artifact, &bar, percent, &downloaded, total);
+    debug_assert!(UnicodeWidthStr::width(line.as_str()) <= available_columns);
+    line
+}
+
+fn truncate_middle_to_width(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_owned();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_owned();
+    }
+
+    let content_width = max_width - 1;
+    let prefix_width = content_width.div_ceil(2);
+    let suffix_width = content_width - prefix_width;
+    let prefix = take_prefix_to_width(value, prefix_width);
+    let suffix = take_suffix_to_width(value, suffix_width);
+    format!("{prefix}…{suffix}")
+}
+
+fn truncate_end_to_width(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_owned();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_owned();
+    }
+    format!("{}…", take_prefix_to_width(value, max_width - 1))
+}
+
+fn take_prefix_to_width(value: &str, max_width: usize) -> String {
+    let mut width = 0;
+    value
+        .chars()
+        .take_while(|character| {
+            let character_width = UnicodeWidthChar::width(*character).unwrap_or(0);
+            if width + character_width > max_width {
+                return false;
+            }
+            width += character_width;
+            true
+        })
+        .collect()
+}
+
+fn take_suffix_to_width(value: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut suffix = value
+        .chars()
+        .rev()
+        .take_while(|character| {
+            let character_width = UnicodeWidthChar::width(*character).unwrap_or(0);
+            if width + character_width > max_width {
+                return false;
+            }
+            width += character_width;
+            true
+        })
+        .collect::<Vec<_>>();
+    suffix.reverse();
+    suffix.into_iter().collect()
 }
 
 fn clear_progress_line() {
@@ -1153,7 +1293,7 @@ fn execute_selected(
     let (executable, tool, version, source, config_path) =
         if let Some(selection) = ephemeral_selector {
             let selector = parse_node_selection(selection, catalog)?;
-            let version = NodeMetadataClient::official()?.resolve_version_selector(&selector)?;
+            let version = node_metadata_client(&home)?.resolve_version_selector(&selector)?;
             if selector != version {
                 println!("{}", catalog.selector_resolved(&selector, &version));
             }
@@ -1933,8 +2073,9 @@ fn run_source_command(
             alias,
             base_url,
             allow_insecure,
+            trust_metadata,
         } => {
-            config.add(&provider, &alias, &base_url, allow_insecure)?;
+            config.add(&provider, &alias, &base_url, allow_insecure, trust_metadata)?;
             save_source_config(&path, &config)?;
             println!("{}", catalog.source_changed("added", &provider, &alias));
         }
@@ -2004,14 +2145,20 @@ fn print_sources(sources: &[SourceView], catalog: Catalog) {
             } else {
                 ""
             };
+            let metadata = if source.trust_metadata {
+                " 受信元数据"
+            } else {
+                ""
+            };
             println!(
-                "{} {} {} 状态={} {}{}",
+                "{} {} {} 状态={} {}{}{}",
                 source.provider,
                 source.alias,
                 source.kind.as_str(),
                 state,
                 source.base_url,
-                security
+                security,
+                metadata
             );
         } else {
             let state = if source.active {
@@ -2026,16 +2173,35 @@ fn print_sources(sources: &[SourceView], catalog: Catalog) {
             } else {
                 ""
             };
+            let metadata = if source.trust_metadata {
+                " trusted-metadata"
+            } else {
+                ""
+            };
             println!(
-                "{} {} {} {} {}{}",
+                "{} {} {} {} {}{}{}",
                 source.provider,
                 source.alias,
                 source.kind.as_str(),
                 state,
                 source.base_url,
-                security
+                security,
+                metadata
             );
         }
+    }
+}
+
+fn node_metadata_client(home: &Path) -> Result<NodeMetadataClient, Box<dyn std::error::Error>> {
+    let config = load_source_config(&source_config_path(home))?;
+    let source = config.metadata_source("node")?;
+    if source.kind == pinset_core::SourceKind::Official {
+        Ok(NodeMetadataClient::official()?)
+    } else {
+        Ok(NodeMetadataClient::for_source(
+            &source.base_url,
+            &source.alias,
+        )?)
     }
 }
 
@@ -2286,6 +2452,52 @@ mod tests {
             download_artifact_name("https://nodejs.org/"),
             "runtime archive"
         );
+    }
+
+    #[test]
+    fn download_progress_lines_fit_without_terminal_wrapping() {
+        let artifact = "node-v24.19.0-linux-x64.tar.xz";
+        for language in [Language::English, Language::SimplifiedChinese] {
+            for terminal_columns in [24, 40, 60, 80] {
+                let line = download_progress_line(
+                    Catalog::new(language),
+                    artifact,
+                    15 * 1024 * 1024,
+                    Some(30 * 1024 * 1024),
+                    terminal_columns,
+                );
+                assert!(
+                    UnicodeWidthStr::width(line.as_str()) < terminal_columns,
+                    "line width {} exceeded {terminal_columns} columns: {line}",
+                    UnicodeWidthStr::width(line.as_str())
+                );
+                assert!(line.contains("50%"));
+                assert!(!line.contains(['\r', '\n']));
+            }
+        }
+    }
+
+    #[test]
+    fn download_progress_keeps_filename_ends_when_space_is_limited() {
+        let line = download_progress_line(
+            Catalog::new(Language::SimplifiedChinese),
+            "node-v24.19.0-linux-x64.tar.xz",
+            5 * 1024 * 1024,
+            Some(30 * 1024 * 1024),
+            72,
+        );
+        assert!(line.contains('…'));
+        assert!(line.contains("node-"));
+        assert!(line.contains("tar.xz"));
+        assert!(UnicodeWidthStr::width(line.as_str()) < 72);
+    }
+
+    #[test]
+    fn middle_truncation_counts_cjk_display_columns() {
+        let value = truncate_middle_to_width("正在下载-node-runtime.tar.xz", 16);
+        assert!(value.contains('…'));
+        assert!(value.ends_with("tar.xz"));
+        assert!(UnicodeWidthStr::width(value.as_str()) <= 16);
     }
 
     #[test]

@@ -538,6 +538,22 @@ pub enum Error {
     },
 
     #[cfg(feature = "installer")]
+    #[error("failed to open installation lock {path}: {source}")]
+    OpenInstallLock {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("failed to acquire installation lock {path}: {source}")]
+    AcquireInstallLock {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
     #[error("failed to open ZIP artifact {path}: {source}")]
     OpenZip {
         path: PathBuf,

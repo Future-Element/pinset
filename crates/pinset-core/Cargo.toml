@@ -9,6 +9,7 @@ publish = false
 [features]
 default = []
 installer = [
+    "dep:fs4",
     "dep:hex",
     "dep:reqwest",
     "dep:sha2",
@@ -30,6 +31,7 @@ sources = [
 [dependencies]
 atomic-write-file = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+fs4 = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 same-file.workspace = true
 serde.workspace = true
