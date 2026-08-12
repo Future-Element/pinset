@@ -1,9 +1,9 @@
 # Pinset Plans
 
-当前发布候选：`v0.1.0-alpha.2`
+当前发布版本：`v0.1.0-alpha.2`
 下一开发目标：`v0.1.0-alpha.3`
 目标稳定版本：`v0.1.0`
-状态：`alpha.2 release candidate — publishing pending`
+状态：`alpha.2 published — alpha.3 planning`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -58,7 +58,7 @@
 
 主题：`Predictable Node selection everywhere`
 
-状态：**发布候选**
+状态：**已发布**
 
 交付结果：
 
@@ -69,7 +69,7 @@
 - [x] npm、npx、corepack 使用所选 Node 的子进程 PATH。
 - [x] 英文与简体中文提示、帮助、参数错误和常见运行错误。
 - [x] 临时目录中的 78 项测试、三平台构建和隔离 Ubuntu 真实 Node 验收。
-- [ ] 发布 `v0.1.0-alpha.2` 标签并复核公开 Release 资产与固定版本安装。
+- [x] 发布 `v0.1.0-alpha.2` 标签并复核公开 Release 资产、SHA-256、归档内容与版本输出。
 
 目标是在不改变现有项目文件语义的前提下，为同一用户提供正式默认 Node 版本，让项目配置
 稳定覆盖全局选择，并让 `node`、`npm`、`npx`、`corepack`、`exec` 与诊断命令得到同一个

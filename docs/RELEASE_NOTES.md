@@ -6,7 +6,7 @@
 ## v0.1.0-alpha.2
 
 - 版本日期：2026-08-12
-- 发布阶段：Alpha 预发布候选
+- 发布阶段：Alpha 预发布
 - 许可证：MIT License
 - Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
 - Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
@@ -51,6 +51,9 @@
 - Linux x64、Windows x64、macOS arm64 Release 归档构建通过。
 - 一次性 Ubuntu Runner 使用临时 `PINSET_HOME` 安装 Node 24.0.0 全局版本与 Node 22.0.0
   项目版本，验证项目覆盖、离开项目恢复全局版本、node/npm/corepack 和中文提示。
+- GitHub Release 工作流完成版本/tag 校验、质量门禁和三平台构建，并发布五个预期资产。
+- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档和 Windows ZIP
+  只包含预期的 CLI 与 shim，Windows CLI 输出 `pinset 0.1.0-alpha.2`。
 - 未在开发者 Windows 或 WSL 环境安装真实运行时。
 - 尚未完成 Windows 与 macOS 真实 Node 的人工流程验收；三平台构建通过不等同于三平台
   真实运行时安装均已验收。

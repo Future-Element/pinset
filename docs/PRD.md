@@ -1,7 +1,7 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布候选：`v0.1.0-alpha.2`
+当前发布版本：`v0.1.0-alpha.2`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -10,7 +10,7 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“当前”均指 `v0.1.0-alpha.2` 发布候选；标记为“计划”的契约尚不能当作可用命令。
+- 本文件中的“当前”均指 `v0.1.0-alpha.2`；标记为“计划”的契约尚不能当作可用命令。
 
 ## 1. 产品定位
 
@@ -264,7 +264,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前 `v0.1.0-alpha.2` 发布候选：
+当前 `v0.1.0-alpha.2`：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
@@ -310,7 +310,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-`v0.1.0-alpha.2` 发布候选已经完成 Node 项目级精确版本闭环、正式全局选择、安全系统 PATH
+`v0.1.0-alpha.2` 已经完成 Node 项目级精确版本闭环、正式全局选择、安全系统 PATH
 透传、来源感知诊断、中英文界面和公开三平台 CI/CD。浮动版本、卸载、CPython 与 Flutter
 仍未交付。完整范围和发布门禁见
 [Plans](PLANS.md#2-v010-alpha2--global-and-project-resolution)。
