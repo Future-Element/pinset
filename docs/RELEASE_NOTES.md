@@ -2,13 +2,14 @@
 
 本文件记录公开版本的用户可见变化、安装方式、验证边界和已知限制。计划中的功能不写成已交付；候选版本在 GitHub Release 实际完成前明确标注为待发布。
 
-## v0.1.0-beta.1（待发布）
+## v0.1.0-beta.1
 
-- 目标日期：`2026-08-12`
+- 发布日期：`2026-08-12`
 - 阶段：Node-first Beta / GitHub prerelease
 - 许可证：MIT
 - Pinset 归档：Linux x64、Windows x64、macOS Apple Silicon
 - Node 目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- GitHub Release：[v0.1.0-beta.1](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-beta.1)
 
 ### 重点变化
 
@@ -137,9 +138,9 @@ curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/uninstal
 
 Windows 从 Release 下载 `uninstall.ps1`，依次执行 `./uninstall.ps1 -DryRun` 与 `./uninstall.ps1 -Yes`。
 
-### 候选验证边界
+### 发布验证
 
-发布前本地门禁计划包括：
+发布前本地门禁已通过：
 
 - Rust 格式检查；
 - workspace 全目标、全 feature 严格 Clippy；
@@ -149,9 +150,18 @@ Windows 从 Release 下载 `uninstall.ps1`，依次执行 `./uninstall.ps1 -DryR
 - PowerShell 卸载器隔离测试；
 - shim 依赖图和 `git diff --check`。
 
-这些本地检查使用临时目录、假归档、本地 HTTP 和假运行时，不会在开发机安装真实 Node。三平台真实 Node 验收只在 tag Release 工作流的隔离 Runner 中执行。
+这些本地检查使用临时目录、假归档、本地 HTTP 和假运行时，没有在开发机安装真实 Node。Rust workspace 共 127 项测试通过。
 
-GitHub Release、Actions run、最终测试数量、资产复算和 attestation 验证结果将在发布完成后补充；在此之前不声称 Beta 已发布。
+main Quality [run 31584619265](https://github.com/Future-Element/pinset/actions/runs/31584619265) 成功。tag Release [run 31584751431](https://github.com/Future-Element/pinset/actions/runs/31584751431) 的 Release Quality、Linux、Windows、macOS 和发布任务全部成功；每个平台都在临时 `PINSET_HOME` 中完成真实 Node 24.0.0 全局版本、Node 22.0.0 项目版本以及 node/npm/npx/corepack 的显式与直接执行验收。
+
+发布后重新下载全部 10 个公开资产：
+
+- `SHA256SUMS` 的 9 个条目全部复算一致；
+- Linux/macOS 归档各只包含 `pinset` 与 `pinset-shim`；
+- Windows ZIP 只包含两个 `.exe`，公开 CLI 输出 `pinset 0.1.0-beta.1`；
+- 3 份 CycloneDX JSON 均可解析；
+- Linux、Windows、macOS 三个归档的 GitHub attestation 均验证成功；
+- 公开安装/卸载脚本内容与 tag 一致，`install.sh` 默认版本为 `0.1.0-beta.1`。
 
 ### 已知限制
 

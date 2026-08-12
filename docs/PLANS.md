@@ -1,9 +1,9 @@
 # Pinset Plans
 
-当前公开版本：`v0.1.0-alpha.6`
-当前发布目标：`v0.1.0-beta.1`
+当前公开版本：`v0.1.0-beta.1`
+当前发布目标：`v0.1.0`
 后续稳定目标：`v0.1.0`
-状态：`Beta 候选已实现，等待一次完整发布门禁`
+状态：`Beta 已发布，进入 Node 稳定版反馈与供应链收口`
 更新时间：`2026-08-12`
 
 ## 1. 文档边界
@@ -25,7 +25,7 @@
 | `v0.1.0-alpha.4` | Node 工作流收口 | 已发布 | `global` 入口、下载进度、README 使用路径 |
 | `v0.1.0-alpha.5` | Provider 路由闭环 | 已发布 | 自动 node/npm/npx/corepack 路由、独立安装、导入和 shim 迁移 |
 | `v0.1.0-alpha.6` | 完整卸载 | 已发布 | 安全完整卸载脚本和跨 Shell 修复 |
-| `v0.1.0-beta.1` | Node 公测闭环 | 当前目标 | 简短安装、下载韧性、可信镜像、离线导入、三平台真实验收、供应链信息 |
+| `v0.1.0-beta.1` | Node 公测闭环 | 已发布 | 简短安装、下载韧性、可信镜像、离线导入、三平台真实验收、供应链信息 |
 | `v0.1.0` | Node 稳定版 | 后续 | 上游 PGP、schema/兼容冻结、Beta 反馈和发布治理 |
 | `v0.2.0+` | 新 Provider | 未排期 | 在 Node 稳定后评估 Python、Flutter |
 
@@ -76,7 +76,7 @@
 
 ### B. 简化安装入口
 
-状态：`已实现，待 Release 资产验证`
+状态：`已发布并完成公开资产验证`
 
 - [x] `install.sh` 内置 `0.1.0-beta.1` 推荐版本；
 - [x] 主入口缩短为 `curl -fsSL raw.../install.sh | sh`；
@@ -84,7 +84,7 @@
 - [x] 安装器内部继续限制 HTTPS/TLS 并校验 SHA-256；
 - [x] 发布门禁验证 workspace 版本、tag 与安装器默认版本一致；
 - [x] README 解释旧 curl 参数的含义和固定版本用法；
-- [ ] 发布后从公开 URL 重新执行隔离安装器验收。
+- [x] 发布后重新下载公开 `install.sh`，验证内置版本、校验和与 tag 内容一致；实际安装行为由三平台 Release 隔离验收覆盖。
 
 ### C. 国内镜像与信任模型
 
@@ -127,7 +127,7 @@
 
 ### F. 三平台真实 Node 验收
 
-状态：`工作流已实现，等待 tag 运行`
+状态：`三平台 Release 验收成功`
 
 Release 的 Linux、Windows、macOS 构建任务分别在随机临时 `PINSET_HOME` 中：
 
@@ -139,11 +139,11 @@ Release 的 Linux、Windows、macOS 构建任务分别在随机临时 `PINSET_HO
 - [x] 验证 `pinset exec` 的 node/npm/npx/corepack；
 - [x] 验证 PATH 直接调用的 node/npm/npx/corepack；
 - [x] 验收完成后删除 Runner 临时目录；
-- [ ] `v0.1.0-beta.1` tag 的三平台任务实际全部成功。
+- [x] `v0.1.0-beta.1` tag 的 Linux、Windows、macOS 任务实际全部成功。
 
 ### G. Release 供应链
 
-状态：`工作流已实现，等待 tag 运行`
+状态：`已发布并完成公开资产复核`
 
 - [x] tag、workspace、安装器版本一致性检查；
 - [x] 锁定格式、Clippy、workspace 测试和 release build；
@@ -152,14 +152,14 @@ Release 的 Linux、Windows、macOS 构建任务分别在随机临时 `PINSET_HO
 - [x] 安装器、卸载器、校验和、SBOM 的来源证明；
 - [x] SHA256SUMS 覆盖全部 Release 资产；
 - [x] GitHub Actions 使用固定完整 SHA；
-- [ ] 签名 tag 已推送；
-- [ ] GitHub Release 自动创建并标记 prerelease；
-- [ ] 发布后重新下载并复算全部校验；
-- [ ] `gh attestation verify` 验证三平台归档。
+- [x] 签名 tag 已推送并指向通过 main Quality 的精确提交；
+- [x] GitHub Release 自动创建并标记 prerelease；
+- [x] 发布后重新下载 10 个公开资产并复算 `SHA256SUMS` 的 9 个条目；
+- [x] `gh attestation verify` 验证三平台归档。
 
 ### H. 文档
 
-状态：`候选版完成`
+状态：`发布版完成`
 
 - [x] README 从安装到卸载的主路径；
 - [x] 解释短 curl 与旧参数；
@@ -167,7 +167,21 @@ Release 的 Linux、Windows、macOS 构建任务分别在随机临时 `PINSET_HO
 - [x] 路由、镜像、续传、离线、诊断和迁移；
 - [x] Release 完整性验证；
 - [x] PRD、Plans、Release Notes 与 Node-only 范围一致；
-- [ ] 发布后补充实际 tag、Actions run 和资产验证结果。
+- [x] 发布后补充实际 tag、Actions run 和资产验证结果。
+
+### I. 发布证据
+
+- 签名提交：`7066fd2f6388acba6d9c106e8a469d3ca4a6177d`；
+- 签名 tag：`v0.1.0-beta.1`；
+- main Quality：[run 31584619265](https://github.com/Future-Element/pinset/actions/runs/31584619265)；
+- tag Release：[run 31584751431](https://github.com/Future-Element/pinset/actions/runs/31584751431)；
+- GitHub Release：[v0.1.0-beta.1](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-beta.1)；
+- Release Quality、Linux、Windows、macOS 和发布任务全部成功；
+- 三个平台分别完成真实 Node 24.0.0 全局版本、Node 22.0.0 项目版本和 node/npm/npx/corepack 验收；
+- 10 个公开资产存在，`SHA256SUMS` 的 9 项复算一致；
+- Linux/macOS 归档各只包含 `pinset` 与 `pinset-shim`，Windows ZIP 只包含对应两个 `.exe`；
+- 公开 Windows CLI 输出 `pinset 0.1.0-beta.1`；
+- 3 份 CycloneDX JSON 可解析，3 个平台归档的 GitHub attestation 验证成功。
 
 ## 5. 本地验证策略
 
