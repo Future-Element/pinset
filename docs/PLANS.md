@@ -235,6 +235,10 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 本地日常测试继续使用临时 `PINSET_HOME`、假归档和假运行时，不在开发者机器自动安装
 Node、Python 或 Flutter。真实运行时只在明确隔离的 VM/测试用户中执行。
 
+CI 提供仅 `workflow_dispatch` 触发的 `Ubuntu real runtime acceptance`。它在一次性 Ubuntu runner
+和临时 `PINSET_HOME` 中安装两个真实 Node 版本，验证全局选择、项目覆盖、离开项目恢复
+全局、npm/corepack 和中文设置；普通 PR 推送不会触发该下载型验收。
+
 ### 2.10 Release Gates
 
 `v0.1.0-alpha.2` 必须满足：

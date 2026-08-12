@@ -122,3 +122,29 @@ jobs:
           path: ${{ matrix.archive }}
           if-no-files-found: error
           retention-days: 14
+
+  ubuntu-runtime-acceptance:
+    name: Ubuntu real runtime acceptance
+    if: github.event_name == 'workflow_dispatch'
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup update stable
+          rustup default stable
+
+      - name: Build locked release binaries
+        run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Run real Node acceptance in an isolated home
+        env:
+          PINSET_BIN: ${{ github.workspace }}/target/release/pinset
+          PINSET_GLOBAL_VERSION: 24.0.0
+          PINSET_PROJECT_VERSION: 22.0.0
+        run: bash scripts/tests/ubuntu_runtime_acceptance.sh

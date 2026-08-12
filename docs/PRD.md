@@ -654,6 +654,10 @@ pinset exec -- npm test
 
 重复安装同一版本和目标时会验证收据及必要路径并直接复用。
 
+真实 Node 验收使用 CI 中仅手动触发的 `Ubuntu real runtime acceptance`，运行位置是 GitHub 一次性
+Ubuntu runner，所有状态写入临时 `PINSET_HOME`。普通 PR 和本地测试仍只使用假运行时，
+避免无意下载或修改开发者环境。
+
 ### 17.8 Ubuntu/WSL 构建与测试
 
 Windows 编译的 PE 文件不能作为 Linux 原生 Pinset 使用。Ubuntu/WSL 应下载 Linux Release
