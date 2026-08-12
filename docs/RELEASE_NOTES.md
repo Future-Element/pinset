@@ -35,6 +35,14 @@
   差异检查通过。
 - 所有卸载测试只处理随机临时目录中的假 CLI、假路由、假 Node/Python 安装；没有修改真实
   `PINSET_HOME`、PATH、shell profile 或语言运行时。
+- `main` Quality [run 31579128737](https://github.com/Future-Element/pinset/actions/runs/31579128737)
+  和 tag Release [run 31579293998](https://github.com/Future-Element/pinset/actions/runs/31579293998)
+  全部成功。
+- 发布后重新下载 7 个公开资产并复算 `SHA256SUMS` 六项；Linux/macOS 归档只包含 `pinset`、
+  `pinset-shim`，Windows ZIP 只包含对应的两个 `.exe`，公开 Windows CLI 输出
+  `pinset 0.1.0-alpha.6`。
+- 公开下载的 `uninstall.sh` 与 `uninstall.ps1` 均在独立临时目录完成 dry-run 和确认删除，模拟
+  CLI、路由器及整个模拟 `PINSET_HOME` 被删除，项目 `pinset.toml` 被保留。
 
 ### Linux x64 / macOS Apple Silicon 安装
 

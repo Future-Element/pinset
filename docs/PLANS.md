@@ -483,8 +483,14 @@ Linux/WSL 和 macOS 上的用户验收结果修复兼容问题；该版本不扩
   XDG/LocalAppData 根以及符号链接或 junction 数据根。
 - Unix 与 PowerShell 隔离测试覆盖未确认、dry-run、宽路径拒绝、全部受管运行时删除、外部命令
   和项目文件保留；测试只使用随机临时目录。
-- Windows PowerShell 与 WSL 隔离测试、117 项 workspace 测试、严格 Clippy、锁定 Release 构建、
-  PowerShell/POSIX 语法和差异检查通过；未触发 GitHub Actions，未安装或删除真实语言运行时。
+- 发布前 Windows PowerShell 与 WSL 隔离测试、117 项 workspace 测试、严格 Clippy、锁定 Release
+  构建、PowerShell/POSIX 语法和差异检查通过；未安装或删除真实语言运行时。
+- `main` Quality [run 31579128737](https://github.com/Future-Element/pinset/actions/runs/31579128737)
+  与 tag Release [run 31579293998](https://github.com/Future-Element/pinset/actions/runs/31579293998)
+  成功；Linux、Windows、macOS 构建 job 均运行对应的隔离卸载测试。
+- 发布后重新下载 7 个公开资产，`SHA256SUMS` 六项复算一致；三个归档只包含 CLI 与通用 shim，
+  Windows CLI 输出 `pinset 0.1.0-alpha.6`。公开 `uninstall.sh` 和 `uninstall.ps1` 均在独立临时
+  目录通过 dry-run 与确认删除测试，并保留模拟项目配置。
 
 CPython 与 Flutter 继续延期，需在 Node 闭环稳定后重新确认版本范围；不会为了展示多语言而提前
 把任一运行时的下载、校验或命令语义塞进通用安装器。
