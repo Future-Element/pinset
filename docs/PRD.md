@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.1.0-beta.1`
-产品阶段：`Node-first Beta`
+文档版本：`v0.2.0`
+产品阶段：`Multi-provider development`
 更新时间：`2026-08-12`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
 
-后续可以增加其他 Provider。`v0.1.0-beta.1` 只支持 Node.js，Python 和 Flutter 暂不纳入。
+`v0.2.0` 支持 Node.js、pnpm 和 Bun。Python 和 Flutter 暂不纳入。
 
 ### 1.1 目标
 
@@ -28,8 +28,8 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 1.3 本版本不做
 
-- 不在 Beta 接入 Python、Flutter、Java 等新 Provider；
-- 不替代 npm、pnpm、yarn 等包管理器；
+- 不接入 Python、Flutter、Java 等其他 Provider；
+- 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
 - 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
 - 不维护第三方 Homebrew Tap、Scoop Bucket 或其他外部包仓库；
@@ -54,14 +54,14 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 - 默认只接受 HTTPS 下载源；
 - 自定义源默认只替换归档传输，不替换官方校验元数据；
-- SHA-256 不匹配立即停止，不继续 fallback；
+- 归档完整性不匹配立即停止，不继续 fallback；
 - 安装在临时目录完成校验和解压后再原子提交；
 - 不覆盖无法证明由 Pinset 所有的命令或目录；
 - 只删除经过路径和所有权检查的 Pinset 文件。
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 在用户选择或安装 Node 时注册 `node`、`npm`、`npx`、`corepack`；未来其他 Provider 使用同一注册模型。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`。
 
 ## 3. 支持矩阵
 
@@ -93,10 +93,12 @@ WSL 使用 Linux 归档，不能运行 Windows `.exe`，也不能复用 Windows 
 表达用户意图，可提交：
 
 ```toml
-schema = 1
+schema = 2
 
 [tools]
-node = "24"
+node = "24.0.0"
+pnpm = "11.21.0"
+bun = "1.3.14"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -105,7 +107,7 @@ node = "24"
 
 - schema；
 - Provider 和精确版本；
-- 每个目标平台的归档 URL、格式和 SHA-256；
+- 每个目标平台的归档 URL、格式和完整性值；
 - 校验元数据来源；
 - 生成信息。
 
@@ -125,7 +127,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`。
 
 ### 4.5 通用命令路由
 
@@ -142,9 +144,9 @@ Node Provider 声明 `node`、`npm`、`npx`、`corepack`。
 
 ### 4.7 下载缓存
 
-- 完整归档：`PINSET_HOME/downloads/sha256/<hash>.archive`；
-- 断点文件：`PINSET_HOME/downloads/partial/<hash>.part`；
-- 相同 SHA-256 跨来源、跨项目复用；
+- 完整归档：`PINSET_HOME/downloads/{sha256|sha512}/<hash>.archive`；
+- 断点文件：`PINSET_HOME/downloads/partial/{sha256|sha512}/<hash>.part`；
+- 相同完整性值跨来源、跨项目复用；
 - 未知文件和非普通文件不会被当作缓存处理。
 
 ## 5. Node 功能
@@ -329,14 +331,29 @@ Beta 支持：
 
 正常提示、帮助、诊断、常见错误和进度信息应接入统一目录；底层操作系统错误、路径、URL 和哈希保留原值。
 
+## 6.1 pnpm 与 Bun Provider
+
+pnpm Provider 支持稳定版 10 和 11，Bun Provider 支持稳定版 1.x。两者均可使用精确、主版本、主次版本、`latest` 和 `current` 选择器，并通过 `list <tool> --available` 查看满足全部发布目标的稳定版本。
+
+- pnpm 从 `@pnpm/exe` 的精确 `optionalDependencies` 解析 `@pnpm/win-x64`、`@pnpm/linux-x64`、`@pnpm/macos-arm64`；
+- Bun 从 `bun` 的精确 `optionalDependencies` 解析 `@oven` 平台包；
+- Bun x64 同时锁定 AVX2 与 baseline 包，当前机器安装目标通过 CPU 能力选择；
+- 平台包必须使用官方 npm HTTPS tarball、SHA-512 SRI 和可由 npm registry 当前公钥验证的 ECDSA 签名；
+- npm 包以 `.tar.gz` 安全解压，strip `package/` 后验证 `pnpm(.exe)` 或 `bin/bun(.exe)`；
+- Bun 安装后创建受安装目录约束的 `bunx` 硬链接，文件系统不支持时退回复制；
+- pnpm/Bun 不要求 Node 已选择或已安装，也不通过 Corepack 安装。
+
+多个 Provider 同时选择时，子进程 PATH 依次包含当前命令目录和其他已选择、已安装 Provider 的命令目录，再追加继承 PATH；Pinset shim 目录必须排除，以防脚本中的跨工具调用递归进入 shim。
+
 ## 7. 安全和供应链
 
-### 7.1 Node 归档
+### 7.1 Provider 归档
 
 - 从可信元数据源获得预期 SHA-256；
 - 下载源不得改变锁文件中的预期哈希；
 - 所有归档在解压前校验；
 - Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，计划在稳定版加入。
+- pnpm/Bun 使用 npm 平台包的 SHA-512 SRI，并在锁定阶段验证 npm registry ECDSA 签名；安装阶段重新计算 SHA-512。
 
 ### 7.2 Pinset Release
 
@@ -385,7 +402,7 @@ Beta 支持：
 - shim 轻依赖检查；
 - `git diff --check`。
 
-这些检查只使用临时目录、假归档和本地服务，不在开发机安装真实 Node。
+这些检查只使用临时目录、假归档和本地服务，不在开发机安装真实运行时。
 
 ### 9.2 Release 检查
 
@@ -393,10 +410,11 @@ Beta 支持：
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node 和一个项目 Node；
+- 安装一个全局 Node、一个项目 Node、一个 pnpm 和一个 Bun；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack；
-- 验证 PATH 直接调用的 node/npm/npx/corepack；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx；
+- 验证 PATH 直接调用的 node/npm/npx/corepack/pnpm/bun/bunx；
+- 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
@@ -404,13 +422,13 @@ Beta 支持：
 
 ## 10. 稳定版前待办
 
-`v0.1.0` 计划完成：
+稳定版前计划完成：
 
 - 验证 Node 上游 SHASUMS OpenPGP 签名，并定义密钥轮换策略；
-- 冻结 schema 1 兼容承诺和迁移策略；
+- 冻结 schema 1 读取兼容、schema 2 写入承诺和迁移策略；
 - 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
-- Node 稳定版完成前不增加新 Provider。
+- 完成 Node、pnpm、Bun 的三平台真实运行时验收。
 
-Python 和 Flutter 排在 `v0.1.0` 之后。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+Python 和 Flutter 排在当前三个 Provider 稳定之后。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

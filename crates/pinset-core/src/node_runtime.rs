@@ -38,10 +38,11 @@ pub fn install_locked_node(
         artifact: ArtifactSpec {
             canonical_url: artifact.canonical_url.clone(),
             sources,
-            sha256: artifact.sha256.clone(),
+            integrity: artifact.artifact_integrity()?.canonical(),
             format: match artifact.format {
                 LockedArtifactFormat::Zip => ArtifactFormat::Zip,
                 LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
+                LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
             },
         },
         strip_components: 1,

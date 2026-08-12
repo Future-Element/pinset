@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Pinset 仍处于 alpha 阶段，目前只对最新 GitHub Release 提供安全修复。预发布版本可能包含不兼容变更。
+Pinset 仍处于预发布阶段，目前只对最新 GitHub Release 提供安全修复。预发布版本可能包含不兼容变更。
 
 ## Reporting a vulnerability
 

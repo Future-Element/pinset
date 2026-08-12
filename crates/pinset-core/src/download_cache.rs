@@ -5,20 +5,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sha2::{Digest, Sha256};
 use tempfile::Builder;
 
-use crate::{Error, Result};
+use crate::{ArtifactIntegrity, Error, IntegrityAlgorithm, Result};
 
 const CACHE_DIRECTORY: &str = "downloads";
-const SHA256_DIRECTORY: &str = "sha256";
 const PARTIAL_DIRECTORY: &str = "partial";
 const ARCHIVE_SUFFIX: &str = ".archive";
 const MAX_CACHE_IMPORT_BYTES: u64 = 1_073_741_824;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadCacheEntry {
-    pub sha256: String,
+    pub integrity: String,
     pub size: u64,
     pub path: PathBuf,
 }
@@ -30,37 +28,60 @@ pub struct DownloadCacheCleanOutcome {
 }
 
 pub fn download_cache_path(pinset_home: &Path, sha256: &str) -> Result<PathBuf> {
-    if !is_sha256(sha256) {
+    let integrity = ArtifactIntegrity::parse(sha256).map_err(|_| Error::InvalidSha256 {
+        value: sha256.to_owned(),
+    })?;
+    if integrity.algorithm() != IntegrityAlgorithm::Sha256 {
         return Err(Error::InvalidSha256 {
             value: sha256.to_owned(),
         });
     }
+    download_cache_path_for_integrity(pinset_home, &integrity)
+}
+
+pub(crate) fn download_cache_path_for_integrity(
+    pinset_home: &Path,
+    integrity: &ArtifactIntegrity,
+) -> Result<PathBuf> {
     Ok(pinset_home
         .join(CACHE_DIRECTORY)
-        .join(SHA256_DIRECTORY)
-        .join(format!("{}.archive", sha256.to_ascii_lowercase())))
+        .join(integrity.algorithm().as_str())
+        .join(format!("{}.archive", integrity.cache_key())))
 }
 
 pub fn list_download_cache(pinset_home: &Path) -> Result<Vec<DownloadCacheEntry>> {
-    let root = pinset_home.join(CACHE_DIRECTORY).join(SHA256_DIRECTORY);
+    let mut cached = Vec::new();
+    for algorithm in [IntegrityAlgorithm::Sha256, IntegrityAlgorithm::Sha512] {
+        list_download_cache_algorithm(pinset_home, algorithm, &mut cached)?;
+    }
+    cached.sort_by_key(|entry| Reverse(entry.integrity.clone()));
+    Ok(cached)
+}
+
+fn list_download_cache_algorithm(
+    pinset_home: &Path,
+    algorithm: IntegrityAlgorithm,
+    cached: &mut Vec<DownloadCacheEntry>,
+) -> Result<()> {
+    let root = pinset_home.join(CACHE_DIRECTORY).join(algorithm.as_str());
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(source) => return Err(Error::ReadDownloadCache { path: root, source }),
     };
-    let mut cached = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| Error::ReadDownloadCache {
             path: root.clone(),
             source,
         })?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(sha256) = name.strip_suffix(ARCHIVE_SUFFIX) else {
+        let Some(hash) = name.strip_suffix(ARCHIVE_SUFFIX) else {
             continue;
         };
-        if !is_sha256(sha256) {
+        let candidate = format!("{}:{hash}", algorithm.as_str());
+        let Ok(integrity) = ArtifactIntegrity::parse(&candidate) else {
             continue;
-        }
+        };
         let metadata = entry
             .metadata()
             .map_err(|source| Error::ReadDownloadCache {
@@ -79,13 +100,12 @@ pub fn list_download_cache(pinset_home: &Path) -> Result<Vec<DownloadCacheEntry>
             return Err(Error::UnsafeDownloadCacheEntry { path: entry.path() });
         }
         cached.push(DownloadCacheEntry {
-            sha256: sha256.to_owned(),
+            integrity: integrity.canonical(),
             size: metadata.len(),
             path: entry.path(),
         });
     }
-    cached.sort_by_key(|entry| Reverse(entry.sha256.clone()));
-    Ok(cached)
+    Ok(())
 }
 
 pub fn clean_download_cache(pinset_home: &Path) -> Result<DownloadCacheCleanOutcome> {
@@ -103,21 +123,30 @@ pub fn clean_download_cache(pinset_home: &Path) -> Result<DownloadCacheCleanOutc
         outcome.bytes = outcome.bytes.saturating_add(entry.size);
     }
     let partial_root = pinset_home.join(CACHE_DIRECTORY).join(PARTIAL_DIRECTORY);
-    for entry in list_partial_downloads(&partial_root)? {
-        fs::remove_file(&entry.path).map_err(|source| Error::RemoveDownloadCacheEntry {
-            path: entry.path,
-            source,
-        })?;
-        outcome.entries += 1;
-        outcome.bytes = outcome.bytes.saturating_add(entry.size);
+    for algorithm in [IntegrityAlgorithm::Sha256, IntegrityAlgorithm::Sha512] {
+        let root = partial_root.join(algorithm.as_str());
+        for entry in list_partial_downloads(&root, algorithm)? {
+            fs::remove_file(&entry.path).map_err(|source| Error::RemoveDownloadCacheEntry {
+                path: entry.path,
+                source,
+            })?;
+            outcome.entries += 1;
+            outcome.bytes = outcome.bytes.saturating_add(entry.size);
+        }
+        remove_if_empty(&root)?;
     }
-    remove_if_empty(&pinset_home.join(CACHE_DIRECTORY).join(SHA256_DIRECTORY))?;
+    for algorithm in [IntegrityAlgorithm::Sha256, IntegrityAlgorithm::Sha512] {
+        remove_if_empty(&pinset_home.join(CACHE_DIRECTORY).join(algorithm.as_str()))?;
+    }
     remove_if_empty(&partial_root)?;
     remove_if_empty(&pinset_home.join(CACHE_DIRECTORY))?;
     Ok(outcome)
 }
 
-fn list_partial_downloads(root: &Path) -> Result<Vec<DownloadCacheEntry>> {
+fn list_partial_downloads(
+    root: &Path,
+    algorithm: IntegrityAlgorithm,
+) -> Result<Vec<DownloadCacheEntry>> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -135,12 +164,13 @@ fn list_partial_downloads(root: &Path) -> Result<Vec<DownloadCacheEntry>> {
             source,
         })?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(sha256) = name.strip_suffix(".part") else {
+        let Some(hash) = name.strip_suffix(".part") else {
             continue;
         };
-        if !is_sha256(sha256) {
+        let candidate = format!("{}:{hash}", algorithm.as_str());
+        let Ok(integrity) = ArtifactIntegrity::parse(&candidate) else {
             continue;
-        }
+        };
         let file_type = entry
             .file_type()
             .map_err(|source| Error::ReadDownloadCache {
@@ -157,7 +187,7 @@ fn list_partial_downloads(root: &Path) -> Result<Vec<DownloadCacheEntry>> {
                 source,
             })?;
         partials.push(DownloadCacheEntry {
-            sha256: sha256.to_owned(),
+            integrity: integrity.canonical(),
             size: metadata.len(),
             path: entry.path(),
         });
@@ -165,16 +195,28 @@ fn list_partial_downloads(root: &Path) -> Result<Vec<DownloadCacheEntry>> {
     Ok(partials)
 }
 
+#[cfg(test)]
 pub(crate) fn download_partial_path(pinset_home: &Path, sha256: &str) -> Result<PathBuf> {
-    if !is_sha256(sha256) {
+    let integrity = ArtifactIntegrity::parse(sha256).map_err(|_| Error::InvalidSha256 {
+        value: sha256.to_owned(),
+    })?;
+    if integrity.algorithm() != IntegrityAlgorithm::Sha256 {
         return Err(Error::InvalidSha256 {
             value: sha256.to_owned(),
         });
     }
+    download_partial_path_for_integrity(pinset_home, &integrity)
+}
+
+pub(crate) fn download_partial_path_for_integrity(
+    pinset_home: &Path,
+    integrity: &ArtifactIntegrity,
+) -> Result<PathBuf> {
     Ok(pinset_home
         .join(CACHE_DIRECTORY)
         .join(PARTIAL_DIRECTORY)
-        .join(format!("{}.part", sha256.to_ascii_lowercase())))
+        .join(integrity.algorithm().as_str())
+        .join(format!("{}.part", integrity.cache_key())))
 }
 
 pub fn import_download_cache(
@@ -182,8 +224,25 @@ pub fn import_download_cache(
     archive: &Path,
     expected_sha256: &str,
 ) -> Result<DownloadCacheEntry> {
-    let destination = download_cache_path(pinset_home, expected_sha256)?;
-    let expected_sha256 = expected_sha256.to_ascii_lowercase();
+    let integrity =
+        ArtifactIntegrity::parse(expected_sha256).map_err(|_| Error::InvalidSha256 {
+            value: expected_sha256.to_owned(),
+        })?;
+    if integrity.algorithm() != IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidSha256 {
+            value: expected_sha256.to_owned(),
+        });
+    }
+    import_download_cache_with_integrity(pinset_home, archive, &integrity)
+}
+
+pub fn import_download_cache_with_integrity(
+    pinset_home: &Path,
+    archive: &Path,
+    integrity: &ArtifactIntegrity,
+) -> Result<DownloadCacheEntry> {
+    let destination = download_cache_path_for_integrity(pinset_home, integrity)?;
+    let expected = integrity.canonical();
     let metadata = fs::symlink_metadata(archive).map_err(|source| Error::ReadDownloadCache {
         path: archive.to_path_buf(),
         source,
@@ -201,15 +260,12 @@ pub fn import_download_cache(
     }
 
     if destination.exists() {
-        let (actual, size) = hash_file(&destination)?;
-        if actual != expected_sha256 {
-            return Err(Error::ChecksumMismatch {
-                expected: expected_sha256,
-                actual,
-            });
+        let (actual, size) = hash_file(&destination, integrity)?;
+        if actual != expected {
+            return Err(Error::ChecksumMismatch { expected, actual });
         }
         return Ok(DownloadCacheEntry {
-            sha256: actual,
+            integrity: actual,
             size,
             path: destination,
         });
@@ -233,7 +289,7 @@ pub fn import_download_cache(
             path: destination.clone(),
             source,
         })?;
-    let mut hasher = Sha256::new();
+    let mut hasher = integrity.hasher();
     let mut size = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -261,12 +317,9 @@ pub fn import_download_cache(
                 source,
             })?;
     }
-    let actual = hex::encode(hasher.finalize());
-    if actual != expected_sha256 {
-        return Err(Error::ChecksumMismatch {
-            expected: expected_sha256,
-            actual,
-        });
+    let actual = integrity.canonical_digest(&hasher.finalize());
+    if actual != expected {
+        return Err(Error::ChecksumMismatch { expected, actual });
     }
     temporary
         .as_file()
@@ -278,7 +331,7 @@ pub fn import_download_cache(
     match temporary.persist_noclobber(&destination) {
         Ok(_) => {}
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-            let (existing_hash, _) = hash_file(&destination)?;
+            let (existing_hash, _) = hash_file(&destination, integrity)?;
             if existing_hash != actual {
                 return Err(Error::ChecksumMismatch {
                     expected: actual,
@@ -294,13 +347,13 @@ pub fn import_download_cache(
         }
     }
     Ok(DownloadCacheEntry {
-        sha256: actual,
+        integrity: actual,
         size,
         path: destination,
     })
 }
 
-fn hash_file(path: &Path) -> Result<(String, u64)> {
+fn hash_file(path: &Path, integrity: &ArtifactIntegrity) -> Result<(String, u64)> {
     let metadata = fs::symlink_metadata(path).map_err(|source| Error::ReadDownloadCache {
         path: path.to_path_buf(),
         source,
@@ -314,7 +367,7 @@ fn hash_file(path: &Path) -> Result<(String, u64)> {
         path: path.to_path_buf(),
         source,
     })?;
-    let mut hasher = Sha256::new();
+    let mut hasher = integrity.hasher();
     let mut size = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -330,7 +383,7 @@ fn hash_file(path: &Path) -> Result<(String, u64)> {
         size = size.saturating_add(count as u64);
         hasher.update(&buffer[..count]);
     }
-    Ok((hex::encode(hasher.finalize()), size))
+    Ok((integrity.canonical_digest(&hasher.finalize()), size))
 }
 
 fn remove_if_empty(path: &Path) -> Result<()> {
@@ -351,13 +404,10 @@ fn remove_if_empty(path: &Path) -> Result<()> {
     }
 }
 
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn lists_and_cleans_only_content_addressed_cache_entries() {
@@ -370,7 +420,7 @@ mod tests {
 
         let entries = list_download_cache(home.path()).expect("cache entries");
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].sha256, hash);
+        assert_eq!(entries[0].integrity, format!("sha256:{hash}"));
         assert_eq!(entries[0].size, 6);
 
         let outcome = clean_download_cache(home.path()).expect("clean cache");
@@ -412,7 +462,7 @@ mod tests {
 
         let imported =
             import_download_cache(home.path(), &source, &expected).expect("cache import");
-        assert_eq!(imported.sha256, expected);
+        assert_eq!(imported.integrity, format!("sha256:{expected}"));
         assert_eq!(
             fs::read(&imported.path).expect("cached"),
             b"offline node archive"

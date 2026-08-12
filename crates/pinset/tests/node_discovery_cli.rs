@@ -39,11 +39,11 @@ fn local_node_listing_and_help_are_localized() {
     assert_success_contains(&empty, "尚未安装任何 Node.js 版本");
 
     let help = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "--help"]);
-    assert_success_contains(&help, "列出本机已安装或官方可用的 Node.js 版本");
+    assert_success_contains(&help, "列出本机已安装或官方可用的运行时版本");
 
     let unsupported = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "python"]);
     assert!(!unsupported.status.success());
-    assert!(stderr(&unsupported).contains("只接受 node 工具"));
+    assert!(stderr(&unsupported).contains("python"));
 }
 
 fn create_install_receipt(home: &Path, version: &str, target: &str) {

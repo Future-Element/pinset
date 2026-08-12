@@ -16,18 +16,21 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer, Lockfile,
-    NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
-    clean_download_cache, command_tool, create_project_config, current_target, ensure_shims,
-    find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
-    import_download_cache, install_locked_node, is_managed_command_shim, list_download_cache,
-    list_installed_node_versions, load_global_config, load_lockfile, load_optional_global_config,
-    load_project_config, load_source_config, load_user_settings, lockfile_path,
-    node_command_directory, path_with_selected_runtime, pinset_home, resolve_command,
-    resolve_tool_selection, runtime_provider, save_global_config, save_global_state, save_lockfile,
-    save_project_config, save_source_config, save_user_settings, source_config_path,
-    uninstall_node_version, user_settings_path, validate_exact_node_version,
-    validate_lock_matches_selection,
+    ArtifactIntegrity, DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer,
+    LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
+    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
+    current_target, current_target_for_tool, ensure_shims, find_optional_project_config,
+    find_project_config, global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_node, install_locked_npm_tool,
+    is_managed_command_shim, list_download_cache, list_installed_tool_versions, load_global_config,
+    load_lockfile, load_optional_global_config, load_optional_lockfile, load_project_config,
+    load_source_config, load_user_settings, lockfile_path, node_command_directory,
+    path_with_selected_tools, pinset_home, resolve_command, resolve_tool_selection,
+    runtime_command_directory, runtime_provider, save_global_config, save_global_state,
+    save_lockfile, save_project_config, save_source_config, save_user_settings, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_node_version, validate_lock_matches_selection, validate_lock_matches_tool,
+    validate_lock_matches_tools,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -53,17 +56,17 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
-    /// Show or set the default Node.js version used outside projects.
+    /// Show or set a default runtime version used outside projects.
     Global {
-        /// Selection such as node@24.0.0, node@24, node@24.12, node@lts or node@current.
+        /// Selection such as node@lts, pnpm@11 or bun@1.3.
         selection: Option<String>,
         /// Update the global selection and lock without downloading the runtime.
         #[arg(long, requires = "selection")]
         no_install: bool,
     },
-    /// Select and lock a Node.js version for the current project or globally.
+    /// Select and lock a runtime version for the current project or globally.
     Use {
-        /// Selection such as node@24.0.0, node@24, node@24.12, node@lts or node@current.
+        /// Selection such as node@24, pnpm@11 or bun@1.3.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -72,9 +75,9 @@ enum Commands {
         #[arg(long)]
         global: bool,
     },
-    /// Clear the project or global Node.js selection without uninstalling anything.
+    /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear. The Node-first release accepts node.
+        /// Tool to clear: node, pnpm or bun.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -83,9 +86,9 @@ enum Commands {
         #[arg(long, conflicts_with = "global")]
         cwd: Option<PathBuf>,
     },
-    /// Install an explicit Node.js version or the current project/global lockfile target.
+    /// Install an explicit runtime version or every project/global lockfile target.
     Install {
-        /// Install a Node.js version without changing project or global selection.
+        /// Install a runtime version without changing project or global selection.
         #[arg(conflicts_with_all = ["locked", "global", "cwd"])]
         selection: Option<String>,
         /// Require the selected config and lockfile to match. This is the default.
@@ -105,20 +108,20 @@ enum Commands {
     },
     /// Print the effective project, global or system selection and executable path.
     Current {
-        /// Tool to inspect. Defaults to node in the Node-first release.
+        /// Tool to inspect. Defaults to node.
         tool: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// List installed or officially available Node.js versions.
+    /// List installed or officially available runtime versions.
     List {
-        /// Tool to list. The Node-first release accepts node.
+        /// Tool to list: node, pnpm or bun.
         tool: String,
-        /// Query the official Node.js release index instead of local installations.
+        /// Query the official provider index instead of local installations.
         #[arg(long)]
         available: bool,
     },
-    /// Uninstall an exact Node.js version owned by Pinset.
+    /// Uninstall an exact runtime version owned by Pinset.
     Uninstall {
         /// Exact selection such as node@24.0.0.
         selection: String,
@@ -239,8 +242,11 @@ enum CacheCommands {
     Import {
         archive: PathBuf,
         /// Expected SHA-256 from a reviewed pinset.lock or upstream manifest.
-        #[arg(long)]
-        sha256: String,
+        #[arg(long, conflicts_with = "integrity")]
+        sha256: Option<String>,
+        /// Expected SRI or canonical integrity, for example sha512-<base64>.
+        #[arg(long, conflicts_with = "sha256")]
+        integrity: Option<String>,
     },
 }
 
@@ -372,7 +378,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         } => {
             if let Some(selection) = selection {
                 let cwd = env::current_dir()?;
-                select_node(&selection, true, no_install, false, &cwd, catalog)?;
+                select_tool(&selection, true, no_install, false, &cwd, catalog)?;
                 print_project_override(&cwd, &pinset_home()?, catalog)?;
             } else {
                 print_global_current(catalog)?;
@@ -385,13 +391,11 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             global,
         } => {
             let cwd = env::current_dir()?;
-            select_node(&selection, global, no_install, false, &cwd, catalog)?
+            select_tool(&selection, global, no_install, false, &cwd, catalog)?
         }
         Commands::Unset { tool, global, cwd } => {
-            if tool != "node" {
-                return Err(catalog.node_only_error().into());
-            }
-            unset_node(global, &effective_cwd(cwd)?, catalog)?;
+            require_provider(&tool)?;
+            unset_tool(&tool, global, &effective_cwd(cwd)?, catalog)?;
         }
         Commands::Install {
             selection,
@@ -400,7 +404,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             cwd,
         } => {
             if let Some(selection) = selection {
-                install_node_selection(&selection, catalog)?;
+                install_tool_selection(&selection, catalog)?;
             } else if global {
                 install_global(&pinset_home()?, catalog)?;
             } else {
@@ -417,32 +421,44 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             print_current(&cwd, tool.as_deref().unwrap_or("node"), catalog)?;
         }
         Commands::List { tool, available } => {
-            if tool != "node" {
-                return Err(catalog.node_only_error().into());
-            }
+            require_provider(&tool)?;
             if available {
-                let releases = node_metadata_client(&pinset_home()?)?.available_releases()?;
-                for release in releases {
-                    println!(
-                        "{}",
-                        catalog.available_node(
-                            &release.version,
-                            &release.date,
-                            release.lts.as_deref(),
-                            release.security,
-                        )
-                    );
-                }
-            } else {
-                let installed = list_installed_node_versions(&pinset_home()?)?;
-                if installed.is_empty() {
-                    println!("{}", catalog.no_installed_node());
-                } else {
-                    for entry in installed {
+                if tool == "node" {
+                    let releases = node_metadata_client(&pinset_home()?)?.available_releases()?;
+                    for release in releases {
                         println!(
                             "{}",
-                            catalog.installed_node(&entry.version, &entry.targets.join(","))
+                            catalog.available_node(
+                                &release.version,
+                                &release.date,
+                                release.lts.as_deref(),
+                                release.security,
+                            )
                         );
+                    }
+                } else {
+                    for release in NpmMetadataClient::official()?.available_releases(&tool)? {
+                        println!("{}@{}", tool, release.version);
+                    }
+                }
+            } else {
+                let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
+                if installed.is_empty() {
+                    if tool == "node" {
+                        println!("{}", catalog.no_installed_node());
+                    } else {
+                        println!("no Pinset-managed {tool} versions are installed");
+                    }
+                } else {
+                    for entry in installed {
+                        if tool == "node" {
+                            println!(
+                                "{}",
+                                catalog.installed_node(&entry.version, &entry.targets.join(","))
+                            );
+                        } else {
+                            println!("{}@{} [{}]", tool, entry.version, entry.targets.join(","));
+                        }
                     }
                 }
             }
@@ -452,14 +468,29 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             force,
             cwd,
         } => {
-            let version = parse_node_selection(&selection, catalog)?;
-            validate_exact_node_version(&version)?;
-            let outcome =
-                uninstall_node_version(&pinset_home()?, &effective_cwd(cwd)?, &version, force)?;
-            println!(
-                "{}",
-                catalog.uninstalled_node(&outcome.version, &outcome.targets.join(","))
-            );
+            let (tool, version) = parse_tool_selection(&selection, catalog)?;
+            validate_exact_tool_version(&tool, &version)?;
+            if tool == "node" {
+                let outcome =
+                    uninstall_node_version(&pinset_home()?, &effective_cwd(cwd)?, &version, force)?;
+                println!(
+                    "{}",
+                    catalog.uninstalled_node(&outcome.version, &outcome.targets.join(","))
+                );
+            } else {
+                let outcome = uninstall_tool_version(
+                    &pinset_home()?,
+                    &effective_cwd(cwd)?,
+                    &tool,
+                    &version,
+                    force,
+                )?;
+                println!(
+                    "uninstalled {tool}@{} [{}]",
+                    outcome.version,
+                    outcome.targets.join(",")
+                );
+            }
         }
         Commands::Cache { command } => match command {
             CacheCommands::List => {
@@ -470,7 +501,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                     for entry in entries {
                         println!(
                             "{}",
-                            catalog.cache_entry(&entry.sha256, entry.size, &entry.path)
+                            catalog.cache_entry(&entry.integrity, entry.size, &entry.path)
                         );
                     }
                 }
@@ -479,12 +510,23 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 let outcome = clean_download_cache(&pinset_home()?)?;
                 println!("{}", catalog.cache_cleaned(outcome.entries, outcome.bytes));
             }
-            CacheCommands::Import { archive, sha256 } => {
+            CacheCommands::Import {
+                archive,
+                sha256,
+                integrity,
+            } => {
                 let archive = absolutize(&archive)?;
-                let entry = import_download_cache(&pinset_home()?, &archive, &sha256)?;
+                let entry = if let Some(sha256) = sha256 {
+                    import_download_cache(&pinset_home()?, &archive, &sha256)?
+                } else if let Some(integrity) = integrity {
+                    let integrity = ArtifactIntegrity::parse(&integrity)?;
+                    import_download_cache_with_integrity(&pinset_home()?, &archive, &integrity)?
+                } else {
+                    return Err("cache import requires --sha256 or --integrity".into());
+                };
                 println!(
                     "{}",
-                    catalog.cache_imported(&entry.sha256, entry.size, &entry.path)
+                    catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
                 );
             }
         },
@@ -517,7 +559,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             } else {
                 let candidate = select_legacy_candidate(&candidates, source.as_deref(), catalog)?;
                 let selector = normalize_legacy_node_selector(&candidate.version)?;
-                select_node(
+                select_tool(
                     &format!("node@{selector}"),
                     global,
                     no_install,
@@ -593,20 +635,78 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
     Ok(ExitCode::SUCCESS)
 }
 
+fn parse_tool_selection(
+    selection: &str,
+    catalog: Catalog,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let Some((tool, version)) = selection.split_once('@') else {
+        return Err(catalog.selection_error().into());
+    };
+    if version.is_empty() || version.contains('@') {
+        return Err(catalog.selection_error().into());
+    }
+    require_provider(tool)?;
+    Ok((tool.to_owned(), version.to_owned()))
+}
+
 fn parse_node_selection(
     selection: &str,
     catalog: Catalog,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let Some((tool, version)) = selection.split_once('@') else {
-        return Err(catalog.selection_error().into());
-    };
-    if tool != "node" || version.is_empty() || version.contains('@') {
+    let (tool, version) = parse_tool_selection(selection, catalog)?;
+    if tool != "node" {
         return Err(catalog.node_only_error().into());
     }
-    Ok(version.to_owned())
+    Ok(version)
 }
 
-fn select_node(
+fn require_provider(tool: &str) -> Result<(), Box<dyn std::error::Error>> {
+    runtime_provider(tool)
+        .map(|_| ())
+        .ok_or_else(|| format!("runtime provider {tool:?} is not available").into())
+}
+
+fn validate_exact_tool_version(
+    tool: &str,
+    version: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if tool == "node" {
+        validate_exact_node_version(version)?;
+    } else {
+        let resolved = NpmMetadataClient::official()?.resolve_version_selector(tool, version)?;
+        if resolved != version {
+            return Err(format!("{tool}@{version} is not an exact stable version").into());
+        }
+    }
+    Ok(())
+}
+
+fn resolve_locked_tool(
+    tool: &str,
+    selector: &str,
+) -> Result<LockedTool, Box<dyn std::error::Error>> {
+    if tool == "node" {
+        let lockfile = node_metadata_client(&pinset_home()?)?
+            .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+        return Ok(lockfile
+            .tool("node")
+            .expect("generated Node lock contains node")
+            .clone());
+    }
+    let client = NpmMetadataClient::official()?;
+    let version = client.resolve_version_selector(tool, selector)?;
+    Ok(client.resolve_tool(tool, &version)?)
+}
+
+fn new_lockfile() -> Lockfile {
+    Lockfile {
+        schema: pinset_core::LOCKFILE_SCHEMA,
+        generated_by: format!("pinset {}", env!("CARGO_PKG_VERSION")),
+        tools: Vec::new(),
+    }
+}
+
+fn select_tool(
     selection: &str,
     global: bool,
     no_install: bool,
@@ -614,21 +714,24 @@ fn select_node(
     cwd: &Path,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let selector = parse_node_selection(selection, catalog)?;
-    let lockfile = node_metadata_client(&pinset_home()?)?
-        .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-    let locked_node = lockfile.tool("node").expect("generated lock contains node");
-    let version = locked_node.version.clone();
+    let (tool, selector) = parse_tool_selection(selection, catalog)?;
+    let locked_tool = resolve_locked_tool(&tool, &selector)?;
+    let version = locked_tool.version.clone();
     if selector != version {
-        println!("{}", catalog.selector_resolved(&selector, &version));
+        println!("{tool}@{selector} resolved to {tool}@{version}");
     }
     let (scope, lock_path) = if global {
         let home = pinset_home()?;
         let config_path = global_config_path(&home);
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
-        config.set_tool("node", &version);
+        let lock_path = global_lockfile_path(&home);
+        let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
+        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        lockfile.upsert_tool(locked_tool.clone());
+        config.set_tool(&tool, &version);
+        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
         save_global_state(&home, &config, &lockfile)?;
-        ("global", global_lockfile_path(&home))
+        ("global", lock_path)
     } else {
         let config_path = match find_optional_project_config(cwd)? {
             Some(path) => path,
@@ -637,22 +740,34 @@ fn select_node(
         };
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
+        let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
+        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        lockfile.upsert_tool(locked_tool.clone());
+        project.set_tool(&tool, &version);
+        validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
         save_lockfile(&lock_path, &lockfile)?;
-        project.set_tool("node", &version);
         save_project_config(&config_path, &project)?;
         ("project", lock_path)
     };
-    println!(
-        "{}",
-        catalog.selected(scope, &version, locked_node.artifacts.len(), &lock_path)
-    );
+    if tool == "node" {
+        println!(
+            "{}",
+            catalog.selected(scope, &version, locked_tool.artifacts.len(), &lock_path)
+        );
+    } else {
+        println!(
+            "selected {tool}@{version} for {scope} ({} targets, lock {})",
+            locked_tool.artifacts.len(),
+            lock_path.display()
+        );
+    }
     if !no_install {
         if global {
             install_global(&pinset_home()?, catalog)?;
         } else {
             install_project(cwd, catalog)?;
         }
-    } else if let Err(error) = register_provider_commands(&pinset_home()?, "node", catalog) {
+    } else if let Err(error) = register_provider_commands(&pinset_home()?, &tool, catalog) {
         eprintln!(
             "{}",
             catalog.shim_auto_registration_failed(&error.to_string())
@@ -661,24 +776,25 @@ fn select_node(
     Ok(())
 }
 
-fn install_node_selection(
+fn install_tool_selection(
     selection: &str,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let selector = parse_node_selection(selection, catalog)?;
-    let lockfile = node_metadata_client(&pinset_home()?)?
-        .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-    let locked_node = lockfile.tool("node").expect("generated lock contains node");
-    if selector != locked_node.version {
+    let (tool, selector) = parse_tool_selection(selection, catalog)?;
+    let locked_tool = resolve_locked_tool(&tool, &selector)?;
+    if selector != locked_tool.version {
         println!(
-            "{}",
-            catalog.selector_resolved(&selector, &locked_node.version)
+            "{tool}@{selector} resolved to {tool}@{}",
+            locked_tool.version
         );
     }
-    install_node_from_lock(&pinset_home()?, &lockfile, catalog)
+    let mut lockfile = new_lockfile();
+    lockfile.upsert_tool(locked_tool);
+    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, catalog)
 }
 
-fn unset_node(
+fn unset_tool(
+    tool: &str,
     global: bool,
     cwd: &Path,
     catalog: Catalog,
@@ -690,7 +806,7 @@ fn unset_node(
             println!("{}", catalog.selection_unset("global", &config_path, false));
             return Ok(());
         };
-        if config.tools.remove("node").is_none() {
+        if config.tools.remove(tool).is_none() {
             println!("{}", catalog.selection_unset("global", &config_path, false));
             return Ok(());
         }
@@ -699,14 +815,14 @@ fn unset_node(
             load_lockfile(&lock_path)?;
         }
         save_global_config(&config_path, &config)?;
-        remove_tool_from_lock(&lock_path, "node")?;
+        remove_tool_from_lock(&lock_path, tool)?;
         println!("{}", catalog.selection_unset("global", &config_path, true));
         return Ok(());
     }
 
     let config_path = find_project_config(cwd)?;
     let mut config = load_project_config(&config_path)?;
-    if config.tools.remove("node").is_none() {
+    if config.tools.remove(tool).is_none() {
         println!(
             "{}",
             catalog.selection_unset("project", &config_path, false)
@@ -718,7 +834,7 @@ fn unset_node(
         load_lockfile(&lock_path)?;
     }
     save_project_config(&config_path, &config)?;
-    remove_tool_from_lock(&lock_path, "node")?;
+    remove_tool_from_lock(&lock_path, tool)?;
     println!("{}", catalog.selection_unset("project", &config_path, true));
     Ok(())
 }
@@ -728,7 +844,7 @@ fn remove_tool_from_lock(path: &Path, tool: &str) -> Result<(), Box<dyn std::err
         return Ok(());
     }
     let mut lockfile = load_lockfile(path)?;
-    lockfile.tools.retain(|locked| locked.name != tool);
+    lockfile.remove_tool(tool);
     if lockfile.tools.is_empty() {
         fs::remove_file(path)?;
     } else {
@@ -826,31 +942,17 @@ fn resolve_language(requested: Option<Language>) -> Result<Language, Box<dyn std
 fn install_project(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
     let project = load_project_config(&config_path)?;
-    let configured = project
-        .tools
-        .get("node")
-        .ok_or_else(|| Error::ToolNotConfigured {
-            tool: "node".to_owned(),
-            config_path: config_path.clone(),
-        })?;
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
-    install_locked_selection(&home, configured, &config_path, &lock_path, catalog)
+    install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)
 }
 
 fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = global_config_path(home);
     let config: GlobalConfig = load_global_config(&config_path)?;
-    let configured = config
-        .tools
-        .get("node")
-        .ok_or_else(|| Error::ToolNotConfigured {
-            tool: "node".to_owned(),
-            config_path: config_path.clone(),
-        })?;
     install_locked_selection(
         home,
-        configured,
+        &config.tools,
         &config_path,
         &global_lockfile_path(home),
         catalog,
@@ -859,49 +961,75 @@ fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::erro
 
 fn install_locked_selection(
     home: &Path,
-    configured: &str,
+    configured: &std::collections::BTreeMap<String, String>,
     config_path: &Path,
     lock_path: &Path,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lockfile = load_lockfile(lock_path)?;
-    validate_lock_matches_selection(&lockfile, configured, config_path)?;
-    install_node_from_lock(home, &lockfile, catalog)
+    validate_lock_matches_tools(&lockfile, configured, config_path)?;
+    for provider in pinset_core::runtime_providers() {
+        if configured.contains_key(provider.tool) {
+            install_tool_from_lock(home, &lockfile, provider.tool, catalog)?;
+        }
+    }
+    Ok(())
 }
 
-fn install_node_from_lock(
+fn install_tool_from_lock(
     home: &Path,
     lockfile: &Lockfile,
+    tool: &str,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let locked_node = lockfile
-        .tool("node")
-        .expect("validated or generated Node lock contains node");
-    let sources = load_source_config(&source_config_path(home))?;
+    let locked_tool = lockfile
+        .tool(tool)
+        .ok_or_else(|| Error::LockedToolMissing {
+            tool: tool.to_owned(),
+        })?;
     let installer = Installer::new(InstallLimits::default())?
         .with_progress_reporter(download_progress_reporter(catalog));
-    let outcome = install_locked_node(&installer, home, &sources, locked_node, &current_target())?;
-    if outcome.reused_existing {
-        println!(
-            "{}",
-            catalog.already_installed(
-                &locked_node.version,
-                &current_target(),
-                &outcome.install_dir,
-            )
-        );
+    let target = current_target_for_tool(tool);
+    let outcome = if tool == "node" {
+        let sources = load_source_config(&source_config_path(home))?;
+        install_locked_node(&installer, home, &sources, locked_tool, &target)?
     } else {
-        println!(
-            "{}",
-            catalog.installed(
-                &locked_node.version,
-                &current_target(),
-                &outcome.source_id,
-                &outcome.install_dir,
-            )
-        );
+        install_locked_npm_tool(&installer, home, locked_tool, &target)?
+    };
+    if outcome.reused_existing {
+        if tool == "node" {
+            println!(
+                "{}",
+                catalog.already_installed(&locked_tool.version, &target, &outcome.install_dir)
+            );
+        } else {
+            println!(
+                "{tool}@{} is already installed for {target} at {}",
+                locked_tool.version,
+                outcome.install_dir.display()
+            );
+        }
+    } else {
+        if tool == "node" {
+            println!(
+                "{}",
+                catalog.installed(
+                    &locked_tool.version,
+                    &target,
+                    &outcome.source_id,
+                    &outcome.install_dir,
+                )
+            );
+        } else {
+            println!(
+                "installed {tool}@{} for {target} from {} at {}",
+                locked_tool.version,
+                outcome.source_id,
+                outcome.install_dir.display()
+            );
+        }
     }
-    if let Err(error) = register_provider_commands(home, "node", catalog) {
+    if let Err(error) = register_provider_commands(home, tool, catalog) {
         eprintln!(
             "{}",
             catalog.shim_auto_registration_failed(&error.to_string())
@@ -1175,11 +1303,14 @@ fn print_global_current(catalog: Catalog) -> Result<(), Box<dyn std::error::Erro
         println!("{}", catalog.global_not_selected(&config_path));
         return Ok(());
     };
-    let Some(version) = config.tools.get("node") else {
+    if config.tools.is_empty() {
         println!("{}", catalog.global_not_selected(&config_path));
         return Ok(());
-    };
-    print_declared_node(&home, version, "global", &config_path, catalog)
+    }
+    for (tool, version) in &config.tools {
+        print_declared_tool(&home, tool, version, "global", &config_path, catalog)?;
+    }
+    Ok(())
 }
 
 fn print_project_override(
@@ -1208,8 +1339,9 @@ fn print_project_override(
     Ok(())
 }
 
-fn print_declared_node(
+fn print_declared_tool(
     home: &Path,
+    tool: &str,
     version: &str,
     source: &str,
     config_path: &Path,
@@ -1217,20 +1349,25 @@ fn print_declared_node(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let install_dir = home
         .join("installs")
-        .join("node")
+        .join(tool)
         .join(version)
-        .join(current_target());
-    let command_dir = node_command_directory(&install_dir, &current_target())?;
-    let executable = node_runtime_command_path(&command_dir, "node");
+        .join(current_target_for_tool(tool));
+    let command_dir = runtime_command_directory(tool, &install_dir);
+    let command = runtime_provider(tool)
+        .and_then(|provider| provider.commands.first())
+        .ok_or_else(|| Error::UnsupportedCommand {
+            command: tool.to_owned(),
+        })?;
+    let executable = runtime_command_path(&command_dir, command);
     if executable.is_file() {
         println!(
             "{}",
-            catalog.current_installed(version, source, &executable, Some(config_path))
+            catalog.current_installed(tool, version, source, &executable, Some(config_path))
         );
     } else {
         println!(
             "{}",
-            catalog.current_missing(version, source, &command_dir, Some(config_path))
+            catalog.current_missing(tool, version, source, &command_dir, Some(config_path))
         );
     }
     Ok(())
@@ -1249,6 +1386,7 @@ fn print_current(
         Ok(resolution) => println!(
             "{}",
             catalog.current_installed(
+                selected_tool,
                 &resolution.version,
                 resolution.source.as_str(),
                 &resolution.executable,
@@ -1257,8 +1395,9 @@ fn print_current(
         ),
         Err(Error::RuntimeCommandNotFound { .. }) => {
             let selection = resolve_tool_selection(selected_tool, cwd, &home)?;
-            print_declared_node(
+            print_declared_tool(
                 &home,
+                selected_tool,
                 &selection.version,
                 selection.source.as_str(),
                 &selection.config_path,
@@ -1309,7 +1448,7 @@ fn execute_selected(
                 .join(&version)
                 .join(current_target());
             let command_dir = node_command_directory(&install_dir, &current_target())?;
-            let executable = node_runtime_command_path(&command_dir, command_name);
+            let executable = runtime_command_path(&command_dir, command_name);
             if !executable.is_file() {
                 return Err(Error::RuntimeCommandNotFound {
                     tool: "node".to_owned(),
@@ -1330,7 +1469,7 @@ fn execute_selected(
                 resolution.selection_path,
             )
         };
-    let runtime_path = path_with_selected_runtime(&executable)?;
+    let runtime_path = path_with_selected_tools(&executable, cwd, &home)?;
     let mut child = command_for_runtime(&executable);
     child
         .args(&command[1..])
@@ -1353,17 +1492,15 @@ fn execute_selected(
     ))
 }
 
-fn node_runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
+fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
     if cfg!(windows) {
-        let native = command_dir.join(if command == "node" {
-            "node.exe".to_owned()
-        } else {
-            format!("{command}.cmd")
-        });
-        if native.is_file() || command != "node" {
-            return native;
+        for extension in ["exe", "cmd", "bat"] {
+            let candidate = command_dir.join(command).with_extension(extension);
+            if candidate.is_file() {
+                return candidate;
+            }
         }
-        return command_dir.join("node.cmd");
+        return command_dir.join(command).with_extension("exe");
     }
     command_dir.join(command)
 }
@@ -1522,19 +1659,22 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
     let shims = command_routing_directory(&home)?;
     let shim_on_path = directory_on_path(&shims);
     let shim_binary = default_shim_binary()?;
-    let commands = runtime_provider("node")
-        .expect("Node provider is built in")
-        .commands;
-    let path_candidates = inspect_path_candidates(commands, &home, &shim_binary);
+    let commands = pinset_core::runtime_providers()
+        .iter()
+        .flat_map(|provider| provider.commands.iter().copied())
+        .collect::<Vec<_>>();
+    let path_candidates = inspect_path_candidates(&commands, &home, &shim_binary);
     let legacy_shims = home.join("shims");
     let legacy_commands = if paths_equal(&legacy_shims, &shims) {
         Vec::new()
     } else {
-        existing_shim_commands(&legacy_shims, commands)
+        existing_shim_commands(&legacy_shims, &commands)
     };
     let routing_issues = collect_routing_issues(
-        selected.is_some(),
-        commands,
+        pinset_core::runtime_providers()
+            .iter()
+            .any(|provider| resolve_tool_selection(provider.tool, cwd, &home).is_ok()),
+        &commands,
         &path_candidates,
         &shims,
         &shim_binary,
@@ -1838,52 +1978,106 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
         }
     }
 
-    match resolve_tool_selection("node", cwd, &home) {
-        Ok(selection) => {
-            println!(
-                "{}",
-                catalog.doctor_selection(
+    for provider in pinset_core::runtime_providers() {
+        let mut has_declared_selection = false;
+        match resolve_tool_selection(provider.tool, cwd, &home) {
+            Ok(selection) => {
+                has_declared_selection = true;
+                if provider.tool == "node" {
+                    println!(
+                        "{}",
+                        catalog.doctor_selection(
+                            &selection.version,
+                            selection.source.as_str(),
+                            Some(&selection.config_path),
+                        )
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        catalog.doctor_line(
+                            &format!("{}_selection", provider.tool),
+                            format!(
+                                "{}@{} source={} config={}",
+                                provider.tool,
+                                selection.version,
+                                selection.source.as_str(),
+                                selection.config_path.display()
+                            ),
+                            "ok",
+                        )
+                    );
+                }
+                let lock_path = match selection.source {
+                    pinset_core::SelectionSource::Project => lockfile_path(&selection.config_path),
+                    pinset_core::SelectionSource::Global => global_lockfile_path(&home),
+                    pinset_core::SelectionSource::System => unreachable!("declared selection"),
+                };
+                let lockfile = load_lockfile(&lock_path)?;
+                validate_lock_matches_tool(
+                    &lockfile,
+                    provider.tool,
                     &selection.version,
-                    selection.source.as_str(),
-                    Some(&selection.config_path),
-                )
-            );
-            let lock_path = match selection.source {
-                pinset_core::SelectionSource::Project => lockfile_path(&selection.config_path),
-                pinset_core::SelectionSource::Global => global_lockfile_path(&home),
-                pinset_core::SelectionSource::System => unreachable!("declared selection"),
-            };
-            let lockfile = load_lockfile(&lock_path)?;
-            validate_lock_matches_selection(&lockfile, &selection.version, &selection.config_path)?;
-            println!(
-                "{}",
-                catalog.doctor_lock_matches(&lock_path, &selection.version)
-            );
-        }
-        Err(Error::ToolSelectionNotFound { .. }) => {}
-        Err(error) => return Err(error.into()),
-    }
-
-    match resolve_command("node", cwd, &home) {
-        Ok(resolution) => {
-            if resolution.source == pinset_core::SelectionSource::System {
+                    &selection.config_path,
+                )?;
                 println!(
                     "{}",
-                    catalog
-                        .doctor_selection(&resolution.version, resolution.source.as_str(), None,)
+                    if provider.tool == "node" {
+                        catalog.doctor_lock_matches(&lock_path, &selection.version)
+                    } else {
+                        catalog.doctor_line(
+                            &format!("{}_lock", provider.tool),
+                            lock_path.display(),
+                            "ok",
+                        )
+                    }
                 );
             }
-            println!(
-                "{}",
-                catalog.doctor_line("runtime", resolution.executable.display(), "ok")
-            );
+            Err(Error::ToolSelectionNotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
         }
-        Err(Error::RuntimeCommandNotFound { version, .. }) => println!(
-            "{}",
-            catalog.doctor_line("runtime", format!("node@{version}"), "missing")
-        ),
-        Err(Error::CommandSelectionNotFound { .. }) => println!("{}", catalog.no_selection()),
-        Err(error) => return Err(error.into()),
+
+        if provider.tool != "node" && !has_declared_selection {
+            continue;
+        }
+        let command = provider.commands[0];
+        match resolve_command(command, cwd, &home) {
+            Ok(resolution) => {
+                if provider.tool == "node"
+                    && resolution.source == pinset_core::SelectionSource::System
+                {
+                    println!(
+                        "{}",
+                        catalog.doctor_selection(
+                            &resolution.version,
+                            resolution.source.as_str(),
+                            None,
+                        )
+                    );
+                }
+                println!(
+                    "{}",
+                    catalog.doctor_line(
+                        &format!("{}_runtime", provider.tool),
+                        resolution.executable.display(),
+                        "ok",
+                    )
+                );
+            }
+            Err(Error::RuntimeCommandNotFound { version, .. }) => println!(
+                "{}",
+                catalog.doctor_line(
+                    &format!("{}_runtime", provider.tool),
+                    format!("{}@{version}", provider.tool),
+                    "missing",
+                )
+            ),
+            Err(Error::CommandSelectionNotFound { .. }) if provider.tool == "node" => {
+                println!("{}", catalog.no_selection())
+            }
+            Err(Error::CommandSelectionNotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
     }
 
     let shims = command_routing_directory(&home)?;
@@ -1901,10 +2095,11 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
         )
     );
     let shim_binary = default_shim_binary()?;
-    let commands = runtime_provider("node")
-        .expect("Node provider is built in")
-        .commands;
-    let path_candidates = inspect_path_candidates(commands, &home, &shim_binary);
+    let commands = pinset_core::runtime_providers()
+        .iter()
+        .flat_map(|provider| provider.commands.iter().copied())
+        .collect::<Vec<_>>();
+    let path_candidates = inspect_path_candidates(&commands, &home, &shim_binary);
     for candidate in &path_candidates {
         println!(
             "{}",
@@ -1921,12 +2116,14 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
     let legacy_commands = if paths_equal(&legacy_shims, &shims) {
         Vec::new()
     } else {
-        existing_shim_commands(&legacy_shims, commands)
+        existing_shim_commands(&legacy_shims, &commands)
     };
-    let selected = resolve_tool_selection("node", cwd, &home).is_ok();
+    let selected = pinset_core::runtime_providers()
+        .iter()
+        .any(|provider| resolve_tool_selection(provider.tool, cwd, &home).is_ok());
     for issue in collect_routing_issues(
         selected,
-        commands,
+        &commands,
         &path_candidates,
         &shims,
         &shim_binary,

@@ -109,7 +109,36 @@ fn cache_import_requires_and_records_the_declared_sha256() {
         ],
     );
     assert!(!rejected.status.success());
-    assert!(stderr(&rejected).contains("SHA-256 mismatch"));
+    assert!(stderr(&rejected).contains("artifact integrity mismatch"));
+}
+
+#[test]
+fn cache_import_accepts_npm_sha512_integrity() {
+    let root = tempdir().expect("temporary root");
+    let home = root.path().join("home");
+    let project = root.path().join("project");
+    let archive = root.path().join("pnpm.tgz");
+    fs::create_dir_all(&project).expect("project");
+    fs::write(&archive, b"offline npm archive").expect("archive");
+    let sri = "sha512-fslFPQZh8o/BbjdWiKi5xaXVu9F+w4u351b6/BgD4pFONk1/lTPjNyL9bHzA5cWemHg+RgWJkXrarpWDZOYyzQ==";
+    let hash = "7ec9453d0661f28fc16e375688a8b9c5a5d5bbd17ec38bb7e756fafc1803e2914e364d7f9533e33722fd6c7cc0e5c59e98783e460589917adaae958364e632cd";
+
+    let imported = pinset(
+        &project,
+        &home,
+        &[
+            "cache",
+            "import",
+            archive.to_str().expect("UTF-8 archive"),
+            "--integrity",
+            sri,
+        ],
+    );
+    assert_success_contains(&imported, sri);
+    assert_eq!(
+        fs::read(home.join(format!("downloads/sha512/{hash}.archive"))).expect("cached archive"),
+        b"offline npm archive"
+    );
 }
 
 fn create_install_receipt(home: &Path, version: &str, target: &str) {

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
@@ -8,10 +8,12 @@ use std::{
 use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, NodeArchiveFormat, Result, SourceConfig, plan_node_artifact};
+use crate::{
+    ArtifactIntegrity, Error, NodeArchiveFormat, Result, SourceConfig, plan_node_artifact,
+};
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
-pub const LOCKFILE_SCHEMA: u32 = 1;
+pub const LOCKFILE_SCHEMA: u32 = 2;
 pub const MVP_NODE_TARGETS: [&str; 4] = [
     "windows-x86_64",
     "macos-aarch64",
@@ -45,7 +47,10 @@ pub struct LockedArtifact {
     pub target: String,
     pub canonical_url: String,
     pub artifact_path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
     pub format: LockedArtifactFormat,
     pub archive_root: String,
     pub verification: String,
@@ -57,6 +62,8 @@ pub enum LockedArtifactFormat {
     Zip,
     #[serde(rename = "tar.xz")]
     TarXz,
+    #[serde(rename = "tar.gz")]
+    TarGz,
 }
 
 impl LockedArtifactFormat {
@@ -64,6 +71,7 @@ impl LockedArtifactFormat {
         match self {
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
+            Self::TarGz => "tar.gz",
         }
     }
 }
@@ -86,6 +94,20 @@ impl Lockfile {
     pub fn tool(&self, name: &str) -> Option<&LockedTool> {
         self.tools.iter().find(|tool| tool.name == name)
     }
+
+    pub fn upsert_tool(&mut self, tool: LockedTool) {
+        if let Some(existing) = self.tools.iter_mut().find(|item| item.name == tool.name) {
+            *existing = tool;
+        } else {
+            self.tools.push(tool);
+        }
+        self.schema = LOCKFILE_SCHEMA;
+    }
+
+    pub fn remove_tool(&mut self, name: &str) {
+        self.tools.retain(|tool| tool.name != name);
+        self.schema = LOCKFILE_SCHEMA;
+    }
 }
 
 impl LockedTool {
@@ -93,6 +115,17 @@ impl LockedTool {
         self.artifacts
             .iter()
             .find(|artifact| artifact.target == target)
+    }
+}
+
+impl LockedArtifact {
+    pub fn artifact_integrity(&self) -> Result<ArtifactIntegrity> {
+        let value = self
+            .integrity
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&self.sha256);
+        ArtifactIntegrity::parse(value)
     }
 }
 
@@ -119,6 +152,7 @@ pub fn load_lockfile(path: &Path) -> Result<Lockfile> {
 pub fn save_lockfile(path: &Path, lockfile: &Lockfile) -> Result<()> {
     validate_lockfile(lockfile)?;
     let mut normalized = lockfile.clone();
+    normalized.schema = LOCKFILE_SCHEMA;
     normalized
         .tools
         .sort_by(|left, right| left.name.cmp(&right.name));
@@ -169,8 +203,49 @@ pub fn validate_lock_matches_selection<'a>(
     Ok(tool)
 }
 
+pub fn validate_lock_matches_tool<'a>(
+    lockfile: &'a Lockfile,
+    tool_name: &str,
+    selected_version: &str,
+    selection_path: &Path,
+) -> Result<&'a LockedTool> {
+    let tool = lockfile
+        .tool(tool_name)
+        .ok_or_else(|| Error::LockedToolMissing {
+            tool: tool_name.to_owned(),
+        })?;
+    if tool.requested != selected_version || tool.version != selected_version {
+        return Err(Error::LockfileMismatch {
+            selection_path: selection_path.to_path_buf(),
+            tool: tool_name.to_owned(),
+            configured: selected_version.to_owned(),
+            locked: tool.version.clone(),
+        });
+    }
+    Ok(tool)
+}
+
+pub fn validate_lock_matches_tools(
+    lockfile: &Lockfile,
+    configured_tools: &BTreeMap<String, String>,
+    selection_path: &Path,
+) -> Result<()> {
+    for (tool, version) in configured_tools {
+        validate_lock_matches_tool(lockfile, tool, version, selection_path)?;
+    }
+    for locked in &lockfile.tools {
+        if !configured_tools.contains_key(&locked.name) {
+            return Err(Error::ToolNotConfigured {
+                tool: locked.name.clone(),
+                config_path: selection_path.to_path_buf(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
-    if lockfile.schema != LOCKFILE_SCHEMA {
+    if !matches!(lockfile.schema, 1 | LOCKFILE_SCHEMA) {
         return Err(Error::UnsupportedLockfileSchema {
             actual: lockfile.schema,
         });
@@ -189,11 +264,20 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
         }
         validate_locked_tool(tool)?;
     }
+    if lockfile.schema == 1 && lockfile.tools.iter().any(|tool| tool.name != "node") {
+        return Err(Error::InvalidLockfile {
+            reason: "schema 1 lockfiles can contain only Node.js".to_owned(),
+        });
+    }
     Ok(())
 }
 
 fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
-    if tool.name != "node" || tool.provider != "nodejs-official" {
+    let provider_supported = matches!(
+        (tool.name.as_str(), tool.provider.as_str()),
+        ("node", "nodejs-official") | ("pnpm", "pnpm-npm") | ("bun", "bun-npm")
+    );
+    if !provider_supported {
         return Err(Error::InvalidLockfile {
             reason: format!(
                 "unsupported tool/provider pair {}/{}",
@@ -203,8 +287,10 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     }
     if tool.requested != tool.version {
         return Err(Error::InvalidLockfile {
-            reason: "Node MVP requires requested and version to be the same exact version"
-                .to_owned(),
+            reason: format!(
+                "{} requires requested and version to be the same exact version",
+                tool.name
+            ),
         });
     }
     let mut targets = HashSet::with_capacity(tool.artifacts.len());
@@ -214,19 +300,43 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
                 reason: format!("duplicate artifact target {}", artifact.target),
             });
         }
-        validate_locked_artifact(&tool.version, artifact)?;
+        match tool.name.as_str() {
+            "node" => validate_locked_node_artifact(&tool.version, artifact)?,
+            "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
+            _ => unreachable!("provider pair checked above"),
+        }
     }
-    for target in MVP_NODE_TARGETS {
-        if !targets.contains(target) {
+    if tool.name == "node" {
+        for target in MVP_NODE_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Node MVP artifact for {target}"),
+                });
+            }
+        }
+    } else {
+        for (target, _) in npm_tool_targets(&tool.name) {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing {} artifact for {target}", tool.name),
+                });
+            }
+        }
+        if targets.len() != npm_tool_targets(&tool.name).len() {
             return Err(Error::InvalidLockfile {
-                reason: format!("missing Node MVP artifact for {target}"),
+                reason: format!("{} lock contains an unsupported artifact target", tool.name),
             });
         }
+    }
+    if tool.artifacts.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("{} has no artifacts", tool.name),
+        });
     }
     Ok(())
 }
 
-fn validate_locked_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
+fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
     let plan = plan_node_artifact(&SourceConfig::default(), version, &artifact.target)?;
     let expected_format = match plan.format {
         NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
@@ -244,8 +354,7 @@ fn validate_locked_artifact(version: &str, artifact: &LockedArtifact) -> Result<
             ),
         });
     }
-    if artifact.sha256.len() != 64 || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
         return Err(Error::InvalidLockfile {
             reason: format!("invalid SHA-256 for {}", artifact.target),
         });
@@ -256,6 +365,60 @@ fn validate_locked_artifact(version: &str, artifact: &LockedArtifact) -> Result<
         });
     }
     Ok(())
+}
+
+fn validate_locked_npm_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
+    if artifact.format != LockedArtifactFormat::TarGz {
+        return Err(Error::InvalidLockfile {
+            reason: format!("{} artifact {} must be tar.gz", tool.name, artifact.target),
+        });
+    }
+    let package = npm_tool_targets(&tool.name)
+        .iter()
+        .find_map(|(target, package)| (*target == artifact.target).then_some(*package))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: format!("unsupported {} target {}", tool.name, artifact.target),
+        })?;
+    let package_base = package.rsplit('/').next().expect("npm package is nonempty");
+    let artifact_path = format!("{package}/-/{package_base}-{}.tgz", tool.version);
+    let canonical_url = format!("https://registry.npmjs.org/{artifact_path}");
+    if artifact.archive_root != "package"
+        || artifact.canonical_url != canonical_url
+        || artifact.artifact_path != artifact_path
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid npm artifact identity for {}", artifact.target),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha512 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("npm artifact {} must use SHA-512", artifact.target),
+        });
+    }
+    if artifact.verification != "npm-registry-signature-sha512" {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported npm verification for {}", artifact.target),
+        });
+    }
+    Ok(())
+}
+
+fn npm_tool_targets(tool: &str) -> &'static [(&'static str, &'static str)] {
+    match tool {
+        "pnpm" => &[
+            ("windows-x86_64", "@pnpm/win-x64"),
+            ("linux-x86_64", "@pnpm/linux-x64"),
+            ("macos-aarch64", "@pnpm/macos-arm64"),
+        ],
+        "bun" => &[
+            ("windows-x86_64-avx2", "@oven/bun-windows-x64"),
+            ("windows-x86_64-baseline", "@oven/bun-windows-x64-baseline"),
+            ("linux-x86_64-avx2", "@oven/bun-linux-x64"),
+            ("linux-x86_64-baseline", "@oven/bun-linux-x64-baseline"),
+            ("macos-aarch64", "@oven/bun-darwin-aarch64"),
+        ],
+        _ => &[],
+    }
 }
 
 pub fn load_optional_lockfile(path: &Path) -> Result<Option<Lockfile>> {
@@ -345,6 +508,7 @@ mod tests {
             canonical_url: plan.canonical_url,
             artifact_path: plan.artifact_path,
             sha256: "ab".repeat(32),
+            integrity: None,
             format: match plan.format {
                 NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
                 NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,

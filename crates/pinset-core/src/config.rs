@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::{Error, Result};
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
+pub const PROJECT_CONFIG_SCHEMA: u32 = 2;
 #[cfg(feature = "project-write")]
-const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 1\n\n[tools]\n";
+const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 2\n\n[tools]\n";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,7 +70,7 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
             source,
         })?;
 
-    if config.schema != 1 {
+    if !matches!(config.schema, 1 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -111,12 +112,14 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
 
 #[cfg(feature = "project-write")]
 pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
-    if config.schema != 1 {
+    if !matches!(config.schema, 1 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
     }
-    let serialized = toml::to_string_pretty(config)
+    let mut normalized = config.clone();
+    normalized.schema = PROJECT_CONFIG_SCHEMA;
+    let serialized = toml::to_string_pretty(&normalized)
         .map_err(|source| Error::SerializeProjectConfig { source })?;
     let mut file =
         AtomicWriteFile::options()
@@ -185,10 +188,10 @@ mod tests {
     fn rejects_unknown_schema() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
-        fs::write(&config_path, "schema = 2\n[tools]\nnode = \"20\"\n").expect("config");
+        fs::write(&config_path, "schema = 3\n[tools]\nnode = \"20\"\n").expect("config");
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
-        assert!(matches!(error, Error::UnsupportedSchema { actual: 2 }));
+        assert!(matches!(error, Error::UnsupportedSchema { actual: 3 }));
     }
 
     #[cfg(feature = "project-write")]
@@ -201,13 +204,13 @@ mod tests {
         assert_eq!(
             load_project_config(&path).expect("load created config"),
             ProjectConfig {
-                schema: 1,
+                schema: PROJECT_CONFIG_SCHEMA,
                 tools: BTreeMap::new(),
             }
         );
         assert_eq!(
             fs::read_to_string(path).expect("created config"),
-            "schema = 1\n\n[tools]\n"
+            "schema = 2\n\n[tools]\n"
         );
     }
 
