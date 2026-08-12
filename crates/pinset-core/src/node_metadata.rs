@@ -53,6 +53,22 @@ impl NodeMetadataClient {
         })
     }
 
+    pub fn for_base_url(base_url: &str) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|source| Error::HttpClient { source })?;
+        let metadata_base_url =
+            Url::parse(base_url).map_err(|source| Error::InvalidSourceBaseUrl {
+                url: base_url.to_owned(),
+                reason: source.to_string(),
+            })?;
+        Ok(Self {
+            client,
+            metadata_base_url,
+        })
+    }
+
     pub fn resolve_exact_lock(&self, version: &str, generated_by: &str) -> Result<Lockfile> {
         let plans = MVP_NODE_TARGETS
             .into_iter()

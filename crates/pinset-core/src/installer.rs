@@ -13,7 +13,7 @@ use tempfile::Builder;
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
-use crate::{Error, Result};
+use crate::{Error, Result, download_cache_path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
@@ -77,6 +77,7 @@ pub struct InstallOutcome {
     pub bytes_downloaded: u64,
     pub sha256: String,
     pub source_id: String,
+    pub reused_existing: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +103,16 @@ impl Default for InstallLimits {
 pub struct Installer {
     client: Client,
     limits: InstallLimits,
+}
+
+#[derive(Debug)]
+struct SelectedArtifact {
+    source_id: String,
+    source_kind: String,
+    source_url: String,
+    path: PathBuf,
+    bytes_downloaded: u64,
+    actual_hash: String,
 }
 
 impl Installer {
@@ -145,48 +156,62 @@ impl Installer {
             source,
         })?;
 
-        let mut attempted = Vec::with_capacity(request.artifact.sources.len());
-        let mut last_retryable_error = None;
-        let mut selected = None;
-        for (index, source) in request.artifact.sources.iter().enumerate() {
-            attempted.push(source.id.clone());
-            let download_path = transaction
-                .path()
-                .join(format!("artifact-{index}.download"));
-            match self.download_verified(&source.url, &expected_hash, &download_path) {
-                Ok((bytes_downloaded, actual_hash)) => {
-                    selected = Some((source, download_path, bytes_downloaded, actual_hash));
-                    break;
-                }
-                Err(error) if is_retryable_source_error(&error) => {
-                    last_retryable_error = Some(error);
-                }
-                Err(error) => return Err(error),
+        let expected_hex = hex::encode(expected_hash);
+        let cache_path = download_cache_path(&request.pinset_home, &expected_hex)?;
+        let selected = if self.cached_artifact_is_valid(&cache_path, &expected_hash)? {
+            SelectedArtifact {
+                source_id: "cache".to_owned(),
+                source_kind: "cache".to_owned(),
+                source_url: format!("cache:sha256:{expected_hex}"),
+                path: cache_path,
+                bytes_downloaded: 0,
+                actual_hash: expected_hex,
             }
-        }
-        let (selected_source, download_path, bytes_downloaded, actual_hash) =
+        } else {
+            let mut attempted = Vec::with_capacity(request.artifact.sources.len());
+            let mut last_retryable_error = None;
+            let mut selected = None;
+            for (index, source) in request.artifact.sources.iter().enumerate() {
+                attempted.push(source.id.clone());
+                let download_path = transaction
+                    .path()
+                    .join(format!("artifact-{index}.download"));
+                match self.download_verified(&source.url, &expected_hash, &download_path) {
+                    Ok((bytes_downloaded, actual_hash)) => {
+                        self.persist_cache_artifact(&download_path, &cache_path, &expected_hash)?;
+                        selected = Some(SelectedArtifact {
+                            source_id: source.id.clone(),
+                            source_kind: source.kind.receipt_name().to_owned(),
+                            source_url: redacted_url(&source.url),
+                            path: cache_path.clone(),
+                            bytes_downloaded,
+                            actual_hash,
+                        });
+                        break;
+                    }
+                    Err(error) if is_retryable_source_error(&error) => {
+                        last_retryable_error = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             selected.ok_or_else(|| Error::ArtifactSourcesExhausted {
                 attempted: attempted.join(", "),
                 last_error: last_retryable_error
                     .map(|error| error.to_string())
                     .unwrap_or_else(|| "no source was attempted".to_owned()),
-            })?;
+            })?
+        };
         match request.artifact.format {
             ArtifactFormat::Zip => {
-                self.extract_zip(&download_path, &staging_dir, request.strip_components)?
+                self.extract_zip(&selected.path, &staging_dir, request.strip_components)?
             }
             ArtifactFormat::TarXz => {
-                self.extract_tar_xz(&download_path, &staging_dir, request.strip_components)?
+                self.extract_tar_xz(&selected.path, &staging_dir, request.strip_components)?
             }
         }
         validate_required_paths(&staging_dir, &request.required_paths)?;
-        write_receipt(
-            &staging_dir,
-            request,
-            selected_source,
-            &actual_hash,
-            bytes_downloaded,
-        )?;
+        write_receipt(&staging_dir, request, &selected)?;
 
         let final_parent = final_dir
             .parent()
@@ -206,9 +231,119 @@ impl Installer {
 
         Ok(InstallOutcome {
             install_dir: final_dir,
-            bytes_downloaded,
-            sha256: actual_hash,
-            source_id: selected_source.id.clone(),
+            bytes_downloaded: selected.bytes_downloaded,
+            sha256: selected.actual_hash,
+            source_id: selected.source_id,
+            reused_existing: false,
+        })
+    }
+
+    fn cached_artifact_is_valid(&self, path: &Path, expected_hash: &[u8; 32]) -> Result<bool> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(source) => {
+                return Err(Error::ReadDownloadCache {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(Error::UnsafeDownloadCacheEntry {
+                path: path.to_path_buf(),
+            });
+        }
+        if metadata.len() > self.limits.max_download_bytes {
+            fs::remove_file(path).map_err(|source| Error::RemoveDownloadCacheEntry {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            return Ok(false);
+        }
+        let mut file = File::open(path).map_err(|source| Error::ReadDownloadCache {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let count = file
+                .read(&mut buffer)
+                .map_err(|source| Error::ReadDownloadCache {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let actual: [u8; 32] = hasher.finalize().into();
+        if actual == *expected_hash {
+            return Ok(true);
+        }
+        fs::remove_file(path).map_err(|source| Error::RemoveDownloadCacheEntry {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(false)
+    }
+
+    fn persist_cache_artifact(
+        &self,
+        source: &Path,
+        destination: &Path,
+        expected_hash: &[u8; 32],
+    ) -> Result<()> {
+        let parent = destination
+            .parent()
+            .expect("cache path always has a parent");
+        fs::create_dir_all(parent).map_err(|source| Error::WriteDownload {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        let mut input = File::open(source).map_err(|source| Error::WriteDownload {
+            path: destination.to_path_buf(),
+            source,
+        })?;
+        let mut temporary = Builder::new()
+            .prefix(".download-cache-")
+            .tempfile_in(parent)
+            .map_err(|source| Error::WriteDownload {
+                path: destination.to_path_buf(),
+                source,
+            })?;
+        io::copy(&mut input, temporary.as_file_mut())
+            .and_then(|_| temporary.as_file().sync_all())
+            .map_err(|source| Error::WriteDownload {
+                path: destination.to_path_buf(),
+                source,
+            })?;
+        let mut candidate = temporary;
+        for _ in 0..3 {
+            match candidate.persist_noclobber(destination) {
+                Ok(_) => return Ok(()),
+                Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+                    candidate = error.file;
+                    if self.cached_artifact_is_valid(destination, expected_hash)? {
+                        return Ok(());
+                    }
+                }
+                Err(error) => {
+                    return Err(Error::WriteDownload {
+                        path: destination.to_path_buf(),
+                        source: error.error,
+                    });
+                }
+            }
+        }
+        Err(Error::WriteDownload {
+            path: destination.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "download cache entry changed repeatedly during atomic commit",
+            ),
         })
     }
 
@@ -631,6 +766,7 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
         bytes_downloaded: 0,
         sha256: receipt.artifact_sha256,
         source_id: receipt.selected_source,
+        reused_existing: true,
     })
 }
 
@@ -865,12 +1001,9 @@ struct ExistingInstallReceipt {
 fn write_receipt(
     staging: &Path,
     request: &InstallRequest,
-    selected_source: &ArtifactSource,
-    actual_hash: &str,
-    bytes_downloaded: u64,
+    selected: &SelectedArtifact,
 ) -> Result<()> {
     let canonical_url = redacted_url(&request.artifact.canonical_url);
-    let selected_url = redacted_url(&selected_source.url);
     let receipt = InstallReceipt {
         schema: 1,
         complete: true,
@@ -878,12 +1011,12 @@ fn write_receipt(
         version: &request.version,
         target: &request.target,
         canonical_url: &canonical_url,
-        selected_source: &selected_source.id,
-        selected_source_kind: selected_source.kind.receipt_name(),
-        selected_url: &selected_url,
-        artifact_sha256: actual_hash,
+        selected_source: &selected.source_id,
+        selected_source_kind: &selected.source_kind,
+        selected_url: &selected.source_url,
+        artifact_sha256: &selected.actual_hash,
         artifact_format: request.artifact.format.receipt_name(),
-        bytes_downloaded,
+        bytes_downloaded: selected.bytes_downloaded,
     };
     let serialized =
         toml::to_string(&receipt).map_err(|source| Error::SerializeInstallReceipt { source })?;
@@ -906,6 +1039,7 @@ mod tests {
     use std::{
         io::{Cursor, Read as _, Write as _},
         net::TcpListener,
+        sync::{Arc, Barrier},
         thread,
     };
 
@@ -944,6 +1078,63 @@ mod tests {
         assert_eq!(repeated.install_dir, outcome.install_dir);
         assert_eq!(repeated.bytes_downloaded, 0);
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn reuses_verified_content_addressed_cache_without_network() {
+        let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
+        let hash = sha256_hex(&archive);
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let request = request(root.path(), url, hash.clone());
+
+        let first = test_installer().install(&request).expect("first install");
+        server.join().expect("server");
+        fs::remove_dir_all(&first.install_dir).expect("remove installed fixture");
+
+        let mut offline_request = request;
+        offline_request.artifact.sources[0].url = "http://127.0.0.1:1/offline.zip".to_owned();
+        let cached = test_installer()
+            .install(&offline_request)
+            .expect("cached install");
+        assert_eq!(cached.source_id, "cache");
+        assert_eq!(cached.bytes_downloaded, 0);
+        assert!(cached.install_dir.join("bin/node.exe").is_file());
+        assert!(
+            root.path()
+                .join(format!("downloads/sha256/{hash}.archive"))
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn concurrent_cache_commits_leave_one_verified_archive() {
+        let root = tempdir().expect("temp root");
+        let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
+        let hash = sha256_hex(&archive);
+        let expected: [u8; 32] = hex::decode(&hash)
+            .expect("hash")
+            .try_into()
+            .expect("sha256");
+        let destination = download_cache_path(root.path(), &hash).expect("cache path");
+        let installer = Arc::new(test_installer());
+        let barrier = Arc::new(Barrier::new(2));
+        let mut workers = Vec::new();
+        for index in 0..2 {
+            let source = root.path().join(format!("source-{index}.zip"));
+            fs::write(&source, &archive).expect("source archive");
+            let installer = Arc::clone(&installer);
+            let barrier = Arc::clone(&barrier);
+            let destination = destination.clone();
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                installer.persist_cache_artifact(&source, &destination, &expected)
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("cache worker").expect("cache commit");
+        }
+        assert_eq!(fs::read(destination).expect("cached archive"), archive);
     }
 
     #[test]

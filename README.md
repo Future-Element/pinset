@@ -17,7 +17,10 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
-Python、Flutter、浮动版本选择器、PGP 验签、缓存管理和中央包管理器分发不属于这个 MVP，后续按路线图实现。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
+公开 Release 仍是 alpha.2。当前 alpha.3 开发分支已经加入浮动版本选择器、安全卸载、
+内容寻址下载缓存、来源测试、JSON 诊断和旧管理器只读检测；这些能力将在完成真实三平台
+验收后发布。Python、Flutter、PGP 验签和中央包管理器分发仍按路线图推进。项目不维护
+第三方 Homebrew Tap 或 Scoop Bucket。
 
 设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
 
@@ -78,11 +81,32 @@ pinset source add node my-mirror --base-url https://mirror.example/node/
 pinset source use node my-mirror
 pinset source fallback node official
 pinset source list node
+pinset source test node my-mirror
 ```
 
 网络错误可按用户配置回退；哈希不匹配会立即停止，不会换源重试来掩盖异常。内置 `official` 源不可覆盖或删除。
 
 首次生成锁文件仍需访问 Node 官方 HTTPS 校验清单；已有并提交的锁文件可以在受限网络中只通过镜像执行 `install --locked`。详见使用指南。
+
+## alpha.3 开发分支
+
+从源码构建当前分支后，可以使用以下尚未发布的命令：
+
+```shell
+pinset list node
+pinset list node --available
+pinset use node@24 --no-install
+pinset exec node@24.0.0 -- node --version
+pinset uninstall node@24.0.0
+pinset cache list
+pinset cache clean
+pinset doctor --json
+pinset import --dry-run
+```
+
+浮动选择器在显式选择时读取官方版本索引，最终仍写入精确版本。一次性 `exec` 只执行已经
+安装的匹配版本，不写项目或全局状态。卸载默认保护当前项目和全局引用；`--force` 不会扩大
+删除范围，只表示接受引用暂时失效。缓存清理保留未知文件和非普通文件。
 
 ## 开发
 

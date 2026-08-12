@@ -298,7 +298,7 @@ alpha.2 不包含：
 
 目标：完成 Node provider 的日常版本发现、安装生命周期和旧管理器共存闭环。
 
-状态：**开发中 — 版本发现与浮动选择器切片**
+状态：**开发中 — Node 生命周期功能已实现，等待真实三平台验收与发布冻结**
 
 当前实现：
 
@@ -308,7 +308,13 @@ alpha.2 不包含：
 - [x] `pinset list node` 只列出带完整 Pinset 安装收据的本地版本，不访问网络。
 - [x] `pinset list node --available` 显式读取 Node 官方索引并显示日期、LTS 与安全更新标记。
 - [x] 英文与简体中文输出、假官方索引和假安装目录测试。
-- [ ] 卸载与引用保护、缓存生命周期、`source test`、`doctor --json`、只读迁移和一次性 `exec`。
+- [x] `pinset uninstall node@<exact-version>` 默认保护当前项目和全局引用，`--force` 仍只删除带匹配收据的 Pinset 安装。
+- [x] 下载归档按 SHA-256 内容寻址缓存；支持离线复用、`cache list` 和所有权安全的 `cache clean`。
+- [x] `source test node [alias]` 只读验证版本索引和最新稳定版 SHASUMS，不下载运行时归档。
+- [x] `doctor --json` 输出 schema 1 机器可读报告。
+- [x] `.nvmrc`、`.node-version`、Volta、asdf 和 mise 的 `import --dry-run` 只读检测与冲突报告。
+- [x] `pinset exec node@<selector> -- <command>` 一次性选择已安装版本，不修改项目或全局配置。
+- [ ] Windows、Linux x64、macOS x64/arm64 真实隔离环境验收与 alpha.3 发布冻结。
 
 这一切片的索引信任规则：版本发现固定读取 Node 官方 HTTPS `index.json`；镜像仍只改变归档
 传输位置，不能提供或替换版本身份。索引中的预发布版本和缺少任一支持目标产物的版本不会
@@ -330,6 +336,8 @@ alpha.2 不包含：
 
 - 浮动选择器只在写锁或显式联网查询时访问网络，日常执行不访问网络。
 - 卸载不会删除外部管理器或 Pinset 数据根之外的文件。
+- 缓存只清理 `downloads/sha256/<64 hex>.archive` 普通文件，未知文件和非普通文件不会被跟随或删除。
+- `source test` 读取远程元数据；显式允许 HTTP 的源会清楚报告 TLS 不适用。
 - 多来源冲突时停止并解释，不自动覆盖项目配置。
 - 系统 PATH 和旧管理器组合至少覆盖五种可复现环境。
 

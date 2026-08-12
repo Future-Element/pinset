@@ -14,15 +14,17 @@ use std::ffi::OsStr;
 use clap::{Parser, Subcommand, error::ErrorKind};
 use pinset_core::{
     Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
-    ShimInstallMethod, SourceView, command_tool, create_project_config, current_target,
-    find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
-    install_locked_node, install_shims, list_installed_node_versions, load_global_config,
-    load_lockfile, load_optional_global_config, load_project_config, load_source_config,
-    load_user_settings, lockfile_path, node_command_directory, path_with_selected_runtime,
-    pinset_home, resolve_command, resolve_tool_selection, save_global_state, save_lockfile,
-    save_project_config, save_source_config, save_user_settings, source_config_path,
-    user_settings_path, validate_lock_matches_selection,
+    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
+    current_target, find_optional_project_config, find_project_config, global_config_path,
+    global_lockfile_path, install_locked_node, install_shims, list_download_cache,
+    list_installed_node_versions, load_global_config, load_lockfile, load_optional_global_config,
+    load_project_config, load_source_config, load_user_settings, lockfile_path,
+    node_command_directory, path_with_selected_runtime, pinset_home, resolve_command,
+    resolve_tool_selection, save_global_state, save_lockfile, save_project_config,
+    save_source_config, save_user_settings, source_config_path, uninstall_node_version,
+    user_settings_path, validate_exact_node_version, validate_lock_matches_selection,
 };
+use serde::Serialize;
 
 use crate::i18n::{Catalog, Language};
 
@@ -87,6 +89,22 @@ enum Commands {
         #[arg(long)]
         available: bool,
     },
+    /// Uninstall an exact Node.js version owned by Pinset.
+    Uninstall {
+        /// Exact selection such as node@24.0.0.
+        selection: String,
+        /// Ignore current project and global selection references.
+        #[arg(long)]
+        force: bool,
+        /// Project directory used for reference protection.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Inspect or clean verified runtime download archives.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommands,
+    },
     /// Execute a command through the selected runtime without installing shims.
     Exec {
         #[arg(long)]
@@ -96,6 +114,17 @@ enum Commands {
     },
     /// Report project, lockfile, installation and PATH state without modifying anything.
     Doctor {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Detect legacy Node.js version files without changing them.
+    Import {
+        /// Preview detected values; no files are modified.
+        #[arg(long, required = true)]
+        dry_run: bool,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
@@ -124,6 +153,14 @@ enum ShimCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum CacheCommands {
+    /// List content-addressed archives in the Pinset download cache.
+    List,
+    /// Remove content-addressed archives from the Pinset download cache.
+    Clean,
+}
+
+#[derive(Debug, Subcommand)]
 enum SourceCommands {
     /// List built-in and custom sources.
     List {
@@ -149,6 +186,12 @@ enum SourceCommands {
     },
     /// Remove an inactive custom source.
     Remove { provider: String, alias: String },
+    /// Read-only connectivity and Node index validation for one source.
+    Test {
+        provider: String,
+        /// Source alias. Defaults to the active source.
+        alias: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -341,12 +384,75 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 }
             }
         }
+        Commands::Uninstall {
+            selection,
+            force,
+            cwd,
+        } => {
+            let version = parse_node_selection(&selection, catalog)?;
+            validate_exact_node_version(&version)?;
+            let outcome =
+                uninstall_node_version(&pinset_home()?, &effective_cwd(cwd)?, &version, force)?;
+            println!(
+                "{}",
+                catalog.uninstalled_node(&outcome.version, &outcome.targets.join(","))
+            );
+        }
+        Commands::Cache { command } => match command {
+            CacheCommands::List => {
+                let entries = list_download_cache(&pinset_home()?)?;
+                if entries.is_empty() {
+                    println!("{}", catalog.cache_empty());
+                } else {
+                    for entry in entries {
+                        println!(
+                            "{}",
+                            catalog.cache_entry(&entry.sha256, entry.size, &entry.path)
+                        );
+                    }
+                }
+            }
+            CacheCommands::Clean => {
+                let outcome = clean_download_cache(&pinset_home()?)?;
+                println!("{}", catalog.cache_cleaned(outcome.entries, outcome.bytes));
+            }
+        },
         Commands::Exec { cwd, command } => {
             let cwd = effective_cwd(cwd)?;
             return execute_selected(&cwd, &command, catalog);
         }
-        Commands::Doctor { cwd } => {
-            run_doctor(&effective_cwd(cwd)?, catalog)?;
+        Commands::Doctor { cwd, json } => {
+            let cwd = effective_cwd(cwd)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&doctor_report(&cwd)?)?);
+            } else {
+                run_doctor(&cwd, catalog)?;
+            }
+        }
+        Commands::Import { dry_run: _, cwd } => {
+            let cwd = effective_cwd(cwd)?;
+            let candidates = detect_legacy_node_configs(&cwd)?;
+            if candidates.is_empty() {
+                println!("{}", catalog.import_none(&cwd));
+            } else {
+                let distinct = candidates
+                    .iter()
+                    .map(|candidate| candidate.version.as_str())
+                    .collect::<std::collections::BTreeSet<_>>();
+                for candidate in &candidates {
+                    println!(
+                        "{}",
+                        catalog.import_candidate(
+                            &candidate.kind,
+                            &candidate.version,
+                            &candidate.path,
+                        )
+                    );
+                }
+                if distinct.len() > 1 {
+                    println!("{}", catalog.import_conflict(distinct.len()));
+                }
+            }
         }
         Commands::Shim {
             command:
@@ -429,8 +535,20 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 10] = [
-        "init", "use", "install", "which", "current", "exec", "doctor", "shim", "source", "list",
+    const COMMANDS: [&str; 13] = [
+        "init",
+        "use",
+        "install",
+        "which",
+        "current",
+        "exec",
+        "doctor",
+        "shim",
+        "source",
+        "list",
+        "uninstall",
+        "cache",
+        "import",
     ];
     arguments
         .iter()
@@ -503,7 +621,7 @@ fn install_locked_selection(
     let sources = load_source_config(&source_config_path(home))?;
     let installer = Installer::new(InstallLimits::default())?;
     let outcome = install_locked_node(&installer, home, &sources, locked_node, &current_target())?;
-    if outcome.bytes_downloaded == 0 {
+    if outcome.reused_existing {
         println!(
             "{}",
             catalog.already_installed(
@@ -572,21 +690,71 @@ fn execute_selected(
     command: &[OsString],
     catalog: Catalog,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let (ephemeral_selector, mut command) = command
+        .first()
+        .and_then(|value| value.to_str())
+        .filter(|value| value.starts_with("node@"))
+        .map_or((None, command), |selection| {
+            (Some(selection), &command[1..])
+        });
+    if ephemeral_selector.is_some() && command.first().is_some_and(|value| value == "--") {
+        command = &command[1..];
+    }
     let command_name = command
         .first()
         .and_then(|value| value.to_str())
         .ok_or_else(|| catalog.utf8_command_error())?;
-    let resolution = resolve_command(command_name, cwd, &pinset_home()?)?;
-    let runtime_path = path_with_selected_runtime(&resolution.executable)?;
-    let mut child = command_for_runtime(&resolution.executable);
+    let home = pinset_home()?;
+    let (executable, tool, version, source, config_path) =
+        if let Some(selection) = ephemeral_selector {
+            let selector = parse_node_selection(selection, catalog)?;
+            let version = NodeMetadataClient::official()?.resolve_version_selector(&selector)?;
+            if selector != version {
+                println!("{}", catalog.selector_resolved(&selector, &version));
+            }
+            if command_tool(command_name) != Some("node") {
+                return Err(Error::UnsupportedCommand {
+                    command: command_name.to_owned(),
+                }
+                .into());
+            }
+            let install_dir = home
+                .join("installs")
+                .join("node")
+                .join(&version)
+                .join(current_target());
+            let command_dir = node_command_directory(&install_dir, &current_target())?;
+            let executable = node_runtime_command_path(&command_dir, command_name);
+            if !executable.is_file() {
+                return Err(Error::RuntimeCommandNotFound {
+                    tool: "node".to_owned(),
+                    version,
+                    command: command_name.to_owned(),
+                    searched: executable.display().to_string(),
+                }
+                .into());
+            }
+            (executable, "node".to_owned(), version, "ephemeral", None)
+        } else {
+            let resolution = resolve_command(command_name, cwd, &home)?;
+            (
+                resolution.executable,
+                resolution.tool,
+                resolution.version,
+                resolution.source.as_str(),
+                resolution.selection_path,
+            )
+        };
+    let runtime_path = path_with_selected_runtime(&executable)?;
+    let mut child = command_for_runtime(&executable);
     child
         .args(&command[1..])
         .current_dir(cwd)
         .env("PATH", runtime_path)
-        .env("PINSET_SELECTED_TOOL", &resolution.tool)
-        .env("PINSET_SELECTED_VERSION", &resolution.version)
-        .env("PINSET_SELECTION_SOURCE", resolution.source.as_str());
-    if let Some(path) = &resolution.selection_path {
+        .env("PINSET_SELECTED_TOOL", &tool)
+        .env("PINSET_SELECTED_VERSION", &version)
+        .env("PINSET_SELECTION_SOURCE", source);
+    if let Some(path) = &config_path {
         child.env("PINSET_CONFIG_PATH", path);
     } else {
         child.env_remove("PINSET_CONFIG_PATH");
@@ -598,6 +766,21 @@ fn execute_selected(
             .and_then(|code| u8::try_from(code).ok())
             .unwrap_or(1),
     ))
+}
+
+fn node_runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
+    if cfg!(windows) {
+        let native = command_dir.join(if command == "node" {
+            "node.exe".to_owned()
+        } else {
+            format!("{command}.cmd")
+        });
+        if native.is_file() || command != "node" {
+            return native;
+        }
+        return command_dir.join("node.cmd");
+    }
+    command_dir.join(command)
 }
 
 fn command_for_runtime(executable: &Path) -> Command {
@@ -614,6 +797,230 @@ fn command_for_runtime(executable: &Path) -> Command {
         }
     }
     Command::new(executable)
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorReport {
+    schema: u32,
+    cwd: String,
+    pinset_home: String,
+    project_config: DoctorItem,
+    global_config: DoctorItem,
+    selection: Option<DoctorSelection>,
+    lockfile: DoctorItem,
+    runtime: DoctorItem,
+    shim_path: DoctorItem,
+    path_candidates: Vec<DoctorPathCandidate>,
+    legacy_node_configs: Vec<LegacyNodeConfig>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorItem {
+    status: &'static str,
+    path: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorSelection {
+    tool: String,
+    version: String,
+    source: String,
+    config_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorPathCandidate {
+    path: String,
+    owner: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LegacyNodeConfig {
+    kind: String,
+    version: String,
+    path: PathBuf,
+}
+
+fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let project_path = find_optional_project_config(cwd)?;
+    let global_path = global_config_path(&home);
+    let project_config = DoctorItem {
+        status: if project_path.is_some() {
+            "ok"
+        } else {
+            "missing"
+        },
+        path: project_path.as_ref().map(|path| path.display().to_string()),
+        detail: None,
+    };
+    let global_config = DoctorItem {
+        status: if global_path.is_file() {
+            "ok"
+        } else {
+            "missing"
+        },
+        path: Some(global_path.display().to_string()),
+        detail: None,
+    };
+
+    let selected = match resolve_tool_selection("node", cwd, &home) {
+        Ok(selection) => Some(selection),
+        Err(Error::ToolSelectionNotFound { .. }) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let selection = selected.as_ref().map(|selection| DoctorSelection {
+        tool: selection.tool.clone(),
+        version: selection.version.clone(),
+        source: selection.source.as_str().to_owned(),
+        config_path: Some(selection.config_path.display().to_string()),
+    });
+    let lockfile = if let Some(selection) = &selected {
+        let path = match selection.source {
+            pinset_core::SelectionSource::Project => lockfile_path(&selection.config_path),
+            pinset_core::SelectionSource::Global => global_lockfile_path(&home),
+            pinset_core::SelectionSource::System => unreachable!("declared selection"),
+        };
+        let lockfile = load_lockfile(&path)?;
+        validate_lock_matches_selection(&lockfile, &selection.version, &selection.config_path)?;
+        DoctorItem {
+            status: "ok",
+            path: Some(path.display().to_string()),
+            detail: Some(format!("node@{}", selection.version)),
+        }
+    } else {
+        DoctorItem {
+            status: "not-applicable",
+            path: None,
+            detail: None,
+        }
+    };
+    let runtime = match resolve_command("node", cwd, &home) {
+        Ok(resolution) => DoctorItem {
+            status: "ok",
+            path: Some(resolution.executable.display().to_string()),
+            detail: Some(format!(
+                "node@{} source={}",
+                resolution.version,
+                resolution.source.as_str()
+            )),
+        },
+        Err(Error::RuntimeCommandNotFound {
+            version, searched, ..
+        }) => DoctorItem {
+            status: "missing",
+            path: None,
+            detail: Some(format!("node@{version}; searched={searched}")),
+        },
+        Err(Error::CommandSelectionNotFound { searched, .. }) => DoctorItem {
+            status: "missing",
+            path: None,
+            detail: Some(format!("searched={searched}")),
+        },
+        Err(error) => return Err(error.into()),
+    };
+    let shims = home.join("shims");
+    let shim_on_path = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).any(|entry| paths_equal(&entry, &shims)))
+        .unwrap_or(false);
+    let path_candidates = path_command_candidates("node")
+        .into_iter()
+        .map(|path| DoctorPathCandidate {
+            owner: path_owner(&path, &home),
+            path: path.display().to_string(),
+        })
+        .collect();
+    Ok(DoctorReport {
+        schema: 1,
+        cwd: cwd.display().to_string(),
+        pinset_home: home.display().to_string(),
+        project_config,
+        global_config,
+        selection,
+        lockfile,
+        runtime,
+        shim_path: DoctorItem {
+            status: if shim_on_path {
+                "active"
+            } else {
+                "not-on-path"
+            },
+            path: Some(shims.display().to_string()),
+            detail: None,
+        },
+        path_candidates,
+        legacy_node_configs: detect_legacy_node_configs(cwd)?,
+    })
+}
+
+fn detect_legacy_node_configs(
+    cwd: &Path,
+) -> Result<Vec<LegacyNodeConfig>, Box<dyn std::error::Error>> {
+    let mut candidates = Vec::new();
+    for (name, kind) in [(".nvmrc", "nvm"), (".node-version", "node-version")] {
+        let path = cwd.join(name);
+        if path.is_file() {
+            let version = fs::read_to_string(&path)?.trim().to_owned();
+            if !version.is_empty() {
+                candidates.push(LegacyNodeConfig {
+                    kind: kind.to_owned(),
+                    version,
+                    path,
+                });
+            }
+        }
+    }
+
+    let path = cwd.join("package.json");
+    if path.is_file() {
+        let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?;
+        if let Some(version) = value
+            .get("volta")
+            .and_then(|volta| volta.get("node"))
+            .and_then(serde_json::Value::as_str)
+        {
+            candidates.push(LegacyNodeConfig {
+                kind: "volta".to_owned(),
+                version: version.to_owned(),
+                path,
+            });
+        }
+    }
+
+    let path = cwd.join(".tool-versions");
+    if path.is_file() {
+        let content = fs::read_to_string(&path)?;
+        if let Some(version) = content.lines().find_map(|line| {
+            let mut parts = line.split_whitespace();
+            matches!(parts.next(), Some("node") | Some("nodejs"))
+                .then(|| parts.next())
+                .flatten()
+        }) {
+            candidates.push(LegacyNodeConfig {
+                kind: "asdf".to_owned(),
+                version: version.to_owned(),
+                path,
+            });
+        }
+    }
+
+    let path = cwd.join("mise.toml");
+    if path.is_file() {
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path)?)?;
+        if let Some(version) = value
+            .get("tools")
+            .and_then(|tools| tools.get("node"))
+            .and_then(toml::Value::as_str)
+        {
+            candidates.push(LegacyNodeConfig {
+                kind: "mise".to_owned(),
+                version: version.to_owned(),
+                path,
+            });
+        }
+    }
+    Ok(candidates)
 }
 
 fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
@@ -833,6 +1240,28 @@ fn run_source_command(
             config.remove(&provider, &alias)?;
             save_source_config(&path, &config)?;
             println!("{}", catalog.source_changed("removed", &provider, &alias));
+        }
+        SourceCommands::Test { provider, alias } => {
+            if provider != "node" {
+                return Err(catalog.node_only_error().into());
+            }
+            let source = config.source(&provider, alias.as_deref())?;
+            let client = NodeMetadataClient::for_base_url(&source.base_url)?;
+            let releases = client.available_releases()?;
+            let newest = releases.first().ok_or_else(|| Error::InvalidNodeIndex {
+                reason: "source index contains no supported stable releases".to_owned(),
+            })?;
+            client.resolve_exact_lock(&newest.version, "pinset source test")?;
+            println!(
+                "{}",
+                catalog.source_test_ok(
+                    &provider,
+                    &source.alias,
+                    &source.base_url,
+                    releases.len(),
+                    source.base_url.starts_with("https://"),
+                )
+            );
         }
     }
     Ok(())

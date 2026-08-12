@@ -127,6 +127,23 @@ impl SourceConfig {
         Ok(result)
     }
 
+    pub fn source(&self, provider: &str, alias: Option<&str>) -> Result<SourceView> {
+        let sources = self.list(provider)?;
+        if let Some(alias) = alias {
+            return sources
+                .into_iter()
+                .find(|source| source.alias == alias)
+                .ok_or_else(|| Error::SourceNotFound {
+                    provider: provider.to_owned(),
+                    alias: alias.to_owned(),
+                });
+        }
+        Ok(sources
+            .into_iter()
+            .find(|source| source.active)
+            .expect("every provider has an active source"))
+    }
+
     pub fn resolve_artifact_sources(
         &self,
         provider: &str,

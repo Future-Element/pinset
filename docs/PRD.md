@@ -311,8 +311,9 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 ## 13. 当前版本边界
 
 `v0.1.0-alpha.2` 已经完成 Node 项目级精确版本闭环、正式全局选择、安全系统 PATH
-透传、来源感知诊断、中英文界面和公开三平台 CI/CD。浮动版本、卸载、CPython 与 Flutter
-仍未交付。完整范围和发布门禁见
+透传、来源感知诊断、中英文界面和公开三平台 CI/CD。alpha.3 开发分支已实现浮动版本、
+安全卸载、下载缓存、来源测试、机器诊断和只读迁移预览，但尚未完成真实三平台发布验收；
+CPython 与 Flutter 仍未交付。完整范围和发布门禁见
 [Plans](PLANS.md#2-v010-alpha2--global-and-project-resolution)。
 
 ## 14. 命令契约与交付状态
@@ -331,13 +332,15 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
 | `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
-| `pinset exec <tool>@<selector> -- ...` | alpha.3 | 一次性选择，不修改项目或全局状态 |
+| `pinset exec node@<selector> -- ...` | alpha.3 已实现待验收 | 一次性选择已安装版本，不修改项目或全局状态 |
 | `pinset doctor` | 已实现基础版 | 扩展 PATH、全局、旧管理器与 IDE 诊断 |
-| `pinset doctor --json` | alpha.3 | 稳定机器可读诊断结构 |
+| `pinset doctor --json` | alpha.3 已实现待验收 | schema 1 稳定机器可读诊断结构 |
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
-| `pinset source test` | alpha.3 | 只读检测 DNS/TLS/HTTP/路径和校验能力 |
+| `pinset source test node [alias]` | alpha.3 已实现待验收 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
 | `pinset list node [--available]` | alpha.3 开发中 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
-| `pinset uninstall`、`import` | alpha.3+ | 安全卸载和显式迁移 |
+| `pinset uninstall node@x.y.z` | alpha.3 已实现待验收 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
+| `pinset cache list/clean` | alpha.3 已实现待验收 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
+| `pinset import --dry-run` | alpha.3 已实现待验收 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
 | `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
@@ -694,6 +697,29 @@ cargo test --workspace --all-features
 ```
 
 自动化测试只使用临时目录、本地假 HTTP 服务、构造归档和假运行时，不安装真实语言运行时。
+
+### 17.9 alpha.3 开发分支预览
+
+以下命令已经在 alpha.3 开发分支实现，但在完成真实三平台验收与版本冻结前不属于已发布
+alpha.2 兼容承诺：
+
+```bash
+pinset list node
+pinset list node --available
+pinset use node@24 --no-install
+pinset exec node@24.0.0 -- node --version
+pinset uninstall node@24.0.0
+pinset cache list
+pinset cache clean
+pinset source test node company-mirror
+pinset doctor --json
+pinset import --dry-run
+```
+
+`uninstall` 默认拒绝删除当前项目或全局仍引用的版本；`--force` 只跳过引用检查，不会删除
+Pinset 数据目录之外、缺少收据或收据身份不匹配的目录。`cache clean` 只删除
+`downloads/sha256/<SHA-256>.archive` 普通文件。`import --dry-run` 只读取当前目录中的旧管理器
+配置并报告冲突，不会写入 `pinset.toml`。
 
 ## 18. 诊断与常见问题
 

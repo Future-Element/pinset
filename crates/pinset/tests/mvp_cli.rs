@@ -170,6 +170,69 @@ fn global_locked_install_rejects_mismatch_before_network_or_installation() {
     assert!(!home.join("installs").exists());
 }
 
+#[test]
+fn exec_can_select_an_installed_exact_version_without_changing_project_state() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+    create_fake_node(&home, "24.0.0");
+
+    let output = pinset(
+        &workspace,
+        &home,
+        &["exec", "node@24.0.0", "--", "node", "ephemeral"],
+    );
+    assert_success_contains(&output, "24.0.0:ephemeral");
+    assert_success_contains(&output, "source=ephemeral");
+    assert!(!workspace.join("pinset.toml").exists());
+    assert!(!home.join("state").exists());
+}
+
+#[test]
+fn doctor_json_and_import_preview_are_machine_readable_and_read_only() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    write_project(&project, "24.0.0", "24.0.0");
+    create_fake_node(&home, "24.0.0");
+    fs::write(project.join(".nvmrc"), "22.12.0\n").expect("nvmrc");
+    fs::write(
+        project.join("package.json"),
+        r#"{"volta":{"node":"20.18.0"}}"#,
+    )
+    .expect("package json");
+
+    let doctor = pinset(&project, &home, &["doctor", "--json"]);
+    assert!(
+        doctor.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor JSON output");
+    assert_eq!(report["schema"], 1);
+    assert_eq!(report["selection"]["version"], "24.0.0");
+    assert_eq!(report["runtime"]["status"], "ok");
+    assert_eq!(
+        report["legacy_node_configs"].as_array().map(Vec::len),
+        Some(2)
+    );
+
+    let preview = pinset(&project, &home, &["--lang", "zh-CN", "import", "--dry-run"]);
+    assert_success_contains(&preview, "检测到 nvm：Node.js 22.12.0");
+    assert_success_contains(&preview, "发现冲突");
+    assert_eq!(
+        fs::read_to_string(project.join(".nvmrc")).expect("nvmrc"),
+        "22.12.0\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("pinset.toml")).expect("project config"),
+        "schema = 1\n\n[tools]\nnode = \"24.0.0\"\n"
+    );
+}
+
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {

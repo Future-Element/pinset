@@ -141,6 +141,25 @@ impl Catalog {
             Error::InvalidNodeIndex { reason } => {
                 format!("错误：Node.js 官方版本索引无效：{reason}")
             }
+            Error::NodeVersionNotInstalled { version } => {
+                format!("错误：Pinset 未安装 Node.js {version}")
+            }
+            Error::NodeVersionInUse {
+                version,
+                references,
+            } => format!(
+                "错误：Node.js {version} 仍被以下配置引用，拒绝卸载：{references}；确认接受配置失效后可使用 --force"
+            ),
+            Error::UnsafeNodeInstallEntry { path } => format!(
+                "错误：安装目录 {} 缺少匹配收据或不是 Pinset 可安全删除的目录，已停止卸载",
+                path.display()
+            ),
+            Error::UnsafeDownloadCacheEntry { path } => {
+                format!(
+                    "错误：下载缓存项 {} 不是普通文件，已拒绝操作",
+                    path.display()
+                )
+            }
             Error::LockfileMismatch {
                 selection_path,
                 tool,
@@ -205,20 +224,29 @@ impl Catalog {
             Some("list") => {
                 "列出本机已安装或官方可用的 Node.js 版本。\n\n用法：pinset list node [--available]"
             }
+            Some("uninstall") => {
+                "卸载 Pinset 管理的精确 Node.js 版本。\n\n用法：pinset uninstall node@x.y.z [--cwd <目录>] [--force]"
+            }
+            Some("cache") => {
+                "查看或清理已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean>"
+            }
             Some("exec") => {
-                "使用当前选择执行命令。\n\n用法：pinset exec [--cwd <目录>] -- <命令> [参数...]"
+                "使用当前选择或一次性 Node.js 版本执行命令。\n\n用法：pinset exec [--cwd <目录>] [node@<版本选择器>] -- <命令> [参数...]"
             }
             Some("doctor") => {
-                "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>]"
+                "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
+            }
+            Some("import") => {
+                "只读检测旧 Node.js 管理器配置。\n\n用法：pinset import --dry-run [--cwd <目录>]"
             }
             Some("shim") => {
                 "管理 Pinset 多调用 shim。\n\n用法：pinset shim install --binary <文件> --dir <目录> [命令...]"
             }
             Some("source") => {
-                "管理本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove> [参数...]"
+                "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init      创建项目配置\n  use       选择并锁定版本\n  install   安装锁定版本\n  current   显示当前选择\n  list      列出已安装或可用版本\n  which     显示实际命令路径\n  exec      使用当前选择执行命令\n  doctor    诊断配置与 PATH\n  shim      管理命令 shim\n  source    管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  use        选择并锁定版本\n  install    安装锁定版本\n  uninstall  安全卸载精确版本\n  current    显示当前选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览旧管理器配置\n  shim       管理命令 shim\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -302,6 +330,106 @@ impl Catalog {
                 "{version} 可用 日期={date} LTS={lts} 安全更新={}",
                 if security { "是" } else { "否" }
             ),
+        }
+    }
+
+    pub fn uninstalled_node(self, version: &str, targets: &str) -> String {
+        match self.language {
+            Language::English => format!("uninstalled node@{version} targets={targets}"),
+            Language::SimplifiedChinese => {
+                format!("已卸载 Node.js {version}；目标平台={targets}")
+            }
+        }
+    }
+
+    pub fn cache_empty(self) -> &'static str {
+        match self.language {
+            Language::English => "the Pinset download cache is empty",
+            Language::SimplifiedChinese => "Pinset 下载缓存为空",
+        }
+    }
+
+    pub fn cache_entry(self, sha256: &str, size: u64, path: &Path) -> String {
+        match self.language {
+            Language::English => {
+                format!("{sha256} cached bytes={size} path={}", path.display())
+            }
+            Language::SimplifiedChinese => {
+                format!("{sha256} 已缓存 字节数={size} 路径={}", path.display())
+            }
+        }
+    }
+
+    pub fn cache_cleaned(self, entries: usize, bytes: u64) -> String {
+        match self.language {
+            Language::English => format!("cleaned {entries} cached archives ({bytes} bytes)"),
+            Language::SimplifiedChinese => {
+                format!("已清理 {entries} 个缓存归档（{bytes} 字节）")
+            }
+        }
+    }
+
+    pub fn source_test_ok(
+        self,
+        provider: &str,
+        alias: &str,
+        base_url: &str,
+        releases: usize,
+        tls: bool,
+    ) -> String {
+        match self.language {
+            Language::English => format!(
+                "source test ok provider={provider} alias={alias} url={base_url} stable_releases={releases} checks=dns,http,index,shasums tls={}",
+                if tls {
+                    "ok"
+                } else {
+                    "not-applicable-insecure-http"
+                }
+            ),
+            Language::SimplifiedChinese => format!(
+                "安装源测试通过：提供方={provider}；别名={alias}；地址={base_url}；稳定版本数={releases}；检查项=DNS,HTTP,版本索引,SHASUMS；TLS={}",
+                if tls {
+                    "通过"
+                } else {
+                    "不适用（显式允许的不安全 HTTP）"
+                }
+            ),
+        }
+    }
+
+    pub fn import_none(self, cwd: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "no legacy Node.js version configuration detected in {}",
+                cwd.display()
+            ),
+            Language::SimplifiedChinese => {
+                format!("在 {} 中未检测到旧 Node.js 版本配置", cwd.display())
+            }
+        }
+    }
+
+    pub fn import_candidate(self, kind: &str, version: &str, path: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "detected {kind} node={version} path={} action=none",
+                path.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "检测到 {kind}：Node.js {version}；路径={}；操作=无（仅预览）",
+                path.display()
+            ),
+        }
+    }
+
+    pub fn import_conflict(self, versions: usize) -> String {
+        match self.language {
+            Language::English => format!(
+                "conflict: detected {versions} distinct Node.js versions; no configuration was changed"
+            ),
+            Language::SimplifiedChinese => {
+                format!("发现冲突：检测到 {versions} 个不同 Node.js 版本；未修改任何配置")
+            }
         }
     }
 

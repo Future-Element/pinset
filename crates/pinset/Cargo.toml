@@ -13,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 pinset-core = { path = "../pinset-core", features = ["installer", "node-metadata", "project-write", "sources", "state-write"] }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

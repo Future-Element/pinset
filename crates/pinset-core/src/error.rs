@@ -348,6 +348,26 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[cfg(feature = "node-provider")]
+    #[error("Node.js {version} is not installed by Pinset")]
+    NodeVersionNotInstalled { version: String },
+
+    #[cfg(feature = "node-provider")]
+    #[error("refusing to uninstall Node.js {version}; it is selected by {references}")]
+    NodeVersionInUse { version: String, references: String },
+
+    #[cfg(feature = "node-provider")]
+    #[error("unsafe or unowned Node.js installation entry: {path}")]
+    UnsafeNodeInstallEntry { path: PathBuf },
+
+    #[cfg(feature = "node-provider")]
+    #[error("failed to remove Node.js installation {path}: {source}")]
+    RemoveNodeInstall {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[cfg(feature = "node-metadata")]
     #[error("failed to request official Node.js metadata {url}: {source}")]
     NodeMetadataRequest {
@@ -480,6 +500,26 @@ pub enum Error {
     #[cfg(feature = "installer")]
     #[error("failed to write download file {path}: {source}")]
     WriteDownload {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("failed to read download cache {path}: {source}")]
+    ReadDownloadCache {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("unsafe download cache entry rejected: {path}")]
+    UnsafeDownloadCacheEntry { path: PathBuf },
+
+    #[cfg(feature = "installer")]
+    #[error("failed to remove download cache entry {path}: {source}")]
+    RemoveDownloadCacheEntry {
         path: PathBuf,
         #[source]
         source: std::io::Error,

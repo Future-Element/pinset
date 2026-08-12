@@ -931,7 +931,10 @@ version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "pinset-core",
+ "serde",
+ "serde_json",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

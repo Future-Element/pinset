@@ -1,4 +1,10 @@
-use std::{fs, process::Command};
+use std::{
+    fs,
+    io::{Read, Write},
+    net::TcpListener,
+    process::Command,
+    thread,
+};
 
 use tempfile::tempdir;
 
@@ -87,6 +93,65 @@ fn failed_remove_does_not_rewrite_active_source_config() {
     let after = fs::read(home.join("sources.toml")).expect("source config after failure");
     assert_eq!(after, before);
     assert!(!home.join("installs").exists());
+}
+
+#[test]
+fn tests_a_node_source_read_only_against_its_version_index() {
+    let root = tempdir().expect("temporary PINSET_HOME");
+    let home = root.path().join("isolated-home");
+    let index = br#"[{"version":"v24.1.0","date":"2025-05-08","files":["win-x64-zip","linux-x64","osx-x64-tar","osx-arm64-tar"],"lts":"Krypton","security":false}]"#.to_vec();
+    let hash = "ab".repeat(32);
+    let shasums = format!(
+        "{hash}  node-v24.1.0-win-x64.zip\n{hash}  node-v24.1.0-linux-x64.tar.xz\n{hash}  node-v24.1.0-darwin-x64.tar.xz\n{hash}  node-v24.1.0-darwin-arm64.tar.xz\n"
+    )
+    .into_bytes();
+    let (base_url, server) = serve_sequence(vec![
+        ("GET /index.json", index),
+        ("GET /v24.1.0/SHASUMS256.txt", shasums),
+    ]);
+
+    pinset(
+        &home,
+        &[
+            "source",
+            "add",
+            "node",
+            "local",
+            "--base-url",
+            &base_url,
+            "--allow-insecure",
+        ],
+    )
+    .assert_success("added node local");
+    let tested = pinset(
+        &home,
+        &["--lang", "zh-CN", "source", "test", "node", "local"],
+    );
+    server.join().expect("server");
+    tested.assert_success_contains("安装源测试通过");
+    tested.assert_success_contains("稳定版本数=1");
+    assert!(!home.join("installs").exists());
+}
+
+fn serve_sequence(responses: Vec<(&'static str, Vec<u8>)>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+    let address = listener.local_addr().expect("server address");
+    let server = thread::spawn(move || {
+        for (expected, body) in responses {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0_u8; 2048];
+            let count = stream.read(&mut request).expect("read request");
+            assert!(String::from_utf8_lossy(&request[..count]).contains(expected));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .expect("response headers");
+            stream.write_all(&body).expect("response body");
+        }
+    });
+    (format!("http://{address}/"), server)
 }
 
 fn pinset(home: &std::path::Path, arguments: &[&str]) -> CommandResult {

@@ -1,4 +1,6 @@
 mod config;
+#[cfg(feature = "installer")]
+mod download_cache;
 mod error;
 mod global_state;
 #[cfg(feature = "installer")]
@@ -26,6 +28,11 @@ pub use config::{
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
+#[cfg(feature = "installer")]
+pub use download_cache::{
+    DownloadCacheCleanOutcome, DownloadCacheEntry, clean_download_cache, download_cache_path,
+    list_download_cache,
+};
 pub use error::{Error, Result};
 #[cfg(feature = "state-write")]
 pub use global_state::save_global_config;
@@ -48,7 +55,10 @@ pub use lockfile::{
     validate_lock_matches_project, validate_lock_matches_selection,
 };
 #[cfg(feature = "node-provider")]
-pub use node_lifecycle::{InstalledNodeVersion, list_installed_node_versions};
+pub use node_lifecycle::{
+    InstalledNodeVersion, NodeVersionReference, UninstallNodeOutcome, find_node_version_references,
+    list_installed_node_versions, uninstall_node_version,
+};
 #[cfg(feature = "node-metadata")]
 pub use node_metadata::{NodeMetadataClient, NodeRelease};
 #[cfg(feature = "node-provider")]
