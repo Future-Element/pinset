@@ -1,7 +1,54 @@
 # Pinset 发布说明
 
-本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
+本文档记录 Pinset 已发布版本及明确标注的发布候选。未来范围与开发状态请参阅
 [Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
+
+## v0.1.0-alpha.3
+
+- 版本日期：2026-08-12
+- 发布阶段：Alpha 预发布候选
+- 许可证：MIT License
+- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
+- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- GitHub Release：[v0.1.0-alpha.3](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.3)
+
+### 更新内容
+
+- 支持 `node@24`、`node@24.12`、`node@lts` 和 `node@current`，解析后写入精确版本。
+- 新增本地安装列表与显式官方可用版本查询。
+- 新增精确版本安全卸载；当前项目或全局仍引用时默认拒绝，`--force` 仍不越过 Pinset
+  数据所有权边界。
+- 新增按 SHA-256 内容寻址的下载缓存、校验后离线复用、缓存查看和安全清理。
+- 新增 `source test node [alias]`，只读检查版本索引和最新稳定版 SHASUMS。
+- 新增 `doctor --json` schema 1 机器可读诊断。
+- 新增 `.nvmrc`、`.node-version`、Volta、asdf 和 mise 的 `import --dry-run` 只读检测。
+- 新增 `exec node@<selector> -- <command>` 一次性选择已安装版本，不修改项目或全局状态。
+- 所有新增正常提示、帮助和常见错误均支持英文与简体中文。
+
+### 验证范围
+
+- 97 项 workspace 测试、本地格式、严格 Clippy、锁定 Release 构建、下载缓存并发复验和
+  shim 轻依赖检查通过。
+- 自动化仅使用临时目录、假运行时、本地 HTTP 和构造归档；没有安装真实 Node。
+- 真实目标系统功能验收由用户在发布后自行执行。
+
+### Linux x64 / macOS Apple Silicon 安装
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.3/install.sh |
+  sh -s -- --version 0.1.0-alpha.3
+```
+
+默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
+不安装 Node，并强制校验 Release 的 SHA-256。Windows 使用 Release ZIP。
+
+### 已知限制
+
+- Python、Flutter、PGP 验签和中央包管理器分发尚未交付。
+- 一次性 `exec node@<selector>` 只执行已经安装的版本，不隐式安装运行时。
+- `import --dry-run` 只检测当前目录，不自动写入或删除旧管理器配置。
+- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
 
 ## v0.1.0-alpha.2
 

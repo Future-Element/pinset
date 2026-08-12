@@ -5,21 +5,21 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前 `0.1.0-alpha.2` 是 Node-first 预发布版：
+当前 `0.1.0-alpha.3` 是 Node-first 预发布候选：
 
-- 支持 Node.js 精确版本 `x.y.z`；
+- 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
 - 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
 - 生成可提交的 `pinset.toml` 与 `pinset.lock`；
 - 从 Node 官方 HTTPS `SHASUMS256.txt` 取得哈希，镜像只改变传输位置；
 - 校验 SHA-256 后安全解压 ZIP/TAR.XZ，并以事务方式提交安装；
-- 提供 `use`、`install`、`current`、`which`、`exec`、`doctor` 和 shim；
+- 提供版本列表、安全卸载、内容寻址下载缓存、来源测试和旧管理器只读检测；
+- 提供 `doctor --json` 和一次性 `exec node@<selector>`；
 - 支持配置国内、企业内网或其他自定义镜像及有序回退；
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
-公开 Release 仍是 alpha.2。当前 alpha.3 开发分支已经加入浮动版本选择器、安全卸载、
-内容寻址下载缓存、来源测试、JSON 诊断和旧管理器只读检测；这些能力将在完成真实三平台
-验收后发布。Python、Flutter、PGP 验签和中央包管理器分发仍按路线图推进。项目不维护
+alpha.3 将通过官方 GitHub Release 提供给用户自行验收。Python、Flutter、PGP 验签和中央
+包管理器分发仍按路线图推进。项目不维护
 第三方 Homebrew Tap 或 Scoop Bucket。
 
 设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
@@ -40,12 +40,12 @@ pinset --lang zh-CN
 
 ## 五分钟开始
 
-当前预发布版在 Linux x64 和 macOS Apple Silicon 上可以执行：
+alpha.3 发布后，Linux x64 和 macOS Apple Silicon 可以执行：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.2/install.sh |
-  sh -s -- --version 0.1.0-alpha.2
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.3/install.sh |
+  sh -s -- --version 0.1.0-alpha.3
 ```
 
 安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把 `pinset` 与 `pinset-shim` 原子安装到 `$HOME/.local/bin`。它不使用 `sudo`、不改 shell profile，也不安装 Node。
@@ -88,9 +88,9 @@ pinset source test node my-mirror
 
 首次生成锁文件仍需访问 Node 官方 HTTPS 校验清单；已有并提交的锁文件可以在受限网络中只通过镜像执行 `install --locked`。详见使用指南。
 
-## alpha.3 开发分支
+## alpha.3 新增功能
 
-从源码构建当前分支后，可以使用以下尚未发布的命令：
+alpha.3 可以测试以下新增命令：
 
 ```shell
 pinset list node
