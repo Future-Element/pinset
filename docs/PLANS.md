@@ -455,6 +455,12 @@ alpha.2 不包含：
 - WSL 在独立 `/tmp` target 中完成同一组 117 项 Linux 测试；离线安装器假归档测试通过。
 - WSL 验证只下载缺失的 Rust crates 构建依赖到 Cargo 缓存，不下载或安装真实 Node；未触发
   GitHub Actions。
+- main 质量门禁 [#31576332545](https://github.com/Future-Element/pinset/actions/runs/31576332545)
+  通过；标签 Release 工作流
+  [#31576490916](https://github.com/Future-Element/pinset/actions/runs/31576490916) 完成同一质量门禁、
+  Linux x64、Windows x64、macOS Apple Silicon 构建并发布五个预期资产。
+- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；三个平台归档只包含 CLI 与通用 shim，
+  Windows CLI 输出 `pinset 0.1.0-alpha.5` 并包含 alpha.5 新命令。
 
 ## 6. v0.1.0-alpha.6 — Node Acceptance Fixes
 

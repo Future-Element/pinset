@@ -37,8 +37,13 @@
 - Windows 格式、严格 Clippy、117 项锁定 workspace 全功能测试、锁定 Release 构建和差异检查通过。
 - WSL 在独立 `/tmp` target 中完成同一组 117 项 Linux 测试；离线安装器假归档测试通过。
 - 自动化只使用临时目录、假运行时、本地构造归档和假 shim；未在开发机下载或安装真实 Node。
-- Release 标签工作流执行同一质量门禁，并构建 Linux x64、Windows x64、macOS Apple Silicon
-  三个平台归档；实际工作流与公开资产复核结果见本节后续发布记录。
+- main 质量门禁 [#31576332545](https://github.com/Future-Element/pinset/actions/runs/31576332545)
+  通过；标签 Release 工作流
+  [#31576490916](https://github.com/Future-Element/pinset/actions/runs/31576490916) 完成同一质量门禁、
+  Linux x64、Windows x64、macOS Apple Silicon 构建并发布五个预期资产。
+- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；Linux/macOS 归档各只包含 `pinset` 与
+  `pinset-shim`，Windows ZIP 只包含两个 `.exe`。Windows CLI 输出 `pinset 0.1.0-alpha.5`，
+  并确认 `activate`、`global`、`import`、`install`、`shim`、`unset` 命令存在。
 
 ### Linux x64 / macOS Apple Silicon 安装
 
