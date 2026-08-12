@@ -77,7 +77,14 @@ corepack --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'
 pnpm --version | grep -Fx "$PNPM_VERSION"
 bun --version | grep -Fx "$BUN_VERSION"
 bunx --version | grep -Fx "$BUN_VERSION"
-pnpm exec node --version | grep -Fx "v$PROJECT_VERSION"
+set +e
+PNPM_CHILD_NODE_OUTPUT="$(pnpm exec node --version 2>&1)"
+PNPM_CHILD_NODE_STATUS=$?
+set -e
+printf 'pnpm exec node --version => status=%s output=%s\n' \
+  "$PNPM_CHILD_NODE_STATUS" "$PNPM_CHILD_NODE_OUTPUT"
+test "$PNPM_CHILD_NODE_STATUS" -eq 0
+printf '%s\n' "$PNPM_CHILD_NODE_OUTPUT" | grep -Fx "v$PROJECT_VERSION"
 
 cd "$TEST_ROOT"
 "$PINSET_BIN" current node | tee restored-global-current.txt
