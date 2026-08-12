@@ -30,7 +30,10 @@
 - 本地格式、严格 Clippy、102 项 workspace 全功能测试、锁定 Release 构建和差异检查通过。
 - 自动化使用临时目录、本地假 HTTP、构造归档、假 shim 和假运行时，不安装真实 Node。
 - 安装器测试覆盖已知内容长度的开始、字节推进、校验完成事件，以及缓存、回退和失败关闭。
-- 三平台 Release 构建和公开资产复核将在标签工作流完成后记录。
+- GitHub Release 工作流完成质量门禁和 Linux x64、Windows x64、macOS Apple Silicon
+  构建，并发布五个预期资产。
+- 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；三个归档只包含预期 CLI 与 shim，
+  Windows CLI 输出 `pinset 0.1.0-alpha.4` 并确认包含 `global` 命令。
 
 ### Linux x64 / macOS Apple Silicon 安装
 
