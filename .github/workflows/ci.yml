@@ -93,6 +93,28 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
+      - name: Run real Node, pnpm and Bun acceptance on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PINSET_BIN: ${{ github.workspace }}/target/release/pinset
+          PINSET_GLOBAL_VERSION: 24.0.0
+          PINSET_PROJECT_VERSION: 22.0.0
+          PINSET_PNPM_VERSION: 11.21.0
+          PINSET_BUN_VERSION: 1.3.14
+        run: bash scripts/tests/ubuntu_runtime_acceptance.sh
+
+      - name: Run real Node, pnpm and Bun acceptance on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PINSET_BIN: ${{ github.workspace }}\target\release\pinset.exe
+          PINSET_GLOBAL_VERSION: 24.0.0
+          PINSET_PROJECT_VERSION: 22.0.0
+          PINSET_PNPM_VERSION: 11.21.0
+          PINSET_BUN_VERSION: 1.3.14
+        run: ./scripts/tests/windows_runtime_acceptance.ps1
+
       - name: Test Unix curl installer
         if: runner.os != 'Windows'
         shell: bash
