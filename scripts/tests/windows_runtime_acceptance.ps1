@@ -90,6 +90,7 @@ try {
     $Project = Join-Path $TestRoot 'project'
     New-Item -ItemType Directory -Path $Project | Out-Null
     Set-Location $Project
+    Set-Content -LiteralPath (Join-Path $Project 'package.json') -Value '{"private":true}' -NoNewline
     & $Pinset init
     & $Pinset use "node@$ProjectVersion"
     Assert-ExactOutput "v$ProjectVersion" (& node --version) 'project direct node'

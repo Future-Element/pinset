@@ -59,6 +59,7 @@ bunx --version | grep -Fx "$BUN_VERSION"
 
 mkdir project
 cd project
+printf '{"private":true}\n' > package.json
 "$PINSET_BIN" init
 "$PINSET_BIN" use "node@$PROJECT_VERSION"
 test -f pinset.toml
