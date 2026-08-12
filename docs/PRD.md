@@ -1,8 +1,8 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布版本：`v0.1.0-alpha.5`
-当前开发版本：`v0.1.0-alpha.6`
+当前发布版本：`v0.1.0-alpha.6`
+当前开发版本：`待真实环境验收后确定`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -11,8 +11,8 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“已发布”指 `v0.1.0-alpha.5`；下一版本只处理真实环境验收发现的兼容问题，
-  不再扩张 Node 命令面。
+- 本文件中的“已发布”指 `v0.1.0-alpha.6`；下一版本根据完整卸载和跨平台真实环境验收结果确定，
+  不提前扩张 Node 命令面或接入新语言。
 
 ## 1. 产品定位
 
@@ -269,13 +269,14 @@ Installer 负责下载限制、哈希校验、安全解压、临时目录、原�
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前 `v0.1.0-alpha.5` 的产物矩阵：
+当前 `v0.1.0-alpha.6` 的产物矩阵：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
 | Node 项目锁定与安装 | 支持 | 支持 | 支持 | 支持 |
 | Pinset 官方 Release 产物 | ZIP | TAR.GZ | 暂未发布 | TAR.GZ |
 | 官方 curl 安装器 | 不适用 | 支持 | 不适用 | 支持 |
+| 官方完整卸载脚本（alpha.6） | PowerShell | POSIX sh | POSIX sh | POSIX sh |
 
 平台支持声明必须区分“代码可构建”“CI 构建通过”“真实安装通过”和“完整用户流程验收”。
 未执行的层级不得用更低层级结果代替。
@@ -322,6 +323,11 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 仍未交付。完整范围和发布门禁见
 [Plans](PLANS.md#5-v010-alpha5--node-runtime-closure)。
 
+`v0.1.0-alpha.6` 增加独立于 CLI 的 Unix 与 Windows 完整卸载脚本：在明确确认后删除
+Pinset 二进制、可验证的受管命令路由和整个 `PINSET_HOME`（包括所有受管语言运行时），但保留
+项目配置/锁、shell profile、系统运行时和其他管理器文件。完整范围见
+[Plans](PLANS.md#6-v010-alpha6--full-uninstall-and-acceptance-fixes)。
+
 ## 14. 命令契约与交付状态
 
 | 命令 | 交付状态 | 目标契约 |
@@ -356,6 +362,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | Provider 自动命令注册 | 已实现 | 选择/安装后注册 Provider 声明的命令，冲突时整组停止 |
 | `pinset shim install --provider <tool>` | 已实现 | 幂等修复 Provider 命令入口，不作为正常安装步骤 |
 | `pinset shim migrate --provider node` | 已实现 | 在当前路由目录准备入口，报告并保留旧 shim |
+| `uninstall.sh` / `uninstall.ps1` | 已实现 | 预览并经显式确认后完整删除 Pinset 与所有受管运行时 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
 
@@ -818,6 +825,43 @@ pinset shim path
 `global` 不带参数时只读查看用户默认，带参数时解析精确版本、写入全局配置和锁，并默认安装
 当前平台。下载 Node 归档时，交互终端显示进度条、百分比和字节数；完成提示只在 SHA-256
 校验通过后出现。非交互环境输出简洁状态，内容寻址缓存命中不产生伪下载进度。
+
+### 17.11 alpha.6 完整卸载
+
+完整卸载与 `pinset uninstall node@<version>` 不同：后者只删除一个已安装版本，并保护仍被项目
+或全局状态引用的版本；前者用于从当前操作系统移除整个 Pinset 用户安装，包括所有受管语言。
+
+Release 提供两个独立脚本：
+
+- Linux、macOS、WSL：`uninstall.sh`；
+- Windows：`uninstall.ps1`。
+
+两个脚本默认只输出即将删除和保留的目标，不执行删除；`--dry-run` / `-DryRun` 明确表示只读
+预览，`--yes` / `-Yes` 才授权执行。执行顺序为：
+
+1. 解析平台默认安装目录、默认 `PINSET_HOME` 和显式覆盖；
+2. 拒绝文件系统根、HOME、XDG/LocalAppData 根、符号链接或 junction 数据根；
+3. 对自定义 `PINSET_HOME` 要求额外的 `--allow-nonstandard-home` / `-AllowNonstandardHome`；
+4. 在删除通用路由器前，通过符号链接目标、Windows wrapper 精确内容、硬链接或文件哈希验证
+   当前 Provider 命令入口确实由 Pinset 管理；
+5. 删除 CLI、通用路由器、已验证路由和整个 `PINSET_HOME`。`installs/` 下的 Node 及未来其他
+   Provider 运行时、下载缓存、全局状态和本机设置全部随数据根删除。
+
+脚本不会搜索工作区，因此项目中的 `pinset.toml` 与 `pinset.lock` 会保留；也不编辑 shell/
+PowerShell profile，不删除系统运行时、nvm/fnm/Volta 等外部管理器或无法验证所有权的同名命令。
+用户需要自行删除曾手动写入 profile 的 Pinset PATH 行或持久化的 `PINSET_*` 环境变量。
+
+固定预发布用法：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
+  sh -s -- --dry-run
+```
+
+确认输出后将 `--dry-run` 改为 `--yes`。Windows 应先下载 `uninstall.ps1`，运行
+`./uninstall.ps1 -DryRun`，确认后运行 `./uninstall.ps1 -Yes`，避免把远程脚本与删除授权合并成
+无法复核的一步。
 
 ## 18. 诊断与常见问题
 

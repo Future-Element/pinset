@@ -51,6 +51,9 @@ jobs:
       - name: Test curl installer without network or runtime installation
         run: sh scripts/tests/install_sh_test.sh
 
+      - name: Test full uninstaller in an isolated home
+        run: sh scripts/tests/uninstall_sh_test.sh
+
       - name: Keep the shim dependency graph lightweight
         shell: bash
         run: |
@@ -96,6 +99,16 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: sh scripts/tests/install_sh_test.sh
+
+      - name: Test Unix full uninstaller
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh scripts/tests/uninstall_sh_test.sh
+
+      - name: Test Windows full uninstaller
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/tests/uninstall_ps1_test.ps1
 
       - name: Package Unix binaries
         if: runner.os != 'Windows'
@@ -148,11 +161,15 @@ jobs:
         shell: bash
         run: |
           cp install.sh dist/install.sh
-          chmod 755 dist/install.sh
+          cp uninstall.sh dist/uninstall.sh
+          cp uninstall.ps1 dist/uninstall.ps1
+          chmod 755 dist/install.sh dist/uninstall.sh
           (
             cd dist
             sha256sum \
               install.sh \
+              uninstall.sh \
+              uninstall.ps1 \
               pinset-linux-x86_64.tar.gz \
               pinset-macos-aarch64.tar.gz \
               pinset-windows-x86_64.zip \
@@ -166,6 +183,8 @@ jobs:
         run: |
           assets=(
             dist/install.sh
+            dist/uninstall.sh
+            dist/uninstall.ps1
             dist/pinset-linux-x86_64.tar.gz
             dist/pinset-macos-aarch64.tar.gz
             dist/pinset-windows-x86_64.zip

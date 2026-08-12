@@ -18,6 +18,13 @@ Unix curl 安装器使用完全离线的假 Release 测试：
 
 ```sh
 sh scripts/tests/install_sh_test.sh
+sh scripts/tests/uninstall_sh_test.sh
+```
+
+Windows 完整卸载脚本使用独立 PowerShell 临时目录测试：
+
+```powershell
+./scripts/tests/uninstall_ps1_test.ps1
 ```
 
 这些测试不会安装真实 Node、Python 或 Flutter。真实运行时烟雾测试应在明确隔离的临时环境中进行，并在 PR 中说明平台与结果。

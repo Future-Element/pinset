@@ -1,9 +1,9 @@
 # Pinset Plans
 
-当前发布版本：`v0.1.0-alpha.5`
-下一开发目标：`v0.1.0-alpha.6`
+当前发布版本：`v0.1.0-alpha.6`
+下一开发目标：`待真实环境验收后确定`
 目标稳定版本：`v0.1.0`
-状态：`alpha.5 published — alpha.6 acceptance fixes next`
+状态：`alpha.6 published — real environment uninstall acceptance next`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -23,7 +23,7 @@
 | `v0.1.0-alpha.3` | Node lifecycle and migration | 浮动选择器、本地版本管理、卸载、来源测试和旧管理器诊断 |
 | `v0.1.0-alpha.4` | Node workflow hardening | 显式全局默认入口、项目覆盖解释和 Node 使用文档收口 |
 | `v0.1.0-alpha.5` | Node runtime closure | Provider 自动路由、直接安装、显式旧配置导入、旧 shim 迁移和完整 PATH 诊断 |
-| `v0.1.0-alpha.6` | Node acceptance fixes | 只处理 alpha.5 跨 Shell/平台真实验收发现的问题，不再新增 Node 功能面 |
+| `v0.1.0-alpha.6` | Full uninstall and acceptance fixes | 官方完整卸载、所有受管运行时清理与 alpha.5 跨平台验收修复 |
 | 后续 Alpha | CPython / Flutter providers | 在 Node 闭环稳定并重新确认范围后再排期，不进入 alpha.5 |
 | `v0.1.0-beta.1` | Integrated public preview | 三种运行时的跨平台闭环、离线复现和迁移验收 |
 | `v0.1.0` | Stable preview | 冻结 schema、供应链与兼容策略，完成首个稳定版本 |
@@ -462,10 +462,12 @@ alpha.2 不包含：
 - 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；三个平台归档只包含 CLI 与通用 shim，
   Windows CLI 输出 `pinset 0.1.0-alpha.5` 并包含 alpha.5 新命令。
 
-## 6. v0.1.0-alpha.6 — Node Acceptance Fixes
+## 6. v0.1.0-alpha.6 — Full Uninstall and Acceptance Fixes
 
-目标：根据 alpha.5 在真实 Windows、Linux/WSL 和 macOS 上的用户验收结果修复兼容问题；
-该版本不再扩张 Node 命令面。
+状态：**已发布**
+
+目标：提供不依赖 Pinset CLI 自身仍可运行的官方完整卸载路径，并根据 alpha.5 在真实 Windows、
+Linux/WSL 和 macOS 上的用户验收结果修复兼容问题；该版本不扩张 Node 命令面。
 
 范围：
 
@@ -473,6 +475,16 @@ alpha.2 不包含：
 - 验证 Bash、Zsh、Fish 和 PowerShell 的一次性激活与持久配置说明。
 - 完成 Node 全局版本、两个项目版本、系统 Node 与旧管理器共存的真实环境矩阵。
 - 只修复上述验收暴露的问题；直接安装、导入、迁移、诊断等功能均在 alpha.5 交付。
+- 发布 Unix `uninstall.sh` 和 Windows `uninstall.ps1`；默认只显示计划，显式确认后删除 CLI、
+  通用路由器、可验证的 Provider 命令入口以及整个 `PINSET_HOME`。
+- `PINSET_HOME/installs` 下当前与未来由 Pinset 管理的全部语言运行时随数据根一起删除；项目中的
+  `pinset.toml`/`pinset.lock`、shell profile 和外部管理器文件始终保留。
+- 标准数据根可直接确认；自定义数据根要求额外的非标准路径授权，并拒绝文件系统根、HOME、
+  XDG/LocalAppData 根以及符号链接或 junction 数据根。
+- Unix 与 PowerShell 隔离测试覆盖未确认、dry-run、宽路径拒绝、全部受管运行时删除、外部命令
+  和项目文件保留；测试只使用随机临时目录。
+- Windows PowerShell 与 WSL 隔离测试、117 项 workspace 测试、严格 Clippy、锁定 Release 构建、
+  PowerShell/POSIX 语法和差异检查通过；未触发 GitHub Actions，未安装或删除真实语言运行时。
 
 CPython 与 Flutter 继续延期，需在 Node 闭环稳定后重新确认版本范围；不会为了展示多语言而提前
 把任一运行时的下载、校验或命令语义塞进通用安装器。
@@ -507,6 +519,7 @@ CPython 与 Flutter 继续延期，需在 Node 闭环稳定后重新确认版本
 
 - GitHub Releases 是当前官方二进制分发渠道。
 - Linux x64 与 macOS Apple Silicon 使用官方 `install.sh`；Windows 使用 Release ZIP。
+- Release 同时提供 Unix `uninstall.sh` 与 Windows `uninstall.ps1`，完整卸载不要求 CLI 可运行。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 - Homebrew、Scoop、WinGet 等中央渠道只有在满足其官方接收和持续维护政策后单独评估。
 - alpha/beta 预发布必须使用固定版本 URL；`releases/latest` 只面向稳定 Release。
@@ -713,7 +726,7 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 
 - 非草稿 PR 在 opened、reopened、synchronize、ready_for_review 时运行 `Quality`。
 - `main` 推送再次运行 `Quality`。
-- `Quality` 包含格式、Clippy、workspace 测试、curl 安装器离线测试和 shim 依赖约束。
+- `Quality` 包含格式、Clippy、workspace 测试、curl 安装器与完整卸载器隔离测试和 shim 依赖约束。
 - 手动 workflow 可以构建 Linux x64、Windows x64、macOS arm64 归档。
 - 版本标签触发完整 Release workflow，不手工上传资产。
 
@@ -731,17 +744,17 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 标签必须与 workspace 版本完全一致：
 
 ```bash
-git tag -a v0.1.0-alpha.5 -m "Pinset 0.1.0-alpha.5"
-git push origin v0.1.0-alpha.5
+git tag -a v0.1.0-alpha.6 -m "Pinset 0.1.0-alpha.6"
+git push origin v0.1.0-alpha.6
 ```
 
 Release workflow：
 
 1. 校验 tag 与 workspace 版本。
-2. 运行 Quality 与离线安装器测试。
+2. 运行 Quality、离线安装器测试与隔离完整卸载测试。
 3. 构建 Linux x64、Windows x64、macOS arm64。
 4. 生成平台归档和 `SHA256SUMS`。
-5. 发布 `install.sh`、归档和校验文件。
+5. 发布 `install.sh`、`uninstall.sh`、`uninstall.ps1`、归档和校验文件。
 6. 含连字符版本自动标记为 GitHub Prerelease。
 
 失败时修复并发布新版本；不得覆盖已经公开使用的版本标签或静默替换 Release 资产。

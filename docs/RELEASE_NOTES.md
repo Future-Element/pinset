@@ -3,6 +3,67 @@
 本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
 [Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
 
+## v0.1.0-alpha.6
+
+- 版本日期：2026-08-12
+- 发布阶段：Alpha 预发布
+- 许可证：MIT License
+- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
+- 完整卸载脚本：Unix/WSL/macOS `uninstall.sh`、Windows `uninstall.ps1`
+- GitHub Release：[v0.1.0-alpha.6](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.6)
+
+### 更新内容
+
+- 新增不依赖 Pinset CLI 仍可运行的官方完整卸载脚本；默认只显示清理计划，必须通过
+  `--yes` / `-Yes` 显式确认。
+- 完整卸载会删除 `pinset`、`pinset-shim`、可验证为 Pinset 所有的 Provider 命令入口，以及
+  整个 `PINSET_HOME`；其中包括全局状态、设置、缓存和 `installs/` 下的全部受管语言运行时。
+- Provider 命令入口在通用路由器删除前，通过 Unix 符号链接目标/文件内容或 Windows wrapper
+  精确内容/文件哈希验证；不能证明所有权的同名命令始终保留。
+- 拒绝文件系统根、HOME、XDG/LocalAppData 根、`.`/`..` 路径穿越、符号链接或 junction 数据根。
+  自定义 `PINSET_HOME` 必须增加 `--allow-nonstandard-home` / `-AllowNonstandardHome` 二次授权。
+- 项目中的 `pinset.toml`、`pinset.lock`、shell/PowerShell profile、系统运行时和 nvm/fnm/Volta
+  等外部管理器文件不会被搜索或删除。
+- Release 工作流把两个卸载脚本作为独立资产发布，并与安装器和三平台归档一起写入
+  `SHA256SUMS`。
+
+### 验证范围
+
+- Windows PowerShell 隔离测试和 WSL POSIX Shell 隔离测试覆盖未确认、dry-run、自定义目录授权、
+  宽路径/路径穿越拒绝、全部假语言运行时删除、外部命令及项目文件保留。
+- 117 项锁定 workspace 测试、严格 Clippy、PowerShell/POSIX 语法、锁定 Windows Release 构建和
+  差异检查通过。
+- 所有卸载测试只处理随机临时目录中的假 CLI、假路由、假 Node/Python 安装；没有修改真实
+  `PINSET_HOME`、PATH、shell profile 或语言运行时。
+
+### Linux x64 / macOS Apple Silicon 安装
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/install.sh |
+  sh -s -- --version 0.1.0-alpha.6
+```
+
+### 完整卸载
+
+Linux、macOS、WSL 先预览：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
+  sh -s -- --dry-run
+```
+
+确认计划后把 `--dry-run` 改为 `--yes`。Windows 从 Release 下载 `uninstall.ps1`，依次执行
+`./uninstall.ps1 -DryRun` 和 `./uninstall.ps1 -Yes`。
+
+### 已知限制
+
+- 脚本不修改 shell profile 或持久化环境变量；用户需自行删除曾手动添加的 PATH 行和
+  `PINSET_*` 环境变量。
+- Python、Flutter、PGP 验签和中央包管理器分发仍未交付。
+- macOS x64 Node 可写入锁文件，但当前没有 macOS Intel Pinset CLI 归档。
+
 ## v0.1.0-alpha.5
 
 - 版本日期：2026-08-12

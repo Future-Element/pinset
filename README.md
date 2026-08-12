@@ -5,7 +5,7 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-最新公开版本是 `0.1.0-alpha.5`，下一开发目标是 `0.1.0-alpha.6`。当前继续完善
+最新公开版本是 `0.1.0-alpha.6`，下一开发目标将在真实环境验收后确定。当前继续完善
 Node-first 闭环，不接入 Python 或 Flutter：
 
 - 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
@@ -21,9 +21,11 @@ Node-first 闭环，不接入 Python 或 Flutter：
 - 支持清除项目/全局选择并回退上一层，不隐式卸载运行时；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 - 由内置 Provider 统一声明运行时命令，选择或安装运行时后自动准备命令路由。
+- 提供带预览和二次确认的完整卸载脚本，可清理 Pinset 管理的全部语言运行时。
 
 alpha.5 已经一次性收口 Node 运行时管理：Provider 自动命令路由、独立版本安装、显式旧配置导入、
-旧 shim 迁移和完整 PATH 诊断。alpha.6 只处理跨 Shell/平台真实验收发现的兼容问题。
+旧 shim 迁移和完整 PATH 诊断。alpha.6 补齐官方完整卸载，并处理跨 Shell/平台真实验收
+发现的兼容问题。
 Python、Flutter、PGP 验签和中央包管理器分发继续延期；项目不维护
 第三方 Homebrew Tap 或 Scoop Bucket。
 
@@ -33,8 +35,8 @@ Linux x64 和 macOS Apple Silicon 可以执行：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.5/install.sh |
-  sh -s -- --version 0.1.0-alpha.5
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/install.sh |
+  sh -s -- --version 0.1.0-alpha.6
 ```
 
 安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把
@@ -42,6 +44,42 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 `node`、`npm`、`npx`、`corepack`、`python` 或其他运行时命令，也不会安装任何运行时。
 
 稳定版本发布后可以把固定版本 URL 换成 `https://github.com/Future-Element/pinset/releases/latest/download/install.sh`。也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载当前系统的归档。
+
+## 完整卸载
+
+`pinset uninstall node@<version>` 只删除一个 Node 版本。官方完整卸载脚本会清理：
+
+- `pinset`、`pinset-shim` 和能够验证为 Pinset 所有的 Provider 命令路由；
+- 整个 `PINSET_HOME`，包括全局状态、设置、缓存以及 `installs/` 下的全部语言运行时；
+- 不搜索或删除项目仓库中的 `pinset.toml`、`pinset.lock`，不修改 shell profile，也不删除
+  nvm、fnm、系统 Node 或其他管理器的文件。
+
+Linux、macOS 和 WSL 先预览，再显式确认：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
+  sh -s -- --dry-run
+
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.sh |
+  sh -s -- --yes
+```
+
+Windows PowerShell 下载脚本后执行：
+
+```powershell
+Invoke-WebRequest `
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.6/uninstall.ps1 `
+  -OutFile uninstall.ps1
+./uninstall.ps1 -DryRun
+./uninstall.ps1 -Yes
+```
+
+脚本默认只接受平台标准 `PINSET_HOME`。如果曾主动设置自定义数据目录，需同时传入
+`--pinset-home /absolute/path --allow-nonstandard-home`；PowerShell 使用
+`-PinsetHome C:\absolute\path -AllowNonstandardHome`。脚本不会自动删除你手动写入 profile 的
+PATH 行或持久化的 `PINSET_*` 环境变量，完成后应自行移除。
 
 ## 使用说明
 
@@ -284,7 +322,11 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
+sh scripts/tests/install_sh_test.sh
+sh scripts/tests/uninstall_sh_test.sh
 ```
+
+Windows 另运行 `./scripts/tests/uninstall_ps1_test.ps1`。
 
 测试使用临时目录、本地假 HTTP 服务和假运行时，不会安装真实 Node、Python 或 Flutter。
 
