@@ -25,9 +25,15 @@ PGP 验签和中央包管理器分发仍按路线图推进。项目不维护
 设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
 
 ```shell
-pinset use node@24.0.0 --global
+pinset global node@24
+pinset global
 pinset current
 ```
+
+`pinset global` 是全局默认版本的一等入口；不带版本时只读查看，带版本时解析为精确版本、
+写入独立的全局配置和锁，并默认安装当前平台。原有的 `pinset use node@... --global` 继续兼容。
+在项目目录中执行时，如果 `pinset.toml` 覆盖了全局版本，输出会明确提示；`pinset current`
+始终显示当前目录真正生效的版本。
 
 保存中文界面语言：
 
@@ -62,6 +68,23 @@ pinset which node
 pinset exec -- node --version
 pinset doctor
 ```
+
+只需要用户默认版本、不需要项目配置时：
+
+```shell
+pinset global node@lts
+pinset exec -- node --version
+```
+
+如果希望直接执行 `node`、`npm`、`npx` 和 `corepack`，先创建不会覆盖已有文件的用户级 shim：
+
+```shell
+pinset shim install
+pinset shim path
+```
+
+再把 `pinset shim path` 输出的目录放到 PATH 中其他 Node 管理器之前。Pinset 不会自动修改
+shell profile；完整的 Bash、PowerShell 示例见使用指南。
 
 `pinset use` 会解析并锁定四个平台的官方 Node 产物，然后只为当前平台安装。要先生成配置和锁文件、暂不下载运行时：
 

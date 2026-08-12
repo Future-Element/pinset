@@ -195,7 +195,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  install    Install a locked version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  import     Preview legacy manager configuration\n  shim       Manage command shims\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -209,6 +209,9 @@ impl Catalog {
         }
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
+            Some("global") => {
+                "查看或设置项目之外使用的全局默认 Node.js。\n\n用法：pinset global [node@x.y.z|主版本|主次版本|lts|current] [--no-install]"
+            }
             Some("use") => {
                 "选择并锁定 Node.js 版本。\n\n用法：pinset use <node@x.y.z|主版本|主次版本|lts|current> [--global] [--no-install]"
             }
@@ -240,13 +243,13 @@ impl Catalog {
                 "只读检测旧 Node.js 管理器配置。\n\n用法：pinset import --dry-run [--cwd <目录>]"
             }
             Some("shim") => {
-                "管理 Pinset 多调用 shim。\n\n用法：pinset shim install --binary <文件> --dir <目录> [命令...]"
+                "管理 Pinset 多调用 shim。\n\n用法：\n  pinset shim path\n  pinset shim install [--binary <文件>] [--dir <目录>] [命令...]"
             }
             Some("source") => {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  use        选择并锁定版本\n  install    安装锁定版本\n  uninstall  安全卸载精确版本\n  current    显示当前选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览旧管理器配置\n  shim       管理命令 shim\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  install    安装锁定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览旧管理器配置\n  shim       管理命令 shim\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -288,6 +291,37 @@ impl Catalog {
                     lock_path.display()
                 )
             }
+        }
+    }
+
+    pub fn global_not_selected(self, config_path: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "no global Node.js version selected; run `pinset global node@<selector>` (config={})",
+                config_path.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "尚未设置全局 Node.js；请执行 `pinset global node@<版本选择器>`（配置={}）",
+                config_path.display()
+            ),
+        }
+    }
+
+    pub fn global_project_override(
+        self,
+        global_version: &str,
+        project_version: &str,
+        project_config: &Path,
+    ) -> String {
+        match self.language {
+            Language::English => format!(
+                "note: project node@{project_version} overrides global node@{global_version} in this directory (config={})",
+                project_config.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "提示：当前目录由项目 Node.js {project_version} 覆盖全局 Node.js {global_version}（配置={}）",
+                project_config.display()
+            ),
         }
     }
 
@@ -640,6 +674,19 @@ impl Catalog {
                 } else {
                     "复制"
                 }
+            ),
+        }
+    }
+
+    pub fn shim_path_ready(self, directory: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "shim directory ready: {}; add this directory before other Node managers in PATH",
+                directory.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "shim 目录已就绪：{}；请将该目录放在 PATH 中其他 Node 管理器之前",
+                directory.display()
             ),
         }
     }

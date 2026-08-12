@@ -46,6 +46,14 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
+    /// Show or set the default Node.js version used outside projects.
+    Global {
+        /// Selection such as node@24.0.0, node@24, node@24.12, node@lts or node@current.
+        selection: Option<String>,
+        /// Update the global selection and lock without downloading the runtime.
+        #[arg(long, requires = "selection")]
+        no_install: bool,
+    },
     /// Select and lock a Node.js version for the current project or globally.
     Use {
         /// Selection such as node@24.0.0, node@24, node@24.12, node@lts or node@current.
@@ -74,7 +82,7 @@ enum Commands {
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Print the current project tool selections and their exact executable paths.
+    /// Print the effective project, global or system selection and executable path.
     Current {
         /// Tool to inspect. Defaults to node in the Node-first release.
         tool: Option<String>,
@@ -128,7 +136,7 @@ enum Commands {
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Install multi-call shim links into a user-owned directory.
+    /// Inspect or install multi-call shim links in a user-owned directory.
     Shim {
         #[command(subcommand)]
         command: ShimCommands,
@@ -142,11 +150,16 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum ShimCommands {
+    /// Print the user-owned directory containing Pinset command shims.
+    Path,
+    /// Install Node.js command shims without overwriting existing files.
     Install {
+        /// pinset-shim binary. Defaults to the binary next to pinset.
         #[arg(long)]
-        binary: PathBuf,
+        binary: Option<PathBuf>,
+        /// Destination directory. Defaults to PINSET_HOME/shims.
         #[arg(long)]
-        dir: PathBuf,
+        dir: Option<PathBuf>,
         #[arg(default_values_t = default_commands())]
         commands: Vec<String>,
     },
@@ -279,60 +292,23 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             let path = create_project_config(&env::current_dir()?)?;
             println!("{}", catalog.created(&path));
         }
+        Commands::Global {
+            selection,
+            no_install,
+        } => {
+            if let Some(selection) = selection {
+                select_node(&selection, true, no_install, catalog)?;
+                print_project_override(&env::current_dir()?, &pinset_home()?, catalog)?;
+            } else {
+                print_global_current(catalog)?;
+                print_project_override(&env::current_dir()?, &pinset_home()?, catalog)?;
+            }
+        }
         Commands::Use {
             selection,
             no_install,
             global,
-        } => {
-            let selector = parse_node_selection(&selection, catalog)?;
-            let lockfile = NodeMetadataClient::official()?
-                .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-            let version = lockfile
-                .tool("node")
-                .expect("generated lock contains node")
-                .version
-                .clone();
-            if selector != version {
-                println!("{}", catalog.selector_resolved(&selector, &version));
-            }
-            let (scope, lock_path) = if global {
-                let home = pinset_home()?;
-                let config_path = global_config_path(&home);
-                let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
-                config.set_tool("node", &version);
-                save_global_state(&home, &config, &lockfile)?;
-                ("global", global_lockfile_path(&home))
-            } else {
-                let cwd = env::current_dir()?;
-                let config_path = find_project_config(&cwd)?;
-                let mut project = load_project_config(&config_path)?;
-                let lock_path = lockfile_path(&config_path);
-                save_lockfile(&lock_path, &lockfile)?;
-                project.set_tool("node", &version);
-                save_project_config(&config_path, &project)?;
-                ("project", lock_path)
-            };
-            println!(
-                "{}",
-                catalog.selected(
-                    scope,
-                    &version,
-                    lockfile
-                        .tool("node")
-                        .expect("generated lock contains node")
-                        .artifacts
-                        .len(),
-                    &lock_path,
-                )
-            );
-            if !no_install {
-                if global {
-                    install_global(&pinset_home()?, catalog)?;
-                } else {
-                    install_project(&env::current_dir()?, catalog)?;
-                }
-            }
-        }
+        } => select_node(&selection, global, no_install, catalog)?,
         Commands::Install {
             locked: _,
             global,
@@ -454,25 +430,28 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 }
             }
         }
-        Commands::Shim {
-            command:
-                ShimCommands::Install {
-                    binary,
-                    dir,
-                    commands,
-                },
-        } => {
-            for result in install_shims(&binary, &dir, &commands)? {
-                let method = match result.method {
-                    ShimInstallMethod::HardLink => "hard-link",
-                    ShimInstallMethod::Copy => "copy",
-                };
-                println!(
-                    "{}",
-                    catalog.shim_installed(&result.command, &result.destination, method)
-                );
+        Commands::Shim { command } => match command {
+            ShimCommands::Path => println!("{}", pinset_home()?.join("shims").display()),
+            ShimCommands::Install {
+                binary,
+                dir,
+                commands,
+            } => {
+                let binary = binary.unwrap_or(default_shim_binary()?);
+                let dir = dir.unwrap_or(pinset_home()?.join("shims"));
+                for result in install_shims(&binary, &dir, &commands)? {
+                    let method = match result.method {
+                        ShimInstallMethod::HardLink => "hard-link",
+                        ShimInstallMethod::Copy => "copy",
+                    };
+                    println!(
+                        "{}",
+                        catalog.shim_installed(&result.command, &result.destination, method)
+                    );
+                }
+                println!("{}", catalog.shim_path_ready(&dir));
             }
-        }
+        },
         Commands::Source { command } => run_source_command(command, catalog)?,
     }
 
@@ -490,6 +469,51 @@ fn parse_node_selection(
         return Err(catalog.node_only_error().into());
     }
     Ok(version.to_owned())
+}
+
+fn select_node(
+    selection: &str,
+    global: bool,
+    no_install: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let selector = parse_node_selection(selection, catalog)?;
+    let lockfile = NodeMetadataClient::official()?
+        .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+    let locked_node = lockfile.tool("node").expect("generated lock contains node");
+    let version = locked_node.version.clone();
+    if selector != version {
+        println!("{}", catalog.selector_resolved(&selector, &version));
+    }
+    let (scope, lock_path) = if global {
+        let home = pinset_home()?;
+        let config_path = global_config_path(&home);
+        let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
+        config.set_tool("node", &version);
+        save_global_state(&home, &config, &lockfile)?;
+        ("global", global_lockfile_path(&home))
+    } else {
+        let cwd = env::current_dir()?;
+        let config_path = find_project_config(&cwd)?;
+        let mut project = load_project_config(&config_path)?;
+        let lock_path = lockfile_path(&config_path);
+        save_lockfile(&lock_path, &lockfile)?;
+        project.set_tool("node", &version);
+        save_project_config(&config_path, &project)?;
+        ("project", lock_path)
+    };
+    println!(
+        "{}",
+        catalog.selected(scope, &version, locked_node.artifacts.len(), &lock_path)
+    );
+    if !no_install {
+        if global {
+            install_global(&pinset_home()?, catalog)?;
+        } else {
+            install_project(&env::current_dir()?, catalog)?;
+        }
+    }
+    Ok(())
 }
 
 fn language_from_arguments(arguments: &[OsString]) -> Result<Option<Language>, String> {
@@ -535,8 +559,9 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 13] = [
+    const COMMANDS: [&str; 14] = [
         "init",
+        "global",
         "use",
         "install",
         "which",
@@ -644,6 +669,74 @@ fn install_locked_selection(
     Ok(())
 }
 
+fn print_global_current(catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let config_path = global_config_path(&home);
+    let Some(config) = load_optional_global_config(&config_path)? else {
+        println!("{}", catalog.global_not_selected(&config_path));
+        return Ok(());
+    };
+    let Some(version) = config.tools.get("node") else {
+        println!("{}", catalog.global_not_selected(&config_path));
+        return Ok(());
+    };
+    print_declared_node(&home, version, "global", &config_path, catalog)
+}
+
+fn print_project_override(
+    cwd: &Path,
+    home: &Path,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config_path) = find_optional_project_config(cwd)? else {
+        return Ok(());
+    };
+    let project = load_project_config(&config_path)?;
+    let Some(project_version) = project.tools.get("node") else {
+        return Ok(());
+    };
+    let global_path = global_config_path(home);
+    let Some(global) = load_optional_global_config(&global_path)? else {
+        return Ok(());
+    };
+    let Some(global_version) = global.tools.get("node") else {
+        return Ok(());
+    };
+    println!(
+        "{}",
+        catalog.global_project_override(global_version, project_version, &config_path)
+    );
+    Ok(())
+}
+
+fn print_declared_node(
+    home: &Path,
+    version: &str,
+    source: &str,
+    config_path: &Path,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let install_dir = home
+        .join("installs")
+        .join("node")
+        .join(version)
+        .join(current_target());
+    let command_dir = node_command_directory(&install_dir, &current_target())?;
+    let executable = node_runtime_command_path(&command_dir, "node");
+    if executable.is_file() {
+        println!(
+            "{}",
+            catalog.current_installed(version, source, &executable, Some(config_path))
+        );
+    } else {
+        println!(
+            "{}",
+            catalog.current_missing(version, source, &command_dir, Some(config_path))
+        );
+    }
+    Ok(())
+}
+
 fn print_current(
     cwd: &Path,
     tool: &str,
@@ -665,20 +758,13 @@ fn print_current(
         ),
         Err(Error::RuntimeCommandNotFound { .. }) => {
             let selection = resolve_tool_selection(selected_tool, cwd, &home)?;
-            let install_dir = home
-                .join("installs")
-                .join(&selection.tool)
-                .join(&selection.version)
-                .join(current_target());
-            println!(
-                "{}",
-                catalog.current_missing(
-                    &selection.version,
-                    selection.source.as_str(),
-                    &node_command_directory(&install_dir, &current_target())?,
-                    Some(&selection.config_path),
-                )
-            );
+            print_declared_node(
+                &home,
+                &selection.version,
+                selection.source.as_str(),
+                &selection.config_path,
+                catalog,
+            )?;
         }
         Err(error) => return Err(error.into()),
     }
@@ -1319,6 +1405,21 @@ fn print_sources(sources: &[SourceView], catalog: Catalog) {
 
 fn effective_cwd(cwd: Option<PathBuf>) -> Result<PathBuf, std::io::Error> {
     cwd.map_or_else(env::current_dir, |path| absolutize(&path))
+}
+
+fn default_shim_binary() -> Result<PathBuf, std::io::Error> {
+    let executable = env::current_exe()?;
+    let directory = executable.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "pinset executable path has no parent directory",
+        )
+    })?;
+    Ok(directory.join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    }))
 }
 
 fn absolutize(path: &Path) -> Result<PathBuf, std::io::Error> {

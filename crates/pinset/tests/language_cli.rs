@@ -57,6 +57,14 @@ fn saves_chinese_and_uses_it_for_following_commands() {
         String::from_utf8_lossy(&help.stdout)
     );
 
+    let global_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "global", "--help"],
+    );
+    assert_success_contains(&global_help, "查看或设置项目之外使用的全局默认 Node.js");
+    assert_success_contains(&global_help, "pinset global");
+
     let argument_error = pinset(&first_project, &home, &["--lang", "zh-CN", "use"]);
     assert!(!argument_error.status.success());
     assert!(

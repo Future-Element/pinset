@@ -77,6 +77,104 @@ fn which_and_exec_use_the_global_fake_runtime_without_a_project() {
 }
 
 #[test]
+fn global_command_reports_default_even_when_a_project_overrides_it() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    write_global(&home, "24.0.0", "24.0.0");
+    write_project(&project, "20.0.0", "20.0.0");
+    create_fake_node(&home, "24.0.0");
+    create_fake_node(&home, "20.0.0");
+
+    let global = pinset(&project, &home, &["global"]);
+    assert_success_contains(&global, "node 24.0.0 installed");
+    assert_success_contains(&global, "source=global");
+    assert_success_contains(&global, "project node@20.0.0 overrides global node@24.0.0");
+
+    let effective = pinset(&project, &home, &["current"]);
+    assert_success_contains(&effective, "node 20.0.0 installed");
+    assert_success_contains(&effective, "source=project");
+}
+
+#[test]
+fn global_command_without_state_is_read_only_and_actionable() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+
+    let output = pinset(&workspace, &home, &["global"]);
+
+    assert_success_contains(&output, "pinset global node@<selector>");
+    assert!(
+        !home.exists(),
+        "read-only global inspection must not create state"
+    );
+}
+
+#[test]
+fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    let fake_shim = root.path().join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    let destination = root.path().join("custom-shims");
+    fs::create_dir(&workspace).expect("workspace");
+    fs::write(&fake_shim, b"fake shim").expect("fake shim");
+
+    let path = pinset(&workspace, &home, &["shim", "path"]);
+    assert_success_contains(&path, &home.join("shims").display().to_string());
+    assert!(!home.exists(), "shim path must not create PINSET_HOME");
+
+    let install = pinset(
+        &workspace,
+        &home,
+        &[
+            "shim",
+            "install",
+            "--binary",
+            fake_shim.to_str().expect("UTF-8 fake shim"),
+            "--dir",
+            destination.to_str().expect("UTF-8 destination"),
+        ],
+    );
+    assert_success_contains(&install, "shim directory ready");
+    for command in ["node", "npm", "npx", "corepack"] {
+        let filename = if cfg!(windows) {
+            format!("{command}.exe")
+        } else {
+            command.to_owned()
+        };
+        assert!(
+            destination.join(filename).is_file(),
+            "missing {command} shim"
+        );
+    }
+
+    let repeated = pinset(
+        &workspace,
+        &home,
+        &[
+            "shim",
+            "install",
+            "--binary",
+            fake_shim.to_str().expect("UTF-8 fake shim"),
+            "--dir",
+            destination.to_str().expect("UTF-8 destination"),
+        ],
+    );
+    assert!(
+        !repeated.status.success(),
+        "existing shims must not be overwritten"
+    );
+}
+
+#[test]
 fn project_selection_overrides_the_global_fake_runtime() {
     let root = tempdir().expect("temporary root");
     let project = root.path().join("project");

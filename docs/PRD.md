@@ -208,7 +208,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 
 ### 设置全局默认版本
 
-1. 用户执行 `pinset use node@24.0.0 --global`。
+1. 用户执行 `pinset global node@24`；兼容入口为 `pinset use node@24 --global`。
 2. Pinset 读取可信元数据并生成用户级全局锁。
 3. 当前平台缺失时执行校验和事务安装。
 4. shim 在没有项目声明时使用该全局版本。
@@ -325,9 +325,10 @@ CPython 与 Flutter 仍未交付。完整范围和发布门禁见
 | `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
 | `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
+| `pinset global [node@selector]` | 已实现，待发布 | 显式查看或设置全局默认版本，并提示项目覆盖 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
 | `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
-| `pinset current` | 已实现 | 显示项目选择和安装路径 |
+| `pinset current` | 已实现 | 显示当前目录最终生效的项目、全局或系统选择 |
 | `pinset current [tool]` | 已实现 | 显示工具、精确版本、来源和路径 |
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
@@ -535,6 +536,28 @@ PATH，也不安装 Node。
 
 ### 17.2 项目选择与安装
 
+设置或查看用户全局默认版本：
+
+```bash
+pinset global node@24
+pinset global
+```
+
+带选择器时会解析并保存精确版本，默认安装当前平台；不带参数时只读查看全局默认。项目中的
+`pinset.toml` 优先级更高，此时 `pinset global` 会提示覆盖关系，`pinset current` 显示真正
+生效的项目版本。兼容命令 `pinset use node@24 --global` 仍然可用。
+
+只写入全局配置和锁、不安装：
+
+```bash
+pinset global node@lts --no-install
+pinset install --global --locked
+```
+
+全局操作不要求 `pinset init`，也不会创建或修改当前目录中的项目文件。
+
+#### 项目版本
+
 ```bash
 cd /path/to/project
 pinset init
@@ -601,8 +624,8 @@ shim 只在用户指定目录创建 `node`、`npm`、`npx` 和 `corepack` 入口
 Windows PowerShell：
 
 ```powershell
-$shimDir = Join-Path $env:LOCALAPPDATA "Pinset\shims"
-pinset shim install --binary .\pinset-shim.exe --dir $shimDir
+$shimDir = pinset shim path
+pinset shim install
 $env:PATH = "$shimDir;$env:PATH"
 node --version
 pinset doctor
@@ -611,14 +634,17 @@ pinset doctor
 Linux/macOS：
 
 ```bash
-PINSET_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/pinset"
-pinset shim install --binary "$HOME/.local/bin/pinset-shim" --dir "$PINSET_DATA_HOME/shims"
-export PATH="$PINSET_DATA_HOME/shims:$HOME/.local/bin:$PATH"
+PINSET_SHIM_DIR="$(pinset shim path)"
+pinset shim install
+export PATH="$PINSET_SHIM_DIR:$HOME/.local/bin:$PATH"
 node --version
 pinset doctor
 ```
 
-确认无冲突后，用户可自行把同一 `export` 写入 shell profile。Pinset 不自动修改已运行父 Shell。
+默认从 `pinset` 同目录寻找 `pinset-shim`，默认目标为 `$PINSET_HOME/shims`；高级场景仍可用
+`--binary` 和 `--dir` 覆盖。目标中任何同名文件已存在时都会拒绝整组安装，不会覆盖其他
+管理器。确认无冲突后，用户可自行把同一 PATH 设置写入 shell profile；Pinset 不自动修改
+已运行父 Shell。
 
 ### 17.6 国内或企业镜像
 

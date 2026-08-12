@@ -3,7 +3,7 @@
 当前发布版本：`v0.1.0-alpha.3`
 下一开发目标：`v0.1.0-alpha.4`
 目标稳定版本：`v0.1.0`
-状态：`alpha.3 published — alpha.4 planning`
+状态：`alpha.3 published — alpha.4 implementation`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -21,8 +21,9 @@
 | `v0.1.0-alpha.1` | Node project MVP | 精确 Node 版本、项目配置与锁文件、安全安装、镜像、shim 和三平台 Release |
 | `v0.1.0-alpha.2` | Global and project resolution | 正式全局选择、项目覆盖、系统 PATH 透传和可解释解析 |
 | `v0.1.0-alpha.3` | Node lifecycle and migration | 浮动选择器、本地版本管理、卸载、来源测试和旧管理器诊断 |
-| `v0.1.0-alpha.4` | CPython provider | 可审计 CPython 产物、Python 命令路由和 uv/pip 共存 |
-| `v0.1.0-alpha.5` | Flutter provider | Flutter stable、Dart 路由、稳定 SDK 路径和 IDE 流程 |
+| `v0.1.0-alpha.4` | Node workflow hardening | 显式全局默认入口、项目覆盖解释和 Node 使用文档收口 |
+| `v0.1.0-alpha.5` | CPython provider | 可审计 CPython 产物、Python 命令路由和 uv/pip 共存 |
+| `v0.1.0-alpha.6` | Flutter provider | Flutter stable、Dart 路由、稳定 SDK 路径和 IDE 流程 |
 | `v0.1.0-beta.1` | Integrated public preview | 三种运行时的跨平台闭环、离线复现和迁移验收 |
 | `v0.1.0` | Stable preview | 冻结 schema、供应链与兼容策略，完成首个稳定版本 |
 
@@ -342,7 +343,43 @@ alpha.2 不包含：
 - 多来源冲突时停止并解释，不自动覆盖项目配置。
 - 系统 PATH 和旧管理器组合至少覆盖五种可复现环境。
 
-## 4. v0.1.0-alpha.4 — CPython Provider
+## 4. v0.1.0-alpha.4 — Node Workflow Hardening
+
+状态：**功能完成，待用户验收与发布冻结**
+
+目标：先把 Node 的全局默认、项目覆盖和命令发现体验收口，再扩展第二种运行时。
+
+范围：
+
+- 新增 `pinset global [node@selector]` 一等入口；无参数只读查看，带参数设置并默认安装。
+- 保留 `pinset use node@... --global` 和现有 schema 的完全兼容。
+- 在项目覆盖全局默认时明确显示全局值、项目值和生效配置路径。
+- `pinset current` 继续代表当前目录的最终生效结果，`pinset global` 代表用户默认值。
+- `pinset shim install` 自动推导发布包内的 shim 二进制和用户级目标目录，并提供 `shim path`。
+- 完善中英文顶层帮助、README 全局/项目流程和临时目录回归测试。
+
+不包含：
+
+- 自动修改 shell profile、系统 PATH 或 IDE 设置。
+- 安装 Python、Flutter 或其他新的运行时 Provider。
+- 为便利性放宽哈希、安全解压、锁匹配或安装所有权边界。
+
+验收：
+
+- 用户无需了解全局状态文件位置即可设置、查看和更新全局 Node。
+- 在有/无项目配置、有/无安装的组合下，输出明确且解析优先级不变。
+- 新入口不访问项目文件；只读查看不创建 `PINSET_HOME`。
+- 所有自动测试仅使用临时目录和假运行时，不下载真实 Node。
+
+当前证据：
+
+- `cargo fmt --all -- --check` 通过。
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` 通过。
+- `cargo test --workspace --all-features` 共 100 项测试通过。
+- `git diff --check` 通过。
+- 自动化仅写临时目录、假 shim 与假运行时；未下载或安装真实 Node，未触发 GitHub CI。
+
+## 5. v0.1.0-alpha.5 — CPython Provider
 
 目标：在不接管依赖和虚拟环境的前提下，提供可审计的 CPython 解释器安装与选择。
 
@@ -361,7 +398,7 @@ alpha.2 不包含：
 - 管理 requirements、pyproject 依赖或发布 Python 包。
 - 依赖未固定的“最新构建”远程状态复现锁文件。
 
-## 5. v0.1.0-alpha.5 — Flutter Provider
+## 6. v0.1.0-alpha.6 — Flutter Provider
 
 目标：提供 Flutter stable 与 Dart 的可预测版本选择，并形成可操作的 IDE SDK 流程。
 
@@ -380,7 +417,7 @@ alpha.2 不包含：
 - 自动改写 VS Code、Android Studio 或 Xcode 项目配置。
 - 未经用户确认替换 FVM 或系统 Flutter。
 
-## 6. v0.1.0-beta.1 — Integrated Public Preview
+## 7. v0.1.0-beta.1 — Integrated Public Preview
 
 目标：验证三种内置 provider 能否以一套配置、锁、解析和诊断模型共同工作。
 
@@ -393,7 +430,7 @@ alpha.2 不包含：
 - schema、锁文件兼容和 provider 更新策略形成书面承诺。
 - SBOM、artifact attestation、SHA-256 与发布来源对外可验证。
 
-## 7. v0.1.0 — Stable Preview
+## 8. v0.1.0 — Stable Preview
 
 `v0.1.0` 冻结以下承诺：
 
@@ -406,7 +443,7 @@ alpha.2 不包含：
 
 稳定版不等于覆盖所有语言、平台和版本，也不建立第三方插件执行生态。
 
-## 8. Release Channels
+## 9. Release Channels
 
 - GitHub Releases 是当前官方二进制分发渠道。
 - Linux x64 与 macOS Apple Silicon 使用官方 `install.sh`；Windows 使用 Release ZIP。
@@ -414,7 +451,7 @@ alpha.2 不包含：
 - Homebrew、Scoop、WinGet 等中央渠道只有在满足其官方接收和持续维护政策后单独评估。
 - alpha/beta 预发布必须使用固定版本 URL；`releases/latest` 只面向稳定 Release。
 
-## 9. Common Release Gates
+## 10. Common Release Gates
 
 每个版本冻结前必须：
 
@@ -427,12 +464,12 @@ alpha.2 不包含：
 - 用户可见变化进入 [发布说明](RELEASE_NOTES.md)。
 - 安全问题按 [安全策略](../SECURITY.md) 处理，不在公开 Issue 泄露未修复细节。
 
-## 10. Research Baseline
+## 11. Research Baseline
 
 调研基线日期：2026-07-28。产品行为和技术机制优先采用官方文档、官方仓库和官方机器
 可读索引；社区讨论只用于发现问题，不作为已确认结论。
 
-### 10.1 市场结论
+### 11.1 市场结论
 
 asdf、mise、proto 和 vfox 已经证明“一个工具管理多种运行时”不是市场空白。Pinset 不能
 只靠统一命令形成价值，继续开发必须聚焦：
@@ -447,7 +484,7 @@ asdf、mise、proto 和 vfox 已经证明“一个工具管理多种运行时”
 如果真实访谈和可用性测试显示目标用户认为现有 mise/proto 已充分解决问题，Pinset 应缩小
 到迁移/诊断工具或停止扩张，不以增加 provider 掩盖需求不足。
 
-### 10.2 竞品启示
+### 11.2 竞品启示
 
 | 工具 | 已有优势 | Pinset 取舍 |
 | --- | --- | --- |
@@ -461,7 +498,7 @@ asdf、mise、proto 和 vfox 已经证明“一个工具管理多种运行时”
 
 竞品的脚本或插件能力并非天然缺陷；Pinset 的不可执行配置是自身供应链和信任模型选择。
 
-### 10.3 官方运行时来源
+### 11.3 官方运行时来源
 
 Node.js：
 
@@ -481,7 +518,7 @@ Flutter：
 - 首批只认证 stable；Flutter bundle 自带 Dart，锁文件必须表达该关系。
 - 上游平台矩阵是动态事实，不能把 2026-07-28 快照永久硬编码。
 
-### 10.4 镜像与分发结论
+### 11.4 镜像与分发结论
 
 - `official` 始终存在，镜像只替换 artifact base URL。
 - Node 没有官方指定的唯一中国镜像，公共加速服务只能标记为用户批准的第三方传输来源。
@@ -490,7 +527,7 @@ Flutter：
 - npm 已存在无作用域同名包，因此不以 `npm install -g pinset` 作为官方分发方式。
 - GitHub Releases 是当前官方渠道；未来中央渠道必须满足其官方接收和持续维护要求。
 
-## 11. Decision Registry
+## 12. Decision Registry
 
 `Accepted` 是已确定产品方向；`Provisional` 仍需技术验证或用户证据；`Deferred` 不进入当前
 版本。相同主题的细节以 [PRD](PRD.md) 和本文件对应版本契约为准。
@@ -535,9 +572,9 @@ Flutter：
 - Provisional 转为 Accepted 时必须引用自动化、真实平台或用户研究结果。
 - 扩大远程执行、权限、数据收集、项目写入或删除范围必须单独安全评审。
 
-## 12. Spike and Validation Evidence
+## 13. Spike and Validation Evidence
 
-### 12.1 Shim Spike
+### 13.1 Shim Spike
 
 2026-07-28 Windows x64 早期结果：
 
@@ -559,7 +596,7 @@ estimated p95 overhead: 18017 us
 后续必须比较签名/LTO 构建、真实 Node 相对开销和必要时的 Shell activation/显式 exec 降级，
 不能用核心函数微基准替代完整用户路径。
 
-### 12.2 Installer Spike
+### 13.2 Installer Spike
 
 早期本地 fixture 已验证：
 
@@ -588,16 +625,16 @@ alpha.1 已进一步完成：
 - Python/Flutter 真实产物、许可证和 IDE 验收；
 - Windows 长路径、ADS、更多 Unicode/大小写冲突真实样本。
 
-### 12.3 Remaining Spikes
+### 13.3 Remaining Spikes
 
 - Flutter IDE：`which --sdk`、稳定路径、VS Code/Android Studio、Windows junction。
 - Python 来源：固定清单、`PYTHON.json`、许可证、镜像、自定义 CA 和离线缓存。
 - 共存诊断：fnm、nvm、uv、FVM、mise、asdf、vfox 与系统安装的真实组合。
 - 系统 PATH 透传：排除 shim、自递归、命令身份和已声明版本失败关闭。
 
-## 13. Development and Release Workflow
+## 14. Development and Release Workflow
 
-### 13.1 本地开发
+### 14.1 本地开发
 
 ```bash
 cargo fmt --all -- --check
@@ -609,7 +646,7 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 测试默认使用临时 `PINSET_HOME`、本地假 HTTP、构造归档和假运行时，不安装真实 Node、
 Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试用户或 CI job，并记录平台。
 
-### 13.2 CI
+### 14.2 CI
 
 - 非草稿 PR 在 opened、reopened、synchronize、ready_for_review 时运行 `Quality`。
 - `main` 推送再次运行 `Quality`。
@@ -617,7 +654,7 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 - 手动 workflow 可以构建 Linux x64、Windows x64、macOS arm64 归档。
 - 版本标签触发完整 Release workflow，不手工上传资产。
 
-### 13.3 发布前
+### 14.3 发布前
 
 1. 更新 Cargo workspace 版本和 `Cargo.lock`。
 2. 更新 PRD 当前边界、Plans 状态、README 和 Release Notes。
@@ -626,7 +663,7 @@ Python 或 Flutter。真实上游测试必须放在明确隔离的 VM、测试�
 5. 检查平台支持、已知限制、schema/锁兼容和升级说明。
 6. 确认目标 tag 尚未存在，工作树与 `origin/main` 对齐。
 
-### 13.4 触发发布
+### 14.4 触发发布
 
 标签必须与 workspace 版本完全一致：
 
@@ -646,7 +683,7 @@ Release workflow：
 
 失败时修复并发布新版本；不得覆盖已经公开使用的版本标签或静默替换 Release 资产。
 
-### 13.5 发布后
+### 14.5 发布后
 
 - 确认 Release 非草稿，预发布标记与版本语义一致。
 - 核对预期资产名称和数量。
@@ -655,7 +692,7 @@ Release workflow：
 - 执行 `pinset --version`，alpha.2 起验收全局/项目切换。
 - 记录未执行的平台、真实运行时、IDE、签名或安装渠道验收。
 
-## 14. User Research and Go/No-Go
+## 15. User Research and Go/No-Go
 
 访谈目标为 8–12 位跨语言或跨平台开发者，可用性测试目标为 5–8 位。验证：
 
@@ -675,7 +712,7 @@ Go/No-Go：
 - Flutter IDE 稳定路径无法接受时，不用终端 shim 成功掩盖 IDE 缺口。
 - 多语言价值不能被用户研究证明时，缩小到 Node/迁移诊断或终止扩张。
 
-## 15. Open Decisions
+## 16. Open Decisions
 
 - Node 发布密钥轮换、离线密钥环和 PGP 失败恢复。
 - Python 固定清单的发布、签名和许可证展示。
