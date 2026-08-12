@@ -132,6 +132,15 @@ impl Catalog {
             Error::InvalidNodeVersion { version } => {
                 format!("错误：Node.js 版本 {version:?} 无效，必须使用不带 v 前缀的 x.y.z")
             }
+            Error::InvalidNodeSelector { selector } => format!(
+                "错误：Node.js 选择器 {selector:?} 无效，可使用 x.y.z、主版本、主次版本、lts 或 current"
+            ),
+            Error::NodeSelectorNotFound { selector } => {
+                format!("错误：Node.js 官方索引中没有与 {selector:?} 匹配且支持全部目标平台的版本")
+            }
+            Error::InvalidNodeIndex { reason } => {
+                format!("错误：Node.js 官方版本索引无效：{reason}")
+            }
             Error::LockfileMismatch {
                 selection_path,
                 tool,
@@ -182,7 +191,7 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("use") => {
-                "选择并锁定 Node.js 版本。\n\n用法：pinset use <node@x.y.z> [--global] [--no-install]"
+                "选择并锁定 Node.js 版本。\n\n用法：pinset use <node@x.y.z|主版本|主次版本|lts|current> [--global] [--no-install]"
             }
             Some("install") => {
                 "根据项目或全局锁文件安装当前平台运行时。\n\n用法：pinset install [--locked] [--global] [--cwd <目录>]"
@@ -192,6 +201,9 @@ impl Catalog {
             }
             Some("current") => {
                 "显示当前版本、来源和安装路径。\n\n用法：pinset current [node] [--cwd <目录>]"
+            }
+            Some("list") => {
+                "列出本机已安装或官方可用的 Node.js 版本。\n\n用法：pinset list node [--available]"
             }
             Some("exec") => {
                 "使用当前选择执行命令。\n\n用法：pinset exec [--cwd <目录>] -- <命令> [参数...]"
@@ -206,7 +218,7 @@ impl Catalog {
                 "管理本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init      创建项目配置\n  use       选择并锁定版本\n  install   安装锁定版本\n  current   显示当前选择\n  which     显示实际命令路径\n  exec      使用当前选择执行命令\n  doctor    诊断配置与 PATH\n  shim      管理命令 shim\n  source    管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init      创建项目配置\n  use       选择并锁定版本\n  install   安装锁定版本\n  current   显示当前选择\n  list      列出已安装或可用版本\n  which     显示实际命令路径\n  exec      使用当前选择执行命令\n  doctor    诊断配置与 PATH\n  shim      管理命令 shim\n  source    管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -248,6 +260,48 @@ impl Catalog {
                     lock_path.display()
                 )
             }
+        }
+    }
+
+    pub fn selector_resolved(self, selector: &str, version: &str) -> String {
+        match self.language {
+            Language::English => format!("resolved node@{selector} to node@{version}"),
+            Language::SimplifiedChinese => {
+                format!("已将 node@{selector} 解析为精确版本 node@{version}")
+            }
+        }
+    }
+
+    pub fn no_installed_node(self) -> &'static str {
+        match self.language {
+            Language::English => "no Node.js versions are installed by Pinset",
+            Language::SimplifiedChinese => "Pinset 尚未安装任何 Node.js 版本",
+        }
+    }
+
+    pub fn installed_node(self, version: &str, targets: &str) -> String {
+        match self.language {
+            Language::English => format!("{version} installed targets={targets}"),
+            Language::SimplifiedChinese => format!("{version} 已安装 目标={targets}"),
+        }
+    }
+
+    pub fn available_node(
+        self,
+        version: &str,
+        date: &str,
+        lts: Option<&str>,
+        security: bool,
+    ) -> String {
+        let lts = lts.unwrap_or("-");
+        match self.language {
+            Language::English => {
+                format!("{version} available date={date} lts={lts} security={security}")
+            }
+            Language::SimplifiedChinese => format!(
+                "{version} 可用 日期={date} LTS={lts} 安全更新={}",
+                if security { "是" } else { "否" }
+            ),
         }
     }
 
@@ -464,15 +518,15 @@ impl Catalog {
 
     pub fn selection_error(self) -> &'static str {
         match self.language {
-            Language::English => "selection must use node@x.y.z",
-            Language::SimplifiedChinese => "版本选择必须使用 node@x.y.z 格式",
+            Language::English => "selection must use node@<selector>",
+            Language::SimplifiedChinese => "版本选择必须使用 node@<选择器> 格式",
         }
     }
 
     pub fn node_only_error(self) -> &'static str {
         match self.language {
-            Language::English => "the Node-first MVP only accepts node@x.y.z",
-            Language::SimplifiedChinese => "当前 Node-first 版本只接受 node@x.y.z",
+            Language::English => "the Node-first release only accepts the node tool",
+            Language::SimplifiedChinese => "当前 Node-first 版本只接受 node 工具",
         }
     }
 

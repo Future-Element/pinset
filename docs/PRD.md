@@ -321,6 +321,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | --- | --- | --- |
 | `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
 | `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
+| `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | alpha.3 开发中 | 联网解析为精确稳定版本后写锁 |
 | `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
@@ -335,7 +336,8 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset doctor --json` | alpha.3 | 稳定机器可读诊断结构 |
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
 | `pinset source test` | alpha.3 | 只读检测 DNS/TLS/HTTP/路径和校验能力 |
-| `pinset list`、`uninstall`、`import` | alpha.3+ | 版本生命周期和显式迁移 |
+| `pinset list node [--available]` | alpha.3 开发中 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
+| `pinset uninstall`、`import` | alpha.3+ | 安全卸载和显式迁移 |
 | `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。

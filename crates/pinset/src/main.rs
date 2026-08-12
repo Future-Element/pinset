@@ -16,12 +16,12 @@ use pinset_core::{
     Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
     ShimInstallMethod, SourceView, command_tool, create_project_config, current_target,
     find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
-    install_locked_node, install_shims, load_global_config, load_lockfile,
-    load_optional_global_config, load_project_config, load_source_config, load_user_settings,
-    lockfile_path, node_command_directory, path_with_selected_runtime, pinset_home,
-    resolve_command, resolve_tool_selection, save_global_state, save_lockfile, save_project_config,
-    save_source_config, save_user_settings, source_config_path, user_settings_path,
-    validate_lock_matches_selection,
+    install_locked_node, install_shims, list_installed_node_versions, load_global_config,
+    load_lockfile, load_optional_global_config, load_project_config, load_source_config,
+    load_user_settings, lockfile_path, node_command_directory, path_with_selected_runtime,
+    pinset_home, resolve_command, resolve_tool_selection, save_global_state, save_lockfile,
+    save_project_config, save_source_config, save_user_settings, source_config_path,
+    user_settings_path, validate_lock_matches_selection,
 };
 
 use crate::i18n::{Catalog, Language};
@@ -44,9 +44,9 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
-    /// Select and lock an exact Node.js version for the current project or globally.
+    /// Select and lock a Node.js version for the current project or globally.
     Use {
-        /// Selection in the form node@x.y.z.
+        /// Selection such as node@24.0.0, node@24, node@24.12, node@lts or node@current.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -78,6 +78,14 @@ enum Commands {
         tool: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
+    },
+    /// List installed or officially available Node.js versions.
+    List {
+        /// Tool to list. The Node-first release accepts node.
+        tool: String,
+        /// Query the official Node.js release index instead of local installations.
+        #[arg(long)]
+        available: bool,
     },
     /// Execute a command through the selected runtime without installing shims.
     Exec {
@@ -233,9 +241,17 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             no_install,
             global,
         } => {
-            let version = parse_node_selection(&selection, catalog)?;
+            let selector = parse_node_selection(&selection, catalog)?;
             let lockfile = NodeMetadataClient::official()?
-                .resolve_exact_lock(&version, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+                .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+            let version = lockfile
+                .tool("node")
+                .expect("generated lock contains node")
+                .version
+                .clone();
+            if selector != version {
+                println!("{}", catalog.selector_resolved(&selector, &version));
+            }
             let (scope, lock_path) = if global {
                 let home = pinset_home()?;
                 let config_path = global_config_path(&home);
@@ -293,6 +309,37 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         Commands::Current { tool, cwd } => {
             let cwd = effective_cwd(cwd)?;
             print_current(&cwd, tool.as_deref().unwrap_or("node"), catalog)?;
+        }
+        Commands::List { tool, available } => {
+            if tool != "node" {
+                return Err(catalog.node_only_error().into());
+            }
+            if available {
+                let releases = NodeMetadataClient::official()?.available_releases()?;
+                for release in releases {
+                    println!(
+                        "{}",
+                        catalog.available_node(
+                            &release.version,
+                            &release.date,
+                            release.lts.as_deref(),
+                            release.security,
+                        )
+                    );
+                }
+            } else {
+                let installed = list_installed_node_versions(&pinset_home()?)?;
+                if installed.is_empty() {
+                    println!("{}", catalog.no_installed_node());
+                } else {
+                    for entry in installed {
+                        println!(
+                            "{}",
+                            catalog.installed_node(&entry.version, &entry.targets.join(","))
+                        );
+                    }
+                }
+            }
         }
         Commands::Exec { cwd, command } => {
             let cwd = effective_cwd(cwd)?;
@@ -382,8 +429,8 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 9] = [
-        "init", "use", "install", "which", "current", "exec", "doctor", "shim", "source",
+    const COMMANDS: [&str; 10] = [
+        "init", "use", "install", "which", "current", "exec", "doctor", "shim", "source", "list",
     ];
     arguments
         .iter()

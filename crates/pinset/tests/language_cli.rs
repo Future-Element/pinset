@@ -50,6 +50,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
 
     let help = pinset(&first_project, &home, &["--lang", "zh-CN", "use", "--help"]);
     assert_success_contains(&help, "选择并锁定 Node.js 版本");
+    assert_success_contains(&help, "主版本|主次版本|lts|current");
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("Usage:"),
         "help should be localized: {}",

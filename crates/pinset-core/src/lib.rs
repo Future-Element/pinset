@@ -5,6 +5,8 @@ mod global_state;
 mod installer;
 #[cfg(feature = "lockfile")]
 mod lockfile;
+#[cfg(feature = "node-provider")]
+mod node_lifecycle;
 #[cfg(feature = "node-metadata")]
 mod node_metadata;
 #[cfg(feature = "node-provider")]
@@ -45,10 +47,14 @@ pub use lockfile::{
     MVP_NODE_TARGETS, load_lockfile, load_optional_lockfile, lockfile_path, save_lockfile,
     validate_lock_matches_project, validate_lock_matches_selection,
 };
-#[cfg(feature = "node-metadata")]
-pub use node_metadata::NodeMetadataClient;
 #[cfg(feature = "node-provider")]
-pub use node_provider::{NodeArchiveFormat, NodeArtifactPlan, plan_node_artifact};
+pub use node_lifecycle::{InstalledNodeVersion, list_installed_node_versions};
+#[cfg(feature = "node-metadata")]
+pub use node_metadata::{NodeMetadataClient, NodeRelease};
+#[cfg(feature = "node-provider")]
+pub use node_provider::{
+    NodeArchiveFormat, NodeArtifactPlan, plan_node_artifact, validate_exact_node_version,
+};
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 pub use node_runtime::{install_locked_node, node_command_directory};
 pub use resolver::{

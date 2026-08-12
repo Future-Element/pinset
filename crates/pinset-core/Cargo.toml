@@ -18,7 +18,7 @@ installer = [
     "dep:zip",
 ]
 lockfile = ["node-provider", "dep:atomic-write-file"]
-node-metadata = ["lockfile", "dep:reqwest"]
+node-metadata = ["lockfile", "dep:reqwest", "dep:serde_json"]
 node-provider = ["sources"]
 project-write = ["dep:atomic-write-file", "dep:tempfile"]
 state-write = ["dep:atomic-write-file"]
@@ -33,6 +33,7 @@ hex = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 same-file.workspace = true
 serde.workspace = true
+serde_json = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }

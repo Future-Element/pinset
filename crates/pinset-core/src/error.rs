@@ -324,11 +324,29 @@ pub enum Error {
     #[error("invalid exact Node.js version \"{version}\"; expected x.y.z without a leading 'v'")]
     InvalidNodeVersion { version: String },
 
+    #[cfg(feature = "node-metadata")]
+    #[error(
+        "invalid Node.js selector \"{selector}\"; expected x.y.z, a major/minor prefix, lts or current"
+    )]
+    InvalidNodeSelector { selector: String },
+
+    #[cfg(feature = "node-metadata")]
+    #[error("official Node.js index contains no supported release matching \"{selector}\"")]
+    NodeSelectorNotFound { selector: String },
+
     #[cfg(feature = "node-provider")]
     #[error(
         "unsupported Node.js target \"{target}\"; expected windows/linux/macos with x86_64/aarch64"
     )]
     UnsupportedNodeTarget { target: String },
+
+    #[cfg(feature = "node-provider")]
+    #[error("failed to read Node.js installation directory {path}: {source}")]
+    ReadNodeInstallDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[cfg(feature = "node-metadata")]
     #[error("failed to request official Node.js metadata {url}: {source}")]
@@ -349,6 +367,14 @@ pub enum Error {
     #[cfg(feature = "node-metadata")]
     #[error("official Node.js SHASUMS exceeds {limit} bytes")]
     NodeMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "node-metadata")]
+    #[error("official Node.js release index exceeds {limit} bytes")]
+    NodeIndexTooLarge { limit: u64 },
+
+    #[cfg(feature = "node-metadata")]
+    #[error("invalid official Node.js release index: {reason}")]
+    InvalidNodeIndex { reason: String },
 
     #[cfg(feature = "node-metadata")]
     #[error("invalid official Node.js SHASUMS: {reason}")]
@@ -424,7 +450,7 @@ pub enum Error {
     #[error("invalid SHA-256 value \"{value}\"; expected 64 hexadecimal characters")]
     InvalidSha256 { value: String },
 
-    #[cfg(feature = "installer")]
+    #[cfg(any(feature = "installer", feature = "node-metadata"))]
     #[error("failed to build the HTTP client: {source}")]
     HttpClient {
         #[source]

@@ -298,6 +298,22 @@ alpha.2 不包含：
 
 目标：完成 Node provider 的日常版本发现、安装生命周期和旧管理器共存闭环。
 
+状态：**开发中 — 版本发现与浮动选择器切片**
+
+当前实现：
+
+- [x] `node@<major>`、`node@<major.minor>`、`node@lts`、`node@current` 解析为精确稳定版本后写锁。
+- [x] 精确 `node@x.y.z` 保持原有离线选择语义，不为日常使用额外读取版本索引。
+- [x] 只选择同时提供 Windows x64、Linux x64、macOS x64/arm64 所需产物的官方版本。
+- [x] `pinset list node` 只列出带完整 Pinset 安装收据的本地版本，不访问网络。
+- [x] `pinset list node --available` 显式读取 Node 官方索引并显示日期、LTS 与安全更新标记。
+- [x] 英文与简体中文输出、假官方索引和假安装目录测试。
+- [ ] 卸载与引用保护、缓存生命周期、`source test`、`doctor --json`、只读迁移和一次性 `exec`。
+
+这一切片的索引信任规则：版本发现固定读取 Node 官方 HTTPS `index.json`；镜像仍只改变归档
+传输位置，不能提供或替换版本身份。索引中的预发布版本和缺少任一支持目标产物的版本不会
+参与浮动选择器匹配。`current` 表示最新可锁定稳定版，`lts` 表示最新可锁定 LTS 版本。
+
 范围：
 
 - `node@24`、`node@24.12`、`lts`、`current` 等选择器解析为精确版本后写锁。

@@ -32,7 +32,7 @@ pub fn plan_node_artifact(
     version: &str,
     target: &str,
 ) -> Result<NodeArtifactPlan> {
-    validate_exact_version(version)?;
+    validate_exact_node_version(version)?;
     let platform = node_platform(target)?;
     let format = if platform.starts_with("win-") {
         NodeArchiveFormat::Zip
@@ -62,12 +62,14 @@ pub fn plan_node_artifact(
     })
 }
 
-fn validate_exact_version(version: &str) -> Result<()> {
+pub fn validate_exact_node_version(version: &str) -> Result<()> {
     let parts = version.split('.').collect::<Vec<_>>();
     if parts.len() != 3
-        || parts
-            .iter()
-            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || part.parse::<u64>().is_err()
+        })
     {
         return Err(Error::InvalidNodeVersion {
             version: version.to_owned(),
