@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 #[cfg(all(feature = "state-write", feature = "lockfile"))]
-use crate::{Lockfile, save_lockfile, validate_lock_matches_selection};
+use crate::{Lockfile, save_lockfile, validate_lock_matches_tools};
 
-pub const GLOBAL_STATE_SCHEMA: u32 = 1;
+pub const GLOBAL_STATE_SCHEMA: u32 = 2;
 pub const GLOBAL_CONFIG_FILENAME: &str = "global.toml";
 pub const GLOBAL_LOCKFILE_FILENAME: &str = "global.lock";
 
@@ -89,7 +89,7 @@ pub fn load_optional_global_config(path: &Path) -> Result<Option<GlobalConfig>> 
 }
 
 fn validate_global_config(config: &GlobalConfig) -> Result<()> {
-    if config.schema != GLOBAL_STATE_SCHEMA {
+    if !matches!(config.schema, 1 | GLOBAL_STATE_SCHEMA) {
         return Err(Error::UnsupportedGlobalConfigSchema {
             actual: config.schema,
         });
@@ -100,8 +100,10 @@ fn validate_global_config(config: &GlobalConfig) -> Result<()> {
 #[cfg(feature = "state-write")]
 pub fn save_global_config(path: &Path, config: &GlobalConfig) -> Result<()> {
     validate_global_config(config)?;
-    let serialized =
-        toml::to_string_pretty(config).map_err(|source| Error::SerializeGlobalConfig { source })?;
+    let mut normalized = config.clone();
+    normalized.schema = GLOBAL_STATE_SCHEMA;
+    let serialized = toml::to_string_pretty(&normalized)
+        .map_err(|source| Error::SerializeGlobalConfig { source })?;
     let parent = path
         .parent()
         .ok_or_else(|| Error::CreateGlobalStateDirectory {
@@ -137,14 +139,7 @@ pub fn save_global_state(
     lockfile: &Lockfile,
 ) -> Result<()> {
     let config_path = global_config_path(pinset_home);
-    let configured = config
-        .tools
-        .get("node")
-        .ok_or_else(|| Error::ToolNotConfigured {
-            tool: "node".to_owned(),
-            config_path: config_path.clone(),
-        })?;
-    validate_lock_matches_selection(lockfile, configured, &config_path)?;
+    validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
 
     let _guard = GLOBAL_STATE_WRITE_LOCK
         .lock()
@@ -202,10 +197,10 @@ mod tests {
             Err(Error::ParseGlobalConfig { .. })
         ));
 
-        fs::write(&path, "schema = 2\n[tools]\n").expect("unsupported config");
+        fs::write(&path, "schema = 3\n[tools]\n").expect("unsupported config");
         assert!(matches!(
             load_global_config(&path),
-            Err(Error::UnsupportedGlobalConfigSchema { actual: 2 })
+            Err(Error::UnsupportedGlobalConfigSchema { actual: 3 })
         ));
     }
 
@@ -279,7 +274,7 @@ mod tests {
         let config = load_global_config(&config_path).expect("global config");
         let selected = config.tools.get("node").expect("node selection");
         let lockfile = crate::load_lockfile(&global_lockfile_path(&home)).expect("global lockfile");
-        validate_lock_matches_selection(&lockfile, selected, &config_path)
+        crate::validate_lock_matches_selection(&lockfile, selected, &config_path)
             .expect("matching global state");
     }
 
@@ -296,6 +291,7 @@ mod tests {
                     canonical_url: plan.canonical_url,
                     artifact_path: plan.artifact_path,
                     sha256: "ab".repeat(32),
+                    integrity: None,
                     format: match plan.format {
                         crate::NodeArchiveFormat::Zip => crate::LockedArtifactFormat::Zip,
                         crate::NodeArchiveFormat::TarXz => crate::LockedArtifactFormat::TarXz,

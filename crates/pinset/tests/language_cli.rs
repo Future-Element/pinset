@@ -49,8 +49,8 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     assert!(stderr.contains("版本选择必须使用"), "stderr: {stderr}");
 
     let help = pinset(&first_project, &home, &["--lang", "zh-CN", "use", "--help"]);
-    assert_success_contains(&help, "选择并锁定 Node.js 版本");
-    assert_success_contains(&help, "主版本|主次版本|lts|current");
+    assert_success_contains(&help, "选择并锁定 Node.js、pnpm 或 Bun 版本");
+    assert_success_contains(&help, "node@24|pnpm@11|bun@1.3");
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("Usage:"),
         "help should be localized: {}",
@@ -62,7 +62,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
         &home,
         &["--lang", "zh-CN", "global", "--help"],
     );
-    assert_success_contains(&global_help, "查看或设置项目之外使用的全局默认 Node.js");
+    assert_success_contains(&global_help, "查看或设置项目之外使用的全局默认运行时");
     assert_success_contains(&global_help, "pinset global");
 
     let activate_help = pinset(
@@ -78,7 +78,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
         &home,
         &["--lang", "zh-CN", "install", "--help"],
     );
-    assert_success_contains(&install_help, "pinset install node@<版本选择器>");
+    assert_success_contains(&install_help, "pinset install <node|pnpm|bun>@<版本选择器>");
 
     let import_help = pinset(
         &first_project,
@@ -99,7 +99,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
         &home,
         &["--lang", "zh-CN", "unset", "--help"],
     );
-    assert_success_contains(&unset_help, "清除项目或全局 Node.js 选择");
+    assert_success_contains(&unset_help, "清除项目或全局运行时选择");
 
     let argument_error = pinset(&first_project, &home, &["--lang", "zh-CN", "use"]);
     assert!(!argument_error.status.success());

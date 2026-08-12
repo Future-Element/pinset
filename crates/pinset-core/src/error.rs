@@ -368,6 +368,38 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error("failed to read {tool} installation directory {path}: {source}")]
+    ReadToolInstallDirectory {
+        tool: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("{tool} {version} is not installed by Pinset")]
+    ToolVersionNotInstalled { tool: String, version: String },
+
+    #[error("invalid {tool} version {version:?}")]
+    InvalidToolVersion { tool: String, version: String },
+
+    #[error("refusing to uninstall {tool} {version}; it is selected by {references}")]
+    ToolVersionInUse {
+        tool: String,
+        version: String,
+        references: String,
+    },
+
+    #[error("unsafe or unowned {tool} installation entry: {path}")]
+    UnsafeToolInstallEntry { tool: String, path: PathBuf },
+
+    #[error("failed to remove {tool} installation {path}: {source}")]
+    RemoveToolInstall {
+        tool: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[cfg(feature = "node-metadata")]
     #[error("failed to request official Node.js metadata {url}: {source}")]
     NodeMetadataRequest {
@@ -403,6 +435,48 @@ pub enum Error {
     #[cfg(feature = "node-metadata")]
     #[error("Node.js {version} SHASUMS does not contain {filename}")]
     NodeChecksumMissing { version: String, filename: String },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error(
+        "invalid {tool} selector {selector:?}; expected an exact, major, minor, latest or current selector"
+    )]
+    InvalidNpmToolSelector { tool: String, selector: String },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("no supported {tool} release matches selector {selector:?}")]
+    NpmToolSelectorNotFound { tool: String, selector: String },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("failed to request npm registry metadata {url}: {source}")]
+    NpmMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("failed while reading npm registry metadata {url}: {source}")]
+    NpmMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("npm registry metadata exceeds {limit} bytes")]
+    NpmMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("invalid npm registry metadata for {package}: {reason}")]
+    InvalidNpmMetadata { package: String, reason: String },
+
+    #[cfg(feature = "npm-metadata")]
+    #[error("npm registry signature verification failed for {package}@{version}: {reason}")]
+    NpmSignatureVerification {
+        package: String,
+        version: String,
+        reason: String,
+    },
 
     #[error("failed to create shim directory {path}: {source}")]
     CreateShimDirectory {
@@ -470,7 +544,17 @@ pub enum Error {
     #[error("invalid SHA-256 value \"{value}\"; expected 64 hexadecimal characters")]
     InvalidSha256 { value: String },
 
-    #[cfg(any(feature = "installer", feature = "node-metadata"))]
+    #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
+    #[error(
+        "invalid artifact integrity \"{value}\"; expected sha256:<hex>, sha512:<hex> or npm sha512-<base64>"
+    )]
+    InvalidArtifactIntegrity { value: String },
+
+    #[cfg(any(
+        feature = "installer",
+        feature = "node-metadata",
+        feature = "npm-metadata"
+    ))]
     #[error("failed to build the HTTP client: {source}")]
     HttpClient {
         #[source]
@@ -526,7 +610,7 @@ pub enum Error {
     },
 
     #[cfg(feature = "installer")]
-    #[error("artifact SHA-256 mismatch: expected {expected}, got {actual}")]
+    #[error("artifact integrity mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
 
     #[cfg(feature = "installer")]
@@ -637,6 +721,15 @@ pub enum Error {
     #[error("failed to atomically commit installation from {staging} to {destination}: {source}")]
     CommitInstall {
         staging: PathBuf,
+        destination: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("failed to create runtime command alias {destination} from {source_path}: {source}")]
+    CreateRuntimeAlias {
+        source_path: PathBuf,
         destination: PathBuf,
         #[source]
         source: std::io::Error,

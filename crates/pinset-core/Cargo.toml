@@ -9,6 +9,8 @@ publish = false
 [features]
 default = []
 installer = [
+    "dep:base64",
+    "dep:flate2",
     "dep:fs4",
     "dep:hex",
     "dep:reqwest",
@@ -18,9 +20,17 @@ installer = [
     "dep:xz2",
     "dep:zip",
 ]
-lockfile = ["node-provider", "dep:atomic-write-file"]
+lockfile = ["node-provider", "dep:atomic-write-file", "dep:base64", "dep:hex"]
 node-metadata = ["lockfile", "dep:reqwest", "dep:serde_json"]
 node-provider = ["sources"]
+npm-metadata = [
+    "lockfile",
+    "sources",
+    "dep:p256",
+    "dep:reqwest",
+    "dep:semver",
+    "dep:serde_json",
+]
 project-write = ["dep:atomic-write-file", "dep:tempfile"]
 state-write = ["dep:atomic-write-file"]
 sources = [
@@ -30,10 +40,14 @@ sources = [
 
 [dependencies]
 atomic-write-file = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 fs4 = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }
 same-file.workspace = true
+semver = { workspace = true, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }

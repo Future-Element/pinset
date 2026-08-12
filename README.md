@@ -5,17 +5,18 @@
 
 Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用一致的命令管理 Node.js、Python、Flutter 等运行时，减少在 fnm、nvm、uv、FVM 之间切换的学习和维护成本。
 
-`v0.1.0-beta.1` 目前专注 Node.js，Python 和 Flutter 尚未支持。当前功能包括：
+`v0.2.0` 在已验证的 Node.js 管理基础上新增独立的 pnpm 与 Bun Provider。Python 和 Flutter 尚未支持。当前功能包括：
 
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
+- pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
 - Windows x64、Linux x64、macOS Apple Silicon 的 Pinset Release；
-- `node`、`npm`、`npx`、`corepack` 统一路由，无需把每个工具复制进安装脚本；
+- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx` 统一路由；
 - 可提交的 `pinset.toml` 和 `pinset.lock`；
-- SHA-256 校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
+- Node SHA-256、npm SHA-512 SRI 与 registry ECDSA 签名校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
 - 国内或企业镜像、有序回退、可选的可信元数据镜像和离线缓存导入；
 - 中英文提示、旧 Node 管理器配置导入、诊断、安全卸载；
-- 三平台自动构建、真实 Node 验收、CycloneDX SBOM 和 GitHub 构建来源证明。
+- 三平台自动构建、真实 Node/pnpm/Bun 验收、CycloneDX SBOM 和 GitHub 构建来源证明。
 
 ## 快速安装
 
@@ -36,10 +37,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-安装指定版本：
+固定安装 `v0.2.0`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.1.0-beta.1/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.2.0/install.sh | sh
 ```
 
 自定义安装目录：
@@ -123,13 +124,15 @@ node --version
 
 ```toml
 # pinset.toml
-schema = 1
+schema = 2
 
 [tools]
-node = "22"
+node = "22.0.0"
+pnpm = "11.21.0"
+bun = "1.3.14"
 ```
 
-`pinset.lock` 保存解析后的精确版本、平台归档、SHA-256 和来源信息。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
+`pinset.lock` 保存解析后的精确版本、平台归档、完整性值和来源信息。Node 使用官方 SHA-256；pnpm/Bun 使用 npm 包的 SHA-512 SRI，并在生成锁文件前验证 registry ECDSA 签名。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
 
 在项目目录中，项目版本优先于全局版本；离开项目目录后自动恢复全局版本。如果项目或全局声明了版本但安装缺失，Pinset 会明确报错，不会静默换成系统 Node。
 
@@ -167,6 +170,36 @@ pinset unset node --global
 | `node@current` | 最新 Current 版本 |
 
 浮动选择器只用于输入；Pinset 在锁文件中始终记录精确版本。
+
+## pnpm 与 Bun
+
+pnpm 和 Bun 与 Node 一样既可设为项目版本，也可设为全局默认，而且都支持查看官方可用版本：
+
+```shell
+pinset list pnpm --available
+pinset list bun --available
+
+pinset use pnpm@11
+pinset use bun@1.3
+pinset install --locked
+
+pinset current pnpm
+pinset current bun
+pnpm --version
+bun --version
+bunx --version
+```
+
+当前支持范围：
+
+| Provider | 稳定版本 | 命令 | 分发来源 |
+| --- | --- | --- | --- |
+| pnpm | 10、11 | `pnpm` | `@pnpm/exe` 对应的官方平台包 |
+| Bun | 1.x | `bun`、`bunx` | `bun` 对应的 `@oven` 官方平台包 |
+
+pnpm 与 Bun 是独立运行时，不依赖已选择的 Node，也不通过 Corepack 安装。Bun 在 x64 上会根据当前 CPU 自动选择 AVX2 或 baseline 包，并把变体写入安装目标。多个 Provider 同时选择时，Pinset 为子进程构造组合 PATH；所选运行时目录排在前面，Pinset 自己的 shim 目录会被排除，因此 pnpm 脚本调用 Node、Node 脚本调用 Bun 时不会递归进入 shim。
+
+精确版本可离线解析选择器，但生成可安装锁仍需读取官方 npm 单版本元数据并验证包签名。`list --available` 使用 npm abbreviated metadata，过滤预发布版本以及缺少任一受支持平台包的版本。
 
 ### 解析优先级
 
@@ -209,9 +242,9 @@ pinset exec node@24.0.0 -- node --version
 pinset install node@20
 ```
 
-### 直接运行 node、npm、npx、corepack
+### 直接运行 Provider 命令
 
-正常执行 `global`、`use` 或 `install` 后，Node Provider 会一起注册四个命令的通用路由，不再要求用户先执行 `pinset shim install`。curl 安装器本身仍然保持运行时中立，只安装 Pinset 和通用调度器。
+正常执行 `global`、`use` 或 `install` 后，各 Provider 会注册自己的通用路由：Node 注册四个命令，pnpm 注册 `pnpm`，Bun 注册 `bun` 和 `bunx`。curl 安装器本身仍然保持运行时中立，只安装 Pinset 和通用调度器。
 
 如果使用源码构建、定制安装目录，或当前终端还没有路由目录，可以临时激活：
 
@@ -231,6 +264,8 @@ pinset activate powershell | Out-String | Invoke-Expression
 ```shell
 pinset shim path
 pinset shim install --provider node
+pinset shim install --provider pnpm
+pinset shim install --provider bun
 pinset shim migrate --provider node
 ```
 
@@ -286,7 +321,7 @@ pinset source add node lan \
 正在下载 node-v24.0.0-linux-x64.tar.xz [==========          ] 50% 15.0 MiB/30.0 MiB
 ```
 
-网络中断后再次执行相同安装命令，Pinset 会从内容寻址的 `.part` 文件继续下载，并校验服务端 `Content-Range`。服务端不支持 Range 时会安全地从头下载。只有完整 SHA-256 校验通过后才会进入安装和完成提示。
+网络中断后再次执行相同安装命令，Pinset 会从按算法分仓的内容寻址 `.part` 文件继续下载，并校验服务端 `Content-Range`。服务端不支持 Range 时会安全地从头下载。只有完整 SHA-256 或 SHA-512 校验通过后才会进入安装和完成提示。
 
 ### 离线缓存
 
@@ -308,6 +343,14 @@ pinset install --locked
 ```
 
 导入只接受普通文件，限制大小，并在原子写入内容寻址缓存前重新计算 SHA-256。哈希应来自已审阅的 `pinset.lock` 或上游校验清单。
+
+pnpm/Bun 的 npm SRI 可直接从锁文件导入：
+
+```shell
+pinset cache import ./platform-package.tgz \
+  --integrity 'sha512-<base64>'
+pinset install --locked
+```
 
 ## 查询、诊断、迁移和卸载
 
@@ -426,7 +469,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-本地 Rust 测试只使用临时目录、假归档、本地 HTTP 服务和假运行时，不会安装真实 Node。Release 工作流会在 Linux、Windows、macOS 的隔离 GitHub Runner 中安装两个真实 Node 版本，验证全局/项目切换以及 `node`、`npm`、`npx`、`corepack` 的两种调用方式。
+本地 Rust 测试只使用临时目录、假归档、本地 HTTP 服务和假运行时，不会安装真实运行时。Release 工作流会在 Linux、Windows、macOS 的隔离 GitHub Runner 中安装两个真实 Node 版本、一个 pnpm 版本和一个 Bun 版本，验证全局/项目组合、项目覆盖、跨 Provider 子进程 PATH，以及七个受管命令的 `pinset exec`/shim 调用方式。
 
 Linux/WSL 构建产物：
 
@@ -439,10 +482,10 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## Beta 限制
 
-- 当前只完整支持 Node.js；Python、Flutter 和其他 Provider 尚未开放。
+- 当前支持 Node.js、pnpm 和 Bun；Python、Flutter 和其他 Provider 尚未开放。
 - Pinset Release 暂无 Linux arm64、macOS Intel 安装包。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
-- Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 中的 SHA-256，但 Beta 尚未验证该清单的上游 OpenPGP 签名。
+- Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 中的 SHA-256，但 Beta 尚未验证该清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。
 - Pinset 不自动修改 shell profile、系统 PATH 或 IDE 配置。
 - 这是预发布版本，配置 schema 仍可能在稳定版前调整；任何迁移都会在 Release Notes 中说明。
 

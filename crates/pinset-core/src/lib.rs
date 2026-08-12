@@ -5,6 +5,8 @@ mod error;
 mod global_state;
 #[cfg(feature = "installer")]
 mod installer;
+#[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
+mod integrity;
 #[cfg(feature = "lockfile")]
 mod lockfile;
 #[cfg(feature = "node-provider")]
@@ -15,7 +17,12 @@ mod node_metadata;
 mod node_provider;
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 mod node_runtime;
+#[cfg(feature = "npm-metadata")]
+mod npm_metadata;
+#[cfg(all(feature = "installer", feature = "npm-metadata"))]
+mod npm_runtime;
 mod resolver;
+mod runtime_lifecycle;
 mod runtime_provider;
 mod shim_install;
 #[cfg(feature = "sources")]
@@ -24,15 +31,15 @@ mod target;
 mod user_settings;
 
 pub use config::{
-    PROJECT_CONFIG_FILENAME, ProjectConfig, find_optional_project_config, find_project_config,
-    load_project_config,
+    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectConfig, find_optional_project_config,
+    find_project_config, load_project_config,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
 #[cfg(feature = "installer")]
 pub use download_cache::{
     DownloadCacheCleanOutcome, DownloadCacheEntry, clean_download_cache, download_cache_path,
-    import_download_cache, list_download_cache,
+    import_download_cache, import_download_cache_with_integrity, list_download_cache,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "state-write")]
@@ -49,11 +56,14 @@ pub use installer::{
     ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, DownloadProgressEvent,
     InstallLimits, InstallOutcome, InstallRequest, Installer, sha256_hex,
 };
+#[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
+pub use integrity::{ArtifactIntegrity, IntegrityAlgorithm};
 #[cfg(feature = "lockfile")]
 pub use lockfile::{
     LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat, LockedTool, Lockfile,
     MVP_NODE_TARGETS, load_lockfile, load_optional_lockfile, lockfile_path, save_lockfile,
-    validate_lock_matches_project, validate_lock_matches_selection,
+    validate_lock_matches_project, validate_lock_matches_selection, validate_lock_matches_tool,
+    validate_lock_matches_tools,
 };
 #[cfg(feature = "node-provider")]
 pub use node_lifecycle::{
@@ -68,13 +78,25 @@ pub use node_provider::{
 };
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 pub use node_runtime::{install_locked_node, node_command_directory};
+#[cfg(feature = "npm-metadata")]
+pub use npm_metadata::{
+    BUN_TARGETS, NpmMetadataClient, NpmToolRelease, NpmToolTarget, PNPM_TARGETS, tool_targets,
+};
+#[cfg(all(feature = "installer", feature = "npm-metadata"))]
+pub use npm_runtime::install_locked_npm_tool;
 pub use resolver::{
     CommandResolution, SelectionSource, ToolSelection, command_tool, find_system_commands,
-    path_with_selected_runtime, pinset_home, pinset_home_from_env, resolve_command,
-    resolve_command_with_path, resolve_from_env, resolve_tool_selection,
+    path_with_selected_runtime, path_with_selected_tools, pinset_home, pinset_home_from_env,
+    resolve_command, resolve_command_with_path, resolve_from_env, resolve_tool_selection,
+    runtime_command_directory,
+};
+pub use runtime_lifecycle::{
+    InstalledToolVersion, ToolVersionReference, UninstallToolOutcome, find_tool_version_references,
+    list_installed_tool_versions, uninstall_tool_version,
 };
 pub use runtime_provider::{
-    RuntimeProvider, runtime_provider, runtime_provider_for_command, runtime_providers,
+    RuntimeCommandLayout, RuntimeProvider, runtime_provider, runtime_provider_for_command,
+    runtime_providers,
 };
 pub use shim_install::{
     ShimInstallMethod, ShimInstallResult, ensure_shims, install_shims, is_managed_command_shim,
@@ -85,7 +107,7 @@ pub use source_config::{
     ResolvedArtifactSource, SUPPORTED_SOURCE_PROVIDERS, SourceConfig, SourceKind, SourceView,
     load_source_config, save_source_config, source_config_path,
 };
-pub use target::current_target;
+pub use target::{current_target, current_target_for_tool};
 #[cfg(feature = "state-write")]
 pub use user_settings::save_user_settings;
 pub use user_settings::{UserSettings, load_user_settings, user_settings_path};

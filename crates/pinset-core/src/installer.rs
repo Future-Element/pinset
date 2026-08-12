@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use flate2::read::GzDecoder;
 use reqwest::{
     StatusCode,
     blocking::Client,
@@ -18,12 +19,16 @@ use tempfile::Builder;
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
-use crate::{Error, Result, download_cache::download_partial_path, download_cache_path};
+use crate::download_cache::{
+    download_cache_path_for_integrity, download_partial_path_for_integrity,
+};
+use crate::{ArtifactIntegrity, Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
     Zip,
     TarXz,
+    TarGz,
 }
 
 impl ArtifactFormat {
@@ -31,6 +36,7 @@ impl ArtifactFormat {
         match self {
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
+            Self::TarGz => "tar.gz",
         }
     }
 }
@@ -61,7 +67,7 @@ pub struct ArtifactSource {
 pub struct ArtifactSpec {
     pub canonical_url: String,
     pub sources: Vec<ArtifactSource>,
-    pub sha256: String,
+    pub integrity: String,
     pub format: ArtifactFormat,
 }
 
@@ -80,7 +86,7 @@ pub struct InstallRequest {
 pub struct InstallOutcome {
     pub install_dir: PathBuf,
     pub bytes_downloaded: u64,
-    pub sha256: String,
+    pub integrity: String,
     pub source_id: String,
     pub reused_existing: bool,
 }
@@ -133,7 +139,7 @@ struct SelectedArtifact {
     source_url: String,
     path: PathBuf,
     bytes_downloaded: u64,
-    actual_hash: String,
+    actual_integrity: String,
 }
 
 struct InstallLock {
@@ -170,7 +176,7 @@ impl Installer {
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
         validate_request(request)?;
         let _install_lock = acquire_install_lock(request)?;
-        let expected_hash = parse_sha256(&request.artifact.sha256)?;
+        let expected_integrity = ArtifactIntegrity::parse(&request.artifact.integrity)?;
         let final_dir = request
             .pinset_home
             .join("installs")
@@ -200,27 +206,36 @@ impl Installer {
             source,
         })?;
 
-        let expected_hex = hex::encode(expected_hash);
-        let cache_path = download_cache_path(&request.pinset_home, &expected_hex)?;
-        let selected = if self.cached_artifact_is_valid(&cache_path, &expected_hash)? {
+        let cache_path =
+            download_cache_path_for_integrity(&request.pinset_home, &expected_integrity)?;
+        let selected = if self.cached_artifact_is_valid(&cache_path, &expected_integrity)? {
             SelectedArtifact {
                 source_id: "cache".to_owned(),
                 source_kind: "cache".to_owned(),
-                source_url: format!("cache:sha256:{expected_hex}"),
+                source_url: format!(
+                    "cache:{}:{}",
+                    expected_integrity.algorithm().as_str(),
+                    expected_integrity.cache_key()
+                ),
                 path: cache_path,
                 bytes_downloaded: 0,
-                actual_hash: expected_hex,
+                actual_integrity: expected_integrity.canonical(),
             }
         } else {
             let mut attempted = Vec::with_capacity(request.artifact.sources.len());
             let mut last_retryable_error = None;
             let mut selected = None;
-            let download_path = download_partial_path(&request.pinset_home, &expected_hex)?;
+            let download_path =
+                download_partial_path_for_integrity(&request.pinset_home, &expected_integrity)?;
             for source in &request.artifact.sources {
                 attempted.push(source.id.clone());
-                match self.download_verified(&source.url, &expected_hash, &download_path) {
-                    Ok((bytes_downloaded, actual_hash)) => {
-                        self.persist_cache_artifact(&download_path, &cache_path, &expected_hash)?;
+                match self.download_verified(&source.url, &expected_integrity, &download_path) {
+                    Ok((bytes_downloaded, actual_integrity)) => {
+                        self.persist_cache_artifact(
+                            &download_path,
+                            &cache_path,
+                            &expected_integrity,
+                        )?;
                         fs::remove_file(&download_path).map_err(|source| Error::WriteDownload {
                             path: download_path.clone(),
                             source,
@@ -231,7 +246,7 @@ impl Installer {
                             source_url: redacted_url(&source.url),
                             path: cache_path.clone(),
                             bytes_downloaded,
-                            actual_hash,
+                            actual_integrity,
                         });
                         break;
                     }
@@ -252,9 +267,18 @@ impl Installer {
             ArtifactFormat::Zip => {
                 self.extract_zip(&selected.path, &staging_dir, request.strip_components)?
             }
-            ArtifactFormat::TarXz => {
-                self.extract_tar_xz(&selected.path, &staging_dir, request.strip_components)?
-            }
+            ArtifactFormat::TarXz => self.extract_tar(
+                &selected.path,
+                &staging_dir,
+                request.strip_components,
+                ArtifactFormat::TarXz,
+            )?,
+            ArtifactFormat::TarGz => self.extract_tar(
+                &selected.path,
+                &staging_dir,
+                request.strip_components,
+                ArtifactFormat::TarGz,
+            )?,
         }
         validate_required_paths(&staging_dir, &request.required_paths)?;
         write_receipt(&staging_dir, request, &selected)?;
@@ -278,13 +302,17 @@ impl Installer {
         Ok(InstallOutcome {
             install_dir: final_dir,
             bytes_downloaded: selected.bytes_downloaded,
-            sha256: selected.actual_hash,
+            integrity: selected.actual_integrity,
             source_id: selected.source_id,
             reused_existing: false,
         })
     }
 
-    fn cached_artifact_is_valid(&self, path: &Path, expected_hash: &[u8; 32]) -> Result<bool> {
+    fn cached_artifact_is_valid(
+        &self,
+        path: &Path,
+        expected_integrity: &ArtifactIntegrity,
+    ) -> Result<bool> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -311,7 +339,7 @@ impl Installer {
             path: path.to_path_buf(),
             source,
         })?;
-        let mut hasher = Sha256::new();
+        let mut hasher = expected_integrity.hasher();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
             let count = file
@@ -325,8 +353,8 @@ impl Installer {
             }
             hasher.update(&buffer[..count]);
         }
-        let actual: [u8; 32] = hasher.finalize().into();
-        if actual == *expected_hash {
+        let actual = hasher.finalize();
+        if actual == expected_integrity.expected_bytes() {
             return Ok(true);
         }
         fs::remove_file(path).map_err(|source| Error::RemoveDownloadCacheEntry {
@@ -340,7 +368,7 @@ impl Installer {
         &self,
         source: &Path,
         destination: &Path,
-        expected_hash: &[u8; 32],
+        expected_integrity: &ArtifactIntegrity,
     ) -> Result<()> {
         let parent = destination
             .parent()
@@ -372,7 +400,7 @@ impl Installer {
                 Ok(_) => return Ok(()),
                 Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
                     candidate = error.file;
-                    if self.cached_artifact_is_valid(destination, expected_hash)? {
+                    if self.cached_artifact_is_valid(destination, expected_integrity)? {
                         return Ok(());
                     }
                 }
@@ -396,10 +424,10 @@ impl Installer {
     fn download_verified(
         &self,
         url: &str,
-        expected_hash: &[u8; 32],
+        expected_integrity: &ArtifactIntegrity,
         destination: &Path,
     ) -> Result<(u64, String)> {
-        let result = self.download_verified_inner(url, expected_hash, destination);
+        let result = self.download_verified_inner(url, expected_integrity, destination);
         if result.is_err() {
             self.report_progress(DownloadProgressEvent::Failed);
         }
@@ -409,7 +437,7 @@ impl Installer {
     fn download_verified_inner(
         &self,
         url: &str,
-        expected_hash: &[u8; 32],
+        expected_integrity: &ArtifactIntegrity,
         destination: &Path,
     ) -> Result<(u64, String)> {
         let display_url = redacted_url(url);
@@ -448,7 +476,7 @@ impl Installer {
             }
         };
 
-        let mut hasher = Sha256::new();
+        let mut hasher = expected_integrity.hasher();
         if resume_from > 0 {
             let mut existing =
                 File::open(destination).map_err(|source| Error::ReadDownloadCache {
@@ -469,8 +497,8 @@ impl Installer {
                 }
                 hasher.update(&buffer[..count]);
             }
-            let existing_hash: [u8; 32] = hasher.clone().finalize().into();
-            if existing_hash == *expected_hash {
+            let existing_hash = hasher.clone().finalize();
+            if existing_hash == expected_integrity.expected_bytes() {
                 self.report_progress(DownloadProgressEvent::Started {
                     url: display_url,
                     total_bytes: Some(resume_from),
@@ -478,7 +506,7 @@ impl Installer {
                 self.report_progress(DownloadProgressEvent::Finished {
                     downloaded_bytes: resume_from,
                 });
-                return Ok((resume_from, hex::encode(existing_hash)));
+                return Ok((resume_from, expected_integrity.canonical()));
             }
         }
 
@@ -492,14 +520,14 @@ impl Installer {
         })?;
         if resume_from > 0 && response.status() == StatusCode::OK {
             resume_from = 0;
-            hasher = Sha256::new();
+            hasher = expected_integrity.hasher();
         } else if resume_from > 0 && response.status() == StatusCode::RANGE_NOT_SATISFIABLE {
             fs::remove_file(destination).map_err(|source| Error::WriteDownload {
                 path: destination.to_path_buf(),
                 source,
             })?;
             resume_from = 0;
-            hasher = Sha256::new();
+            hasher = expected_integrity.hasher();
             response = self
                 .client
                 .get(url)
@@ -521,7 +549,7 @@ impl Installer {
                     source,
                 })?;
                 resume_from = 0;
-                hasher = Sha256::new();
+                hasher = expected_integrity.hasher();
                 response =
                     self.client
                         .get(url)
@@ -605,16 +633,20 @@ impl Installer {
             source,
         })?;
 
-        let actual: [u8; 32] = hasher.finalize().into();
-        let actual_hex = hex::encode(actual);
-        if actual != *expected_hash {
+        let actual = hasher.finalize();
+        let actual_integrity = format!(
+            "{}:{}",
+            expected_integrity.algorithm().as_str(),
+            hex::encode(&actual)
+        );
+        if actual != expected_integrity.expected_bytes() {
             fs::remove_file(destination).map_err(|source| Error::WriteDownload {
                 path: destination.to_path_buf(),
                 source,
             })?;
             return Err(Error::ChecksumMismatch {
-                expected: hex::encode(expected_hash),
-                actual: actual_hex,
+                expected: expected_integrity.canonical(),
+                actual: actual_integrity,
             });
         }
 
@@ -622,7 +654,7 @@ impl Installer {
             downloaded_bytes: total,
         });
 
-        Ok((total, actual_hex))
+        Ok((total, expected_integrity.canonical()))
     }
 
     fn report_progress(&self, event: DownloadProgressEvent) {
@@ -764,19 +796,24 @@ impl Installer {
         Ok(())
     }
 
-    fn extract_tar_xz(
+    fn extract_tar(
         &self,
         archive_path: &Path,
         destination: &Path,
         strip_components: usize,
+        format: ArtifactFormat,
     ) -> Result<()> {
         let file = File::open(archive_path).map_err(|source| Error::ExtractArchiveEntry {
             entry: "<archive>".to_owned(),
             path: archive_path.to_path_buf(),
             source,
         })?;
-        let decoder = XzDecoder::new(file);
-        let mut archive = tar::Archive::new(decoder);
+        let reader: Box<dyn Read> = match format {
+            ArtifactFormat::TarXz => Box::new(XzDecoder::new(file)),
+            ArtifactFormat::TarGz => Box::new(GzDecoder::new(file)),
+            ArtifactFormat::Zip => unreachable!("ZIP archives use extract_zip"),
+        };
+        let mut archive = tar::Archive::new(reader);
         let entries = archive.entries().map_err(|source| Error::ReadTarArchive {
             path: archive_path.to_path_buf(),
             source,
@@ -979,11 +1016,19 @@ fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
 fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Option<InstallOutcome> {
     let content = fs::read_to_string(final_dir.join(".pinset-install.toml")).ok()?;
     let receipt: ExistingInstallReceipt = toml::from_str(&content).ok()?;
+    let receipt_integrity = receipt
+        .artifact_integrity
+        .or(receipt.artifact_sha256)
+        .and_then(|value| ArtifactIntegrity::parse(&value).ok())?
+        .canonical();
+    let expected_integrity = ArtifactIntegrity::parse(&request.artifact.integrity)
+        .ok()?
+        .canonical();
     if !receipt.complete
         || receipt.tool != request.tool
         || receipt.version != request.version
         || receipt.target != request.target
-        || receipt.artifact_sha256 != request.artifact.sha256.to_ascii_lowercase()
+        || receipt_integrity != expected_integrity
     {
         return None;
     }
@@ -993,7 +1038,7 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
     Some(InstallOutcome {
         install_dir: final_dir.to_path_buf(),
         bytes_downloaded: 0,
-        sha256: receipt.artifact_sha256,
+        integrity: receipt_integrity,
         source_id: receipt.selected_source,
         reused_existing: true,
     })
@@ -1001,15 +1046,6 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
-}
-
-fn parse_sha256(value: &str) -> Result<[u8; 32]> {
-    let decoded = hex::decode(value).map_err(|_| Error::InvalidSha256 {
-        value: value.to_owned(),
-    })?;
-    decoded.try_into().map_err(|_| Error::InvalidSha256 {
-        value: value.to_owned(),
-    })
 }
 
 fn validate_request(request: &InstallRequest) -> Result<()> {
@@ -1212,7 +1248,9 @@ struct InstallReceipt<'a> {
     selected_source: &'a str,
     selected_source_kind: &'a str,
     selected_url: &'a str,
-    artifact_sha256: &'a str,
+    artifact_integrity: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact_sha256: Option<&'a str>,
     artifact_format: &'a str,
     bytes_downloaded: u64,
 }
@@ -1224,7 +1262,10 @@ struct ExistingInstallReceipt {
     version: String,
     target: String,
     selected_source: String,
-    artifact_sha256: String,
+    #[serde(default)]
+    artifact_integrity: Option<String>,
+    #[serde(default)]
+    artifact_sha256: Option<String>,
 }
 
 fn write_receipt(
@@ -1233,8 +1274,9 @@ fn write_receipt(
     selected: &SelectedArtifact,
 ) -> Result<()> {
     let canonical_url = redacted_url(&request.artifact.canonical_url);
+    let legacy_sha256 = selected.actual_integrity.strip_prefix("sha256:");
     let receipt = InstallReceipt {
-        schema: 1,
+        schema: 2,
         complete: true,
         tool: &request.tool,
         version: &request.version,
@@ -1243,7 +1285,8 @@ fn write_receipt(
         selected_source: &selected.source_id,
         selected_source_kind: &selected.source_kind,
         selected_url: &selected.source_url,
-        artifact_sha256: &selected.actual_hash,
+        artifact_integrity: &selected.actual_integrity,
+        artifact_sha256: legacy_sha256,
         artifact_format: request.artifact.format.receipt_name(),
         bytes_downloaded: selected.bytes_downloaded,
     };
@@ -1272,11 +1315,15 @@ mod tests {
         thread,
     };
 
+    use base64::Engine as _;
+    use flate2::{Compression, write::GzEncoder};
+    use sha2::Sha512;
     use tempfile::tempdir;
     use xz2::write::XzEncoder;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::*;
+    use crate::{download_cache::download_partial_path, download_cache_path};
 
     #[test]
     fn installs_verified_zip_atomically_from_local_http() {
@@ -1371,10 +1418,7 @@ mod tests {
         let root = tempdir().expect("temp root");
         let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
         let hash = sha256_hex(&archive);
-        let expected: [u8; 32] = hex::decode(&hash)
-            .expect("hash")
-            .try_into()
-            .expect("sha256");
+        let expected = ArtifactIntegrity::parse(&hash).expect("sha256");
         let destination = download_cache_path(root.path(), &hash).expect("cache path");
         let installer = Arc::new(test_installer());
         let barrier = Arc::new(Barrier::new(2));
@@ -1385,6 +1429,7 @@ mod tests {
             let installer = Arc::clone(&installer);
             let barrier = Arc::clone(&barrier);
             let destination = destination.clone();
+            let expected = expected.clone();
             workers.push(thread::spawn(move || {
                 barrier.wait();
                 installer.persist_cache_artifact(&source, &destination, &expected)
@@ -1488,6 +1533,38 @@ mod tests {
             );
         }
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn installs_tar_gz_with_npm_sha512_integrity() {
+        let archive = tar_gz_bytes(&[("package/pnpm.exe", b"fake pnpm", 0o755)]);
+        let integrity = format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&archive))
+        );
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, integrity.clone());
+        request.tool = "pnpm".to_owned();
+        request.version = "11.21.0".to_owned();
+        request.target = "windows-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarGz;
+        request.strip_components = 1;
+        request.required_paths = vec![PathBuf::from("pnpm.exe")];
+
+        let outcome = test_installer().install(&request).expect("install tar.gz");
+        server.join().expect("server");
+
+        assert_eq!(outcome.integrity, integrity);
+        assert_eq!(
+            fs::read(outcome.install_dir.join("pnpm.exe")).expect("pnpm"),
+            b"fake pnpm"
+        );
+        assert!(root.path().join("downloads/sha512").is_dir());
+        let receipt =
+            fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
+        assert!(receipt.contains("schema = 2"));
+        assert!(receipt.contains("artifact_integrity = \"sha512-"));
     }
 
     #[cfg(unix)]
@@ -1717,7 +1794,7 @@ mod tests {
                     url,
                     kind: ArtifactSourceKind::Mirror,
                 }],
-                sha256,
+                integrity: sha256,
                 format: ArtifactFormat::Zip,
             },
             strip_components: 0,
@@ -1767,6 +1844,23 @@ mod tests {
         }
         let encoder = builder.into_inner().expect("tar finish");
         encoder.finish().expect("xz finish")
+    }
+
+    fn tar_gz_bytes(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (path, content, mode) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(path).expect("tar path");
+            header.set_size(content.len() as u64);
+            header.set_mode(*mode);
+            header.set_cksum();
+            builder
+                .append(&header, Cursor::new(*content))
+                .expect("tar entry");
+        }
+        let encoder = builder.into_inner().expect("tar finish");
+        encoder.finish().expect("gzip finish")
     }
 
     fn tar_xz_with_symlink(link_target: &str) -> Vec<u8> {

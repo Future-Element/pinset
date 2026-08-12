@@ -210,31 +210,31 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("global") => {
-                "查看或设置项目之外使用的全局默认 Node.js。\n\n用法：pinset global [node@x.y.z|主版本|主次版本|lts|current] [--no-install]"
+                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js 版本。\n\n用法：pinset use <node@x.y.z|主版本|主次版本|lts|current> [--global] [--no-install]"
+                "选择并锁定 Node.js、pnpm 或 Bun 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3> [--global] [--no-install]"
             }
             Some("unset") => {
-                "清除项目或全局 Node.js 选择，不卸载运行时。\n\n用法：pinset unset node [--global] [--cwd <目录>]"
+                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定 Node.js 版本，或根据项目/全局锁文件安装。\n\n用法：\n  pinset install node@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun] [--cwd <目录>]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的 Node.js 版本。\n\n用法：pinset list node [--available]"
+                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun> [--available]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确 Node.js 版本。\n\n用法：pinset uninstall node@x.y.z [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun>@x.y.z [--cwd <目录>] [--force]"
             }
             Some("cache") => {
-                "查看或清理已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean>"
+                "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"
             }
             Some("exec") => {
                 "使用当前选择或一次性 Node.js 版本执行命令。\n\n用法：pinset exec [--cwd <目录>] [node@<版本选择器>] -- <命令> [参数...]"
@@ -420,13 +420,13 @@ impl Catalog {
         }
     }
 
-    pub fn cache_entry(self, sha256: &str, size: u64, path: &Path) -> String {
+    pub fn cache_entry(self, integrity: &str, size: u64, path: &Path) -> String {
         match self.language {
             Language::English => {
-                format!("{sha256} cached bytes={size} path={}", path.display())
+                format!("{integrity} cached bytes={size} path={}", path.display())
             }
             Language::SimplifiedChinese => {
-                format!("{sha256} 已缓存 字节数={size} 路径={}", path.display())
+                format!("{integrity} 已缓存 字节数={size} 路径={}", path.display())
             }
         }
     }
@@ -440,14 +440,14 @@ impl Catalog {
         }
     }
 
-    pub fn cache_imported(self, sha256: &str, size: u64, path: &Path) -> String {
+    pub fn cache_imported(self, integrity: &str, size: u64, path: &Path) -> String {
         match self.language {
             Language::English => format!(
-                "imported verified cache archive sha256={sha256} bytes={size} path={}",
+                "imported verified cache archive integrity={integrity} bytes={size} path={}",
                 path.display()
             ),
             Language::SimplifiedChinese => format!(
-                "已导入校验通过的缓存归档：SHA-256={sha256}；字节数={size}；路径={}",
+                "已导入校验通过的缓存归档：完整性={integrity}；字节数={size}；路径={}",
                 path.display()
             ),
         }
@@ -627,9 +627,11 @@ impl Catalog {
 
     pub fn download_finished(self, artifact: &str, downloaded: &str) -> String {
         match self.language {
-            Language::English => format!("downloaded {artifact} ({downloaded}); SHA-256 verified"),
+            Language::English => {
+                format!("downloaded {artifact} ({downloaded}); integrity verified")
+            }
             Language::SimplifiedChinese => {
-                format!("已下载 {artifact}（{downloaded}）；SHA-256 校验通过")
+                format!("已下载 {artifact}（{downloaded}）；完整性校验通过")
             }
         }
     }
@@ -643,6 +645,7 @@ impl Catalog {
 
     pub fn current_installed(
         self,
+        tool: &str,
         version: &str,
         source: &str,
         executable: &Path,
@@ -654,22 +657,24 @@ impl Catalog {
         if source == "system" {
             return match self.language {
                 Language::English => format!(
-                    "node system installed {} source=system config=-",
+                    "{tool} system installed {} source=system config=-",
                     executable.display()
                 ),
                 Language::SimplifiedChinese => format!(
-                    "系统 PATH 中的 Node.js：{}；来源=系统 PATH；配置=-",
+                    "系统 PATH 中的 {}：{}；来源=系统 PATH；配置=-",
+                    self.tool_name(tool),
                     executable.display()
                 ),
             };
         }
         match self.language {
             Language::English => format!(
-                "node {version} installed {} source={source} config={config}",
+                "{tool} {version} installed {} source={source} config={config}",
                 executable.display()
             ),
             Language::SimplifiedChinese => format!(
-                "Node.js {version} 已安装：{}；来源={}; 配置={config}",
+                "{} {version} 已安装：{}；来源={}; 配置={config}",
+                self.tool_name(tool),
                 executable.display(),
                 self.source_name(source)
             ),
@@ -678,6 +683,7 @@ impl Catalog {
 
     pub fn current_missing(
         self,
+        tool: &str,
         version: &str,
         source: &str,
         expected: &Path,
@@ -688,15 +694,20 @@ impl Catalog {
             .unwrap_or_else(|| "-".to_owned());
         match self.language {
             Language::English => format!(
-                "node {version} missing expected={} source={source} config={config}",
+                "{tool} {version} missing expected={} source={source} config={config}",
                 expected.display()
             ),
             Language::SimplifiedChinese => format!(
-                "Node.js {version} 尚未安装；预期路径={}；来源={}; 配置={config}",
+                "{} {version} 尚未安装；预期路径={}；来源={}; 配置={config}",
+                self.tool_name(tool),
                 expected.display(),
                 self.source_name(source)
             ),
         }
+    }
+
+    fn tool_name(self, tool: &str) -> &str {
+        if tool == "node" { "Node.js" } else { tool }
     }
 
     pub fn doctor_line(self, key: &str, value: impl fmt::Display, state: &str) -> String {
@@ -985,8 +996,8 @@ impl Catalog {
 
     pub fn node_only_error(self) -> &'static str {
         match self.language {
-            Language::English => "the Node-first release only accepts the node tool",
-            Language::SimplifiedChinese => "当前 Node-first 版本只接受 node 工具",
+            Language::English => "this operation only accepts the node tool",
+            Language::SimplifiedChinese => "此操作只接受 node 工具",
         }
     }
 

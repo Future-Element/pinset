@@ -290,7 +290,9 @@ fn doctor_reports_all_node_provider_commands_and_path_shadowing() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         commands,
-        ["corepack", "node", "npm", "npx"].into_iter().collect()
+        ["bun", "bunx", "corepack", "node", "npm", "npx", "pnpm"]
+            .into_iter()
+            .collect()
     );
     assert!(
         report["routing_issues"]
@@ -588,7 +590,7 @@ fn doctor_json_and_import_preview_are_machine_readable_and_read_only() {
     );
     assert_eq!(
         fs::read_to_string(project.join("pinset.toml")).expect("project config"),
-        "schema = 1\n\n[tools]\nnode = \"24.0.0\"\n"
+        "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n"
     );
 
     let conflict = pinset(&project, &home, &["import", "--apply", "--no-install"]);
@@ -600,7 +602,7 @@ fn doctor_json_and_import_preview_are_machine_readable_and_read_only() {
     );
     assert_eq!(
         fs::read_to_string(project.join("pinset.toml")).expect("project config"),
-        "schema = 1\n\n[tools]\nnode = \"24.0.0\"\n"
+        "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n"
     );
 }
 
@@ -662,6 +664,7 @@ fn locked_artifact(version: &str, target: &str) -> LockedArtifact {
         canonical_url: plan.canonical_url,
         artifact_path: plan.artifact_path,
         sha256: "ab".repeat(32),
+        integrity: None,
         format: match plan.format {
             NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
             NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
@@ -751,6 +754,13 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             "@echo off\r\nif \"%1\"==\"exit23\" exit /b 23\r\necho system:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
         )
         .expect("fake system node");
+        for command in ["npm", "npx", "corepack", "pnpm", "bun", "bunx"] {
+            fs::write(
+                directory.join(format!("{command}.cmd")),
+                format!("@echo off\r\necho fake {command}\r\n"),
+            )
+            .expect("fake system command");
+        }
         executable
     }
 
@@ -769,6 +779,20 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake system node permissions");
+        for command in ["npm", "npx", "corepack", "pnpm", "bun", "bunx"] {
+            let command_path = directory.join(command);
+            fs::write(
+                &command_path,
+                format!("#!/bin/sh\nprintf '%s\\n' 'fake {command}'\n"),
+            )
+            .expect("fake system command");
+            let mut command_permissions = fs::metadata(&command_path)
+                .expect("fake system command metadata")
+                .permissions();
+            command_permissions.set_mode(0o755);
+            fs::set_permissions(&command_path, command_permissions)
+                .expect("fake system command permissions");
+        }
         executable
     }
 }

@@ -1,5 +1,27 @@
 # Pinset Release Notes
 
+## v0.2.0（待发布）
+
+- 目标日期：`2026-08-12`
+- 阶段：多 Provider Beta / GitHub Release
+- 许可证：MIT
+- Pinset 归档：Linux x64、Windows x64、macOS Apple Silicon
+- 运行时：Node.js、pnpm 10/11、Bun 1.x
+- GitHub Release：[v0.2.0](https://github.com/Future-Element/pinset/releases/tag/v0.2.0)
+
+### 更新内容
+
+- 新增独立 pnpm Provider：稳定版 10/11，命令 `pnpm`；
+- 新增独立 Bun Provider：稳定版 1.x，命令 `bun`/`bunx`，x64 自动选择 AVX2 或 baseline；
+- 新增 `pinset list pnpm --available` 与 `pinset list bun --available`；
+- 项目/全局配置与锁文件升级为 schema 2，可同时保存 Node、pnpm、Bun，并继续读取 schema 1；
+- npm 平台包在锁定阶段验证 registry ECDSA 签名，安装阶段验证 SHA-512 SRI；
+- 安装器新增安全 `.tar.gz` 解压，缓存新增 SHA-512 分仓与 `cache import --integrity`；
+- 子进程使用多 Provider 组合 PATH，并排除 Pinset shim，支持工具之间安全调用；
+- 本地版本列表和卸载扩展到 pnpm/Bun。
+
+发布候选已通过 Windows 与 Ubuntu WSL 完整测试、`.tar.gz + SHA512`、多 Provider PATH、旧 Node 回归、官方 registry 版本列表和精确签名锁验证。本地访问运行时归档 CDN 时传输停滞，因此 Linux、Windows、macOS Release Runner 的真实 Node/pnpm/Bun 安装与执行仍是创建公开 Release 的阻断门禁。
+
 ## v0.1.0-beta.1
 
 - 发布日期：`2026-08-12`

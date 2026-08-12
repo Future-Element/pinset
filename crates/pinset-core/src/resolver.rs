@@ -5,10 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+use crate::current_target;
 use crate::{
-    Error, Result, current_target, find_optional_project_config, global_config_path,
-    is_managed_command_shim, load_optional_global_config, load_project_config,
-    runtime_provider_for_command,
+    Error, Result, RuntimeCommandLayout, current_target_for_tool, find_optional_project_config,
+    global_config_path, is_managed_command_shim, load_optional_global_config, load_project_config,
+    runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,8 +139,8 @@ pub fn resolve_command_with_path(
         .join("installs")
         .join(tool)
         .join(&version)
-        .join(current_target());
-    let bin_dir = runtime_command_dir(&install_dir);
+        .join(current_target_for_tool(tool));
+    let bin_dir = runtime_command_directory(tool, &install_dir);
     let candidates = executable_candidates(&bin_dir, command);
     let executable = candidates
         .iter()
@@ -298,12 +300,61 @@ pub fn path_with_selected_runtime(executable: &Path) -> Result<OsString> {
     env::join_paths(entries).map_err(|source| Error::RuntimePathJoin { source })
 }
 
-fn runtime_command_dir(install_dir: &Path) -> PathBuf {
-    if cfg!(windows) {
-        install_dir.to_path_buf()
-    } else {
-        install_dir.join("bin")
+pub fn path_with_selected_tools(
+    executable: &Path,
+    cwd: &Path,
+    pinset_home: &Path,
+) -> Result<OsString> {
+    let selected_dir = executable
+        .parent()
+        .ok_or_else(|| Error::RuntimeCommandDirectoryMissing {
+            path: executable.to_path_buf(),
+        })?
+        .to_path_buf();
+    let shim_dir = pinset_home.join("shims");
+    let mut entries = vec![selected_dir.clone()];
+    for provider in runtime_providers() {
+        let Ok(selection) = resolve_tool_selection(provider.tool, cwd, pinset_home) else {
+            continue;
+        };
+        let install_dir = pinset_home
+            .join("installs")
+            .join(provider.tool)
+            .join(selection.version)
+            .join(current_target_for_tool(provider.tool));
+        let command_dir = runtime_command_directory(provider.tool, &install_dir);
+        if command_dir.is_dir()
+            && !paths_equal(&command_dir, &selected_dir)
+            && !entries.iter().any(|entry| paths_equal(entry, &command_dir))
+        {
+            entries.push(command_dir);
+        }
     }
+    if let Some(inherited) = env::var_os("PATH") {
+        for entry in env::split_paths(&inherited) {
+            if !paths_equal(&entry, &shim_dir)
+                && !entries.iter().any(|existing| paths_equal(existing, &entry))
+            {
+                entries.push(entry);
+            }
+        }
+    }
+    env::join_paths(entries).map_err(|source| Error::RuntimePathJoin { source })
+}
+
+pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
+    match runtime_provider(tool).map(|provider| provider.command_layout) {
+        Some(RuntimeCommandLayout::NodeNative) if cfg!(windows) => install_dir.to_path_buf(),
+        Some(RuntimeCommandLayout::NodeNative | RuntimeCommandLayout::Bin) => {
+            install_dir.join("bin")
+        }
+        Some(RuntimeCommandLayout::Root) | None => install_dir.to_path_buf(),
+    }
+}
+
+#[cfg(test)]
+fn runtime_command_dir(install_dir: &Path) -> PathBuf {
+    runtime_command_directory("node", install_dir)
 }
 
 fn executable_candidates(bin_dir: &Path, command: &str) -> Vec<PathBuf> {

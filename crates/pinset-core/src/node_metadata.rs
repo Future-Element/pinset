@@ -107,6 +107,7 @@ impl NodeMetadataClient {
                         canonical_url: plan.canonical_url,
                         artifact_path: plan.artifact_path,
                         sha256,
+                        integrity: None,
                         format: match plan.format {
                             NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
                             NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,

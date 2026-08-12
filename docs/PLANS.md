@@ -1,12 +1,12 @@
 # Pinset Plans
 
-当前版本：`v0.1.0-beta.1`
+当前发布候选：`v0.2.0`
 
-下一个版本：`v0.1.0`
+最新已发布版本：`v0.1.0-beta.1`
 
 更新时间：`2026-08-12`
 
-Beta 已发布。接下来继续完善 Node 支持，处理实际使用中的兼容问题，并准备稳定版。
+`v0.2.0` 在 Node Provider 基础上加入独立 pnpm 与 Bun Provider。功能和本地门禁已完成，发布由标签触发的三平台真实运行时验收作最终裁决。
 
 ## 版本路线
 
@@ -19,10 +19,23 @@ Beta 已发布。接下来继续完善 Node 支持，处理实际使用中的兼
 | `v0.1.0-alpha.5` | 已发布 | 自动注册 node/npm/npx/corepack、独立安装和旧 shim 迁移 |
 | `v0.1.0-alpha.6` | 已发布 | 完整卸载脚本和跨 Shell 修复 |
 | `v0.1.0-beta.1` | 已发布 | 简短安装命令、断点续传、可信镜像、离线导入和三平台 Node 测试 |
-| `v0.1.0` | 计划中 | 上游签名验证、兼容性确认和 Beta 问题修复 |
-| `v0.2.0+` | 未排期 | 评估 Python、Flutter 等 Provider |
+| `v0.2.0` | 待发布 | pnpm 10/11、Bun 1.x、多工具 schema 2、npm 签名与 SHA-512 |
+| `v0.3.0+` | 未排期 | 评估 Python、Flutter 等 Provider |
 
-版本号不对应固定日期。稳定版完成前不会加入新的 Provider。
+版本号不对应固定日期。`v0.2.0` 发布前不创建 Release 或 tag，三平台任一真实运行时验收失败都继续保留为开发版本。
+
+## v0.2.0 范围
+
+- `pinset list pnpm --available` 与 `pinset list bun --available`；
+- pnpm 10/11、Bun 1.x 的精确/主版本/主次版本/`latest`/`current` 选择器；
+- npm 官方平台包、SHA-512 SRI 与 registry ECDSA 签名；
+- schema 2 同时保存 Node、pnpm、Bun，并继续读取 schema 1；
+- `.tar.gz` 安全解压，SHA-256/SHA-512 分仓缓存和 `--integrity` 离线导入；
+- pnpm、bun、bunx 命令路由，以及排除 shim 的多 Provider 组合 PATH；
+- Bun x64 AVX2/baseline 自动选择；
+- 通用本地列表、卸载、current、which 和文本 doctor 检查。
+
+不在 `v0.2.0` 中加入 Corepack 驱动的 pnpm、Node 依赖、包依赖管理、Python、Flutter、新 Release 平台或自动修改 shell profile。
 
 ## Beta 已完成
 
@@ -85,12 +98,12 @@ git diff --check
 
 如果任一平台测试失败，本次 Release 不发布残缺资产，也不手动绕过工作流。
 
-## v0.1.0 计划
+## 稳定版计划
 
-稳定版仍然只做 Node，主要工作有：
+稳定版在 Node、pnpm、Bun 三个 Provider 基础上继续完成：
 
 1. 验证 Node 上游 `SHASUMS256.txt.sig`，整理发布密钥的更新和撤销方式；
-2. 确认 schema 1 的兼容规则和迁移方式；
+2. 冻结 schema 1 读取兼容与 schema 2 写入规则；
 3. 修复 Beta 用户在代理、镜像、断点续传、离线导入和旧管理器迁移中发现的问题；
 4. 增加更多三平台实际使用测试；
 5. 制定 Release 撤回和安全公告流程；
@@ -98,7 +111,7 @@ git diff --check
 
 ## 后续 Provider
 
-Python 和 Flutter 放在 Node 稳定版之后评估。
+Python 和 Flutter 放在当前三个 Provider 稳定后评估。
 
 Python 需要先确定解释器来源、校验方式、虚拟环境职责和系统 Python 回退规则。Flutter 需要确定 SDK 索引、channel、精确版本、Flutter/Dart 命令路由，以及 Android/iOS 工具链与 Pinset 的职责范围。
 

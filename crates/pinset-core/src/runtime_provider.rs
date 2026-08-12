@@ -2,14 +2,33 @@
 pub struct RuntimeProvider {
     pub tool: &'static str,
     pub commands: &'static [&'static str],
+    pub command_layout: RuntimeCommandLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCommandLayout {
+    NodeNative,
+    Root,
+    Bin,
 }
 
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
+    command_layout: RuntimeCommandLayout::NodeNative,
 };
-const PROVIDERS: &[RuntimeProvider] = &[NODE_PROVIDER];
+const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "pnpm",
+    commands: &["pnpm"],
+    command_layout: RuntimeCommandLayout::Root,
+};
+const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "bun",
+    commands: &["bun", "bunx"],
+    command_layout: RuntimeCommandLayout::Bin,
+};
+const PROVIDERS: &[RuntimeProvider] = &[NODE_PROVIDER, PNPM_PROVIDER, BUN_PROVIDER];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
     PROVIDERS
@@ -45,6 +64,11 @@ mod tests {
 
     #[test]
     fn unavailable_providers_and_commands_are_not_invented() {
+        assert_eq!(runtime_provider("pnpm").expect("pnpm").commands, ["pnpm"]);
+        assert_eq!(
+            runtime_provider("bun").expect("bun").commands,
+            ["bun", "bunx"]
+        );
         assert!(runtime_provider("python").is_none());
         assert!(runtime_provider_for_command("python").is_none());
         assert!(runtime_provider_for_command("flutter").is_none());
