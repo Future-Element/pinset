@@ -18,33 +18,12 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
-alpha.3 已通过官方 GitHub Release 提供，目标系统功能由用户继续验收。Python、Flutter、
-PGP 验签和中央包管理器分发仍按路线图推进。项目不维护
-第三方 Homebrew Tap 或 Scoop Bucket。
+alpha.3 已通过官方 GitHub Release 提供，目标系统功能由用户继续验收。`main` 已进入下一版
+Node 工作流完善阶段；`pinset global` 和带默认路径的 `pinset shim install` 当前需要从
+`main` 构建，尚未包含在 alpha.3 Release 中。Python、Flutter、PGP 验签和中央包管理器
+分发仍按路线图推进。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 
-设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
-
-```shell
-pinset global node@24
-pinset global
-pinset current
-```
-
-`pinset global` 是全局默认版本的一等入口；不带版本时只读查看，带版本时解析为精确版本、
-写入独立的全局配置和锁，并默认安装当前平台。原有的 `pinset use node@... --global` 继续兼容。
-在项目目录中执行时，如果 `pinset.toml` 覆盖了全局版本，输出会明确提示；`pinset current`
-始终显示当前目录真正生效的版本。
-
-保存中文界面语言：
-
-```shell
-pinset --lang zh-CN
-```
-
-临时使用英文而不改变持久设置：`pinset --lang en doctor`。语言偏好保存在当前系统的
-`PINSET_HOME/settings.toml`，Windows 与 WSL 互相独立。
-
-## 五分钟开始
+## 安装 Pinset
 
 Linux x64 和 macOS Apple Silicon 可以执行：
 
@@ -58,40 +37,153 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 
 稳定版本发布后可以把固定版本 URL 换成 `https://github.com/Future-Element/pinset/releases/latest/download/install.sh`。也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载当前系统的归档。
 
-安装后将 `pinset` 放入 `PATH`，再进入一个项目：
+## 使用说明
+
+### 1. 将 Pinset 放入 PATH
+
+Linux、macOS、WSL 当前终端：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+pinset --version
+```
+
+确认无冲突后，可自行将同一行写入 `~/.bashrc`、`~/.zshrc` 等 shell profile。Pinset 不会
+自动修改这些文件。Windows 解压 Release ZIP 后，把解压目录加入当前 PowerShell：
+
+```powershell
+$pinsetBin = "C:\path\to\pinset"
+$env:PATH = "$pinsetBin;$env:PATH"
+pinset --version
+```
+
+Windows 与 WSL 是两个独立环境，需要分别安装并分别配置 PATH。
+
+### 2. 设置界面语言
+
+持久使用简体中文：
+
+```shell
+pinset --lang zh-CN
+```
+
+持久恢复英文：`pinset --lang en`。只对单次命令临时切换：
+`pinset --lang en doctor`。语言设置保存在当前系统的 `PINSET_HOME/settings.toml`，不会写入项目。
+
+### 3. 设置全局 Node 版本
+
+当前 `main`/下一版推荐：
+
+```shell
+pinset global node@24
+pinset global
+pinset current
+```
+
+`pinset global node@24` 会查询官方版本索引、锁定精确版本并默认安装当前平台；不带版本的
+`pinset global` 只读显示全局默认。只生成全局配置和锁、不下载 Node：
+
+```shell
+pinset global node@lts --no-install
+pinset install --global --locked
+```
+
+已发布的 alpha.3 使用完全兼容的原有入口：
+
+```shell
+pinset use node@24 --global
+pinset use node@lts --global --no-install
+pinset install --global --locked
+```
+
+全局状态位于 `$PINSET_HOME/state/global.toml` 和 `global.lock`，不会在当前目录创建项目文件。
+
+### 4. 设置项目 Node 版本
+
+在项目根目录执行：
 
 ```shell
 pinset init
-pinset use node@24.0.0
+pinset use node@22
+pinset current
+```
+
+这会创建或更新 `pinset.toml` 与 `pinset.lock`，并默认安装当前平台的精确版本。建议把两个
+文件一起提交。只生成配置和锁：
+
+```shell
+pinset use node@22 --no-install
+pinset install --locked
+```
+
+项目版本优先于全局版本；离开项目目录后自动恢复全局版本。项目或全局已声明但安装缺失时，
+Pinset 会明确失败，不会静默改用系统 Node。
+
+### 5. 执行和检查当前版本
+
+不安装 shim 也能完整使用 Pinset：
+
+```shell
 pinset current
 pinset which node
 pinset exec -- node --version
+pinset exec -- npm --version
+pinset exec -- npm ci
 pinset doctor
+pinset doctor --json
 ```
 
-只需要用户默认版本、不需要项目配置时：
+一次性使用某个已经安装的精确版本，不修改项目或全局状态：
 
 ```shell
-pinset global node@lts
-pinset exec -- node --version
+pinset exec node@24.0.0 -- node --version
 ```
 
-如果希望直接执行 `node`、`npm`、`npx` 和 `corepack`，先创建不会覆盖已有文件的用户级 shim：
+### 6. 直接使用 node、npm、npx 和 corepack
+
+当前 `main`/下一版可自动找到与 `pinset` 同目录的 `pinset-shim`，并安装到用户级目录：
 
 ```shell
 pinset shim install
 pinset shim path
 ```
 
-再把 `pinset shim path` 输出的目录放到 PATH 中其他 Node 管理器之前。Pinset 不会自动修改
-shell profile；完整的 Bash、PowerShell 示例见使用指南。
+Linux、macOS、WSL 当前终端：
 
-`pinset use` 会解析并锁定四个平台的官方 Node 产物，然后只为当前平台安装。要先生成配置和锁文件、暂不下载运行时：
+```bash
+PINSET_SHIM_DIR="$(pinset shim path)"
+export PATH="$PINSET_SHIM_DIR:$PATH"
+node --version
+npm --version
+```
+
+Windows PowerShell：
+
+```powershell
+$shimDir = pinset shim path
+$env:PATH = "$shimDir;$env:PATH"
+node --version
+npm --version
+```
+
+目标目录已有任意同名文件时，Pinset 会拒绝整组安装，不覆盖 fnm、nvm、Volta 或用户文件。
+alpha.3 仍需显式传入 `--binary` 和 `--dir`，具体命令见
+[PRD 使用指南](docs/PRD.md#175-安装-shim)。
+
+### 7. 查询、卸载和缓存
 
 ```shell
-pinset use node@24.0.0 --no-install
-pinset install --locked
+pinset list node
+pinset list node --available
+pinset uninstall node@20.19.0
+pinset cache list
+pinset cache clean
+pinset import --dry-run
 ```
+
+卸载默认拒绝删除当前项目或全局仍引用的版本。`--force` 只跳过引用保护，不会删除 Pinset
+数据目录之外或缺少匹配安装收据的文件。`import --dry-run` 只检测 `.nvmrc`、`.node-version`、
+Volta、asdf 和 mise 配置，不会修改它们。
 
 完整的 Windows、macOS、Linux、WSL、shim、镜像切换和故障排查说明见 [PRD 使用指南](docs/PRD.md#17-当前版本使用指南)。
 
