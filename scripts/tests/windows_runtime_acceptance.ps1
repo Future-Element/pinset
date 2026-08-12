@@ -99,7 +99,16 @@ try {
     Assert-VersionOutput (& corepack --version) 'project direct corepack'
     Assert-ExactOutput $PnpmVersion (& pnpm --version) 'project direct pnpm'
     Assert-ExactOutput $BunVersion (& bun --version) 'project direct bun'
-    Assert-ExactOutput "v$ProjectVersion" (& pnpm exec node --version) 'project pnpm child node'
+    $PnpmChildNodeOutput = @(& pnpm exec node --version 2>&1 | ForEach-Object { $_.ToString() })
+    $PnpmChildNodeStatus = $LASTEXITCODE
+    Write-Host "pnpm exec node --version => status=$PnpmChildNodeStatus output=$($PnpmChildNodeOutput -join ' | ')"
+    if ($PnpmChildNodeStatus -ne 0) {
+        throw "project pnpm child node exited with $PnpmChildNodeStatus"
+    }
+    if ($PnpmChildNodeOutput.Count -eq 0) {
+        throw 'project pnpm child node returned no output'
+    }
+    Assert-ExactOutput "v$ProjectVersion" $PnpmChildNodeOutput 'project pnpm child node'
 
     Set-Location $TestRoot
     Assert-ExactOutput "v$GlobalVersion" (& node --version) 'restored global direct node'

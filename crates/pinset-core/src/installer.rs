@@ -1690,6 +1690,11 @@ mod tests {
     fn merges_a_verified_npm_base_archive_before_the_platform_binary() {
         let base_archive = tar_gz_bytes(&[
             ("package/dist/pnpm.mjs", b"shared pnpm runtime", 0o644),
+            (
+                "package/package.json",
+                br#"{"name":"@pnpm/exe","type":"module"}"#,
+                0o644,
+            ),
             ("package/setup.js", b"must not be installed", 0o644),
         ]);
         let platform_archive = tar_gz_bytes(&[("package/pnpm", b"native pnpm", 0o644)]);
@@ -1725,8 +1730,14 @@ mod tests {
                 format: ArtifactFormat::TarGz,
             },
             strip_components: 1,
-            include_prefixes: vec![PathBuf::from("dist")],
-            required_paths: vec![PathBuf::from("dist/pnpm.mjs")],
+            include_prefixes: vec![
+                PathBuf::from("dist"),
+                PathBuf::from("package.json"),
+            ],
+            required_paths: vec![
+                PathBuf::from("dist/pnpm.mjs"),
+                PathBuf::from("package.json"),
+            ],
         }];
 
         let outcome = test_installer()
@@ -1742,6 +1753,10 @@ mod tests {
         assert_eq!(
             fs::read(outcome.install_dir.join("dist/pnpm.mjs")).expect("shared runtime"),
             b"shared pnpm runtime"
+        );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("package.json")).expect("package metadata"),
+            br#"{"name":"@pnpm/exe","type":"module"}"#
         );
         assert!(!outcome.install_dir.join("setup.js").exists());
         #[cfg(unix)]
