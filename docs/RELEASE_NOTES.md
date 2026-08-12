@@ -3,6 +3,106 @@
 本文档记录 Pinset 各版本已经交付的主要变化。未来范围与开发状态请参阅
 [Plans](PLANS.md)，计划中的功能不会提前写成已发布能力。
 
+## v0.1.0-alpha.2
+
+- 版本日期：2026-08-12
+- 发布阶段：Alpha 预发布候选
+- 许可证：MIT License
+- Pinset CLI 产物：Linux x64、Windows x64、macOS Apple Silicon
+- Node.js 运行时目标：Windows x64、Linux x64、macOS x64、macOS arm64
+- GitHub Release：[v0.1.0-alpha.2](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-alpha.2)
+
+### 更新内容
+
+- 新增正式全局 Node 选择：
+
+  ```shell
+  pinset use node@24.0.0 --global
+  pinset install --global --locked
+  ```
+
+  全局状态保存在 `$PINSET_HOME/state/global.toml` 和 `global.lock`，不会写入当前项目或
+  `$HOME/pinset.toml`。
+- 统一 Node 解析顺序：最近项目配置优先，其次是 Pinset 全局选择，最后才是排除 Pinset
+  shim 后的系统 PATH。离开项目后自动恢复全局选择。
+- 项目或全局已经声明 Node、但对应安装缺失或损坏时失败关闭，不会静默使用低优先级版本。
+- `current`、`which`、`exec`、`doctor` 和 shim 共用同一来源感知解析结果，可区分
+  `project`、`global` 与 `system`。
+- `node`、`npm`、`npx` 和 `corepack` 使用同一所选 Node 命令目录；子进程 PATH 支持
+  `/usr/bin/env node` 启动方式。
+- 系统 Node 透传会排除 Pinset shim 目录和当前 shim 文件，防止直接或间接递归。
+- 新增英文与简体中文界面。无子命令时持久保存语言：
+
+  ```shell
+  pinset --lang zh-CN
+  ```
+
+  带子命令时只覆盖本次输出：`pinset --lang en doctor`。也可使用 `PINSET_LANG` 覆盖当前
+  进程；持久设置保存在 `$PINSET_HOME/settings.toml`，不修改项目文件。
+- 正常提示、诊断、帮助、参数错误和常见运行错误均接入同一语言目录；路径、版本和底层系统
+  错误仍保留原始技术值。
+- 保持 alpha.1 的 `schema = 1` 项目配置和锁文件兼容，不要求迁移现有项目。
+- CI 新增仅手动触发的隔离 Ubuntu 真实运行时验收，普通 PR 不重复下载真实 Node。
+
+### 验证范围
+
+- 78 项 workspace 测试、格式、Clippy、锁定 Release 构建、curl 安装器离线测试与 shim
+  轻依赖检查通过。
+- Linux x64、Windows x64、macOS arm64 Release 归档构建通过。
+- 一次性 Ubuntu Runner 使用临时 `PINSET_HOME` 安装 Node 24.0.0 全局版本与 Node 22.0.0
+  项目版本，验证项目覆盖、离开项目恢复全局版本、node/npm/corepack 和中文提示。
+- 未在开发者 Windows 或 WSL 环境安装真实运行时。
+- 尚未完成 Windows 与 macOS 真实 Node 的人工流程验收；三平台构建通过不等同于三平台
+  真实运行时安装均已验收。
+
+### Linux x64 / macOS Apple Silicon 安装
+
+该版本发布后使用固定预发布 URL：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.2/install.sh |
+  sh -s -- --version 0.1.0-alpha.2
+```
+
+默认安装到 `$HOME/.local/bin`。安装器不使用 `sudo`、不修改 shell profile 或 PATH、
+不安装 Node，并强制校验 Release 的 SHA-256。
+
+### 全局与项目版本
+
+设置全局版本：
+
+```shell
+pinset use node@24.0.0 --global
+pinset current
+pinset exec -- node --version
+```
+
+在项目中覆盖全局版本：
+
+```shell
+mkdir demo && cd demo
+pinset init
+pinset use node@22.0.0
+pinset current
+pinset exec -- node --version
+```
+
+离开项目后，`pinset current` 与 shim 会重新解析到全局版本。若没有项目和全局声明，Pinset
+才会安全透传系统 PATH 中的相应 Node 命令。
+
+### 说明与已知限制
+
+- 仍只接受完整精确版本 `x.y.z`，不支持 `node@24`、`lts`、`latest` 或 `current`。
+- Python、Flutter、版本列表、卸载、浮动选择器和旧管理器导入尚未发布。
+- macOS x64 Node 产物可以写入锁文件，但本版本没有 macOS Intel Pinset CLI 归档。
+- curl 安装器支持 Linux x64 和 macOS Apple Silicon；Windows 使用 Release ZIP。
+- shim 仍需用户显式安装到自有目录并加入 PATH；Pinset 不修改 shell profile。
+- `$HOME/pinset.toml` 仍按普通最近项目配置处理，不会自动迁移或删除。
+- 系统 PATH 透传限于当前 Node-first 命令集合，不代表任意工具或 Shell activation。
+- Node 信任值仍来自官方 HTTPS `SHASUMS256.txt`；PGP 验签属于稳定版前的供应链增强。
+- 项目不维护第三方 Homebrew Tap、Scoop Bucket 或社区镜像 preset。
+
 ## v0.1.0-alpha.1
 
 - 版本日期：2026-08-11

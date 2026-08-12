@@ -5,7 +5,7 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前 `0.1.0-alpha.1` 是 Node-first MVP：
+当前 `0.1.0-alpha.2` 是 Node-first 预发布版：
 
 - 支持 Node.js 精确版本 `x.y.z`；
 - 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
@@ -13,11 +13,20 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 从 Node 官方 HTTPS `SHASUMS256.txt` 取得哈希，镜像只改变传输位置；
 - 校验 SHA-256 后安全解压 ZIP/TAR.XZ，并以事务方式提交安装；
 - 提供 `use`、`install`、`current`、`which`、`exec`、`doctor` 和 shim；
-- 支持配置国内、企业内网或其他自定义镜像及有序回退。
+- 支持配置国内、企业内网或其他自定义镜像及有序回退；
+- 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
+- 支持英文与简体中文界面，并可按用户持久保存语言偏好。
 
 Python、Flutter、浮动版本选择器、PGP 验签、缓存管理和中央包管理器分发不属于这个 MVP，后续按路线图实现。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 
-当前 alpha.2 开发分支新增全局/项目/系统 PATH 解析和中英文提示。保存中文界面语言：
+设置全局 Node 后，普通目录使用全局版本，项目中的 `pinset.toml` 仍具有更高优先级：
+
+```shell
+pinset use node@24.0.0 --global
+pinset current
+```
+
+保存中文界面语言：
 
 ```shell
 pinset --lang zh-CN
@@ -32,8 +41,8 @@ pinset --lang zh-CN
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.1/install.sh |
-  sh -s -- --version 0.1.0-alpha.1
+  https://github.com/Future-Element/pinset/releases/download/v0.1.0-alpha.2/install.sh |
+  sh -s -- --version 0.1.0-alpha.2
 ```
 
 安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把 `pinset` 与 `pinset-shim` 原子安装到 `$HOME/.local/bin`。它不使用 `sudo`、不改 shell profile，也不安装 Node。

@@ -1,8 +1,8 @@
 # Pinset PRD
 
 文档状态：`产品基线`
-当前发布版本：`v0.1.0-alpha.1`
-更新时间：2026-08-11
+当前发布候选：`v0.1.0-alpha.2`
+更新时间：2026-08-12
 
 ## 文档关系
 
@@ -10,7 +10,7 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“当前”均指 `v0.1.0-alpha.1`；标记为“计划”的契约尚不能当作可用命令。
+- 本文件中的“当前”均指 `v0.1.0-alpha.2` 发布候选；标记为“计划”的契约尚不能当作可用命令。
 
 ## 1. 产品定位
 
@@ -264,7 +264,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 
 Pinset 的产品目标平台是 Windows、macOS 和 Linux；WSL 按独立 Linux 环境处理。
 
-当前 `v0.1.0-alpha.1`：
+当前 `v0.1.0-alpha.2` 发布候选：
 
 | 能力 | Windows x64 | Linux x64 | macOS x64 | macOS arm64 |
 | --- | --- | --- | --- | --- |
@@ -310,24 +310,23 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-`v0.1.0-alpha.1` 已经完成 Node 项目级精确版本闭环和公开三平台 CI/CD，但尚未完成
-正式全局选择、系统 PATH 透传、浮动版本、卸载、CPython 和 Flutter。
-
-下一版本 `v0.1.0-alpha.2` 只聚焦全局/项目/系统解析，不同时扩展新的 provider。完整范围
-和发布门禁见 [Plans](PLANS.md#2-v010-alpha2--global-and-project-resolution)。
+`v0.1.0-alpha.2` 发布候选已经完成 Node 项目级精确版本闭环、正式全局选择、安全系统 PATH
+透传、来源感知诊断、中英文界面和公开三平台 CI/CD。浮动版本、卸载、CPython 与 Flutter
+仍未交付。完整范围和发布门禁见
+[Plans](PLANS.md#2-v010-alpha2--global-and-project-resolution)。
 
 ## 14. 命令契约与交付状态
 
-| 命令 | alpha.1 | 目标契约 |
+| 命令 | 交付状态 | 目标契约 |
 | --- | --- | --- |
 | `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
 | `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
 | `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
-| `pinset use node@x.y.z --global` | alpha.2 | 更新用户级全局选择，不修改项目 |
+| `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
-| `pinset install --global --locked` | alpha.2 | 根据全局锁恢复当前目标 |
+| `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
 | `pinset current` | 已实现 | 显示项目选择和安装路径 |
-| `pinset current [tool]` | alpha.2 | 显示工具、精确版本、来源和路径 |
+| `pinset current [tool]` | 已实现 | 显示工具、精确版本、来源和路径 |
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
 | `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
@@ -337,7 +336,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
 | `pinset source test` | alpha.3 | 只读检测 DNS/TLS/HTTP/路径和校验能力 |
 | `pinset list`、`uninstall`、`import` | alpha.3+ | 版本生命周期和显式迁移 |
-| `pinset --lang <en\|zh-CN>` | alpha.2 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
+| `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
 
@@ -358,7 +357,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ### 15.1 当前项目配置
 
-`pinset.toml` 是不可执行数据，应提交版本控制。alpha.1 只接受精确 Node 版本：
+`pinset.toml` 是不可执行数据，应提交版本控制。当前只接受精确 Node 版本：
 
 ```toml
 schema = 1
@@ -386,7 +385,7 @@ node = "24.0.0"
 
 ```toml
 schema = 1
-generated_by = "pinset 0.1.0-alpha.1"
+generated_by = "pinset 0.1.0-alpha.2"
 
 [[tool]]
 name = "node"
@@ -524,7 +523,7 @@ Node semver、Python 构建标签和 Flutter channel/ref 不能强制共用同�
 ### 17.1 安装 Pinset
 
 Linux x64 和 macOS Apple Silicon 的固定预发布安装命令、Release 资产和校验方式见
-[v0.1.0-alpha.1 发布说明](RELEASE_NOTES.md#linux-x64--macos-apple-silicon-安装)。
+[v0.1.0-alpha.2 发布说明](RELEASE_NOTES.md#linux-x64--macos-apple-silicon-安装)。
 
 默认安装器把 `pinset` 与 `pinset-shim` 放到 `$HOME/.local/bin`，不使用 `sudo`，不修改
 PATH，也不安装 Node。
@@ -553,7 +552,7 @@ pinset install --locked
 
 ### 17.3 执行与查询
 
-不安装 shim 也可以完整使用 alpha.1：
+不安装 shim 也可以完整使用 alpha.2：
 
 ```bash
 pinset current
@@ -700,8 +699,8 @@ cargo test --workspace --all-features
 pinset doctor
 ```
 
-alpha.1 会只读检查数据目录、最近项目配置、锁匹配、当前目标安装、shim PATH 和其他 Node
-候选。常见问题：
+alpha.2 会只读检查数据目录、最近项目配置、正式全局状态、锁匹配、当前目标安装、shim PATH
+和其他 Node 候选。常见问题：
 
 - `pinset.toml was not found`：进入项目目录或先执行 `pinset init`。
 - `lockfile does not match`：执行 `pinset use node@完整版本 --no-install` 并审查锁文件。
