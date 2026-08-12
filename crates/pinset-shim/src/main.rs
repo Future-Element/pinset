@@ -9,7 +9,7 @@ use std::{
 use std::ffi::OsStr;
 
 use pinset_core::{
-    CommandResolution, path_with_selected_runtime, pinset_home_from_env, resolve_command,
+    CommandResolution, path_with_selected_runtime, pinset_home_from_env, resolve_command_with_path,
 };
 
 const SHIM_DEPTH_ENV: &str = "PINSET_SHIM_DEPTH";
@@ -33,7 +33,15 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 
     let invocation = Invocation::parse()?;
     let home = pinset_home_from_env()?;
-    let resolution = resolve_command(&invocation.command, &invocation.cwd, &home)?;
+    let current_executable = env::current_exe()?;
+    let path = env::var_os("PATH");
+    let resolution = resolve_command_with_path(
+        &invocation.command,
+        &invocation.cwd,
+        &home,
+        path.as_deref(),
+        &[current_executable],
+    )?;
     reject_shim_directory_target(&resolution, &home)?;
 
     let runtime_path = path_with_selected_runtime(&resolution.executable)?;
@@ -43,8 +51,12 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         .env(SHIM_DEPTH_ENV, "1")
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
-        .env(SELECTION_SOURCE_ENV, resolution.source.as_str())
-        .env(CONFIG_PATH_ENV, &resolution.config_path);
+        .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
+    if let Some(path) = &resolution.selection_path {
+        child.env(CONFIG_PATH_ENV, path);
+    } else {
+        child.env_remove(CONFIG_PATH_ENV);
+    }
 
     let status = child.status()?;
     Ok(status.code().unwrap_or(1))

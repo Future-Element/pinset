@@ -16,6 +16,7 @@ mod shim_install;
 #[cfg(feature = "sources")]
 mod source_config;
 mod target;
+mod user_settings;
 
 pub use config::{
     PROJECT_CONFIG_FILENAME, ProjectConfig, find_optional_project_config, find_project_config,
@@ -51,8 +52,9 @@ pub use node_provider::{NodeArchiveFormat, NodeArtifactPlan, plan_node_artifact}
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 pub use node_runtime::{install_locked_node, node_command_directory};
 pub use resolver::{
-    CommandResolution, SelectionSource, ToolSelection, command_tool, path_with_selected_runtime,
-    pinset_home, pinset_home_from_env, resolve_command, resolve_from_env, resolve_tool_selection,
+    CommandResolution, SelectionSource, ToolSelection, command_tool, find_system_commands,
+    path_with_selected_runtime, pinset_home, pinset_home_from_env, resolve_command,
+    resolve_command_with_path, resolve_from_env, resolve_tool_selection,
 };
 pub use shim_install::{ShimInstallMethod, ShimInstallResult, install_shims};
 #[cfg(feature = "sources")]
@@ -61,3 +63,6 @@ pub use source_config::{
     load_source_config, save_source_config, source_config_path,
 };
 pub use target::current_target;
+#[cfg(feature = "state-write")]
+pub use user_settings::save_user_settings;
+pub use user_settings::{UserSettings, load_user_settings, user_settings_path};

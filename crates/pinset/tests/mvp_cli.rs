@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -32,6 +32,13 @@ fn current_which_exec_and_doctor_share_the_locked_fake_runtime() {
     assert_success_contains(&exec, "24.0.0:hello mvp");
     assert_success_contains(&exec, "source=project");
 
+    let child_help = pinset(
+        &project,
+        &home,
+        &["--lang", "zh-CN", "exec", "--", "node", "--help"],
+    );
+    assert_success_contains(&child_help, "24.0.0:--help");
+
     #[cfg(not(windows))]
     {
         let npm = pinset(&project, &home, &["exec", "--", "npm", "--version"]);
@@ -60,6 +67,13 @@ fn which_and_exec_use_the_global_fake_runtime_without_a_project() {
     let exec = pinset(&workspace, &home, &["exec", "--", "node", "global"]);
     assert_success_contains(&exec, "24.0.0:global");
     assert_success_contains(&exec, "source=global");
+
+    let current = pinset(&workspace, &home, &["current"]);
+    assert_success_contains(&current, "source=global");
+
+    let doctor = pinset(&workspace, &home, &["doctor"]);
+    assert_success_contains(&doctor, "source=global");
+    assert_success_contains(&doctor, "global.lock");
 }
 
 #[test]
@@ -76,6 +90,46 @@ fn project_selection_overrides_the_global_fake_runtime() {
     let exec = pinset(&project, &home, &["exec", "--", "node", "priority"]);
     assert_success_contains(&exec, "20.0.0:priority");
     assert_success_contains(&exec, "source=project");
+}
+
+#[test]
+fn which_and_exec_safely_pass_through_the_first_system_path_runtime() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    let system_bin = root.path().join("system-bin");
+    fs::create_dir(&workspace).expect("workspace");
+    let executable = create_fake_system_node(&system_bin);
+
+    let which = pinset_with_path(&workspace, &home, &system_bin, &["which", "node"]);
+    assert_success_contains(&which, &executable.display().to_string());
+
+    let exec = pinset_with_path(
+        &workspace,
+        &home,
+        &system_bin,
+        &["exec", "--", "node", "passthrough"],
+    );
+    assert_success_contains(&exec, "system:passthrough");
+    assert_success_contains(&exec, "source=system");
+    assert!(
+        !home.exists(),
+        "system passthrough must not create Pinset state"
+    );
+
+    let current = pinset_with_path(&workspace, &home, &system_bin, &["current", "node"]);
+    assert_success_contains(&current, "source=system");
+
+    let doctor = pinset_with_path(&workspace, &home, &system_bin, &["doctor"]);
+    assert_success_contains(&doctor, "source=system");
+
+    let exit = pinset_with_path(
+        &workspace,
+        &home,
+        &system_bin,
+        &["exec", "--", "node", "exit23"],
+    );
+    assert_eq!(exit.status.code(), Some(23));
 }
 
 #[test]
@@ -231,11 +285,62 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
     }
 }
 
+fn create_fake_system_node(directory: &Path) -> PathBuf {
+    fs::create_dir_all(directory).expect("system command directory");
+
+    #[cfg(windows)]
+    {
+        let executable = directory.join("node.cmd");
+        fs::write(
+            &executable,
+            "@echo off\r\nif \"%1\"==\"exit23\" exit /b 23\r\necho system:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
+        )
+        .expect("fake system node");
+        executable
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = directory.join("node");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nif [ \"$1\" = \"exit23\" ]; then exit 23; fi\nprintf 'system:%s\\nsource=%s\\n' \"$*\" \"$PINSET_SELECTION_SOURCE\"\n",
+        )
+        .expect("fake system node");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fake system node metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("fake system node permissions");
+        executable
+    }
+}
+
 fn pinset(project: &Path, home: &Path, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_pinset"))
         .args(arguments)
         .current_dir(project)
         .env("PINSET_HOME", home)
+        .output()
+        .expect("run pinset")
+}
+
+fn pinset_with_path(project: &Path, home: &Path, first: &Path, arguments: &[&str]) -> Output {
+    let inherited_path = env::var_os("PATH");
+    let path = std::iter::once(first.to_path_buf()).chain(
+        inherited_path
+            .as_ref()
+            .into_iter()
+            .flat_map(|value| env::split_paths(value)),
+    );
+    let path = env::join_paths(path).expect("test PATH");
+    Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .args(arguments)
+        .current_dir(project)
+        .env("PINSET_HOME", home)
+        .env("PATH", path)
         .output()
         .expect("run pinset")
 }

@@ -42,6 +42,46 @@ pub enum Error {
     #[error("unsupported global.toml schema {actual}; this version supports schema 1")]
     UnsupportedGlobalConfigSchema { actual: u32 },
 
+    #[error("failed to read user settings {path}: {source}")]
+    ReadUserSettings {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("user settings {path} are invalid: {source}")]
+    ParseUserSettings {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+
+    #[error("unsupported settings.toml schema {actual}; this version supports schema 1")]
+    UnsupportedUserSettingsSchema { actual: u32 },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to serialize user settings: {source}")]
+    SerializeUserSettings {
+        #[source]
+        source: toml::ser::Error,
+    },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to create user settings directory {path}: {source}")]
+    CreateUserSettingsDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "state-write")]
+    #[error("failed to atomically write user settings {path}: {source}")]
+    WriteUserSettings {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[cfg(feature = "state-write")]
     #[error("failed to serialize global config: {source}")]
     SerializeGlobalConfig {
@@ -156,6 +196,11 @@ pub enum Error {
         start: PathBuf,
         global_config_path: PathBuf,
     },
+
+    #[error(
+        "no project, global or system PATH command was found for \"{command}\"; searched PATH entries: {searched}"
+    )]
+    CommandSelectionNotFound { command: String, searched: String },
 
     #[error(
         "runtime command \"{command}\" for {tool}@{version} is not installed; searched: {searched}"

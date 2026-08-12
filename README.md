@@ -17,6 +17,15 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 
 Python、Flutter、浮动版本选择器、PGP 验签、缓存管理和中央包管理器分发不属于这个 MVP，后续按路线图实现。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
 
+当前 alpha.2 开发分支新增全局/项目/系统 PATH 解析和中英文提示。保存中文界面语言：
+
+```shell
+pinset --lang zh-CN
+```
+
+临时使用英文而不改变持久设置：`pinset --lang en doctor`。语言偏好保存在当前系统的
+`PINSET_HOME/settings.toml`，Windows 与 WSL 互相独立。
+
 ## 五分钟开始
 
 当前预发布版在 Linux x64 和 macOS Apple Silicon 上可以执行：

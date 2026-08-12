@@ -3,8 +3,8 @@
 当前发布版本：`v0.1.0-alpha.1`
 当前开发目标：`v0.1.0-alpha.2`
 目标稳定版本：`v0.1.0`
-状态：`Node global/project resolution planning`
-更新时间：2026-08-11
+状态：`alpha.2 implementation — Draft PR #4`
+更新时间：2026-08-12
 
 ## 文档边界
 
@@ -69,6 +69,7 @@
 - 项目、全局和系统 PATH 的优先级唯一、稳定且可由 `current`/`doctor` 解释。
 - 已声明但损坏或未安装的版本必须失败关闭，不得静默换成另一版本。
 - shim 热路径不访问网络，不执行项目代码，不修改父 Shell。
+- CLI 可持久切换英文或简体中文，语言偏好不进入项目配置。
 
 ### 2.1 P0-01 Global Selection State
 
@@ -169,7 +170,17 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 
 建议必须先展示当前行为，再由用户手动决定是否迁移和删除文件。
 
-### 2.6 Data and Compatibility
+### 2.6 P1-02 CLI Language
+
+- `pinset --lang zh-CN` 把简体中文保存为当前系统用户的默认界面语言。
+- `pinset --lang en` 恢复英文；带子命令时 `--lang` 只覆盖本次执行，不改持久设置。
+- `PINSET_LANG` 可作为当前进程覆盖，优先级低于命令行参数、高于持久设置。
+- 语言保存在 `$PINSET_HOME/settings.toml`，不修改项目配置、锁文件、源配置或 shell profile。
+- 正常提示、诊断、帮助、参数错误和常见运行错误使用同一语言目录；路径、命令、版本、源
+  别名和底层系统错误保持原始技术值。
+- 首批只冻结 `en` 与 `zh-CN` 标识，后续语言必须通过同一目录扩展，不能在各命令散落判断。
+
+### 2.7 Data and Compatibility
 
 - 保持项目 `schema = 1` 和当前 `pinset.lock` 兼容，不因全局功能改写已提交文件。
 - 全局配置使用独立 schema，未来扩展 Python/Flutter 时按工具增加字段。
@@ -177,7 +188,7 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 - Windows 与 WSL 使用独立 `PINSET_HOME`，不共享安装目录或锁定状态。
 - 源配置仍属于本机；切换镜像不得改变项目锁或全局锁中的 canonical 身份和哈希。
 
-### 2.7 Implementation Order
+### 2.8 Implementation Order
 
 1. 冻结全局状态 schema、文件位置、原子写入和错误语义。
 2. 抽象带来源信息的统一解析结果，不先修改 shim 行为。
@@ -196,7 +207,7 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 | 2 | CLI、shim、系统 PATH 透传和诊断 | 解析矩阵、递归保护、npm/corepack 与退出码测试 |
 | 3 | 文档、安装/升级流程和发布准备 | 全量 Quality、三平台构建、Ubuntu VM 验收 |
 
-### 2.8 Acceptance Matrix
+### 2.9 Acceptance Matrix
 
 自动化至少覆盖：
 
@@ -211,6 +222,7 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 - `--global` 不修改项目文件，普通 `use` 不修改全局文件。
 - `--no-install` 不发起运行时归档下载。
 - 配置损坏、锁不匹配、并发写入和中断恢复。
+- `--lang zh-CN` 持久化、单次英文覆盖、中文帮助、中文参数错误和中文诊断。
 
 真实环境验收：
 
@@ -223,7 +235,7 @@ alpha.1 文档曾允许把 `$HOME/pinset.toml` 作为临时默认版本。alpha.
 本地日常测试继续使用临时 `PINSET_HOME`、假归档和假运行时，不在开发者机器自动安装
 Node、Python 或 Flutter。真实运行时只在明确隔离的 VM/测试用户中执行。
 
-### 2.9 Release Gates
+### 2.10 Release Gates
 
 `v0.1.0-alpha.2` 必须满足：
 
@@ -238,8 +250,9 @@ Node、Python 或 Flutter。真实运行时只在明确隔离的 VM/测试用户
 - Ubuntu VM 完成一次真实全局版本、项目覆盖、离开项目恢复全局版本的验收。
 - `curl | sh` 仍强制验证 SHA-256，且安装器不修改 shell profile。
 - 用户可见变化已经写入 Release Notes。
+- 英文与简体中文 CLI 测试通过，语言切换不创建或修改项目文件。
 
-### 2.10 Explicitly Out of Scope
+### 2.11 Explicitly Out of Scope
 
 alpha.2 不包含：
 
@@ -252,7 +265,7 @@ alpha.2 不包含：
 - 第三方 Homebrew Tap、Scoop Bucket 或社区镜像 preset。
 - 云账号、同步、遥测、插件、钩子和项目任意代码执行。
 
-### 2.11 Risks
+### 2.12 Risks
 
 | 风险 | 应对 |
 | --- | --- |

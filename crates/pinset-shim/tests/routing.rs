@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -151,6 +151,50 @@ fn executes_through_an_installed_multicall_shim_name() {
     );
 }
 
+#[test]
+fn installed_shim_passes_through_to_system_path_without_recursing() {
+    let root = tempdir().expect("temp directory");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    let shims = home.join("shims");
+    let system_bin = root.path().join("system-bin");
+    fs::create_dir_all(&workspace).expect("workspace");
+    create_fake_system_node(&system_bin);
+    let installed = install_shims(
+        Path::new(env!("CARGO_BIN_EXE_pinset-shim")),
+        &shims,
+        &["node".to_owned()],
+    )
+    .expect("install shim");
+    let inherited_path = env::var_os("PATH");
+    let path = std::iter::once(shims.clone())
+        .chain(std::iter::once(system_bin.clone()))
+        .chain(
+            inherited_path
+                .as_ref()
+                .into_iter()
+                .flat_map(|value| env::split_paths(value)),
+        );
+    let path = env::join_paths(path).expect("test PATH");
+
+    let output = Command::new(&installed[0].destination)
+        .arg("passthrough")
+        .current_dir(&workspace)
+        .env("PINSET_HOME", &home)
+        .env("PATH", path)
+        .output()
+        .expect("run installed shim");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("system:passthrough"), "stdout: {stdout}");
+    assert!(stdout.contains("source=system"), "stdout: {stdout}");
+}
+
 fn create_fake_node(home: &Path, version: &str) -> PathBuf {
     let install_dir = home
         .join("installs")
@@ -190,6 +234,39 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake node permissions");
+        executable
+    }
+}
+
+fn create_fake_system_node(directory: &Path) -> PathBuf {
+    fs::create_dir_all(directory).expect("system command directory");
+
+    #[cfg(windows)]
+    {
+        let executable = directory.join("node.cmd");
+        fs::write(
+            &executable,
+            "@echo off\r\necho system:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
+        )
+        .expect("fake system node");
+        executable
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = directory.join("node");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'system:%s\\nsource=%s\\n' \"$*\" \"$PINSET_SELECTION_SOURCE\"\n",
+        )
+        .expect("fake system node");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fake system node metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("fake system node permissions");
         executable
     }
 }

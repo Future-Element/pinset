@@ -337,6 +337,7 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
 | `pinset source test` | alpha.3 | 只读检测 DNS/TLS/HTTP/路径和校验能力 |
 | `pinset list`、`uninstall`、`import` | alpha.3+ | 版本生命周期和显式迁移 |
+| `pinset --lang <en\|zh-CN>` | alpha.2 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
 
@@ -434,6 +435,7 @@ base_url = "https://mirror.example/node/"
 
 ```text
 PINSET_HOME/
+├─ settings.toml                      # 本机界面语言等用户偏好
 ├─ downloads/                         # 已验证下载缓存，后续交付
 ├─ installs/<tool>/<version>/<target>/
 ├─ shims/
@@ -568,9 +570,27 @@ pinset current --cwd /path/to/project
 pinset doctor --cwd /path/to/project
 ```
 
-alpha.1 从当前目录向上查找最近的 `pinset.toml`。正式全局选择尚未发布。
+alpha.2 的解析顺序为最近项目配置、正式全局选择、排除 Pinset shim 后的系统 PATH。项目或
+全局已经声明 Node 时，即使安装缺失也不会静默回退。
 
-### 17.4 安装 shim
+### 17.4 界面语言
+
+保存简体中文为默认界面语言：
+
+```shell
+pinset --lang zh-CN
+```
+
+之后的正常提示、帮助和诊断默认使用中文。临时对单个命令使用英文但不修改持久设置：
+
+```shell
+pinset --lang en doctor
+```
+
+也可以通过 `PINSET_LANG=zh-CN` 覆盖当前进程。优先级为命令行参数、环境变量、
+`$PINSET_HOME/settings.toml`、英文默认值。语言设置属于本机用户，不写入项目。
+
+### 17.5 安装 shim
 
 shim 只在用户指定目录创建 `node`、`npm`、`npx` 和 `corepack` 入口，不覆盖已有同名文件。
 
@@ -596,7 +616,7 @@ pinset doctor
 
 确认无冲突后，用户可自行把同一 `export` 写入 shell profile。Pinset 不自动修改已运行父 Shell。
 
-### 17.5 国内或企业镜像
+### 17.6 国内或企业镜像
 
 镜像必须保持 Node 官方发布目录的相对路径结构：
 
@@ -623,7 +643,7 @@ pinset source remove node company-mirror
 Pinset 不内置或自动启用公共第三方镜像。首次 `use` 仍需要从 Node 官方 HTTPS 清单取得
 哈希；如果项目已经提交锁文件，受限网络可以只通过批准镜像执行 `install --locked`。
 
-### 17.6 CI
+### 17.7 CI
 
 ```bash
 pinset install --locked
@@ -634,7 +654,7 @@ pinset exec -- npm test
 
 重复安装同一版本和目标时会验证收据及必要路径并直接复用。
 
-### 17.7 Ubuntu/WSL 构建与测试
+### 17.8 Ubuntu/WSL 构建与测试
 
 Windows 编译的 PE 文件不能作为 Linux 原生 Pinset 使用。Ubuntu/WSL 应下载 Linux Release
 或在 Linux 文件系统中构建 ELF；源码建议放在 `$HOME` 下而不是 `/mnt/c`。

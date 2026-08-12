@@ -941,6 +941,7 @@ dependencies = [
  "atomic-write-file",
  "hex",
  "reqwest",
+ "same-file",
  "serde",
  "sha2",
  "tar",

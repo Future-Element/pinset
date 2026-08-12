@@ -31,6 +31,7 @@ sources = [
 atomic-write-file = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+same-file.workspace = true
 serde.workspace = true
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
