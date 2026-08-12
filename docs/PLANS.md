@@ -1,191 +1,65 @@
 # Pinset Plans
 
-当前公开版本：`v0.1.0-beta.1`
-当前发布目标：`v0.1.0`
-后续稳定目标：`v0.1.0`
-状态：`Beta 已发布，进入 Node 稳定版反馈与供应链收口`
+当前版本：`v0.1.0-beta.1`
+
+下一个版本：`v0.1.0`
+
 更新时间：`2026-08-12`
 
-## 1. 文档边界
+Beta 已发布。接下来继续完善 Node 支持，处理实际使用中的兼容问题，并准备稳定版。
 
-- [PRD](PRD.md) 定义产品定位、Node Beta 功能、安全边界和验收标准；
-- 本文定义版本范围、执行顺序、发布门禁、风险和后续路线；
-- [Release Notes](RELEASE_NOTES.md) 只记录实际交付或正在准备发布的用户可见变化；
-- `README.md` 是用户安装和使用入口。
+## 版本路线
 
-计划项只有在代码、测试和相应发布证据均满足时才视为发布完成。静态检查不等于真实运行时验收，三平台构建不等于三平台 Node 工作流验收。
+| 版本 | 状态 | 主要内容 |
+| --- | --- | --- |
+| `v0.1.0-alpha.1` | 已发布 | 项目配置、锁文件、精确版本安装、镜像、shim 和三平台构建 |
+| `v0.1.0-alpha.2` | 已发布 | 全局版本、项目覆盖、系统 PATH 回退和中文界面 |
+| `v0.1.0-alpha.3` | 已发布 | 浮动版本、本地版本列表、卸载、缓存、诊断和旧配置检测 |
+| `v0.1.0-alpha.4` | 已发布 | `global` 命令、下载进度和使用文档 |
+| `v0.1.0-alpha.5` | 已发布 | 自动注册 node/npm/npx/corepack、独立安装和旧 shim 迁移 |
+| `v0.1.0-alpha.6` | 已发布 | 完整卸载脚本和跨 Shell 修复 |
+| `v0.1.0-beta.1` | 已发布 | 简短安装命令、断点续传、可信镜像、离线导入和三平台 Node 测试 |
+| `v0.1.0` | 计划中 | 上游签名验证、兼容性确认和 Beta 问题修复 |
+| `v0.2.0+` | 未排期 | 评估 Python、Flutter 等 Provider |
 
-## 2. 路线概览
+版本号不对应固定日期。稳定版完成前不会加入新的 Provider。
 
-| 版本 | 主题 | 状态 | 结果 |
-| --- | --- | --- | --- |
-| `v0.1.0-alpha.1` | Node Project MVP | 已发布 | 项目配置/锁、精确安装、镜像、shim、三平台 Release |
-| `v0.1.0-alpha.2` | 全局与项目解析 | 已发布 | 全局选择、项目覆盖、系统 PATH、中文 |
-| `v0.1.0-alpha.3` | 生命周期与迁移 | 已发布 | 浮动选择、本地列表、卸载、缓存、doctor JSON、旧配置检测 |
-| `v0.1.0-alpha.4` | Node 工作流收口 | 已发布 | `global` 入口、下载进度、README 使用路径 |
-| `v0.1.0-alpha.5` | Provider 路由闭环 | 已发布 | 自动 node/npm/npx/corepack 路由、独立安装、导入和 shim 迁移 |
-| `v0.1.0-alpha.6` | 完整卸载 | 已发布 | 安全完整卸载脚本和跨 Shell 修复 |
-| `v0.1.0-beta.1` | Node 公测闭环 | 已发布 | 简短安装、下载韧性、可信镜像、离线导入、三平台真实验收、供应链信息 |
-| `v0.1.0` | Node 稳定版 | 后续 | 上游 PGP、schema/兼容冻结、Beta 反馈和发布治理 |
-| `v0.2.0+` | 新 Provider | 未排期 | 在 Node 稳定后评估 Python、Flutter |
+## Beta 已完成
 
-版本号不是日期承诺。上一阶段安全和兼容门禁未通过时，不以增加 Provider 代替风险收敛。
+### Node 使用
 
-## 3. v0.1.0-beta.1 范围
+- 设置和查看全局 Node 版本；
+- 使用项目配置覆盖全局版本；
+- 离开项目目录后恢复全局版本；
+- 支持精确版本、主版本、主次版本、LTS 和 Current；
+- 直接运行 `node`、`npm`、`npx` 和 `corepack`；
+- 独立安装版本，不改变项目或全局选择；
+- 导入 `.nvmrc`、`.node-version`、Volta、asdf 和 mise 配置；
+- 卸载单个 Node 版本或完整删除 Pinset。
 
-### 3.1 纳入
+### 下载和安装
 
-- Node.js 全局、项目和系统 PATH 的完整解析；
-- `node`、`npm`、`npx`、`corepack` 直接与显式执行；
-- 精确、主版本、主次版本、LTS、Current 选择器；
-- 简化为 `curl -fsSL <install.sh> | sh` 的推荐安装入口；
-- 一行刷新且自适应终端宽度的下载进度；
-- 同一安装跨进程互斥；
-- HTTP Range 断点续传；
-- SHA-256 内容寻址缓存和离线归档导入；
-- 普通归档镜像、有序 fallback、显式可信元数据镜像；
-- 中英文界面、诊断、迁移、单版本和完整卸载；
-- Linux x64、Windows x64、macOS Apple Silicon Release；
-- 三个平台隔离 Runner 中的真实 Node 全局/项目验收；
-- SHA256SUMS、CycloneDX SBOM、GitHub 构建来源证明；
-- 面向首次用户的完整 README。
+- 下载进度在同一行刷新，并适配窄终端和中文；
+- 同一版本的并发安装使用文件锁；
+- 支持 HTTP Range 断点续传；
+- 归档按 SHA-256 缓存，可手动导入离线归档；
+- 支持下载镜像、备用源和可信 HTTPS 元数据镜像；
+- 校验失败、归档格式错误或解压安全检查失败时立即停止；
+- 安装在临时目录完成，校验通过后再写入最终目录。
 
-### 3.2 明确排除
+### 平台和发布
 
-- Python、Flutter 或其他 Provider；
-- npm 包、全局包或包管理器版本管理；
-- Node 上游 SHASUMS OpenPGP 验签；
-- Linux arm64 和 macOS Intel Pinset Release；
-- Homebrew Tap、Scoop Bucket 或第三方分发仓库；
-- shell profile、系统 PATH、IDE 的自动永久修改；
-- 云同步、GUI 和后台服务。
+- Pinset 安装包：Linux x64、Windows x64、macOS Apple Silicon；
+- Node 归档：Windows x64、Linux x64、macOS x64 和 macOS arm64；
+- Release 包含 `SHA256SUMS`、CycloneDX SBOM 和 GitHub 构建来源证明；
+- Linux、Windows、macOS 的 Release 任务都测试了全局版本、项目版本和四个 Node 命令；
+- curl 安装器只安装 `pinset` 与 `pinset-shim`，不会自动安装 Node 或修改 shell profile。
 
-## 4. Beta 实施状态
+Beta 暂不支持 Python、Flutter、Linux arm64 Pinset 安装包和 macOS Intel Pinset 安装包，也不维护 Homebrew Tap 或 Scoop Bucket。
 
-### A. 进度显示收口
+## 本地检查
 
-状态：`已实现，本地测试通过`
-
-- [x] TTY 同一行刷新；
-- [x] 按终端宽度缩放；
-- [x] 使用 Unicode 显示宽度处理中文；
-- [x] 文件名中间截断；
-- [x] 最后一列留空，避免终端自动折行产生多行；
-- [x] 24/40/60/80 列与中英文测试；
-- [x] 非 TTY 输出保持简洁。
-
-### B. 简化安装入口
-
-状态：`已发布并完成公开资产验证`
-
-- [x] `install.sh` 内置 `0.1.0-beta.1` 推荐版本；
-- [x] 主入口缩短为 `curl -fsSL raw.../install.sh | sh`；
-- [x] 保留 `--version` 和 `PINSET_VERSION` 精确覆盖；
-- [x] 安装器内部继续限制 HTTPS/TLS 并校验 SHA-256；
-- [x] 发布门禁验证 workspace 版本、tag 与安装器默认版本一致；
-- [x] README 解释旧 curl 参数的含义和固定版本用法；
-- [x] 发布后重新下载公开 `install.sh`，验证内置版本、校验和与 tag 内容一致；实际安装行为由三平台 Release 隔离验收覆盖。
-
-### C. 国内镜像与信任模型
-
-状态：`已实现，本地测试通过`
-
-- [x] 自定义源默认仅改变归档传输；
-- [x] 官方元数据继续作为默认信任根；
-- [x] `--trust-metadata` 允许受信 HTTPS 镜像提供 index 和 SHASUMS；
-- [x] 源列表显示 `trusted-metadata`；
-- [x] HTTP 与元数据信任互斥；
-- [x] 网络错误 fallback，哈希/格式/安全错误硬停止；
-- [x] README 给出普通镜像、可信元数据镜像和内网 HTTP 示例。
-
-### D. 下载和安装韧性
-
-状态：`已实现，本地测试通过`
-
-- [x] 按 `tool + version + target` 获取跨进程文件锁；
-- [x] 相同运行时并发安装只下载和提交一次；
-- [x] 断点文件按预期 SHA-256 命名；
-- [x] 续传前重新哈希已有内容；
-- [x] 发送 Range 并校验 Content-Range 起点；
-- [x] 服务端忽略 Range 或返回 416 时安全重新下载；
-- [x] 完整校验成功后才写内容寻址缓存；
-- [x] 哈希失败删除不可信断点；
-- [x] `cache clean` 清理完整缓存和受识别断点。
-
-### E. 离线缓存导入
-
-状态：`已实现，本地测试通过`
-
-- [x] `pinset cache import <archive> --sha256 <hash>`；
-- [x] 普通文件和符号链接边界；
-- [x] 最大大小限制；
-- [x] 流式 SHA-256；
-- [x] 临时文件和 no-clobber 原子提交；
-- [x] 已存在缓存重新验证；
-- [x] CLI 与核心测试；
-- [x] README 离线流程。
-
-### F. 三平台真实 Node 验收
-
-状态：`三平台 Release 验收成功`
-
-Release 的 Linux、Windows、macOS 构建任务分别在随机临时 `PINSET_HOME` 中：
-
-- [x] 设置并持久化中文；
-- [x] 安装 Node 24.0.0 全局版本；
-- [x] 安装 Node 22.0.0 项目版本；
-- [x] 验证项目覆盖；
-- [x] 验证离开项目后恢复全局版本；
-- [x] 验证 `pinset exec` 的 node/npm/npx/corepack；
-- [x] 验证 PATH 直接调用的 node/npm/npx/corepack；
-- [x] 验收完成后删除 Runner 临时目录；
-- [x] `v0.1.0-beta.1` tag 的 Linux、Windows、macOS 任务实际全部成功。
-
-### G. Release 供应链
-
-状态：`已发布并完成公开资产复核`
-
-- [x] tag、workspace、安装器版本一致性检查；
-- [x] 锁定格式、Clippy、workspace 测试和 release build；
-- [x] 三个 CycloneDX JSON SBOM；
-- [x] 三个平台归档的 GitHub 构建来源证明；
-- [x] 安装器、卸载器、校验和、SBOM 的来源证明；
-- [x] SHA256SUMS 覆盖全部 Release 资产；
-- [x] GitHub Actions 使用固定完整 SHA；
-- [x] 签名 tag 已推送并指向通过 main Quality 的精确提交；
-- [x] GitHub Release 自动创建并标记 prerelease；
-- [x] 发布后重新下载 10 个公开资产并复算 `SHA256SUMS` 的 9 个条目；
-- [x] `gh attestation verify` 验证三平台归档。
-
-### H. 文档
-
-状态：`发布版完成`
-
-- [x] README 从安装到卸载的主路径；
-- [x] 解释短 curl 与旧参数；
-- [x] 全局和项目版本示例；
-- [x] 路由、镜像、续传、离线、诊断和迁移；
-- [x] Release 完整性验证；
-- [x] PRD、Plans、Release Notes 与 Node-only 范围一致；
-- [x] 发布后补充实际 tag、Actions run 和资产验证结果。
-
-### I. 发布证据
-
-- 签名提交：`7066fd2f6388acba6d9c106e8a469d3ca4a6177d`；
-- 签名 tag：`v0.1.0-beta.1`；
-- main Quality：[run 31584619265](https://github.com/Future-Element/pinset/actions/runs/31584619265)；
-- tag Release：[run 31584751431](https://github.com/Future-Element/pinset/actions/runs/31584751431)；
-- GitHub Release：[v0.1.0-beta.1](https://github.com/Future-Element/pinset/releases/tag/v0.1.0-beta.1)；
-- Release Quality、Linux、Windows、macOS 和发布任务全部成功；
-- 三个平台分别完成真实 Node 24.0.0 全局版本、Node 22.0.0 项目版本和 node/npm/npx/corepack 验收；
-- 10 个公开资产存在，`SHA256SUMS` 的 9 项复算一致；
-- Linux/macOS 归档各只包含 `pinset` 与 `pinset-shim`，Windows ZIP 只包含对应两个 `.exe`；
-- 公开 Windows CLI 输出 `pinset 0.1.0-beta.1`；
-- 3 份 CycloneDX JSON 可解析，3 个平台归档的 GitHub attestation 验证成功。
-
-## 5. 本地验证策略
-
-本地验证不安装真实 Node，也不触发 GitHub Actions：
+日常开发使用以下命令，不下载真实 Node，也不会触发 GitHub Actions：
 
 ```shell
 cargo fmt --all -- --check
@@ -195,129 +69,49 @@ cargo build --release --locked -p pinset-cli -p pinset-shim
 git diff --check
 ```
 
-测试范围：
+测试使用临时 `PINSET_HOME`、本地 HTTP 服务、测试归档和假运行时。WSL 中也应设置独立的临时目录，避免碰到已有的 Pinset 或 Node 安装。
 
-- 随机临时 `PINSET_HOME`；
-- 本地假 HTTP 服务；
-- 构造 ZIP/TAR.XZ 和假 Node 命令；
-- 并发线程和文件锁；
-- 断点、Range、校验失败和回退；
-- POSIX/PowerShell 卸载器对假目录的删除；
-- 不访问真实用户安装，不下载语言运行时。
+真实 Node 测试只在目标系统或 Release 工作流的隔离 Runner 中运行。普通提交不运行这类测试，避免不必要的 GitHub Actions 消耗。
 
-WSL 仅用于 Linux 编译和同一套离线测试；目标目录与开发机真实 `PINSET_HOME` 隔离。
+## 发布流程
 
-## 6. 一次性发布流程
+1. 更新版本号、README、PRD、Plans 和 Release Notes；
+2. 在本地完成格式检查、Clippy、测试、release build 和脚本测试；
+3. 合并到 `main`，确认 Quality 工作流通过；
+4. 在该提交上创建签名 tag；
+5. Release 工作流构建三个平台，并运行真实 Node 测试；
+6. 生成归档、校验和、SBOM 和构建来源证明；
+7. 发布后下载公开文件，复查归档内容和 `SHA256SUMS`。
 
-为了避免反复消耗 GitHub Actions，Beta 只在所有本地门禁通过后触发一次正式链路。
+如果任一平台测试失败，本次 Release 不发布残缺资产，也不手动绕过工作流。
 
-### 6.1 发布前
+## v0.1.0 计划
 
-1. 确认工作树只包含 Beta 相关文件；
-2. 本地完成格式、Clippy、测试、release build、脚本语法和差异检查；
-3. 确认 README、PRD、Plans、Release Notes 与版本一致；
-4. 确认 `Cargo.lock` 已更新且 locked build 成功；
-5. 创建并签名 Beta 候选提交；
-6. 推送 feature 分支；
-7. fast-forward 合并到 `main` 并推送；
-8. 等待唯一一次 main Quality 成功。
+稳定版仍然只做 Node，主要工作有：
 
-### 6.2 发布
+1. 验证 Node 上游 `SHASUMS256.txt.sig`，整理发布密钥的更新和撤销方式；
+2. 确认 schema 1 的兼容规则和迁移方式；
+3. 修复 Beta 用户在代理、镜像、断点续传、离线导入和旧管理器迁移中发现的问题；
+4. 增加更多三平台实际使用测试；
+5. 制定 Release 撤回和安全公告流程；
+6. 决定是否发布 Linux arm64 和 macOS Intel 安装包。
 
-1. 在已验证 main commit 创建签名 tag `v0.1.0-beta.1`；
-2. 推送 tag；
-3. Release Quality 重新执行完整静态/单元门禁；
-4. 三个平台构建并执行真实 Node 验收；
-5. 生成 SBOM、来源证明和 SHA256SUMS；
-6. 自动创建 prerelease GitHub Release。
+## 后续 Provider
 
-### 6.3 发布后
+Python 和 Flutter 放在 Node 稳定版之后评估。
 
-1. 通过 GitHub API 确认 Release 公开且 tag/commit 正确；
-2. 下载全部资产到随机临时目录；
-3. 复算 SHA256SUMS；
-4. 检查 Unix 归档只有 `pinset` 与 `pinset-shim`；
-5. 检查 Windows ZIP 只有两个 `.exe`；
-6. 执行公开 `install.sh` 与卸载器隔离测试；
-7. 验证归档 attestation；
-8. 在 Release Notes 记录实际 Actions run 与验证边界；
-9. 使用 `[skip ci]` 的文档提交更新 main，避免重复运行 CI。
+Python 需要先确定解释器来源、校验方式、虚拟环境职责和系统 Python 回退规则。Flutter 需要确定 SDK 索引、channel、精确版本、Flutter/Dart 命令路由，以及 Android/iOS 工具链与 Pinset 的职责范围。
 
-## 7. Beta 发布判定
+新 Provider 应复用现有的配置、锁文件、安装源、缓存、安装器、命令路由、诊断和卸载机制。
 
-允许发布必须同时满足：
+## 主要风险
 
-- 所有本地门禁通过；
-- main Quality 成功；
-- tag Release Quality 成功；
-- 三个平台真实 Node 验收成功；
-- 三个平台归档均生成来源证明；
-- 资产数量、名称、归档内容、版本和 SHA256SUMS 均正确；
-- 安装器默认版本可从公开 Release 下载；
-- README 不把 Python/Flutter 或上游 PGP 描述为已完成。
-
-只要任一条件失败，就不把 Release 标记为完成，也不以手动上传部分资产绕过工作流。
-
-## 8. v0.1.0 稳定版计划
-
-稳定版继续只聚焦 Node：
-
-1. 验证 Node 上游 `SHASUMS256.txt.sig`；
-2. 明确受信 Node 发布密钥、轮换、撤销和离线密钥更新流程；
-3. 冻结 schema 1 的兼容与迁移承诺；
-4. 收集 Beta 在代理、可信镜像、断点续传、离线导入和旧管理器迁移中的反馈；
-5. 修复三平台真实使用问题；
-6. 形成 Release 撤回、安全公告和受影响版本策略；
-7. 决定是否为 Linux arm64 和 macOS Intel 提供官方归档；
-8. 发布稳定版前重新执行全部 Beta 门禁。
-
-稳定版不以新增 Provider 为目标。
-
-## 9. 稳定版之后
-
-### 9.1 Python Provider 研究
-
-需要先确定：
-
-- 解释器分发来源和信任模型；
-- CPython 与独立构建产物的边界；
-- venv、uv 和包管理职责如何避免重叠；
-- Windows/Linux/macOS 目标矩阵；
-- 命令集合和系统 Python 回退策略。
-
-### 9.2 Flutter Provider 研究
-
-需要先确定：
-
-- 官方 SDK 索引、归档和校验来源；
-- Flutter/Dart 命令路由；
-- channel 与精确版本锁定；
-- Git 仓库式 SDK 与归档式安装的取舍；
-- Android/iOS 工具链不纳入 Pinset 所有权。
-
-任何新 Provider 都必须复用现有 config/lock、source、cache、installer、shim、doctor 和 uninstall 契约；如需破坏契约，先更新 PRD 和迁移方案。
-
-## 10. 已接受决策
-
-- `Accepted`：Node-only Beta，不为展示多语言愿景而加入半成品 Provider；
-- `Accepted`：安装器只安装 CLI 和通用 shim；
-- `Accepted`：正常选择/安装自动注册 Provider 命令；
-- `Accepted`：推荐 curl 命令简短，安全限制在安装器内部继续执行；
-- `Accepted`：官方元数据默认信任，自定义元数据必须显式 `--trust-metadata`；
-- `Accepted`：不维护第三方 Tap/Bucket；
-- `Accepted`：项目/全局声明缺失时失败关闭；
-- `Accepted`：不修改 shell profile；
-- `Accepted`：真实运行时测试只在隔离目标系统或一次性 Release CI；
-- `Accepted`：上游 PGP 验签是稳定版门禁，不在 Beta 仓促引入。
-
-## 11. 主要风险
-
-| 风险 | 当前控制 | 后续动作 |
+| 风险 | 当前处理 | 后续工作 |
 | --- | --- | --- |
-| 国内网络无法访问官方元数据 | 显式可信 HTTPS 元数据镜像 | 收集真实镜像兼容反馈 |
-| 下载中断重复浪费流量 | Range 续传、Content-Range 校验 | 在更多代理/CDN 下验收 |
-| 同版本并发破坏安装 | 跨进程锁、事务提交 | 三平台压力测试 |
-| 镜像篡改归档 | 官方/可信元数据 SHA-256，哈希失败硬停止 | 稳定版增加上游 PGP |
-| shim 覆盖外部工具 | 所有权验证、整组拒绝、doctor | 增加真实旧管理器案例 |
-| CI 成本上涨 | 本地门禁优先，真实 Node 只在 Release | 保持普通 PR 无真实下载 |
-| 预发布 schema 变化 | 锁文件显式 schema、Release Notes | 稳定版冻结迁移承诺 |
+| 国内网络无法访问官方元数据 | 可配置可信 HTTPS 元数据镜像 | 收集常用镜像的兼容反馈 |
+| 下载中断浪费流量 | Range 续传和 `Content-Range` 校验 | 测试更多代理和 CDN |
+| 并发安装损坏目录 | 文件锁和临时目录安装 | 增加三平台压力测试 |
+| 镜像归档被替换 | 使用可信元数据中的 SHA-256 | 稳定版增加上游 PGP 验证 |
+| 命令路由覆盖外部工具 | 写入前检查所有权，冲突时停止 | 增加旧管理器共存测试 |
+| CI 消耗过高 | 本地测试优先，真实 Node 只在 Release 测试 | 保持普通提交不下载运行时 |
+| 预发布配置发生变化 | schema 版本和 Release Notes | 稳定版确认兼容规则 |

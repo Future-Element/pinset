@@ -4,17 +4,17 @@
 产品阶段：`Node-first Beta`
 更新时间：`2026-08-12`
 
-## 1. 产品定义
+## 1. 产品简介
 
-Pinset 是一个本地优先、跨平台、面向多语言项目的运行时版本管理 CLI。它提供统一的选择、锁定、安装、执行、镜像、缓存和诊断模型，减少用户在 nvm/fnm、uv、FVM 等多个管理器之间切换的成本。
+Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
 
-产品最终可以接入多种 Provider，但 `v0.1.0-beta.1` 只承诺 Node.js 闭环。Python、Flutter 和其他语言不得以半成品形式进入 Node Beta。
+后续可以增加其他 Provider。`v0.1.0-beta.1` 只支持 Node.js，Python 和 Flutter 暂不纳入。
 
-### 1.1 核心价值
+### 1.1 目标
 
 - 一套一致命令管理全局和项目运行时；
 - 项目配置与精确锁文件可提交、可复现、可解释；
-- 安装、镜像、缓存和卸载具有明确的安全边界；
+- 下载、安装、缓存和卸载有可靠的安全检查；
 - 不接管 shell profile，不覆盖外部管理器，不隐藏回退；
 - 架构对 Provider 开放，安装器本身保持运行时中立。
 
@@ -26,7 +26,7 @@ Pinset 是一个本地优先、跨平台、面向多语言项目的运行时版�
 - 希望把运行时版本随项目提交并在 CI 中复现的团队；
 - 后续需要统一管理多种语言运行时的个人或组织。
 
-### 1.3 当前非目标
+### 1.3 本版本不做
 
 - 不在 Beta 接入 Python、Flutter、Java 等新 Provider；
 - 不替代 npm、pnpm、yarn 等包管理器；
@@ -36,11 +36,11 @@ Pinset 是一个本地优先、跨平台、面向多语言项目的运行时版�
 - 不删除 nvm、fnm、Volta、系统 Node 或用户文件；
 - 不提供后台服务、GUI、账号同步或云端状态。
 
-## 2. 产品原则
+## 2. 设计约定
 
 ### 2.1 可预测
 
-项目配置优先于 Pinset 全局配置，全局配置优先于系统 PATH。已声明但缺失的版本必须失败关闭，不能静默使用低优先级 Node。
+项目配置优先于 Pinset 全局配置，全局配置优先于系统 PATH。项目或全局已经选择了版本但本机没有安装时，Pinset 直接报错，不会换成其他 Node。
 
 ### 2.2 精确锁定
 
@@ -57,7 +57,7 @@ Pinset 是一个本地优先、跨平台、面向多语言项目的运行时版�
 - SHA-256 不匹配立即停止，不继续 fallback；
 - 安装在临时目录完成校验和解压后再原子提交；
 - 不覆盖无法证明由 Pinset 所有的命令或目录；
-- 删除只发生在经过解析和所有权验证的明确路径内。
+- 只删除经过路径和所有权检查的 Pinset 文件。
 
 ### 2.5 运行时中立
 
@@ -84,9 +84,9 @@ curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 在用户选�
 | `macos-x86_64` | Provider 支持 |
 | `macos-aarch64` | Provider 支持 |
 
-WSL 使用 Linux 归档，不得运行 Windows `.exe` 或复用 Windows Node 安装。
+WSL 使用 Linux 归档，不能运行 Windows `.exe`，也不能复用 Windows 中的 Node 安装。
 
-## 4. 核心对象
+## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
 
@@ -145,13 +145,13 @@ Node Provider 声明 `node`、`npm`、`npx`、`corepack`。
 - 完整归档：`PINSET_HOME/downloads/sha256/<hash>.archive`；
 - 断点文件：`PINSET_HOME/downloads/partial/<hash>.part`；
 - 相同 SHA-256 跨来源、跨项目复用；
-- 未知文件和非普通文件不得被静默当作缓存处理。
+- 未知文件和非普通文件不会被当作缓存处理。
 
-## 5. Node Beta 功能需求
+## 5. Node 功能
 
 ### 5.1 初始化
 
-`pinset init` 在当前目录创建最小 `pinset.toml`。已有文件时不得覆盖。
+`pinset init` 在当前目录创建最小 `pinset.toml`。如果文件已经存在，命令会报错，不会覆盖。
 
 ### 5.2 版本选择
 
@@ -203,7 +203,7 @@ pinset install node@20
 pinset exec node@20.19.0 -- node --version
 ```
 
-独立安装不得修改项目或全局选择。一次性执行只接受已安装的精确版本，不隐式修改持久状态。
+独立安装不修改项目或全局选择。一次性执行只接受已经安装的精确版本，也不会修改持久设置。
 
 ### 5.6 统一解析
 
@@ -225,7 +225,7 @@ pinset exec node@20.19.0 -- node --version
 - 任一同名文件非 Pinset 所有时整组停止；
 - 不覆盖外部管理器或用户命令；
 - `activate` 只输出当前 shell 的 PATH 调整，不写 profile；
-- `shim install` 保留为显式修复入口，不作为日常必需步骤。
+- `shim install` 用于修复路由，日常使用不需要先运行它。
 
 ### 5.8 版本列表
 
@@ -234,7 +234,7 @@ pinset list node
 pinset list node --available
 ```
 
-本地列表只读安装收据；可用列表读取可信版本索引。损坏或无收据目录不得伪装成受管安装。
+本地列表读取安装收据，可用版本列表读取可信版本索引。损坏或缺少收据的目录不会显示为 Pinset 安装。
 
 ### 5.9 安装事务
 
@@ -266,9 +266,9 @@ ZIP/TAR.XZ 必须拒绝路径穿越、绝对路径、特殊文件、逃逸符号
 
 ### 5.11 镜像和回退
 
-普通镜像只替换归档 URL，官方 HTTPS `SHASUMS256.txt` 仍是信任根。`--trust-metadata` 允许 HTTPS 自定义源同时提供 `index.json` 和 SHASUMS；这是显式扩大信任边界，必须在列表和文档中可见。
+普通镜像只替换归档 URL，SHA-256 仍从 Node 官方 HTTPS `SHASUMS256.txt` 获取。使用 `--trust-metadata` 后，自定义 HTTPS 镜像也可以提供 `index.json` 和 SHASUMS，`source list` 会标记这类来源。
 
-`--allow-insecure` 只用于明确可信的 HTTP 内网服务，不能与 `--trust-metadata` 同时使用。
+`--allow-insecure` 只用于可信的 HTTP 内网服务，不能与 `--trust-metadata` 同时使用。
 
 只有网络和传输错误可以 fallback。大小限制、哈希不匹配、格式错误和安全解压错误必须停止。
 
@@ -302,7 +302,7 @@ pinset cache import <archive> --sha256 <hash>
 
 ### 5.14 迁移
 
-检测 `.nvmrc`、`.node-version`、Volta、asdf 和 mise。`--dry-run` 只读；`--apply` 明确写入 Pinset，保留旧文件。冲突时必须要求 `--from`。
+检测 `.nvmrc`、`.node-version`、Volta、asdf 和 mise。`--dry-run` 只查看结果；`--apply` 写入 Pinset 并保留旧文件。存在冲突时由 `--from` 选择来源。
 
 ### 5.15 诊断
 
@@ -316,7 +316,7 @@ pinset cache import <archive> --sha256 <hash>
 - 旧 shim 和已知旧管理器；
 - 可执行的修复建议。
 
-诊断不得修改状态。
+诊断命令只读，不修改状态。
 
 ## 6. 国际化
 
@@ -336,7 +336,7 @@ Beta 支持：
 - 从可信元数据源获得预期 SHA-256；
 - 下载源不得改变锁文件中的预期哈希；
 - 所有归档在解压前校验；
-- Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，这是稳定版门禁。
+- Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，计划在稳定版加入。
 
 ### 7.2 Pinset Release
 
@@ -352,14 +352,14 @@ Beta 支持：
 ### 7.3 密钥和凭据
 
 - URL 写入收据前移除用户名、密码、query 和 fragment；
-- 日志不得输出 GitHub token、镜像凭据或代理密码；
+- 日志不输出 GitHub token、镜像凭据或代理密码；
 - Pinset 不保存包管理器凭据。
 
 ## 8. 架构
 
 ### 8.1 Workspace
 
-- `pinset-core`：配置、锁文件、Provider、来源、安装、缓存、解析和安全边界；
+- `pinset-core`：配置、锁文件、Provider、来源、安装、缓存、解析和安全检查；
 - `pinset-cli`：命令解析、交互、国际化、进度和用户输出；
 - `pinset-shim`：轻量命令调度入口。
 
@@ -370,11 +370,11 @@ Beta 支持：
 - Linux/macOS/WSL：`$XDG_DATA_HOME/pinset` 或 `$HOME/.local/share/pinset`；
 - Windows：`%LOCALAPPDATA%\pinset`。
 
-测试和 CI 必须显式设置随机临时 `PINSET_HOME`。除完整卸载专项测试外，不得对真实用户目录执行删除。
+测试和 CI 使用随机临时 `PINSET_HOME`。除完整卸载的专项测试外，不删除真实用户目录。
 
-## 9. Beta 验收标准
+## 9. Beta 验收
 
-### 9.1 本地门禁
+### 9.1 本地检查
 
 - `cargo fmt --all -- --check`；
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`；
@@ -387,7 +387,7 @@ Beta 支持：
 
 这些检查只使用临时目录、假归档和本地服务，不在开发机安装真实 Node。
 
-### 9.2 Release 门禁
+### 9.2 Release 检查
 
 每个支持平台必须在隔离 Runner 中：
 
@@ -400,17 +400,17 @@ Beta 支持：
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
-任一平台失败不得创建完整 Release。
+任一平台失败都不发布 Release。
 
 ## 10. 稳定版前待办
 
-`v0.1.0` 稳定门禁：
+`v0.1.0` 计划完成：
 
 - 验证 Node 上游 SHASUMS OpenPGP 签名，并定义密钥轮换策略；
 - 冻结 schema 1 兼容承诺和迁移策略；
 - 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
-- 不增加新 Provider，除非 Node 稳定门禁已全部满足。
+- Node 稳定版完成前不增加新 Provider。
 
-Python、Flutter 的研究和实现排在 `v0.1.0` 稳定之后，必须复用 Provider、来源、缓存、路由和安全模型，而不是在 CLI 中写新的特例。
+Python 和 Flutter 排在 `v0.1.0` 之后。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

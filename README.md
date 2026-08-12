@@ -5,7 +5,7 @@
 
 Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用一致的命令管理 Node.js、Python、Flutter 等运行时，减少在 fnm、nvm、uv、FVM 之间切换的学习和维护成本。
 
-`v0.1.0-beta.1` 是 Node-first Beta：本版本只承诺 Node.js 闭环，暂不接入 Python 和 Flutter。当前支持：
+`v0.1.0-beta.1` 目前专注 Node.js，Python 和 Flutter 尚未支持。当前功能包括：
 
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
@@ -36,19 +36,7 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-### 为什么安装命令现在可以这么短
-
-旧命令中的参数并不是另一套安装方式：
-
-- `-f`：HTTP 失败时让 curl 返回失败；
-- `-sS`：隐藏普通进度，但仍显示错误；
-- `-L`：跟随 GitHub 重定向；
-- `--proto '=https' --tlsv1.2`：额外限制 curl 只能使用 HTTPS 和 TLS 1.2 以上；
-- `sh -s -- --version ...`：把固定版本传给脚本。此前 GitHub 的 `latest` 不会指向预发布版本，所以 Alpha 必须显式传版本。
-
-`-fsSL` 与 `-LsSf` 只是同一组短参数的不同顺序。现在主分支安装器内置推荐版本，用户入口可以像 Bun 一样保持简短；安装器内部下载 Release 时仍然执行 HTTPS/TLS 限制和 SHA-256 校验。
-
-需要固定并审阅某个不可变版本时，可以直接使用带版本的 Release 脚本：
+安装指定版本：
 
 ```bash
 curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.1.0-beta.1/install.sh | sh
@@ -199,7 +187,7 @@ pinset which node
 pinset which npm
 ```
 
-### 显式执行与一次性版本
+### 通过 Pinset 执行命令
 
 即使还没有启用直接命令路由，也可以使用：
 
@@ -238,7 +226,7 @@ PowerShell：
 pinset activate powershell | Out-String | Invoke-Expression
 ```
 
-查看路由目录或显式修复：
+查看路由目录或修复路由：
 
 ```shell
 pinset shim path
@@ -268,7 +256,7 @@ pinset source list node
 
 ### 可信元数据镜像
 
-如果官方 `index.json` 或 `SHASUMS256.txt` 在所在网络也很慢，可显式信任一个 HTTPS 镜像：
+如果官方 `index.json` 或 `SHASUMS256.txt` 在所在网络也很慢，可以信任一个 HTTPS 镜像提供这些文件：
 
 ```shell
 pinset source add node cn-trusted \
@@ -349,7 +337,7 @@ pinset import --apply --from nvm
 pinset import --apply --from volta --global --no-install
 ```
 
-多个旧配置给出不同版本时，Pinset 会要求显式指定 `--from`，不会猜测。
+多个旧配置给出不同版本时，需要通过 `--from` 选择来源。
 
 ### 卸载一个 Node 版本
 
@@ -438,7 +426,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-本地 Rust 测试只使用临时目录、假归档、本地 HTTP 服务和假运行时，不会安装真实 Node。Release 工作流才会在 Linux、Windows、macOS 的隔离 GitHub Runner 中安装两个真实 Node 版本，验证全局/项目切换以及 `node`、`npm`、`npx`、`corepack` 的显式和直接调用。
+本地 Rust 测试只使用临时目录、假归档、本地 HTTP 服务和假运行时，不会安装真实 Node。Release 工作流会在 Linux、Windows、macOS 的隔离 GitHub Runner 中安装两个真实 Node 版本，验证全局/项目切换以及 `node`、`npm`、`npx`、`corepack` 的两种调用方式。
 
 Linux/WSL 构建产物：
 
@@ -460,8 +448,8 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## 文档
 
-- [PRD](docs/PRD.md)：产品边界、用户流程、功能和安全约束；
-- [Plans](docs/PLANS.md)：版本路线、实施顺序、验收和发布门禁；
+- [PRD](docs/PRD.md)：产品目标、用户流程、功能和安全约束；
+- [Plans](docs/PLANS.md)：版本路线和后续计划；
 - [Release Notes](docs/RELEASE_NOTES.md)：每个公开版本的用户可见变化和限制；
 - [贡献指南](CONTRIBUTING.md)；
 - [安全策略](SECURITY.md)。
