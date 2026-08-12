@@ -7,7 +7,8 @@ use std::{
 
 use crate::{
     Error, Result, current_target, find_optional_project_config, global_config_path,
-    load_optional_global_config, load_project_config,
+    is_managed_command_shim, load_optional_global_config, load_project_config,
+    runtime_provider_for_command,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,10 +47,7 @@ pub struct CommandResolution {
 }
 
 pub fn command_tool(command: &str) -> Option<&'static str> {
-    match command {
-        "node" | "npm" | "npx" | "corepack" => Some("node"),
-        _ => None,
-    }
+    runtime_provider_for_command(command).map(|provider| provider.tool)
 }
 
 pub fn pinset_home() -> Result<PathBuf> {
@@ -95,7 +93,8 @@ pub fn resolve_from_env(command: &str, cwd: &Path) -> Result<CommandResolution> 
 
 pub fn resolve_command(command: &str, cwd: &Path, pinset_home: &Path) -> Result<CommandResolution> {
     let path = env::var_os("PATH");
-    resolve_command_with_path(command, cwd, pinset_home, path.as_deref(), &[])
+    let excluded = sibling_shim_executable().into_iter().collect::<Vec<_>>();
+    resolve_command_with_path(command, cwd, pinset_home, path.as_deref(), &excluded)
 }
 
 pub fn resolve_command_with_path(
@@ -224,7 +223,7 @@ pub fn find_system_commands(
             if !is_executable_file(&candidate)
                 || excluded_executables
                     .iter()
-                    .any(|excluded| same_executable(&candidate, excluded))
+                    .any(|excluded| same_executable(&candidate, excluded, command))
             {
                 continue;
             }
@@ -257,8 +256,21 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn same_executable(left: &Path, right: &Path) -> bool {
-    paths_equal(left, right) || same_file::is_same_file(left, right).unwrap_or(false)
+fn same_executable(left: &Path, right: &Path, command: &str) -> bool {
+    paths_equal(left, right)
+        || same_file::is_same_file(left, right).unwrap_or(false)
+        || is_managed_command_shim(right, left, command).unwrap_or(false)
+}
+
+fn sibling_shim_executable() -> Option<PathBuf> {
+    let executable = env::current_exe().ok()?;
+    let directory = executable.parent()?;
+    let shim = directory.join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    shim.is_file().then_some(shim)
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -480,7 +492,23 @@ mod tests {
                 &cwd,
                 &home,
                 Some(alias_path.as_os_str()),
-                &[original],
+                std::slice::from_ref(&original),
+            ),
+            Err(Error::CommandSelectionNotFound { .. })
+        ));
+
+        let copy_dir = root.path().join("copy-bin");
+        fs::create_dir_all(&copy_dir).expect("copy directory");
+        let copied = command_path(&copy_dir, "node");
+        fs::copy(&original, &copied).expect("copied shim alias");
+        let copy_path = env::join_paths([&copy_dir]).expect("copy PATH");
+        assert!(matches!(
+            resolve_command_with_path(
+                "node",
+                &cwd,
+                &home,
+                Some(copy_path.as_os_str()),
+                std::slice::from_ref(&original),
             ),
             Err(Error::CommandSelectionNotFound { .. })
         ));

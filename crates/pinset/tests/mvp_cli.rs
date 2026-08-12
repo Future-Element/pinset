@@ -127,7 +127,14 @@ fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
     fs::create_dir(&workspace).expect("workspace");
     fs::write(&fake_shim, b"fake shim").expect("fake shim");
 
-    let path = pinset(&workspace, &home, &["shim", "path"]);
+    let default_routing = home.join("shims");
+    let path = pinset_with_router(
+        &workspace,
+        &home,
+        &fake_shim,
+        &default_routing,
+        &["shim", "path"],
+    );
     assert_success_contains(&path, &home.join("shims").display().to_string());
     assert!(!home.exists(), "shim path must not create PINSET_HOME");
 
@@ -137,6 +144,8 @@ fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
         &[
             "shim",
             "install",
+            "--provider",
+            "node",
             "--binary",
             fake_shim.to_str().expect("UTF-8 fake shim"),
             "--dir",
@@ -146,7 +155,7 @@ fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
     assert_success_contains(&install, "shim directory ready");
     for command in ["node", "npm", "npx", "corepack"] {
         let filename = if cfg!(windows) {
-            format!("{command}.exe")
+            format!("{command}.cmd")
         } else {
             command.to_owned()
         };
@@ -162,15 +171,230 @@ fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
         &[
             "shim",
             "install",
+            "--provider",
+            "node",
             "--binary",
             fake_shim.to_str().expect("UTF-8 fake shim"),
             "--dir",
             destination.to_str().expect("UTF-8 destination"),
         ],
     );
+    assert_success_contains(&repeated, "shim directory ready");
+    assert_eq!(
+        fs::read(&fake_shim).expect("source shim"),
+        b"fake shim",
+        "idempotent repair must not modify the source binary"
+    );
+}
+
+#[test]
+fn shim_migration_registers_new_routes_and_preserves_legacy_entries() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    let destination = root.path().join("routing");
+    let fake_shim = root.path().join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    let legacy = home.join("shims");
+    fs::create_dir(&project).expect("project");
+    fs::create_dir_all(&legacy).expect("legacy shims");
+    fs::write(&fake_shim, b"fake provider router").expect("fake shim");
+    write_project(&project, "24.0.0", "24.0.0");
+    let legacy_node = legacy.join(if cfg!(windows) { "node.exe" } else { "node" });
+    fs::write(&legacy_node, b"legacy route remains untouched").expect("legacy node");
+
+    let output = pinset_with_router(
+        &project,
+        &home,
+        &fake_shim,
+        &destination,
+        &["shim", "migrate", "--provider", "node"],
+    );
+
+    assert_success_contains(&output, "registered 4 command routes");
+    assert_success_contains(&output, "preserved 1 legacy entries");
+    assert_eq!(
+        fs::read(&legacy_node).expect("legacy node"),
+        b"legacy route remains untouched"
+    );
+    for command in ["node", "npm", "npx", "corepack"] {
+        let filename = if cfg!(windows) {
+            format!("{command}.cmd")
+        } else {
+            command.to_owned()
+        };
+        assert!(
+            destination.join(filename).is_file(),
+            "missing {command} route"
+        );
+    }
+}
+
+#[test]
+fn doctor_reports_all_node_provider_commands_and_path_shadowing() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    let routing = root.path().join("routing");
+    let system_bin = root.path().join("system-bin");
+    let fake_shim = root.path().join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    fs::create_dir(&project).expect("project");
+    fs::write(&fake_shim, b"fake provider router").expect("fake shim");
+    write_project(&project, "24.0.0", "24.0.0");
+    create_fake_node(&home, "24.0.0");
+    create_fake_system_node(&system_bin);
+
+    let install = pinset(
+        &project,
+        &home,
+        &[
+            "shim",
+            "install",
+            "--provider",
+            "node",
+            "--binary",
+            fake_shim.to_str().expect("UTF-8 fake shim"),
+            "--dir",
+            routing.to_str().expect("UTF-8 routing"),
+        ],
+    );
+    assert!(install.status.success());
+
+    let doctor = pinset_with_router_and_path(
+        &project,
+        &home,
+        &fake_shim,
+        &routing,
+        &[&system_bin, &routing],
+        &["doctor", "--json"],
+    );
     assert!(
-        !repeated.status.success(),
-        "existing shims must not be overwritten"
+        doctor.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor JSON output");
+    let commands = report["path_candidates"]
+        .as_array()
+        .expect("path candidates")
+        .iter()
+        .filter_map(|candidate| candidate["command"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        commands,
+        ["corepack", "node", "npm", "npx"].into_iter().collect()
+    );
+    assert!(
+        report["routing_issues"]
+            .as_array()
+            .expect("routing issues")
+            .iter()
+            .any(|issue| issue["code"] == "provider-route-shadowed" && issue["command"] == "node")
+    );
+}
+
+#[test]
+fn locked_install_registers_provider_commands_without_downloading_a_runtime() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    let routing = root.path().join("routing");
+    let fake_shim = root.path().join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    fs::create_dir(&project).expect("project");
+    fs::create_dir(&routing).expect("routing");
+    fs::write(&fake_shim, b"fake provider router").expect("fake shim");
+    write_project(&project, "24.0.0", "24.0.0");
+    create_fake_node(&home, "24.0.0");
+    create_complete_install_receipt(&home, "24.0.0");
+
+    let output = pinset_with_router(
+        &project,
+        &home,
+        &fake_shim,
+        &routing,
+        &["install", "--locked"],
+    );
+
+    assert_success_contains(&output, "node command routing ready");
+    assert_success_contains(&output, "managed-existing=-");
+    for command in ["node", "npm", "npx", "corepack"] {
+        let filename = if cfg!(windows) {
+            format!("{command}.cmd")
+        } else {
+            command.to_owned()
+        };
+        assert!(routing.join(filename).is_file(), "missing {command} route");
+    }
+    assert!(!routing.join("python").exists());
+    assert!(!routing.join("flutter").exists());
+
+    let repeated = pinset_with_router(
+        &project,
+        &home,
+        &fake_shim,
+        &routing,
+        &["install", "--locked"],
+    );
+    assert_success_contains(&repeated, "managed-existing=node,npm,npx,corepack");
+}
+
+#[test]
+fn provider_registration_stops_before_overwriting_a_foreign_command() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    let routing = root.path().join("routing");
+    let fake_shim = root.path().join(if cfg!(windows) {
+        "pinset-shim.exe"
+    } else {
+        "pinset-shim"
+    });
+    fs::create_dir(&project).expect("project");
+    fs::create_dir(&routing).expect("routing");
+    fs::write(&fake_shim, b"fake provider router").expect("fake shim");
+    write_project(&project, "24.0.0", "24.0.0");
+    create_fake_node(&home, "24.0.0");
+    create_complete_install_receipt(&home, "24.0.0");
+    let existing_npm = routing.join(if cfg!(windows) { "npm.exe" } else { "npm" });
+    fs::write(&existing_npm, b"foreign npm entry").expect("existing npm");
+
+    let output = pinset_with_router(
+        &project,
+        &home,
+        &fake_shim,
+        &routing,
+        &["install", "--locked"],
+    );
+
+    assert!(
+        output.status.success(),
+        "runtime install remains successful"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("refusing to overwrite"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&existing_npm).expect("existing npm"),
+        b"foreign npm entry"
+    );
+    assert!(
+        !routing
+            .join(if cfg!(windows) { "node.cmd" } else { "node" })
+            .exists()
     );
 }
 
@@ -188,6 +412,43 @@ fn project_selection_overrides_the_global_fake_runtime() {
     let exec = pinset(&project, &home, &["exec", "--", "node", "priority"]);
     assert_success_contains(&exec, "20.0.0:priority");
     assert_success_contains(&exec, "source=project");
+}
+
+#[test]
+fn unset_clears_project_then_global_selection_without_uninstalling_runtimes() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    fs::create_dir(&workspace).expect("workspace");
+    write_global(&home, "24.0.0", "24.0.0");
+    write_project(&project, "20.0.0", "20.0.0");
+    let global_runtime = create_fake_node(&home, "24.0.0");
+    let project_runtime = create_fake_node(&home, "20.0.0");
+
+    let project_unset = pinset(&project, &home, &["unset", "node"]);
+    assert_success_contains(&project_unset, "cleared project Node.js selection");
+    assert!(!project.join("pinset.lock").exists());
+    assert!(
+        fs::read_to_string(project.join("pinset.toml"))
+            .expect("project config")
+            .contains("[tools]")
+    );
+    let current = pinset(&project, &home, &["current"]);
+    assert_success_contains(&current, "node 24.0.0 installed");
+    assert_success_contains(&current, "source=global");
+    assert!(
+        project_runtime.is_file(),
+        "project runtime must be preserved"
+    );
+
+    let global_unset = pinset(&workspace, &home, &["unset", "node", "--global"]);
+    assert_success_contains(&global_unset, "cleared global Node.js selection");
+    assert!(!home.join("state/global.lock").exists());
+    assert!(global_runtime.is_file(), "global runtime must be preserved");
+    let global = pinset(&workspace, &home, &["global"]);
+    assert_success_contains(&global, "no global Node.js version selected");
 }
 
 #[test]
@@ -329,6 +590,18 @@ fn doctor_json_and_import_preview_are_machine_readable_and_read_only() {
         fs::read_to_string(project.join("pinset.toml")).expect("project config"),
         "schema = 1\n\n[tools]\nnode = \"24.0.0\"\n"
     );
+
+    let conflict = pinset(&project, &home, &["import", "--apply", "--no-install"]);
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("pass --from <source>"),
+        "stderr: {}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("pinset.toml")).expect("project config"),
+        "schema = 1\n\n[tools]\nnode = \"24.0.0\"\n"
+    );
 }
 
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
@@ -446,6 +719,27 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
     }
 }
 
+fn create_complete_install_receipt(home: &Path, version: &str) {
+    let install_dir = home
+        .join("installs")
+        .join("node")
+        .join(version)
+        .join(current_target());
+    if cfg!(windows) {
+        fs::write(install_dir.join("node.exe"), b"fake node executable")
+            .expect("required node executable");
+    }
+    fs::write(
+        install_dir.join(".pinset-install.toml"),
+        format!(
+            "complete = true\ntool = \"node\"\nversion = \"{version}\"\ntarget = \"{}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
+            current_target(),
+            "ab".repeat(32)
+        ),
+    )
+    .expect("install receipt");
+}
+
 fn create_fake_system_node(directory: &Path) -> PathBuf {
     fs::create_dir_all(directory).expect("system command directory");
 
@@ -501,6 +795,50 @@ fn pinset_with_path(project: &Path, home: &Path, first: &Path, arguments: &[&str
         .args(arguments)
         .current_dir(project)
         .env("PINSET_HOME", home)
+        .env("PATH", path)
+        .output()
+        .expect("run pinset")
+}
+
+fn pinset_with_router(
+    project: &Path,
+    home: &Path,
+    shim_binary: &Path,
+    shim_directory: &Path,
+    arguments: &[&str],
+) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .args(arguments)
+        .current_dir(project)
+        .env("PINSET_HOME", home)
+        .env("PINSET_SHIM_BINARY", shim_binary)
+        .env("PINSET_SHIM_DIR", shim_directory)
+        .output()
+        .expect("run pinset")
+}
+
+fn pinset_with_router_and_path(
+    project: &Path,
+    home: &Path,
+    shim_binary: &Path,
+    shim_directory: &Path,
+    first: &[&Path],
+    arguments: &[&str],
+) -> Output {
+    let inherited_path = env::var_os("PATH");
+    let path = first.iter().map(|path| (*path).to_path_buf()).chain(
+        inherited_path
+            .as_ref()
+            .into_iter()
+            .flat_map(|value| env::split_paths(value)),
+    );
+    let path = env::join_paths(path).expect("test PATH");
+    Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .args(arguments)
+        .current_dir(project)
+        .env("PINSET_HOME", home)
+        .env("PINSET_SHIM_BINARY", shim_binary)
+        .env("PINSET_SHIM_DIR", shim_directory)
         .env("PATH", path)
         .output()
         .expect("run pinset")

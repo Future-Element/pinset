@@ -2,6 +2,7 @@
 
 文档状态：`产品基线`
 当前发布版本：`v0.1.0-alpha.4`
+当前开发版本：`v0.1.0-alpha.5`
 更新时间：2026-08-12
 
 ## 文档关系
@@ -10,7 +11,8 @@
   如何工作以及明确不做什么。
 - [Plans](PLANS.md) 定义各版本范围、实施顺序和发布门禁。
 - [发布说明](RELEASE_NOTES.md) 只记录已经交付的用户可见变化。
-- 本文件中的“当前”均指 `v0.1.0-alpha.4`；标记为“计划”的契约尚不能当作可用命令。
+- 本文件中的“已发布”指 `v0.1.0-alpha.4`；标记为“开发中”的命令只代表本地源码状态，
+  在发布 `v0.1.0-alpha.5` 前不能作为公开兼容承诺。
 
 ## 1. 产品定位
 
@@ -112,8 +114,10 @@ pinset.lock
 
 ### Provider
 
-Node.js、CPython 和 Flutter 使用内置 provider。Provider 负责版本元数据、目标映射、产物
-布局、可信校验和安装后的必要文件验证。首版不开放任意脚本插件。
+Node.js、CPython 和 Flutter 使用内置 Provider。Provider 负责版本元数据、目标映射、产物
+布局、可信校验、安装后的必要文件验证，以及该运行时拥有的命令清单。命令解析和命令入口
+注册必须读取同一份 Provider 元数据，不能在 curl 安装器或 CLI 分支中分别硬编码。首版不开放
+任意脚本插件；当前只有 Node Provider 已实现。
 
 ### Installer
 
@@ -122,8 +126,9 @@ Installer 负责下载限制、哈希校验、安全解压、临时目录、原�
 
 ### Shim and Exec
 
-shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目录选择运行时；
-`pinset exec` 为 CI、脚本和不安装 shim 的用户提供显式入口。二者共享同一个核心解析器。
+通用 shim 让 Provider 声明的命令根据当前目录选择运行时；curl 只安装调度器本体，不创建任何
+语言命令。Provider 在用户选择或安装对应运行时后注册命令入口。`pinset exec` 为 CI、脚本和
+不启用直接命令路由的用户提供显式入口，二者共享同一个核心解析器。
 
 ### Source Configuration
 
@@ -171,7 +176,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 - 路由 `node`、`npm`、`npx` 和 `corepack`。
 - 支持 Windows x64、Linux x64、macOS x64 和 macOS arm64 官方预编译产物。
 - npm/corepack 通过 `/usr/bin/env node` 启动时，子进程 PATH 必须包含所选 Node。
-- 后续支持 major/minor、LTS 和 current 选择器，但写锁结果始终是精确版本。
+- 支持 major/minor、LTS 和 current 选择器，写锁结果始终是精确版本。
 
 ### CPython
 
@@ -203,7 +208,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 1. 用户从 GitHub Release 或官方安装脚本取得 Pinset。
 2. 安装器识别平台并下载对应归档与 `SHA256SUMS`。
 3. 校验通过后把 `pinset` 与 `pinset-shim` 安装到用户目录。
-4. 安装器展示 PATH 建议，但不自动修改 shell profile。
+4. 安装器不创建任何 Node、Python、Flutter 或其他运行时命令，并展示通用 PATH 建议。
 5. 用户执行 `pinset --version` 和 `pinset doctor` 验证环境。
 
 ### 设置全局默认版本
@@ -211,7 +216,7 @@ shim 让现有的 `node`、`npm`、`python`、`flutter` 等命令根据当前目
 1. 用户执行 `pinset global node@24`；兼容入口为 `pinset use node@24 --global`。
 2. Pinset 读取可信元数据并生成用户级全局锁。
 3. 当前平台缺失时执行校验和事务安装。
-4. shim 在没有项目声明时使用该全局版本。
+4. Node Provider 注册自己声明的命令；已有外部同名文件时停止注册且不覆盖。
 5. `current` 展示来源为 `global`。
 
 ### 初始化项目
@@ -310,13 +315,16 @@ Pinset 默认无遥测，因此产品验证主要来自公开 Issue、用户主�
 
 ## 13. 当前版本边界
 
-`v0.1.0-alpha.4` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH 解析、
+已发布的 `v0.1.0-alpha.4` 已经完成 Node 精确和浮动版本选择、显式全局默认、项目/全局/PATH 解析、
 安全卸载、带进度显示的归档下载、内容寻址下载缓存、来源测试、JSON 诊断、中英文界面和
 旧管理器只读迁移预览。
 该版本已通过本地自动化、三平台 Release 构建和公开资产复核；用户目标系统完整功能验收
-留待发布后执行；
-CPython 与 Flutter 仍未交付。完整范围和发布门禁见
-[Plans](PLANS.md#4-v010-alpha4--node-workflow-hardening)。
+留待发布后执行。
+
+开发中的 `v0.1.0-alpha.5` 一次性收口 Node 运行时管理：增加 Provider 命令清单、选择/安装后的
+自动命令注册、通用 `activate`、独立版本安装、显式旧配置导入、旧 shim 迁移和四命令 PATH
+诊断；curl 仍严格只安装两个 Pinset 二进制。CPython 与 Flutter 仍未交付。完整范围和发布门禁见
+[Plans](PLANS.md#5-v010-alpha5--provider-driven-command-routing)。
 
 ## 14. 命令契约与交付状态
 
@@ -325,26 +333,33 @@ CPython 与 Flutter 仍未交付。完整范围和发布门禁见
 | `pinset init` | 已实现 | 创建最小项目配置，已有文件时拒绝覆盖 |
 | `pinset use node@x.y.z` | 已实现 | 更新项目配置与锁，并安装当前平台 |
 | `pinset use node@24`、`node@24.12`、`node@lts`、`node@current` | 已实现 | 联网解析为精确稳定版本后写锁 |
-| `pinset use node@x.y.z --no-install` | 已实现 | 只更新项目配置和锁 |
+| `pinset use node@x.y.z --no-install` | 已实现 | 更新项目配置和锁但不下载；alpha.5 同时准备 Provider 命令路由 |
 | `pinset use node@x.y.z --global` | 已实现 | 更新用户级全局选择，不修改项目 |
 | `pinset global [node@selector]` | 已实现 | 显式查看或设置全局默认版本，并提示项目覆盖 |
+| `pinset unset node [--global]` | alpha.5 开发中 | 清除项目/全局选择并回退上一层，不卸载运行时 |
 | `pinset install --locked` | 已实现 | 配置与锁不匹配时失败，安装当前目标 |
 | `pinset install --global --locked` | 已实现 | 根据全局锁恢复当前目标 |
+| `pinset install node@<selector>` | alpha.5 开发中 | 安装精确或浮动选择器对应版本，不修改项目/全局选择 |
 | `pinset current` | 已实现 | 显示当前目录最终生效的项目、全局或系统选择 |
 | `pinset current [tool]` | 已实现 | 显示工具、精确版本、来源和路径 |
 | `pinset which <command>` | 已实现 | 显示将执行的真实文件 |
 | `pinset which <command> --sdk` | Flutter 阶段 | 返回 SDK 根路径供 IDE/脚本使用 |
 | `pinset exec -- <command>` | 已实现 | 使用当前项目运行时执行并返回子进程退出码 |
 | `pinset exec node@<selector> -- ...` | 已实现 | 一次性选择已安装版本，不修改项目或全局状态 |
-| `pinset doctor` | 已实现基础版 | 扩展 PATH、全局、旧管理器与 IDE 诊断 |
-| `pinset doctor --json` | 已实现 | schema 1 稳定机器可读诊断结构 |
+| `pinset doctor` | alpha.5 开发中 | 检查四个 Node 命令、PATH 顺序、受管入口、旧 shim 与旧管理器 |
+| `pinset doctor --json` | alpha.5 开发中 | schema 1 机器可读诊断结构，增加命令候选与可逆修复问题码 |
 | `pinset source list/add/use/fallback/remove` | 已实现 | 管理本机传输源，不修改项目锁 |
 | `pinset source test node [alias]` | 已实现 | 只读检测 HTTP/TLS、版本索引和 SHASUMS，不下载归档 |
 | `pinset list node [--available]` | 已实现 | 本地安装列表默认离线；`--available` 显式读取官方索引 |
 | `pinset uninstall node@x.y.z` | 已实现 | 默认保护当前项目和全局引用，只删除 Pinset 收据匹配目录 |
 | `pinset cache list/clean` | 已实现 | 查看和清理 SHA-256 内容寻址归档，保留未知文件 |
 | `pinset import --dry-run` | 已实现 | 只读检测 nvm/node-version/Volta/asdf/mise 并报告冲突 |
+| `pinset import --apply [--from <source>]` | alpha.5 开发中 | 显式导入项目或全局选择；冲突不猜测，保留旧文件 |
 | `pinset --lang <en\|zh-CN>` | 已实现 | 无子命令时保存界面语言，带子命令时仅覆盖本次输出 |
+| `pinset activate <shell>` | alpha.5 开发中 | 输出运行时无关的当前 Shell PATH 设置，不修改 profile |
+| Provider 自动命令注册 | alpha.5 开发中 | 选择/安装后注册 Provider 声明的命令，冲突时整组停止 |
+| `pinset shim install --provider <tool>` | alpha.5 开发中 | 幂等修复 Provider 命令入口，不作为正常安装步骤 |
+| `pinset shim migrate --provider node` | alpha.5 开发中 | 在当前路由目录准备入口，报告并保留旧 shim |
 
 计划命令只有在对应版本发布后才成为兼容承诺。脚本不得依赖未冻结的参数、输出文本或退出码。
 
@@ -514,7 +529,12 @@ Unix Node TAR.XZ 只允许归档根内的安全相对符号链接，且提交前
 - 根据目标构造 canonical artifact path；
 - 提供可信元数据和校验方式；
 - 描述归档布局、命令映射和必要文件；
+- 声明自己拥有的用户命令，供解析器和命令注册共同使用；
 - 验证安装后的运行时结构。
+
+通用安装器和 `curl | sh` 不得包含 `node`、`python`、`flutter` 等 Provider 专属命令清单。
+Provider 注册前必须预检整组目标：受 Pinset 管理且内容一致的入口可幂等复用，任何外部同名
+文件都使注册在写入前停止。失败不得覆盖旧文件，也不得留下部分新入口。
 
 Node semver、Python 构建标签和 Flutter channel/ref 不能强制共用同一个字符串比较器。
 首版只有内置 provider，不加载第三方代码；未来插件只有在能力隔离、签名和信任模型通过
@@ -580,9 +600,29 @@ pinset use node@24.0.0 --no-install
 pinset install --locked
 ```
 
+清除项目选择并恢复全局默认，或清除全局默认并恢复系统 PATH：
+
+```shell
+pinset unset node
+pinset unset node --global
+```
+
+`unset` 只更新 Pinset 配置与对应锁，保留已安装版本、下载缓存和命令路由。
+
+#### 只安装、不改变选择
+
+如果只想预装一个版本供后续一次性执行，不修改项目配置或全局默认：
+
+```shell
+pinset install node@20
+pinset exec node@20.19.0 -- node --version
+```
+
+浮动选择器在安装时解析为精确版本；该命令不会创建或改写 `pinset.toml`、全局状态。
+
 ### 17.3 执行与查询
 
-不安装 shim 也可以完整使用 alpha.3：
+不启用直接命令路由也可以通过显式入口完整使用 Pinset：
 
 ```bash
 pinset current
@@ -599,7 +639,7 @@ pinset current --cwd /path/to/project
 pinset doctor --cwd /path/to/project
 ```
 
-alpha.3 的解析顺序为最近项目配置、正式全局选择、排除 Pinset shim 后的系统 PATH。项目或
+当前解析顺序为最近项目配置、正式全局选择、排除 Pinset shim 后的系统 PATH。项目或
 全局已经声明 Node 时，即使安装缺失也不会静默回退。
 
 ### 17.4 界面语言
@@ -619,34 +659,47 @@ pinset --lang en doctor
 也可以通过 `PINSET_LANG=zh-CN` 覆盖当前进程。优先级为命令行参数、环境变量、
 `$PINSET_HOME/settings.toml`、英文默认值。语言设置属于本机用户，不写入项目。
 
-### 17.5 安装 shim
+### 17.5 Provider 命令路由
 
-shim 只在用户指定目录创建 `node`、`npm`、`npx` 和 `corepack` 入口，不覆盖已有同名文件。
+curl 安装器只放置 `pinset` 和通用 `pinset-shim`，不会创建任何语言命令。用户执行
+`pinset global node@24`、`pinset use node@22` 或锁定安装后，Node Provider 才注册自己声明的
+`node`、`npm`、`npx` 和 `corepack`。
+
+如果 `pinset` 所在目录已经位于 PATH，命令入口默认放在同一目录，可立即直接使用。源码运行、
+自定义布局或回退到 `$PINSET_HOME/shims` 时，只为当前 Shell 启用通用路由目录：
+
+```bash
+eval "$(pinset activate bash)"
+# Zsh 使用：eval "$(pinset activate zsh)"
+```
 
 Windows PowerShell：
 
 ```powershell
-$shimDir = pinset shim path
-pinset shim install
-$env:PATH = "$shimDir;$env:PATH"
-node --version
-pinset doctor
+pinset activate powershell | Out-String | Invoke-Expression
 ```
 
-Linux/macOS：
+`activate` 输出只包含 PATH 操作，不包含 Node 或其他 Provider 命令，也不写 shell profile。
+`pinset shim path` 可只读查看当前默认路由目录；显式修复使用：
 
-```bash
-PINSET_SHIM_DIR="$(pinset shim path)"
-pinset shim install
-export PATH="$PINSET_SHIM_DIR:$HOME/.local/bin:$PATH"
-node --version
-pinset doctor
+```shell
+pinset shim install --provider node
 ```
 
-默认从 `pinset` 同目录寻找 `pinset-shim`，默认目标为 `$PINSET_HOME/shims`；高级场景仍可用
-`--binary` 和 `--dir` 覆盖。目标中任何同名文件已存在时都会拒绝整组安装，不会覆盖其他
-管理器。确认无冲突后，用户可自行把同一 PATH 设置写入 shell profile；Pinset 不自动修改
-已运行父 Shell。
+从 alpha.4 的 `$PINSET_HOME/shims` 布局升级时，可显式迁移到当前路由目录：
+
+```shell
+pinset shim migrate --provider node
+```
+
+迁移只在目标目录创建或复用受管入口；旧目录中的文件会被报告并保留，不会自动删除。
+
+不传 `--provider` 和命令名时，修复命令从最近项目配置与全局配置发现已选择 Provider；高级
+场景可显式传入命令名、`--binary` 和 `--dir`。注册先预检整组目标，已由同一调度器管理的入口
+幂等复用；任何外部同名文件都会使整组注册停止，且不会留下部分入口或覆盖其他管理器。
+Unix 使用指向通用路由器的符号链接；Windows 使用稳定 `.cmd` 包装器，升级
+`pinset-shim.exe` 后无需复制四份新二进制。同目录已有任一同名 `.exe`、`.cmd`、`.bat` 或
+无扩展入口都会被视为冲突。
 
 ### 17.6 国内或企业镜像
 
@@ -747,6 +800,15 @@ pinset import --dry-run
 Pinset 数据目录之外、缺少收据或收据身份不匹配的目录。`cache clean` 只删除
 `downloads/sha256/<SHA-256>.archive` 普通文件。`import --dry-run` 只读取当前目录中的旧管理器
 配置并报告冲突，不会写入 `pinset.toml`。
+
+alpha.5 可在确认后显式导入，并始终保留原文件：
+
+```shell
+pinset import --apply --from nvm
+pinset import --apply --from volta --global --no-install
+```
+
+多个旧文件给出不同版本且没有 `--from` 时，导入会在写入前失败。
 
 ### 17.10 alpha.4 新增功能
 

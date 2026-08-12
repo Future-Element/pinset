@@ -233,4 +233,6 @@ case ":${PATH:-}:" in
         ;;
 esac
 
-printf '\nPinset does not modify shell profiles or install language runtimes automatically.\n'
+printf '\nInstalled only the Pinset CLI and its runtime-agnostic command router.\n'
+printf 'Runtime providers register their own commands only after you select or install that runtime.\n'
+printf 'Pinset does not modify shell profiles or install language runtimes automatically.\n'

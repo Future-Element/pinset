@@ -3,7 +3,7 @@
 当前发布版本：`v0.1.0-alpha.4`
 下一开发目标：`v0.1.0-alpha.5`
 目标稳定版本：`v0.1.0`
-状态：`alpha.4 published — alpha.5 planning`
+状态：`alpha.4 published — alpha.5 implemented locally, release pending`
 更新时间：2026-08-12
 
 ## 文档边界
@@ -22,8 +22,9 @@
 | `v0.1.0-alpha.2` | Global and project resolution | 正式全局选择、项目覆盖、系统 PATH 透传和可解释解析 |
 | `v0.1.0-alpha.3` | Node lifecycle and migration | 浮动选择器、本地版本管理、卸载、来源测试和旧管理器诊断 |
 | `v0.1.0-alpha.4` | Node workflow hardening | 显式全局默认入口、项目覆盖解释和 Node 使用文档收口 |
-| `v0.1.0-alpha.5` | CPython provider | 可审计 CPython 产物、Python 命令路由和 uv/pip 共存 |
-| `v0.1.0-alpha.6` | Flutter provider | Flutter stable、Dart 路由、稳定 SDK 路径和 IDE 流程 |
+| `v0.1.0-alpha.5` | Node runtime closure | Provider 自动路由、直接安装、显式旧配置导入、旧 shim 迁移和完整 PATH 诊断 |
+| `v0.1.0-alpha.6` | Node acceptance fixes | 只处理 alpha.5 跨 Shell/平台真实验收发现的问题，不再新增 Node 功能面 |
+| 后续 Alpha | CPython / Flutter providers | 在 Node 闭环稳定并重新确认范围后再排期，不进入 alpha.5 |
 | `v0.1.0-beta.1` | Integrated public preview | 三种运行时的跨平台闭环、离线复现和迁移验收 |
 | `v0.1.0` | Stable preview | 冻结 schema、供应链与兼容策略，完成首个稳定版本 |
 
@@ -385,43 +386,90 @@ alpha.2 不包含：
 - 发布后重新下载全部资产，`SHA256SUMS` 四项复算一致；三个归档只含预期 CLI 与 shim，
   Windows 产物输出 `pinset 0.1.0-alpha.4` 并包含 `global` 命令。
 
-## 5. v0.1.0-alpha.5 — CPython Provider
+## 5. v0.1.0-alpha.5 — Node Runtime Closure
 
-目标：在不接管依赖和虚拟环境的前提下，提供可审计的 CPython 解释器安装与选择。
+状态：**本地实现完成，尚未发布**
 
-范围：
+目标：在增加第二种运行时前一次性收口 Node 运行时管理功能，并去掉正常流程中的手动
+`shim install`；curl 安装器和 Shell 激活保持完全运行时无关。
 
-- 固定并版本化 python-build-standalone 产物清单。
-- 锁文件记录来源、许可证、目标、哈希和必要 provenance。
-- 路由 `python`、`python3`、`pip`、`pip3` 及归档实际提供的版本化命令。
-- 与 uv/pip 的职责边界和真实项目流程。
-- Python 镜像、自定义 CA 和已有锁文件离线安装。
-- `.python-version` 只读导入与冲突诊断。
+### 5.1 Node 功能闭环
+
+| 能力 | alpha.5 契约 |
+| --- | --- |
+| 版本发现 | 支持精确版、主版本、主/次版本、`lts`、`current`，写入状态时锁为精确版本 |
+| 安装 | 锁文件安装；`pinset install node@<selector>` 只安装指定版本，不修改项目或全局选择 |
+| 选择 | `global` 设置用户默认，`use` 设置项目版本，`unset node [--global]` 清除并回退上一层 |
+| 命令路由 | Node Provider 唯一声明 `node`、`npm`、`npx`、`corepack` 并在选择/安装后自动注册 |
+| 执行查询 | `current`、`which`、`exec` 和一次性版本执行共享同一解析器 |
+| 生命周期 | 本地/官方版本列表、安全卸载、内容寻址缓存查看与清理 |
+| 安装源 | 官方源、自定义 HTTPS/LAN HTTP、活动源、备用顺序与只读连通性测试 |
+| 旧配置迁移 | `import --dry-run` 只读预览；`import --apply [--from]` 显式导入并保留旧文件 |
+| shim 迁移 | `shim migrate` 在新目录注册路由，报告并保留旧入口，不自动删除 |
+| 诊断 | 对四个 Node 命令报告 PATH 顺序、实际生效项、Pinset 所有权、旧管理器和可逆建议 |
+| Shell/语言 | Bash、Zsh、Fish、PowerShell 一次性激活；英文/简体中文提示 |
+
+明确不属于 Node 运行时管理：npm 项目/全局包管理、Corepack 激活策略、源码编译、nightly/
+预发布版、自动修改 shell profile/IDE、自动卸载旧管理器。这些能力不会以“Node 功能未完成”为由
+混入 Pinset。
+
+### 5.2 实现范围
+
+- 增加内置 Provider 命令清单；解析器和命令注册共用同一份 `tool -> commands` 元数据。
+- curl 安装器仍只安装 `pinset` 与通用 `pinset-shim`，并以离线测试断言不会创建任何语言命令。
+- `global`、`use --no-install` 和已锁定安装完成后，由所选 Provider 自动注册自己的命令。
+- `pinset` 所在目录已位于 PATH 时，优先在同目录注册；源码运行等场景回退到用户数据目录。
+- 新增 `pinset activate <bash|zsh|fish|powershell>`，只输出通用 PATH 脚本，不写 shell profile。
+- `pinset shim install --provider <tool>` 保留为幂等修复入口；无参数时根据项目和全局配置发现 Provider。
+- 已有 Pinset 管理入口幂等复用；发现外部同名文件时整组预检失败，不覆盖且不留下部分入口。
+- Unix 新入口使用指向 `pinset-shim` 的符号链接，使后续 CLI 升级无需重建每个命令入口。
+- Windows 新入口使用稳定 `.cmd` 包装器调用同目录路由器，避免硬链接/复制在升级后停留于旧二进制；
+  同目录中的 `.exe`、`.cmd`、`.bat` 或无扩展同名外部入口均在整组写入前判定为冲突。
+- `pinset install node@<selector>` 支持独立安装但不隐式改变项目或全局状态。
+- `pinset unset node [--global]` 只清除 Pinset 选择与相应锁，保留安装、缓存和命令路由。
+- `pinset import --apply [--from <source>] [--global] [--no-install]` 在用户明确请求后导入旧配置；
+  冲突时不猜测来源，旧文件始终保留。
+- `pinset shim migrate [--provider node]` 显式准备新路由目录并保留旧 `$PINSET_HOME/shims`。
+- `doctor` 与 `doctor --json` 检查 `node`、`npm`、`npx`、`corepack` 的所有 PATH 候选、
+  生效顺序、Pinset 所有权、外部遮蔽和旧 shim。
 
 不包含：
 
-- 自动创建或激活虚拟环境。
-- 管理 requirements、pyproject 依赖或发布 Python 包。
-- 依赖未固定的“最新构建”远程状态复现锁文件。
+- 在 curl 阶段创建 `node`、`npm`、`npx`、`corepack` 或其他运行时命令。
+- 自动修改 shell profile、系统 PATH 或 IDE 设置。
+- CPython、Flutter 或其他新运行时 Provider。
+- 覆盖 fnm、nvm、Volta、系统命令或用户已有文件。
+- 管理 npm 依赖、全局包或 Corepack 激活状态。
+- 编译 Node 源码、安装预发布/nightly 构建或自动修改 IDE。
 
-## 6. v0.1.0-alpha.6 — Flutter Provider
+验收与本地证据：
 
-目标：提供 Flutter stable 与 Dart 的可预测版本选择，并形成可操作的 IDE SDK 流程。
+- Provider 清单是命令归属的单一来源，未实现的 Python/Flutter 命令不会被臆造。
+- 假 Node 安装收据可触发自动注册；重复执行幂等，冲突预检不产生部分写入。
+- `activate` 的四种 Shell 输出不包含任何运行时名称。
+- curl 离线测试断言目标目录严格只有 `pinset` 和 `pinset-shim`。
+- 全部验证仅使用临时目录、假 shim、假运行时和本地构造归档，不安装真实运行时。
+- 第一轮 `cargo test --workspace --all-features` 共 117 项通过；新增测试覆盖直接安装参数、旧选择器
+  归一化、迁移保留、四命令诊断和冲突导入不写状态。
+- Windows 格式、严格 Clippy、117 项锁定 workspace 测试、锁定 Release 构建和 diff 门禁通过。
+- WSL 在独立 `/tmp` target 中完成同一组 117 项 Linux 测试；离线安装器假归档测试通过。
+- WSL 验证只下载缺失的 Rust crates 构建依赖到 Cargo 缓存，不下载或安装真实 Node；未触发
+  GitHub Actions。
+
+## 6. v0.1.0-alpha.6 — Node Acceptance Fixes
+
+目标：根据 alpha.5 在真实 Windows、Linux/WSL 和 macOS 上的用户验收结果修复兼容问题；
+该版本不再扩张 Node 命令面。
 
 范围：
 
-- Flutter stable provider、发布清单与归档验证。
-- `flutter` 与同 SDK 内 `dart` 路由。
-- `.fvmrc` 只读导入。
-- 项目稳定 SDK 路径、`which --sdk` 和 IDE 配置文档。
-- Windows junction、Unix symlink、权限和 IDE 缓存观察性验证。
-- Flutter 官方中国指南中的镜像兼容方式，但不默认选择第三方镜像。
+- 验证 Windows 更新后的路由器版本一致性、PowerShell/CMD 行为和 PATH 冲突。
+- 验证 Bash、Zsh、Fish 和 PowerShell 的一次性激活与持久配置说明。
+- 完成 Node 全局版本、两个项目版本、系统 Node 与旧管理器共存的真实环境矩阵。
+- 只修复上述验收暴露的问题；直接安装、导入、迁移、诊断等功能均在 alpha.5 交付。
 
-不包含：
-
-- 管理 pub 包依赖。
-- 自动改写 VS Code、Android Studio 或 Xcode 项目配置。
-- 未经用户确认替换 FVM 或系统 Flutter。
+CPython 与 Flutter 继续延期，需在 Node 闭环稳定后重新确认版本范围；不会为了展示多语言而提前
+把任一运行时的下载、校验或命令语义塞进通用安装器。
 
 ## 7. v0.1.0-beta.1 — Integrated Public Preview
 
@@ -571,6 +619,9 @@ Flutter：
 | D-029 | Accepted | Node MVP 锁定四个平台的精确稳定产物 |
 | D-030 | Provisional | Node alpha 使用官方 HTTPS SHASUMS；稳定版补 PGP 验签 |
 | D-031 | Accepted | Pinset 使用 MIT License 开源 |
+| D-032 | Accepted | curl 安装器永远保持运行时无关，只安装 CLI 与通用调度器 |
+| D-033 | Accepted | 运行时命令由 Provider 在选择/安装后注册，解析与注册共享同一命令清单 |
+| D-034 | Accepted | Provider 命令注册整组预检，外部同名文件使注册停止且绝不覆盖 |
 
 变更规则：
 

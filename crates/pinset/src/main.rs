@@ -14,18 +14,20 @@ mod i18n;
 #[cfg(windows)]
 use std::ffi::OsStr;
 
-use clap::{Parser, Subcommand, error::ErrorKind};
+use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer, NodeMetadataClient,
-    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView, clean_download_cache, command_tool,
-    create_project_config, current_target, find_optional_project_config, find_project_config,
-    global_config_path, global_lockfile_path, install_locked_node, install_shims,
-    list_download_cache, list_installed_node_versions, load_global_config, load_lockfile,
-    load_optional_global_config, load_project_config, load_source_config, load_user_settings,
-    lockfile_path, node_command_directory, path_with_selected_runtime, pinset_home,
-    resolve_command, resolve_tool_selection, save_global_state, save_lockfile, save_project_config,
-    save_source_config, save_user_settings, source_config_path, uninstall_node_version,
-    user_settings_path, validate_exact_node_version, validate_lock_matches_selection,
+    DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer, Lockfile,
+    NodeMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
+    clean_download_cache, command_tool, create_project_config, current_target, ensure_shims,
+    find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
+    install_locked_node, is_managed_command_shim, list_download_cache,
+    list_installed_node_versions, load_global_config, load_lockfile, load_optional_global_config,
+    load_project_config, load_source_config, load_user_settings, lockfile_path,
+    node_command_directory, path_with_selected_runtime, pinset_home, resolve_command,
+    resolve_tool_selection, runtime_provider, save_global_config, save_global_state, save_lockfile,
+    save_project_config, save_source_config, save_user_settings, source_config_path,
+    uninstall_node_version, user_settings_path, validate_exact_node_version,
+    validate_lock_matches_selection,
 };
 use serde::Serialize;
 
@@ -68,8 +70,22 @@ enum Commands {
         #[arg(long)]
         global: bool,
     },
-    /// Install the current target from the project or global lockfile.
+    /// Clear the project or global Node.js selection without uninstalling anything.
+    Unset {
+        /// Tool to clear. The Node-first release accepts node.
+        tool: String,
+        /// Clear the global default instead of the nearest project selection.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        /// Project directory whose nearest Pinset configuration is updated.
+        #[arg(long, conflicts_with = "global")]
+        cwd: Option<PathBuf>,
+    },
+    /// Install an explicit Node.js version or the current project/global lockfile target.
     Install {
+        /// Install a Node.js version without changing project or global selection.
+        #[arg(conflicts_with_all = ["locked", "global", "cwd"])]
+        selection: Option<String>,
         /// Require the selected config and lockfile to match. This is the default.
         #[arg(long)]
         locked: bool,
@@ -116,7 +132,7 @@ enum Commands {
         #[command(subcommand)]
         command: CacheCommands,
     },
-    /// Execute a command through the selected runtime without installing shims.
+    /// Execute through the selected runtime without enabling direct command routing.
     Exec {
         #[arg(long)]
         cwd: Option<PathBuf>,
@@ -131,18 +147,40 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Detect legacy Node.js version files without changing them.
+    /// Preview or explicitly import legacy Node.js version files.
+    #[command(group(
+        clap::ArgGroup::new("import_mode")
+            .required(true)
+            .args(["dry_run", "apply"])
+    ))]
     Import {
         /// Preview detected values; no files are modified.
-        #[arg(long, required = true)]
+        #[arg(long)]
         dry_run: bool,
+        /// Import one detected value into Pinset without changing the legacy file.
+        #[arg(long)]
+        apply: bool,
+        /// Select a legacy source when detected files disagree (for example nvm or volta).
+        #[arg(long = "from", requires = "apply")]
+        source: Option<String>,
+        /// Import as the global default instead of the current project selection.
+        #[arg(long, requires = "apply")]
+        global: bool,
+        /// Write the Pinset selection and lock without installing Node.js.
+        #[arg(long, requires = "apply")]
+        no_install: bool,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Inspect or install multi-call shim links in a user-owned directory.
+    /// Inspect or repair Provider command routing in a user-owned directory.
     Shim {
         #[command(subcommand)]
         command: ShimCommands,
+    },
+    /// Print shell code that enables provider command routing through Pinset.
+    Activate {
+        #[arg(value_enum)]
+        shell: ActivationShell,
     },
     /// Manage local download sources without changing project lock files.
     Source {
@@ -155,17 +193,38 @@ enum Commands {
 enum ShimCommands {
     /// Print the user-owned directory containing Pinset command shims.
     Path,
-    /// Install Node.js command shims without overwriting existing files.
+    /// Repair provider command shims without overwriting existing files.
     Install {
         /// pinset-shim binary. Defaults to the binary next to pinset.
         #[arg(long)]
         binary: Option<PathBuf>,
-        /// Destination directory. Defaults to PINSET_HOME/shims.
+        /// Destination directory. Defaults to the active Pinset command-routing directory.
         #[arg(long)]
         dir: Option<PathBuf>,
-        #[arg(default_values_t = default_commands())]
+        /// Install every command declared by this runtime provider.
+        #[arg(long, conflicts_with = "commands")]
+        provider: Option<String>,
+        /// Advanced override: install these command names instead of a provider manifest.
+        #[arg(value_name = "COMMAND", conflicts_with = "provider")]
         commands: Vec<String>,
     },
+    /// Register configured provider commands in the current routing directory and preserve old entries.
+    Migrate {
+        /// Migrate every command declared by this runtime provider.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Destination directory. Defaults to the active Pinset command-routing directory.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ActivationShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
 }
 
 #[derive(Debug, Subcommand)]
@@ -300,8 +359,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             no_install,
         } => {
             if let Some(selection) = selection {
-                select_node(&selection, true, no_install, catalog)?;
-                print_project_override(&env::current_dir()?, &pinset_home()?, catalog)?;
+                let cwd = env::current_dir()?;
+                select_node(&selection, true, no_install, false, &cwd, catalog)?;
+                print_project_override(&cwd, &pinset_home()?, catalog)?;
             } else {
                 print_global_current(catalog)?;
                 print_project_override(&env::current_dir()?, &pinset_home()?, catalog)?;
@@ -311,13 +371,25 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             selection,
             no_install,
             global,
-        } => select_node(&selection, global, no_install, catalog)?,
+        } => {
+            let cwd = env::current_dir()?;
+            select_node(&selection, global, no_install, false, &cwd, catalog)?
+        }
+        Commands::Unset { tool, global, cwd } => {
+            if tool != "node" {
+                return Err(catalog.node_only_error().into());
+            }
+            unset_node(global, &effective_cwd(cwd)?, catalog)?;
+        }
         Commands::Install {
+            selection,
             locked: _,
             global,
             cwd,
         } => {
-            if global {
+            if let Some(selection) = selection {
+                install_node_selection(&selection, catalog)?;
+            } else if global {
                 install_global(&pinset_home()?, catalog)?;
             } else {
                 install_project(&effective_cwd(cwd)?, catalog)?;
@@ -408,44 +480,75 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 run_doctor(&cwd, catalog)?;
             }
         }
-        Commands::Import { dry_run: _, cwd } => {
+        Commands::Import {
+            dry_run,
+            apply: _,
+            source,
+            global,
+            no_install,
+            cwd,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let candidates = detect_legacy_node_configs(&cwd)?;
             if candidates.is_empty() {
                 println!("{}", catalog.import_none(&cwd));
+            } else if dry_run {
+                print_import_candidates(&candidates, catalog);
             } else {
-                let distinct = candidates
-                    .iter()
-                    .map(|candidate| candidate.version.as_str())
-                    .collect::<std::collections::BTreeSet<_>>();
-                for candidate in &candidates {
-                    println!(
-                        "{}",
-                        catalog.import_candidate(
-                            &candidate.kind,
-                            &candidate.version,
-                            &candidate.path,
-                        )
-                    );
-                }
-                if distinct.len() > 1 {
-                    println!("{}", catalog.import_conflict(distinct.len()));
-                }
+                let candidate = select_legacy_candidate(&candidates, source.as_deref(), catalog)?;
+                let selector = normalize_legacy_node_selector(&candidate.version)?;
+                select_node(
+                    &format!("node@{selector}"),
+                    global,
+                    no_install,
+                    true,
+                    &cwd,
+                    catalog,
+                )?;
+                println!(
+                    "{}",
+                    catalog.import_applied(
+                        &candidate.kind,
+                        &candidate.version,
+                        &candidate.path,
+                        if global { "global" } else { "project" },
+                    )
+                );
             }
         }
         Commands::Shim { command } => match command {
-            ShimCommands::Path => println!("{}", pinset_home()?.join("shims").display()),
+            ShimCommands::Path => {
+                println!("{}", command_routing_directory(&pinset_home()?)?.display())
+            }
             ShimCommands::Install {
                 binary,
                 dir,
+                provider,
                 commands,
             } => {
-                let binary = binary.unwrap_or(default_shim_binary()?);
-                let dir = dir.unwrap_or(pinset_home()?.join("shims"));
-                for result in install_shims(&binary, &dir, &commands)? {
+                let binary = binary
+                    .as_deref()
+                    .map(absolutize)
+                    .transpose()?
+                    .unwrap_or(default_shim_binary()?);
+                let dir = dir
+                    .as_deref()
+                    .map(absolutize)
+                    .transpose()?
+                    .unwrap_or(command_routing_directory(&pinset_home()?)?);
+                let commands = manual_shim_commands(
+                    provider.as_deref(),
+                    &commands,
+                    &env::current_dir()?,
+                    &pinset_home()?,
+                )?;
+                for result in ensure_shims(&binary, &dir, &commands)? {
                     let method = match result.method {
+                        ShimInstallMethod::Symlink => "symbolic-link",
+                        ShimInstallMethod::Wrapper => "wrapper",
                         ShimInstallMethod::HardLink => "hard-link",
                         ShimInstallMethod::Copy => "copy",
+                        ShimInstallMethod::Existing => "existing",
                     };
                     println!(
                         "{}",
@@ -454,7 +557,16 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 }
                 println!("{}", catalog.shim_path_ready(&dir));
             }
+            ShimCommands::Migrate { provider, dir } => {
+                migrate_provider_shims(provider.as_deref(), dir.as_deref(), catalog)?;
+            }
         },
+        Commands::Activate { shell } => {
+            println!(
+                "{}",
+                activation_script(shell, &command_routing_directory(&pinset_home()?)?)
+            );
+        }
         Commands::Source { command } => run_source_command(command, catalog)?,
     }
 
@@ -478,6 +590,8 @@ fn select_node(
     selection: &str,
     global: bool,
     no_install: bool,
+    initialize_project: bool,
+    cwd: &Path,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let selector = parse_node_selection(selection, catalog)?;
@@ -496,8 +610,11 @@ fn select_node(
         save_global_state(&home, &config, &lockfile)?;
         ("global", global_lockfile_path(&home))
     } else {
-        let cwd = env::current_dir()?;
-        let config_path = find_project_config(&cwd)?;
+        let config_path = match find_optional_project_config(cwd)? {
+            Some(path) => path,
+            None if initialize_project => create_project_config(cwd)?,
+            None => find_project_config(cwd)?,
+        };
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
         save_lockfile(&lock_path, &lockfile)?;
@@ -513,8 +630,89 @@ fn select_node(
         if global {
             install_global(&pinset_home()?, catalog)?;
         } else {
-            install_project(&env::current_dir()?, catalog)?;
+            install_project(cwd, catalog)?;
         }
+    } else if let Err(error) = register_provider_commands(&pinset_home()?, "node", catalog) {
+        eprintln!(
+            "{}",
+            catalog.shim_auto_registration_failed(&error.to_string())
+        );
+    }
+    Ok(())
+}
+
+fn install_node_selection(
+    selection: &str,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let selector = parse_node_selection(selection, catalog)?;
+    let lockfile = NodeMetadataClient::official()?
+        .resolve_lock(&selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+    let locked_node = lockfile.tool("node").expect("generated lock contains node");
+    if selector != locked_node.version {
+        println!(
+            "{}",
+            catalog.selector_resolved(&selector, &locked_node.version)
+        );
+    }
+    install_node_from_lock(&pinset_home()?, &lockfile, catalog)
+}
+
+fn unset_node(
+    global: bool,
+    cwd: &Path,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if global {
+        let home = pinset_home()?;
+        let config_path = global_config_path(&home);
+        let Some(mut config) = load_optional_global_config(&config_path)? else {
+            println!("{}", catalog.selection_unset("global", &config_path, false));
+            return Ok(());
+        };
+        if config.tools.remove("node").is_none() {
+            println!("{}", catalog.selection_unset("global", &config_path, false));
+            return Ok(());
+        }
+        let lock_path = global_lockfile_path(&home);
+        if lock_path.is_file() {
+            load_lockfile(&lock_path)?;
+        }
+        save_global_config(&config_path, &config)?;
+        remove_tool_from_lock(&lock_path, "node")?;
+        println!("{}", catalog.selection_unset("global", &config_path, true));
+        return Ok(());
+    }
+
+    let config_path = find_project_config(cwd)?;
+    let mut config = load_project_config(&config_path)?;
+    if config.tools.remove("node").is_none() {
+        println!(
+            "{}",
+            catalog.selection_unset("project", &config_path, false)
+        );
+        return Ok(());
+    }
+    let lock_path = lockfile_path(&config_path);
+    if lock_path.is_file() {
+        load_lockfile(&lock_path)?;
+    }
+    save_project_config(&config_path, &config)?;
+    remove_tool_from_lock(&lock_path, "node")?;
+    println!("{}", catalog.selection_unset("project", &config_path, true));
+    Ok(())
+}
+
+fn remove_tool_from_lock(path: &Path, tool: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let mut lockfile = load_lockfile(path)?;
+    lockfile.tools.retain(|locked| locked.name != tool);
+    if lockfile.tools.is_empty() {
+        fs::remove_file(path)?;
+    } else {
+        save_lockfile(path, &lockfile)?;
     }
     Ok(())
 }
@@ -562,16 +760,18 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 14] = [
+    const COMMANDS: [&str; 16] = [
         "init",
         "global",
         "use",
+        "unset",
         "install",
         "which",
         "current",
         "exec",
         "doctor",
         "shim",
+        "activate",
         "source",
         "list",
         "uninstall",
@@ -645,7 +845,18 @@ fn install_locked_selection(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lockfile = load_lockfile(lock_path)?;
-    let locked_node = validate_lock_matches_selection(&lockfile, configured, config_path)?;
+    validate_lock_matches_selection(&lockfile, configured, config_path)?;
+    install_node_from_lock(home, &lockfile, catalog)
+}
+
+fn install_node_from_lock(
+    home: &Path,
+    lockfile: &Lockfile,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let locked_node = lockfile
+        .tool("node")
+        .expect("validated or generated Node lock contains node");
     let sources = load_source_config(&source_config_path(home))?;
     let installer = Installer::new(InstallLimits::default())?
         .with_progress_reporter(download_progress_reporter(catalog));
@@ -668,6 +879,12 @@ fn install_locked_selection(
                 &outcome.source_id,
                 &outcome.install_dir,
             )
+        );
+    }
+    if let Err(error) = register_provider_commands(home, "node", catalog) {
+        eprintln!(
+            "{}",
+            catalog.shim_auto_registration_failed(&error.to_string())
         );
     }
     Ok(())
@@ -1038,7 +1255,9 @@ struct DoctorReport {
     lockfile: DoctorItem,
     runtime: DoctorItem,
     shim_path: DoctorItem,
+    legacy_shim_path: DoctorItem,
     path_candidates: Vec<DoctorPathCandidate>,
+    routing_issues: Vec<DoctorRoutingIssue>,
     legacy_node_configs: Vec<LegacyNodeConfig>,
 }
 
@@ -1059,8 +1278,20 @@ struct DoctorSelection {
 
 #[derive(Debug, Serialize)]
 struct DoctorPathCandidate {
+    command: String,
     path: String,
-    owner: &'static str,
+    owner: String,
+    position: usize,
+    effective: bool,
+    managed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorRoutingIssue {
+    code: &'static str,
+    command: Option<String>,
+    path: Option<String>,
+    action: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1148,17 +1379,28 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         },
         Err(error) => return Err(error.into()),
     };
-    let shims = home.join("shims");
-    let shim_on_path = env::var_os("PATH")
-        .map(|value| env::split_paths(&value).any(|entry| paths_equal(&entry, &shims)))
-        .unwrap_or(false);
-    let path_candidates = path_command_candidates("node")
-        .into_iter()
-        .map(|path| DoctorPathCandidate {
-            owner: path_owner(&path, &home),
-            path: path.display().to_string(),
-        })
-        .collect();
+    let shims = command_routing_directory(&home)?;
+    let shim_on_path = directory_on_path(&shims);
+    let shim_binary = default_shim_binary()?;
+    let commands = runtime_provider("node")
+        .expect("Node provider is built in")
+        .commands;
+    let path_candidates = inspect_path_candidates(commands, &home, &shim_binary);
+    let legacy_shims = home.join("shims");
+    let legacy_commands = if paths_equal(&legacy_shims, &shims) {
+        Vec::new()
+    } else {
+        existing_shim_commands(&legacy_shims, commands)
+    };
+    let routing_issues = collect_routing_issues(
+        selected.is_some(),
+        commands,
+        &path_candidates,
+        &shims,
+        &shim_binary,
+        &legacy_shims,
+        &legacy_commands,
+    );
     Ok(DoctorReport {
         schema: 1,
         cwd: cwd.display().to_string(),
@@ -1177,9 +1419,97 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
             path: Some(shims.display().to_string()),
             detail: None,
         },
+        legacy_shim_path: DoctorItem {
+            status: if paths_equal(&legacy_shims, &shims) {
+                "active-layout"
+            } else if legacy_commands.is_empty() {
+                "empty"
+            } else {
+                "legacy-preserved"
+            },
+            path: Some(legacy_shims.display().to_string()),
+            detail: (!legacy_commands.is_empty()).then(|| legacy_commands.join(",")),
+        },
         path_candidates,
+        routing_issues,
         legacy_node_configs: detect_legacy_node_configs(cwd)?,
     })
+}
+
+fn collect_routing_issues(
+    selected: bool,
+    commands: &[&str],
+    path_candidates: &[DoctorPathCandidate],
+    routing_directory: &Path,
+    shim_binary: &Path,
+    legacy_directory: &Path,
+    legacy_commands: &[String],
+) -> Vec<DoctorRoutingIssue> {
+    let mut issues = Vec::new();
+    let routing_has_entries = commands
+        .iter()
+        .any(|command| command_entry_exists(routing_directory, command));
+    if !directory_on_path(routing_directory) && (selected || routing_has_entries) {
+        issues.push(DoctorRoutingIssue {
+            code: "routing-directory-not-on-path",
+            command: None,
+            path: Some(routing_directory.display().to_string()),
+            action: "pinset activate <shell>",
+        });
+    }
+    if !legacy_commands.is_empty() {
+        issues.push(DoctorRoutingIssue {
+            code: "legacy-shims-present",
+            command: None,
+            path: Some(legacy_directory.display().to_string()),
+            action: "pinset shim migrate --provider node",
+        });
+    }
+    if !selected {
+        return issues;
+    }
+
+    for command in commands {
+        let candidates = path_candidates
+            .iter()
+            .filter(|candidate| candidate.command == *command)
+            .collect::<Vec<_>>();
+        if let Some(effective) = candidates.first().filter(|candidate| !candidate.managed) {
+            if candidates.iter().any(|candidate| candidate.managed) {
+                issues.push(DoctorRoutingIssue {
+                    code: "provider-route-shadowed",
+                    command: Some((*command).to_owned()),
+                    path: Some(effective.path.clone()),
+                    action: "place the Pinset routing directory earlier in PATH",
+                });
+                continue;
+            }
+        }
+        if candidates.iter().any(|candidate| candidate.managed)
+            || managed_command_entry(routing_directory, command, shim_binary).is_some()
+        {
+            continue;
+        }
+        if let Some(path) = command_entry_paths(routing_directory, command)
+            .into_iter()
+            .find(|path| fs::symlink_metadata(path).is_ok())
+        {
+            issues.push(DoctorRoutingIssue {
+                code: "provider-route-conflict",
+                command: Some((*command).to_owned()),
+                path: Some(path.display().to_string()),
+                action: "review the existing command before running pinset shim install",
+            });
+        } else {
+            issues.push(DoctorRoutingIssue {
+                code: "provider-route-missing",
+                command: Some((*command).to_owned()),
+                path: Some(routing_directory.display().to_string()),
+                action: "pinset shim install --provider node",
+            });
+        }
+    }
+    issues
 }
 
 fn detect_legacy_node_configs(
@@ -1233,22 +1563,99 @@ fn detect_legacy_node_configs(
         }
     }
 
-    let path = cwd.join("mise.toml");
-    if path.is_file() {
-        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path)?)?;
-        if let Some(version) = value
-            .get("tools")
-            .and_then(|tools| tools.get("node"))
-            .and_then(toml::Value::as_str)
-        {
-            candidates.push(LegacyNodeConfig {
-                kind: "mise".to_owned(),
-                version: version.to_owned(),
-                path,
-            });
+    for name in ["mise.toml", ".mise.toml"] {
+        let path = cwd.join(name);
+        if path.is_file() {
+            let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path)?)?;
+            if let Some(version) = value.get("tools").and_then(|tools| {
+                tools
+                    .get("node")
+                    .or_else(|| tools.get("nodejs"))
+                    .and_then(toml::Value::as_str)
+            }) {
+                candidates.push(LegacyNodeConfig {
+                    kind: "mise".to_owned(),
+                    version: version.to_owned(),
+                    path,
+                });
+            }
         }
     }
     Ok(candidates)
+}
+
+fn print_import_candidates(candidates: &[LegacyNodeConfig], catalog: Catalog) {
+    let distinct = candidates
+        .iter()
+        .map(|candidate| candidate.version.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for candidate in candidates {
+        println!(
+            "{}",
+            catalog.import_candidate(&candidate.kind, &candidate.version, &candidate.path,)
+        );
+    }
+    if distinct.len() > 1 {
+        println!("{}", catalog.import_conflict(distinct.len()));
+    }
+}
+
+fn select_legacy_candidate<'a>(
+    candidates: &'a [LegacyNodeConfig],
+    source: Option<&str>,
+    catalog: Catalog,
+) -> Result<&'a LegacyNodeConfig, Box<dyn std::error::Error>> {
+    if let Some(source) = source {
+        return candidates
+            .iter()
+            .find(|candidate| candidate.kind.eq_ignore_ascii_case(source))
+            .ok_or_else(|| {
+                let available = candidates
+                    .iter()
+                    .map(|candidate| candidate.kind.as_str())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(",");
+                catalog.import_source_not_found(source, &available).into()
+            });
+    }
+
+    let normalized = candidates
+        .iter()
+        .map(|candidate| normalize_legacy_node_selector(&candidate.version))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    if normalized.len() > 1 {
+        return Err(catalog.import_apply_conflict(normalized.len()).into());
+    }
+    Ok(&candidates[0])
+}
+
+fn normalize_legacy_node_selector(value: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let trimmed = value.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized == "lts" || normalized.starts_with("lts/") {
+        return Ok("lts".to_owned());
+    }
+    if matches!(
+        normalized.as_str(),
+        "node" | "stable" | "current" | "latest"
+    ) {
+        return Ok("current".to_owned());
+    }
+    let numeric = trimmed
+        .strip_prefix('v')
+        .filter(|value| value.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .unwrap_or(trimmed);
+    let parts = numeric.split('.').collect::<Vec<_>>();
+    if (1..=3).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Ok(numeric.to_owned());
+    }
+    Err(format!("unsupported legacy Node.js selector {value:?}").into())
 }
 
 fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
@@ -1339,10 +1746,8 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
         Err(error) => return Err(error.into()),
     }
 
-    let shims = home.join("shims");
-    let shim_on_path = env::var_os("PATH")
-        .map(|value| env::split_paths(&value).any(|entry| paths_equal(&entry, &shims)))
-        .unwrap_or(false);
+    let shims = command_routing_directory(&home)?;
+    let shim_on_path = directory_on_path(&shims);
     println!(
         "{}",
         catalog.doctor_line(
@@ -1355,10 +1760,47 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
             },
         )
     );
-    for candidate in path_command_candidates("node") {
+    let shim_binary = default_shim_binary()?;
+    let commands = runtime_provider("node")
+        .expect("Node provider is built in")
+        .commands;
+    let path_candidates = inspect_path_candidates(commands, &home, &shim_binary);
+    for candidate in &path_candidates {
         println!(
             "{}",
-            catalog.path_candidate(&candidate, path_owner(&candidate, &home))
+            catalog.path_candidate(
+                &candidate.command,
+                Path::new(&candidate.path),
+                &candidate.owner,
+                candidate.effective,
+                candidate.managed,
+            )
+        );
+    }
+    let legacy_shims = home.join("shims");
+    let legacy_commands = if paths_equal(&legacy_shims, &shims) {
+        Vec::new()
+    } else {
+        existing_shim_commands(&legacy_shims, commands)
+    };
+    let selected = resolve_tool_selection("node", cwd, &home).is_ok();
+    for issue in collect_routing_issues(
+        selected,
+        commands,
+        &path_candidates,
+        &shims,
+        &shim_binary,
+        &legacy_shims,
+        &legacy_commands,
+    ) {
+        println!(
+            "{}",
+            catalog.doctor_routing_issue(
+                issue.code,
+                issue.command.as_deref(),
+                issue.path.as_deref(),
+                issue.action,
+            )
         );
     }
     Ok(())
@@ -1368,14 +1810,63 @@ fn path_command_candidates(command: &str) -> Vec<PathBuf> {
     let Some(path) = env::var_os("PATH") else {
         return Vec::new();
     };
-    let names: &[&str] = if cfg!(windows) {
-        &["node.exe", "node.cmd", "node.bat", "node"]
+    let names = if cfg!(windows) {
+        vec![
+            format!("{command}.exe"),
+            format!("{command}.cmd"),
+            format!("{command}.bat"),
+            command.to_owned(),
+        ]
     } else {
-        &[command]
+        vec![command.to_owned()]
     };
+    let mut seen = std::collections::HashSet::new();
     env::split_paths(&path)
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .filter(|candidate| fs::metadata(candidate).is_ok_and(|metadata| metadata.is_file()))
+        .filter(|candidate| {
+            let key = if cfg!(windows) {
+                candidate.to_string_lossy().to_ascii_lowercase()
+            } else {
+                candidate.to_string_lossy().into_owned()
+            };
+            seen.insert(key)
+        })
+        .collect()
+}
+
+fn inspect_path_candidates(
+    commands: &[&str],
+    pinset_home: &Path,
+    shim_binary: &Path,
+) -> Vec<DoctorPathCandidate> {
+    commands
+        .iter()
+        .flat_map(|command| {
+            path_command_candidates(command)
+                .into_iter()
+                .enumerate()
+                .map(|(position, path)| {
+                    let managed = shim_binary.is_file()
+                        && is_managed_command_shim(shim_binary, &path, command).unwrap_or(false);
+                    DoctorPathCandidate {
+                        command: (*command).to_owned(),
+                        owner: path_owner(&path, pinset_home, managed),
+                        path: path.display().to_string(),
+                        position: position + 1,
+                        effective: position == 0,
+                        managed,
+                    }
+                })
+        })
+        .collect()
+}
+
+fn existing_shim_commands(directory: &Path, commands: &[&str]) -> Vec<String> {
+    commands
+        .iter()
+        .filter(|command| command_entry_exists(directory, command))
+        .map(|command| (*command).to_owned())
         .collect()
 }
 
@@ -1387,9 +1878,12 @@ fn user_home_directory() -> Option<PathBuf> {
     }
 }
 
-fn path_owner(path: &Path, pinset_home: &Path) -> &'static str {
+fn path_owner(path: &Path, pinset_home: &Path, managed: bool) -> String {
+    if managed {
+        return "pinset".to_owned();
+    }
     if path.starts_with(pinset_home.join("shims")) {
-        return "pinset";
+        return "foreign-in-pinset-directory".to_owned();
     }
     let normalized = path
         .to_string_lossy()
@@ -1403,10 +1897,10 @@ fn path_owner(path: &Path, pinset_home: &Path) -> &'static str {
         ("/.volta/", "volta"),
     ] {
         if normalized.contains(pattern) {
-            return owner;
+            return owner.to_owned();
         }
     }
-    "other"
+    "other".to_owned()
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -1550,6 +2044,12 @@ fn effective_cwd(cwd: Option<PathBuf>) -> Result<PathBuf, std::io::Error> {
 }
 
 fn default_shim_binary() -> Result<PathBuf, std::io::Error> {
+    if let Some(path) = env::var_os("PINSET_SHIM_BINARY")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return absolutize(&path);
+    }
     let executable = env::current_exe()?;
     let directory = executable.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -1572,11 +2072,197 @@ fn absolutize(path: &Path) -> Result<PathBuf, std::io::Error> {
     }
 }
 
-fn default_commands() -> Vec<String> {
-    ["node", "npm", "npx", "corepack"]
+fn manual_shim_commands(
+    provider: Option<&str>,
+    commands: &[String],
+    cwd: &Path,
+    home: &Path,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    if !commands.is_empty() {
+        return Ok(commands.to_vec());
+    }
+
+    let mut tools = std::collections::BTreeSet::new();
+    if let Some(provider) = provider {
+        tools.insert(provider.to_owned());
+    } else {
+        if let Some(config_path) = find_optional_project_config(cwd)? {
+            tools.extend(load_project_config(&config_path)?.tools.into_keys());
+        }
+        if let Some(config) = load_optional_global_config(&global_config_path(home))? {
+            tools.extend(config.tools.into_keys());
+        }
+    }
+    if tools.is_empty() {
+        return Err(
+            "no configured runtime provider; pass --provider <tool> or explicit command names"
+                .into(),
+        );
+    }
+
+    let mut resolved = Vec::new();
+    for tool in tools {
+        let provider = runtime_provider(&tool)
+            .ok_or_else(|| format!("runtime provider {tool:?} is not available"))?;
+        resolved.extend(
+            provider
+                .commands
+                .iter()
+                .map(|command| (*command).to_owned()),
+        );
+    }
+    resolved.sort();
+    resolved.dedup();
+    Ok(resolved)
+}
+
+fn register_provider_commands(
+    home: &Path,
+    tool: &str,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let provider = runtime_provider(tool)
+        .ok_or_else(|| format!("runtime provider {tool:?} is not available"))?;
+    let commands = provider
+        .commands
+        .iter()
+        .map(|command| (*command).to_owned())
+        .collect::<Vec<_>>();
+    let directory = command_routing_directory(home)?;
+    let results = ensure_shims(&default_shim_binary()?, &directory, &commands)?;
+    let installed = results
+        .iter()
+        .filter(|result| result.method != ShimInstallMethod::Existing)
+        .map(|result| result.command.as_str())
+        .collect::<Vec<_>>();
+    let preserved = results
+        .iter()
+        .filter(|result| result.method == ShimInstallMethod::Existing)
+        .map(|result| result.command.as_str())
+        .collect::<Vec<_>>();
+    let active = directory_on_path(&directory);
+    println!(
+        "{}",
+        catalog.provider_commands_registered(tool, &directory, &installed, &preserved, active)
+    );
+    Ok(())
+}
+
+fn migrate_provider_shims(
+    provider: Option<&str>,
+    destination: Option<&Path>,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let cwd = env::current_dir()?;
+    let commands = manual_shim_commands(provider, &[], &cwd, &home)?;
+    let source = home.join("shims");
+    let destination = destination
+        .map(absolutize)
+        .transpose()?
+        .unwrap_or(command_routing_directory(&home)?);
+    let binary = default_shim_binary()?;
+
+    let results = ensure_shims(&binary, &destination, &commands)?;
+    for result in &results {
+        let method = match result.method {
+            ShimInstallMethod::Symlink => "symbolic-link",
+            ShimInstallMethod::Wrapper => "wrapper",
+            ShimInstallMethod::HardLink => "hard-link",
+            ShimInstallMethod::Copy => "copy",
+            ShimInstallMethod::Existing => "existing",
+        };
+        println!(
+            "{}",
+            catalog.shim_installed(&result.command, &result.destination, method)
+        );
+    }
+
+    if paths_equal(&source, &destination) {
+        println!("{}", catalog.shim_migration_not_needed(&destination));
+        return Ok(());
+    }
+
+    let preserved = commands
+        .iter()
+        .filter(|command| command_entry_exists(&source, command))
+        .count();
+    println!(
+        "{}",
+        catalog.shim_migrated(
+            &source,
+            &destination,
+            commands.len(),
+            preserved,
+            directory_on_path(&destination),
+        )
+    );
+    Ok(())
+}
+
+fn command_entry_exists(directory: &Path, command: &str) -> bool {
+    command_entry_paths(directory, command)
         .into_iter()
-        .map(str::to_owned)
+        .any(|path| fs::symlink_metadata(path).is_ok())
+}
+
+fn command_entry_paths(directory: &Path, command: &str) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        [
+            format!("{command}.exe"),
+            format!("{command}.cmd"),
+            format!("{command}.bat"),
+            command.to_owned(),
+        ]
+        .into_iter()
+        .map(|name| directory.join(name))
         .collect()
+    } else {
+        vec![directory.join(command)]
+    }
+}
+
+fn managed_command_entry(directory: &Path, command: &str, shim_binary: &Path) -> Option<PathBuf> {
+    shim_binary.is_file().then_some(())?;
+    command_entry_paths(directory, command)
+        .into_iter()
+        .find(|path| is_managed_command_shim(shim_binary, path, command).unwrap_or(false))
+}
+
+fn command_routing_directory(home: &Path) -> Result<PathBuf, std::io::Error> {
+    if let Some(path) = env::var_os("PINSET_SHIM_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return Ok(path);
+    }
+    let executable = env::current_exe()?;
+    if let Some(directory) = executable.parent().filter(|path| directory_on_path(path)) {
+        return Ok(directory.to_path_buf());
+    }
+    Ok(home.join("shims"))
+}
+
+fn directory_on_path(directory: &Path) -> bool {
+    env::var_os("PATH")
+        .map(|value| env::split_paths(&value).any(|entry| paths_equal(&entry, directory)))
+        .unwrap_or(false)
+}
+
+fn activation_script(shell: ActivationShell, shim_directory: &Path) -> String {
+    let path = shim_directory.to_string_lossy();
+    match shell {
+        ActivationShell::Bash | ActivationShell::Zsh => {
+            format!("export PATH='{}':\"$PATH\"", path.replace('\'', "'\\''"))
+        }
+        ActivationShell::Fish => {
+            format!("set -gx PATH '{}' $PATH", path.replace('\'', "\\'"))
+        }
+        ActivationShell::Powershell => format!(
+            "$env:PATH = '{}' + [IO.Path]::PathSeparator + $env:PATH",
+            path.replace('\'', "''")
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1600,5 +2286,41 @@ mod tests {
             download_artifact_name("https://nodejs.org/"),
             "runtime archive"
         );
+    }
+
+    #[test]
+    fn activation_is_runtime_agnostic_for_supported_shells() {
+        let directory = Path::new("/tmp/pinset commands");
+        let bash = activation_script(ActivationShell::Bash, directory);
+        assert!(bash.contains("export PATH="));
+        assert!(bash.contains("$PATH"));
+        assert!(!bash.contains("node"));
+        assert!(!bash.contains("python"));
+
+        let powershell = activation_script(ActivationShell::Powershell, directory);
+        assert!(powershell.contains("$env:PATH"));
+        assert!(powershell.contains("PathSeparator"));
+        assert!(!powershell.contains("node"));
+    }
+
+    #[test]
+    fn accepts_direct_node_install_without_selecting_a_scope() {
+        let cli = Cli::try_parse_from(["pinset", "install", "node@24"]).expect("direct install");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Install {
+                selection: Some(selection),
+                global: false,
+                ..
+            }) if selection == "node@24"
+        ));
+    }
+
+    #[test]
+    fn normalizes_common_legacy_node_selectors() {
+        assert_eq!(normalize_legacy_node_selector("v24.1.0").unwrap(), "24.1.0");
+        assert_eq!(normalize_legacy_node_selector("lts/*").unwrap(), "lts");
+        assert_eq!(normalize_legacy_node_selector("stable").unwrap(), "current");
+        assert!(normalize_legacy_node_selector("nightly/latest").is_err());
     }
 }

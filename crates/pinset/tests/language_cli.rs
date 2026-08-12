@@ -65,6 +65,42 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     assert_success_contains(&global_help, "查看或设置项目之外使用的全局默认 Node.js");
     assert_success_contains(&global_help, "pinset global");
 
+    let activate_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "activate", "--help"],
+    );
+    assert_success_contains(&activate_help, "Provider 命令路由");
+    assert_success_contains(&activate_help, "pinset activate");
+
+    let install_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "install", "--help"],
+    );
+    assert_success_contains(&install_help, "pinset install node@<版本选择器>");
+
+    let import_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "import", "--help"],
+    );
+    assert_success_contains(&import_help, "pinset import --apply");
+
+    let shim_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "shim", "--help"],
+    );
+    assert_success_contains(&shim_help, "pinset shim migrate");
+
+    let unset_help = pinset(
+        &first_project,
+        &home,
+        &["--lang", "zh-CN", "unset", "--help"],
+    );
+    assert_success_contains(&unset_help, "清除项目或全局 Node.js 选择");
+
     let argument_error = pinset(&first_project, &home, &["--lang", "zh-CN", "use"]);
     assert!(!argument_error.status.success());
     assert!(

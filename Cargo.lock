@@ -927,7 +927,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinset-cli"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "clap",
  "pinset-core",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-core"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "atomic-write-file",
  "hex",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-shim"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "pinset-core",
  "tempfile",

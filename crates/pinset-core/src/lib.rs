@@ -16,6 +16,7 @@ mod node_provider;
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 mod node_runtime;
 mod resolver;
+mod runtime_provider;
 mod shim_install;
 #[cfg(feature = "sources")]
 mod source_config;
@@ -72,7 +73,13 @@ pub use resolver::{
     path_with_selected_runtime, pinset_home, pinset_home_from_env, resolve_command,
     resolve_command_with_path, resolve_from_env, resolve_tool_selection,
 };
-pub use shim_install::{ShimInstallMethod, ShimInstallResult, install_shims};
+pub use runtime_provider::{
+    RuntimeProvider, runtime_provider, runtime_provider_for_command, runtime_providers,
+};
+pub use shim_install::{
+    ShimInstallMethod, ShimInstallResult, ensure_shims, install_shims, is_managed_command_shim,
+    is_managed_shim,
+};
 #[cfg(feature = "sources")]
 pub use source_config::{
     ResolvedArtifactSource, SUPPORTED_SOURCE_PROVIDERS, SourceConfig, SourceKind, SourceView,

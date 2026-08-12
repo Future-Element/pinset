@@ -5,7 +5,8 @@
 
 Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。它希望用一套一致的命令替代 fnm/nvm、uv、FVM 等工具在“选择和安装运行时版本”上的重叠工作。
 
-当前 `0.1.0-alpha.4` 是 Node-first 预发布版：
+当前开发版本是 `0.1.0-alpha.5`，最新公开版本是 `0.1.0-alpha.4`。这一阶段继续完善
+Node-first 闭环，不接入 Python 或 Flutter：
 
 - 支持 Node.js 精确版本、主版本/主次版本、`lts` 和 `current`；
 - 支持 Windows x64、Linux x64、macOS x64/arm64 的官方预编译产物；
@@ -14,12 +15,16 @@ Pinset 是一个面向多语言项目的本地优先运行时版本管理 CLI。
 - 校验 SHA-256 后安全解压 ZIP/TAR.XZ，并以事务方式提交安装；
 - 提供版本列表、安全卸载、内容寻址下载缓存、来源测试和旧管理器只读检测；
 - 提供 `doctor --json` 和一次性 `exec node@<selector>`；
+- 支持 `install node@<selector>` 只安装指定版本，不改变项目或全局选择；
 - 支持配置国内、企业内网或其他自定义镜像及有序回退；
 - 支持独立的全局 Node 选择、项目覆盖和安全系统 PATH 透传；
+- 支持清除项目/全局选择并回退上一层，不隐式卸载运行时；
 - 支持英文与简体中文界面，并可按用户持久保存语言偏好。
+- 由内置 Provider 统一声明运行时命令，选择或安装运行时后自动准备命令路由。
 
-alpha.4 新增一等全局默认命令、便捷 shim 安装和 Node 归档下载进度显示。Python、Flutter、
-PGP 验签和中央包管理器分发仍按路线图推进。项目不维护第三方 Homebrew Tap 或 Scoop Bucket。
+alpha.5 正在一次性收口 Node 运行时管理：Provider 自动命令路由、独立版本安装、显式旧配置导入、
+旧 shim 迁移和完整 PATH 诊断。Python、Flutter、PGP 验签和中央包管理器分发继续延期；项目不维护
+第三方 Homebrew Tap 或 Scoop Bucket。
 
 ## 安装 Pinset
 
@@ -31,7 +36,9 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   sh -s -- --version 0.1.0-alpha.4
 ```
 
-安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把 `pinset` 与 `pinset-shim` 原子安装到 `$HOME/.local/bin`。它不使用 `sudo`、不改 shell profile，也不安装 Node。
+安装器识别平台，从同一个 GitHub Release 下载归档和 `SHA256SUMS`，强制核对 SHA-256，然后把
+`pinset` 与通用调度器 `pinset-shim` 原子安装到 `$HOME/.local/bin`。curl 安装阶段不会创建
+`node`、`npm`、`npx`、`corepack`、`python` 或其他运行时命令，也不会安装任何运行时。
 
 稳定版本发布后可以把固定版本 URL 换成 `https://github.com/Future-Element/pinset/releases/latest/download/install.sh`。也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载当前系统的归档。
 
@@ -79,7 +86,8 @@ pinset current
 ```
 
 `pinset global node@24` 会查询官方版本索引、锁定精确版本并默认安装当前平台；不带版本的
-`pinset global` 只读显示全局默认。只生成全局配置和锁、不下载 Node：
+`pinset global` 只读显示全局默认。只生成全局配置和锁、不下载 Node（仍会准备 Provider
+命令路由）：
 
 ```shell
 pinset global node@lts --no-install
@@ -107,19 +115,35 @@ pinset current
 ```
 
 这会创建或更新 `pinset.toml` 与 `pinset.lock`，并默认安装当前平台的精确版本。建议把两个
-文件一起提交。只生成配置和锁：
+文件一起提交。只生成配置和锁、不下载运行时（仍会准备 Provider 命令路由）：
 
 ```shell
 pinset use node@22 --no-install
 pinset install --locked
 ```
 
+只预装一个 Node 版本、不改变项目或全局选择：
+
+```shell
+pinset install node@20
+pinset exec node@20.19.0 -- node --version
+```
+
+清除项目选择以恢复全局默认，或清除全局默认以恢复系统 PATH：
+
+```shell
+pinset unset node
+pinset unset node --global
+```
+
+已安装版本、缓存和命令路由不会因此删除。
+
 项目版本优先于全局版本；离开项目目录后自动恢复全局版本。项目或全局已声明但安装缺失时，
 Pinset 会明确失败，不会静默改用系统 Node。
 
 ### 5. 执行和检查当前版本
 
-不安装 shim 也能完整使用 Pinset：
+不启用直接命令路由也能通过显式入口完整使用 Pinset：
 
 ```shell
 pinset current
@@ -139,34 +163,44 @@ pinset exec node@24.0.0 -- node --version
 
 ### 6. 直接使用 node、npm、npx 和 corepack
 
-Pinset 可以自动找到与 `pinset` 同目录的 `pinset-shim`，并安装到用户级目录：
+curl 只安装 Pinset。执行下面任意正常选择或安装命令时，Node Provider 才会声明并注册
+`node`、`npm`、`npx` 和 `corepack`：
 
 ```shell
-pinset shim install
-pinset shim path
+pinset global node@24
+# 或：pinset use node@22
+# 或：pinset install --global --locked
+
+node --version
+npm --version
 ```
 
-Linux、macOS、WSL 当前终端：
+如果 `pinset` 所在目录已经位于 PATH，Provider 会把通用路由入口放到同一目录，通常不再需要
+任何额外步骤。源码直接运行、定制安装目录或其他回退场景可只为当前终端启用通用路由目录：
 
 ```bash
-PINSET_SHIM_DIR="$(pinset shim path)"
-export PATH="$PINSET_SHIM_DIR:$PATH"
-node --version
-npm --version
+eval "$(pinset activate bash)"       # Bash / WSL
+eval "$(pinset activate zsh)"        # Zsh
 ```
 
-Windows PowerShell：
+PowerShell：
 
 ```powershell
-$shimDir = pinset shim path
-$env:PATH = "$shimDir;$env:PATH"
-node --version
-npm --version
+pinset activate powershell | Out-String | Invoke-Expression
 ```
 
-目标目录已有任意同名文件时，Pinset 会拒绝整组安装，不覆盖 fnm、nvm、Volta 或用户文件。
-高级场景仍可显式传入 `--binary` 和 `--dir`，具体说明见
-[PRD 使用指南](docs/PRD.md#175-安装-shim)。
+`activate` 只调整当前 Shell 的通用 Pinset 路由目录，不包含任何 Node、Python 或 Flutter 专属逻辑，
+也不会修改 shell profile。`pinset shim install --provider node` 保留为显式修复入口，不再是正常
+使用步骤。目标目录出现非 Pinset 管理的同名文件时，整组注册在写入前停止，不覆盖 fnm、nvm、
+Volta、系统命令或用户文件。具体说明见 [PRD 使用指南](docs/PRD.md#175-provider-命令路由)。
+
+从旧 `$PINSET_HOME/shims` 布局升级时可显式执行：
+
+```shell
+pinset shim migrate --provider node
+```
+
+新路由准备完成后旧入口仍会保留，由 `pinset doctor` 报告，不会被自动删除。
 
 ### 7. 下载进度
 
@@ -193,6 +227,16 @@ pinset import --dry-run
 卸载默认拒绝删除当前项目或全局仍引用的版本。`--force` 只跳过引用保护，不会删除 Pinset
 数据目录之外或缺少匹配安装收据的文件。`import --dry-run` 只检测 `.nvmrc`、`.node-version`、
 Volta、asdf 和 mise 配置，不会修改它们。
+
+确认迁移来源后，可以显式导入到项目或全局状态；旧文件始终保留：
+
+```shell
+pinset import --apply --from nvm
+pinset import --apply --from volta --global --no-install
+```
+
+如果多个旧配置给出不同版本且未指定 `--from`，Pinset 会在写入前停止。`doctor` 同时检查
+`node`、`npm`、`npx`、`corepack` 的 PATH 顺序、Pinset 受管入口和外部管理器遮蔽。
 
 完整的 Windows、macOS、Linux、WSL、shim、镜像切换和故障排查说明见 [PRD 使用指南](docs/PRD.md#17-当前版本使用指南)。
 

@@ -195,7 +195,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  install    Install a locked version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  import     Preview legacy manager configuration\n  shim       Manage command shims\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  unset      Clear a project or global selection\n  install    Install a locked or explicit version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  import     Preview or apply legacy manager configuration\n  shim       Repair or migrate command shims\n  activate   Enable provider command routing in a shell\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -215,8 +215,11 @@ impl Catalog {
             Some("use") => {
                 "选择并锁定 Node.js 版本。\n\n用法：pinset use <node@x.y.z|主版本|主次版本|lts|current> [--global] [--no-install]"
             }
+            Some("unset") => {
+                "清除项目或全局 Node.js 选择，不卸载运行时。\n\n用法：pinset unset node [--global] [--cwd <目录>]"
+            }
             Some("install") => {
-                "根据项目或全局锁文件安装当前平台运行时。\n\n用法：pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定 Node.js 版本，或根据项目/全局锁文件安装。\n\n用法：\n  pinset install node@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
@@ -240,16 +243,19 @@ impl Catalog {
                 "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
             }
             Some("import") => {
-                "只读检测旧 Node.js 管理器配置。\n\n用法：pinset import --dry-run [--cwd <目录>]"
+                "预览或显式导入旧 Node.js 管理器配置；不会改写旧文件。\n\n用法：\n  pinset import --dry-run [--cwd <目录>]\n  pinset import --apply [--from <来源>] [--global] [--no-install] [--cwd <目录>]"
             }
             Some("shim") => {
-                "管理 Pinset 多调用 shim。\n\n用法：\n  pinset shim path\n  pinset shim install [--binary <文件>] [--dir <目录>] [命令...]"
+                "查看、修复或迁移 Pinset Provider 命令路由。\n\n用法：\n  pinset shim path\n  pinset shim install [--provider <工具>] [--binary <文件>] [--dir <目录>] [命令...]\n  pinset shim migrate [--provider <工具>] [--dir <目录>]"
+            }
+            Some("activate") => {
+                "输出启用 Pinset Provider 命令路由的 Shell 脚本。\n\n用法：pinset activate <bash|zsh|fish|powershell>"
             }
             Some("source") => {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  install    安装锁定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览旧管理器配置\n  shim       管理命令 shim\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  unset      清除项目或全局选择\n  install    安装锁定或指定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览或应用旧管理器配置\n  shim       管理和迁移命令 shim\n  activate   为当前 Shell 启用命令路由\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -291,6 +297,37 @@ impl Catalog {
                     lock_path.display()
                 )
             }
+        }
+    }
+
+    pub fn selection_unset(self, scope: &str, path: &Path, changed: bool) -> String {
+        match self.language {
+            Language::English if changed => format!(
+                "cleared {scope} Node.js selection in {}; installed runtimes and command routes were preserved",
+                path.display()
+            ),
+            Language::English => format!(
+                "no {scope} Node.js selection was configured in {}",
+                path.display()
+            ),
+            Language::SimplifiedChinese if changed => format!(
+                "已清除{} Node.js 选择：{}；已安装运行时和命令路由保持不变",
+                if scope == "global" {
+                    "全局"
+                } else {
+                    "项目"
+                },
+                path.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "{}未配置 Node.js 选择：{}",
+                if scope == "global" {
+                    "全局"
+                } else {
+                    "项目"
+                },
+                path.display()
+            ),
         }
     }
 
@@ -464,6 +501,46 @@ impl Catalog {
             Language::SimplifiedChinese => {
                 format!("发现冲突：检测到 {versions} 个不同 Node.js 版本；未修改任何配置")
             }
+        }
+    }
+
+    pub fn import_apply_conflict(self, versions: usize) -> String {
+        match self.language {
+            Language::English => format!(
+                "cannot import: detected {versions} distinct Node.js selections; pass --from <source>"
+            ),
+            Language::SimplifiedChinese => format!(
+                "无法导入：检测到 {versions} 个不同 Node.js 选择；请使用 --from <来源> 明确指定"
+            ),
+        }
+    }
+
+    pub fn import_source_not_found(self, source: &str, available: &str) -> String {
+        match self.language {
+            Language::English => {
+                format!("legacy source {source:?} was not detected; available sources: {available}")
+            }
+            Language::SimplifiedChinese => {
+                format!("未检测到旧配置来源 {source:?}；可用来源：{available}")
+            }
+        }
+    }
+
+    pub fn import_applied(self, kind: &str, version: &str, path: &Path, scope: &str) -> String {
+        match self.language {
+            Language::English => format!(
+                "imported {kind} node={version} into Pinset {scope} state; legacy file preserved: {}",
+                path.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "已将 {kind} 的 Node.js {version} 导入 Pinset {}状态；旧文件已保留：{}",
+                if scope == "global" {
+                    "全局"
+                } else {
+                    "项目"
+                },
+                path.display()
+            ),
         }
     }
 
@@ -687,13 +764,21 @@ impl Catalog {
         }
     }
 
-    pub fn path_candidate(self, path: &Path, owner: &str) -> String {
+    pub fn path_candidate(
+        self,
+        command: &str,
+        path: &Path,
+        owner: &str,
+        effective: bool,
+        managed: bool,
+    ) -> String {
         match self.language {
-            Language::English => {
-                format!("path_node {} owner={owner}", path.display())
-            }
+            Language::English => format!(
+                "path_{command} {} owner={owner} effective={effective} managed={managed}",
+                path.display()
+            ),
             Language::SimplifiedChinese => format!(
-                "PATH 中的 Node：{}；来源={}",
+                "PATH 中的 {command}：{}；来源={}；当前生效={}；Pinset 受管={}",
                 path.display(),
                 match owner {
                     "pinset" => "Pinset shim",
@@ -702,9 +787,43 @@ impl Catalog {
                     "asdf" => "asdf",
                     "mise" => "mise",
                     "volta" => "Volta",
+                    "foreign-in-pinset-directory" => "Pinset 目录中的外部文件",
                     _ => "系统或其他工具",
-                }
+                },
+                if effective { "是" } else { "否" },
+                if managed { "是" } else { "否" },
             ),
+        }
+    }
+
+    pub fn doctor_routing_issue(
+        self,
+        code: &str,
+        command: Option<&str>,
+        path: Option<&str>,
+        action: &str,
+    ) -> String {
+        match self.language {
+            Language::English => format!(
+                "routing_issue code={code} command={} path={} action={action}",
+                command.unwrap_or("-"),
+                path.unwrap_or("-"),
+            ),
+            Language::SimplifiedChinese => {
+                let issue = match code {
+                    "routing-directory-not-on-path" => "命令路由目录未加入 PATH",
+                    "legacy-shims-present" => "检测到保留的旧 shim",
+                    "provider-route-shadowed" => "Pinset 命令路由被更早的 PATH 项遮蔽",
+                    "provider-route-conflict" => "目标目录存在外部同名命令",
+                    "provider-route-missing" => "Provider 命令路由缺失",
+                    _ => code,
+                };
+                format!(
+                    "路由问题：{issue}；命令={}；路径={}；建议={action}",
+                    command.unwrap_or("-"),
+                    path.unwrap_or("-"),
+                )
+            }
         }
     }
 
@@ -725,28 +844,122 @@ impl Catalog {
     pub fn shim_installed(self, command: &str, destination: &Path, method: &str) -> String {
         match self.language {
             Language::English => format!("{command} {} {method}", destination.display()),
-            Language::SimplifiedChinese => format!(
-                "已安装命令 {command} 到 {}（{}）",
-                destination.display(),
-                if method == "hard-link" {
-                    "硬链接"
-                } else {
-                    "复制"
-                }
-            ),
+            Language::SimplifiedChinese => {
+                let method = match method {
+                    "symbolic-link" => "符号链接",
+                    "wrapper" => "命令包装器",
+                    "hard-link" => "硬链接",
+                    "existing" => "已有受管入口",
+                    _ => "复制",
+                };
+                format!(
+                    "已准备命令 {command} 到 {}（{method}）",
+                    destination.display()
+                )
+            }
         }
     }
 
     pub fn shim_path_ready(self, directory: &Path) -> String {
         match self.language {
             Language::English => format!(
-                "shim directory ready: {}; add this directory before other Node managers in PATH",
+                "shim directory ready: {}; add this directory before other runtime managers in PATH",
                 directory.display()
             ),
             Language::SimplifiedChinese => format!(
-                "shim 目录已就绪：{}；请将该目录放在 PATH 中其他 Node 管理器之前",
+                "shim 目录已就绪：{}；请将该目录放在 PATH 中其他运行时管理器之前",
                 directory.display()
             ),
+        }
+    }
+
+    pub fn shim_migration_not_needed(self, directory: &Path) -> String {
+        match self.language {
+            Language::English => format!(
+                "command routing already uses {}; no legacy directory migration is needed",
+                directory.display()
+            ),
+            Language::SimplifiedChinese => {
+                format!("命令路由已使用 {}；无需迁移旧目录", directory.display())
+            }
+        }
+    }
+
+    pub fn shim_migrated(
+        self,
+        source: &Path,
+        destination: &Path,
+        commands: usize,
+        preserved: usize,
+        active: bool,
+    ) -> String {
+        match self.language {
+            Language::English => format!(
+                "registered {commands} command routes in {}; preserved {preserved} legacy entries in {}; destination-on-path={active}",
+                destination.display(),
+                source.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "已在 {} 注册 {commands} 个命令路由；{} 中的 {preserved} 个旧入口保持不变；目标目录已加入 PATH={}",
+                destination.display(),
+                source.display(),
+                if active { "是" } else { "否" }
+            ),
+        }
+    }
+
+    pub fn provider_commands_registered(
+        self,
+        provider: &str,
+        directory: &Path,
+        installed: &[&str],
+        preserved: &[&str],
+        active: bool,
+    ) -> String {
+        let installed = if installed.is_empty() {
+            "-".to_owned()
+        } else {
+            installed.join(",")
+        };
+        let preserved = if preserved.is_empty() {
+            "-".to_owned()
+        } else {
+            preserved.join(",")
+        };
+        match self.language {
+            Language::English => {
+                let activation = if active {
+                    ""
+                } else {
+                    "; run `eval \"$(pinset activate bash)\"` for the current Bash shell"
+                };
+                format!(
+                    "{provider} command routing ready: {} (created={installed}; managed-existing={preserved}){activation}",
+                    directory.display()
+                )
+            }
+            Language::SimplifiedChinese => {
+                let activation = if active {
+                    ""
+                } else {
+                    "；当前 Bash 请执行 `eval \"$(pinset activate bash)\"`"
+                };
+                format!(
+                    "{provider} 命令路由已就绪：{}（已创建={installed}；已有受管命令={preserved}）{activation}",
+                    directory.display()
+                )
+            }
+        }
+    }
+
+    pub fn shim_auto_registration_failed(self, reason: &str) -> String {
+        match self.language {
+            Language::English => format!(
+                "warning: runtime installation succeeded, but provider command routing could not be prepared: {reason}"
+            ),
+            Language::SimplifiedChinese => {
+                format!("警告：运行时安装成功，但无法准备 Provider 命令路由：{reason}")
+            }
         }
     }
 

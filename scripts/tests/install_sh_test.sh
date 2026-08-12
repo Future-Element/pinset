@@ -55,6 +55,11 @@ sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$INSTALL_DIR"
 [ -x "$INSTALL_DIR/pinset" ]
 [ -x "$INSTALL_DIR/pinset-shim" ]
 [ "$("$INSTALL_DIR/pinset" --version)" = "pinset 9.8.7-test" ]
+INSTALLED_ENTRIES=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | awk '{ print $1 }')
+[ "$INSTALLED_ENTRIES" = "2" ]
+for runtime_command in node npm npx corepack python flutter java; do
+    [ ! -e "$INSTALL_DIR/$runtime_command" ]
+done
 
 BAD_RELEASE_DIR="$TEST_ROOT/bad-release"
 BAD_INSTALL_DIR="$TEST_ROOT/bad-install"
