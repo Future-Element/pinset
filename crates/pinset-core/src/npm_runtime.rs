@@ -64,6 +64,11 @@ pub fn install_locked_npm_tool(
             format,
         },
         strip_components: 1,
+        include_prefixes: if locked_tool.name == "pnpm" {
+            vec![PathBuf::from(target_manifest.required_path)]
+        } else {
+            Vec::new()
+        },
         required_paths: vec![PathBuf::from(target_manifest.required_path)],
         base_artifacts,
         executable_paths,

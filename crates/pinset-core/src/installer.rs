@@ -87,6 +87,7 @@ pub struct InstallRequest {
     pub target: String,
     pub artifact: ArtifactSpec,
     pub strip_components: usize,
+    pub include_prefixes: Vec<PathBuf>,
     pub required_paths: Vec<PathBuf>,
     pub base_artifacts: Vec<ArtifactInstallSpec>,
     pub executable_paths: Vec<PathBuf>,
@@ -235,7 +236,7 @@ impl Installer {
             &staging_dir,
             request.artifact.format,
             request.strip_components,
-            &[],
+            &request.include_prefixes,
         )?;
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
@@ -1095,6 +1096,11 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
     if validate_required_paths(final_dir, &request.required_paths).is_err() {
         return None;
     }
+    for base in &request.base_artifacts {
+        if validate_required_paths(final_dir, &base.required_paths).is_err() {
+            return None;
+        }
+    }
     if ensure_executable_paths(final_dir, &request.executable_paths).is_err() {
         return None;
     }
@@ -1116,6 +1122,14 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
     validate_artifact_request(&request.artifact, request.strip_components)?;
+    debug_assert!(
+        request.artifact.format != ArtifactFormat::Zip || request.include_prefixes.is_empty()
+    );
+    for path in &request.include_prefixes {
+        if !is_safe_relative(path) {
+            return Err(Error::InvalidRequiredPath { path: path.clone() });
+        }
+    }
     for base in &request.base_artifacts {
         validate_artifact_request(&base.artifact, base.strip_components)?;
         debug_assert!(
@@ -1697,7 +1711,14 @@ mod tests {
             ),
             ("package/setup.js", b"must not be installed", 0o644),
         ]);
-        let platform_archive = tar_gz_bytes(&[("package/pnpm", b"native pnpm", 0o644)]);
+        let platform_archive = tar_gz_bytes(&[
+            ("package/pnpm", b"native pnpm", 0o644),
+            (
+                "package/package.json",
+                br#"{"name":"@pnpm/linux-x64"}"#,
+                0o644,
+            ),
+        ]);
         let base_integrity = format!(
             "sha512-{}",
             base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&base_archive))
@@ -1716,6 +1737,7 @@ mod tests {
         request.target = "linux-x86_64".to_owned();
         request.artifact.format = ArtifactFormat::TarGz;
         request.strip_components = 1;
+        request.include_prefixes = vec![PathBuf::from("pnpm")];
         request.required_paths = vec![PathBuf::from("pnpm")];
         request.executable_paths = vec![PathBuf::from("pnpm")];
         request.base_artifacts = vec![ArtifactInstallSpec {
@@ -2004,6 +2026,7 @@ mod tests {
                 format: ArtifactFormat::Zip,
             },
             strip_components: 0,
+            include_prefixes: Vec::new(),
             required_paths: vec![PathBuf::from("bin/node.exe")],
             base_artifacts: Vec::new(),
             executable_paths: Vec::new(),
