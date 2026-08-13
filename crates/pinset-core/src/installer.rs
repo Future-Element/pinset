@@ -137,6 +137,20 @@ impl Default for InstallLimits {
     }
 }
 
+impl InstallLimits {
+    pub fn for_tool(tool: &str) -> Self {
+        if tool == "flutter" {
+            return Self {
+                max_download_bytes: 3 * 1_073_741_824,
+                max_unpacked_bytes: 12 * 1_073_741_824,
+                max_archive_entries: 250_000,
+                request_timeout: Duration::from_secs(900),
+            };
+        }
+        Self::default()
+    }
+}
+
 pub struct Installer {
     client: Client,
     limits: InstallLimits,
@@ -729,6 +743,7 @@ impl Installer {
         }
 
         let mut seen = HashSet::with_capacity(archive.len());
+        let mut pending_symlinks = Vec::new();
         let mut total_unpacked = 0_u64;
         for index in 0..archive.len() {
             let mut entry = archive
@@ -740,7 +755,10 @@ impl Installer {
                 .ok_or_else(|| Error::UnsafeArchiveEntry {
                     entry: entry_name.clone(),
                 })?;
-            if !is_safe_relative(&archived_path) || is_special_zip_entry(entry.unix_mode()) {
+            let unix_mode = entry.unix_mode();
+            let is_symlink = is_zip_symlink(unix_mode);
+            if !is_safe_relative(&archived_path) || (is_special_zip_entry(unix_mode) && !is_symlink)
+            {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
             let Some(relative) = strip_entry_path(
@@ -764,6 +782,32 @@ impl Installer {
                     path: output_path,
                     source,
                 })?;
+                continue;
+            }
+            if is_symlink {
+                if entry.size() > 4096 {
+                    return Err(Error::UnsafeArchiveEntry { entry: entry_name });
+                }
+                let mut target = Vec::with_capacity(entry.size() as usize);
+                entry
+                    .read_to_end(&mut target)
+                    .map_err(|source| Error::ExtractArchiveEntry {
+                        entry: entry_name.clone(),
+                        path: output_path.clone(),
+                        source,
+                    })?;
+                let link_target = String::from_utf8(target).map(PathBuf::from).map_err(|_| {
+                    Error::UnsafeArchiveEntry {
+                        entry: entry_name.clone(),
+                    }
+                })?;
+                let resolved_target =
+                    resolve_archive_symlink(&relative, &link_target).ok_or_else(|| {
+                        Error::UnsafeArchiveEntry {
+                            entry: entry_name.clone(),
+                        }
+                    })?;
+                pending_symlinks.push((entry_name, output_path, link_target, resolved_target));
                 continue;
             }
 
@@ -835,6 +879,8 @@ impl Installer {
                 }
             })?;
         }
+
+        create_pending_archive_symlinks(destination, pending_symlinks)?;
 
         Ok(())
     }
@@ -1018,9 +1064,24 @@ impl Installer {
                 }
             })?;
         }
-        for (entry_name, output_path, link_target, resolved_target) in pending_symlinks {
-            if !destination.join(resolved_target).is_file() {
-                return Err(Error::UnsafeArchiveEntry { entry: entry_name });
+        create_pending_archive_symlinks(destination, pending_symlinks)?;
+        Ok(())
+    }
+}
+
+type PendingArchiveSymlink = (String, PathBuf, PathBuf, PathBuf);
+
+fn create_pending_archive_symlinks(
+    destination: &Path,
+    mut pending: Vec<PendingArchiveSymlink>,
+) -> Result<()> {
+    while !pending.is_empty() {
+        let mut remaining = Vec::new();
+        let mut created = 0_usize;
+        for (entry_name, output_path, link_target, resolved_target) in pending {
+            if !destination.join(&resolved_target).exists() {
+                remaining.push((entry_name, output_path, link_target, resolved_target));
+                continue;
             }
             if let Some(parent) = output_path.parent() {
                 fs::create_dir_all(parent).map_err(|source| Error::ExtractArchiveEntry {
@@ -1036,9 +1097,19 @@ impl Installer {
                     source,
                 }
             })?;
+            created += 1;
         }
-        Ok(())
+        if created == 0 {
+            return Err(Error::UnsafeArchiveEntry {
+                entry: remaining
+                    .first()
+                    .map(|(entry, _, _, _)| entry.clone())
+                    .unwrap_or_else(|| "<symlink>".to_owned()),
+            });
+        }
+        pending = remaining;
     }
+    Ok(())
 }
 
 fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
@@ -1295,6 +1366,10 @@ fn is_special_zip_entry(mode: Option<u32>) -> bool {
     file_type != 0 && file_type != 0o100000 && file_type != 0o040000
 }
 
+fn is_zip_symlink(mode: Option<u32>) -> bool {
+    mode.is_some_and(|mode| mode & 0o170000 == 0o120000)
+}
+
 fn archive_collision_key(path: &Path) -> String {
     let value = path.to_string_lossy().replace('\\', "/");
     if cfg!(windows) {
@@ -1457,6 +1532,18 @@ mod tests {
 
     use super::*;
     use crate::{download_cache::download_partial_path, download_cache_path};
+
+    #[test]
+    fn raises_archive_limits_only_for_flutter_sdks() {
+        let defaults = InstallLimits::default();
+        let flutter = InstallLimits::for_tool("flutter");
+        assert_eq!(InstallLimits::for_tool("node"), defaults);
+        assert_eq!(InstallLimits::for_tool("go"), defaults);
+        assert!(flutter.max_download_bytes > defaults.max_download_bytes);
+        assert!(flutter.max_unpacked_bytes > defaults.max_unpacked_bytes);
+        assert!(flutter.max_archive_entries > defaults.max_archive_entries);
+        assert!(flutter.request_timeout > defaults.request_timeout);
+    }
 
     #[test]
     fn installs_verified_zip_atomically_from_local_http() {
@@ -1818,6 +1905,62 @@ mod tests {
         assert_transaction_root_is_empty(root.path());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn installs_zip_with_safe_flutter_framework_symlink_chains() {
+        let archive = zip_with_symlink_chain("Versions/Current/FlutterMacOS");
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.target = "macos-aarch64".to_owned();
+        request.strip_components = 1;
+        request.required_paths = vec![
+            PathBuf::from("bin/flutter"),
+            PathBuf::from("FlutterMacOS.framework/FlutterMacOS"),
+        ];
+
+        let outcome = test_installer().install(&request).expect("install");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read_link(
+                outcome
+                    .install_dir
+                    .join("FlutterMacOS.framework/Versions/Current")
+            )
+            .expect("version link"),
+            PathBuf::from("A")
+        );
+        assert_eq!(
+            fs::read_link(
+                outcome
+                    .install_dir
+                    .join("FlutterMacOS.framework/FlutterMacOS")
+            )
+            .expect("framework link"),
+            PathBuf::from("Versions/Current/FlutterMacOS")
+        );
+        assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn rejects_zip_symlinks_that_escape_the_install_root() {
+        let archive = zip_with_symlink_chain("../../outside");
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.strip_components = 1;
+
+        let error = test_installer()
+            .install(&request)
+            .expect_err("escaping symlink");
+        server.join().expect("server");
+
+        assert!(matches!(error, Error::UnsafeArchiveEntry { .. }));
+        assert!(!final_dir(root.path()).exists());
+        assert_transaction_root_is_empty(root.path());
+    }
+
     #[test]
     fn rejects_tar_xz_symlinks_that_escape_the_install_root() {
         let archive = tar_xz_with_symlink("../../outside");
@@ -2057,6 +2200,40 @@ mod tests {
                 .expect("zip entry");
             writer.write_all(content).expect("zip content");
         }
+        writer.finish().expect("zip finish").into_inner()
+    }
+
+    fn zip_with_symlink_chain(framework_target: &str) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default().unix_permissions(0o755);
+        writer
+            .start_file("flutter/bin/flutter", options)
+            .expect("Flutter executable");
+        writer.write_all(b"fake Flutter").expect("Flutter content");
+        writer
+            .start_file(
+                "flutter/FlutterMacOS.framework/Versions/A/FlutterMacOS",
+                options,
+            )
+            .expect("framework binary");
+        writer
+            .write_all(b"fake framework")
+            .expect("framework content");
+        writer
+            .add_symlink(
+                "flutter/FlutterMacOS.framework/FlutterMacOS",
+                framework_target,
+                options,
+            )
+            .expect("framework symlink");
+        writer
+            .add_symlink(
+                "flutter/FlutterMacOS.framework/Versions/Current",
+                "A",
+                options,
+            )
+            .expect("version symlink");
         writer.finish().expect("zip finish").into_inner()
     }
 

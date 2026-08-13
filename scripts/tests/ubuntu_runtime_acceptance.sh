@@ -11,6 +11,9 @@ PROJECT_PNPM_SELECTOR="${PINSET_PROJECT_PNPM_SELECTOR:-10}"
 PROJECT_BUN_SELECTOR="${PINSET_PROJECT_BUN_SELECTOR:-1.2}"
 GLOBAL_GO_SELECTOR="${PINSET_GLOBAL_GO_SELECTOR:-latest}"
 PROJECT_GO_SELECTOR="${PINSET_PROJECT_GO_SELECTOR:-1.24}"
+GLOBAL_FLUTTER_SELECTOR="${PINSET_GLOBAL_FLUTTER_SELECTOR:-latest}"
+PROJECT_FLUTTER_SELECTOR="${PINSET_PROJECT_FLUTTER_SELECTOR:-3.44}"
+SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-0}"
 VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
 
 if [[ ! "$GLOBAL_VERSION" =~ $VERSION_PATTERN ]] || [[ ! "$PROJECT_VERSION" =~ $VERSION_PATTERN ]] ||
@@ -22,6 +25,10 @@ if [[ ! -x "$PINSET_BIN" ]]; then
   echo "PINSET_BIN is not executable: $PINSET_BIN" >&2
   exit 2
 fi
+if [[ "$SKIP_FLUTTER_RUNTIME" != "0" && "$SKIP_FLUTTER_RUNTIME" != "1" ]]; then
+  echo "PINSET_SKIP_FLUTTER_RUNTIME must be 0 or 1" >&2
+  exit 2
+fi
 
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -29,6 +36,8 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export PINSET_HOME="$TEST_ROOT/pinset-home"
 unset PINSET_LANG
 unset GOTOOLCHAIN
+unset FLUTTER_ROOT
+unset FLUTTER_SUPPRESS_ANALYTICS
 
 cd "$TEST_ROOT"
 
@@ -40,6 +49,14 @@ grep -F 'language = "zh-CN"' "$PINSET_HOME/settings.toml"
 "$PINSET_BIN" list pnpm --available | grep -E '^pnpm@10\.'
 "$PINSET_BIN" list bun --available | grep -F "bun@$BUN_VERSION"
 "$PINSET_BIN" list go --available | grep -E '^go@[0-9]+\.[0-9]+\.[0-9]+$'
+FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
+printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
+PROJECT_FLUTTER_VERSION="$(
+  printf '%s\n' "$FLUTTER_RELEASES" |
+    sed -n "s/^flutter@\(${PROJECT_FLUTTER_SELECTOR//./\.}\.[0-9][0-9]*\) .*/\1/p" |
+    head -n 1
+)"
+test -n "$PROJECT_FLUTTER_VERSION"
 "$PINSET_BIN" global "pnpm@$GLOBAL_PNPM_SELECTOR"
 GLOBAL_PNPM_VERSION="$("$PINSET_BIN" exec -- pnpm --version)"
 printf '%s\n' "$GLOBAL_PNPM_VERSION" | grep -E '^11\.'
@@ -47,6 +64,20 @@ printf '%s\n' "$GLOBAL_PNPM_VERSION" | grep -E '^11\.'
 "$PINSET_BIN" global "go@$GLOBAL_GO_SELECTOR"
 GLOBAL_GO_VERSION="$("$PINSET_BIN" exec -- go version | sed -E 's/^go version go([^ ]+).*/\1/')"
 printf '%s\n' "$GLOBAL_GO_VERSION" | grep -E "$VERSION_PATTERN"
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  "$PINSET_BIN" global "flutter@$GLOBAL_FLUTTER_SELECTOR"
+  GLOBAL_FLUTTER_JSON="$("$PINSET_BIN" exec -- flutter --version --machine)"
+  GLOBAL_FLUTTER_VERSION="$(
+    printf '%s' "$GLOBAL_FLUTTER_JSON" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])'
+  )"
+  GLOBAL_DART_VERSION="$(
+    printf '%s' "$GLOBAL_FLUTTER_JSON" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["dartSdkVersion"])'
+  )"
+  printf '%s\n' "$GLOBAL_FLUTTER_VERSION" "$GLOBAL_DART_VERSION" | grep -E "$VERSION_PATTERN"
+  test "$PROJECT_FLUTTER_VERSION" != "$GLOBAL_FLUTTER_VERSION"
+fi
 "$PINSET_BIN" current node | tee global-current.txt
 grep -F "Node.js $GLOBAL_VERSION" global-current.txt
 grep -F '来源=全局' global-current.txt
@@ -61,6 +92,15 @@ grep -F '来源=全局' global-current.txt
 "$PINSET_BIN" exec -- go env GOTOOLCHAIN | grep -Fx 'local'
 "$PINSET_BIN" exec -- go env GOROOT | grep -F "$PINSET_HOME/installs/go/$GLOBAL_GO_VERSION/"
 printf 'package p\nfunc f( ){ }\n' | "$PINSET_BIN" exec -- gofmt | grep -F 'func f() {}'
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  GLOBAL_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
+  GLOBAL_DART_PATH="$("$PINSET_BIN" which dart)"
+  test "$(dirname "$GLOBAL_FLUTTER_PATH")" = "$(dirname "$GLOBAL_DART_PATH")"
+  GLOBAL_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$GLOBAL_FLUTTER_PATH")/.." && pwd -P)"
+  printf "import 'dart:io'; void main() => print(Platform.environment['FLUTTER_ROOT']);\n" > verify_flutter_env.dart
+  "$PINSET_BIN" exec -- dart verify_flutter_env.dart | grep -Fx "$GLOBAL_FLUTTER_ROOT"
+  "$PINSET_BIN" exec -- dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
+fi
 
 SHIM_DIR="$("$PINSET_BIN" shim path)"
 export PATH="$SHIM_DIR:$PATH"
@@ -73,6 +113,18 @@ bun --version | grep -Fx "$BUN_VERSION"
 bunx --version | grep -Fx "$BUN_VERSION"
 go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
+  dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
+  for mutation in upgrade downgrade channel; do
+    if flutter "$mutation" > flutter-mutation.txt 2>&1; then
+      echo "managed flutter $mutation unexpectedly succeeded" >&2
+      exit 1
+    fi
+    grep -F "refusing to run \`flutter $mutation\` against a Pinset-managed Flutter SDK" flutter-mutation.txt
+  done
+fi
+"$PINSET_BIN" cache clean
 
 mkdir project
 cd project
@@ -89,6 +141,23 @@ printf '%s\n' "$PROJECT_BUN_VERSION" | grep -E '^1\.2\.'
 "$PINSET_BIN" use "go@$PROJECT_GO_SELECTOR"
 PROJECT_GO_VERSION="$(go version | sed -E 's/^go version go([^ ]+).*/\1/')"
 printf '%s\n' "$PROJECT_GO_VERSION" | grep -E "^${PROJECT_GO_SELECTOR//./\.}\."
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  printf '{"flutter":"%s"}\n' "$PROJECT_FLUTTER_VERSION" > .fvmrc
+  "$PINSET_BIN" import --apply --from fvm --no-install
+fi
+"$PINSET_BIN" install --locked
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  PROJECT_FLUTTER_JSON="$(flutter --version --machine)"
+  PROJECT_FLUTTER_ACTUAL="$(
+    printf '%s' "$PROJECT_FLUTTER_JSON" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])'
+  )"
+  PROJECT_DART_VERSION="$(
+    printf '%s' "$PROJECT_FLUTTER_JSON" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["dartSdkVersion"])'
+  )"
+  test "$PROJECT_FLUTTER_ACTUAL" = "$PROJECT_FLUTTER_VERSION"
+fi
 test -f pinset.toml
 test -f pinset.lock
 "$PINSET_BIN" current node | tee project-current.txt
@@ -108,6 +177,19 @@ bunx --version | grep -Fx "$PROJECT_BUN_VERSION"
 go version | grep -F "go version go$PROJECT_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
 go env GOROOT | grep -F "$PINSET_HOME/installs/go/$PROJECT_GO_VERSION/"
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
+  PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"
+  test "$(dirname "$PROJECT_FLUTTER_PATH")" = "$(dirname "$PROJECT_DART_PATH")"
+  PROJECT_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$PROJECT_FLUTTER_PATH")/.." && pwd -P)"
+  dart "$TEST_ROOT/verify_flutter_env.dart" | grep -Fx "$PROJECT_FLUTTER_ROOT"
+  dart --version 2>&1 | grep -F "Dart SDK version: $PROJECT_DART_VERSION"
+fi
+"$PINSET_BIN" cache clean
+"$PINSET_BIN" install --locked | tee locked-reuse.txt
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  grep -F "flutter@$PROJECT_FLUTTER_VERSION is already installed" locked-reuse.txt
+fi
 set +e
 PNPM_CHILD_NODE_OUTPUT="$(pnpm exec node --version 2>&1)"
 PNPM_CHILD_NODE_STATUS=$?
@@ -127,5 +209,13 @@ pnpm --version | grep -Fx "$GLOBAL_PNPM_VERSION"
 bun --version | grep -Fx "$BUN_VERSION"
 go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
+  dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
+fi
 
-echo "Unix real Node, pnpm, Bun and Go acceptance passed"
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  echo "Unix real Node, pnpm, Bun, Go and Flutter acceptance passed"
+else
+  echo "Unix real Node, pnpm, Bun and Go acceptance passed; Flutter runtime download skipped"
+fi

@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.3.0`
-产品阶段：`Go Provider development`
+文档版本：`v0.4.0`
+产品阶段：`Flutter Provider release`
 更新时间：`2026-08-13`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
 
-`v0.3.0` 在 Node.js、pnpm 和 Bun 基础上新增 Go Provider。Python、Flutter、Java 和 Rust 暂不纳入本版本。
+`v0.4.0` 在 Node.js、pnpm、Bun 和 Go 基础上新增 Flutter SDK Provider，并将 SDK 内置 Dart 作为同一个不可拆分的运行时单元。Python、Java 和 Rust 暂不纳入本版本。
 
 ### 1.1 目标
 
@@ -28,7 +28,8 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 1.3 本版本不做
 
-- 不接入 Python、Flutter、Java、Rust 等其他 Provider；
+- 不接入 Python、Java、Rust 等其他 Provider；
+- 不管理 Android SDK/NDK、JDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
 - 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
@@ -61,7 +62,7 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Flutter Provider 注册 `flutter`、`dart`。
 
 ## 3. 支持矩阵
 
@@ -139,7 +140,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护。
 
 ### 4.5 通用命令路由
 
@@ -371,6 +372,20 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 - 保留用户的 `GOPATH`、`GOMODCACHE`、`GOCACHE`，不修改 `go.mod` 或 `go.work`；
 - 不管理 Go module 依赖、代理凭据、交叉编译器、TinyGo 或系统 C 工具链。
 
+## 6.3 Flutter SDK Provider
+
+Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主版本、主次版本、`latest` 和 `current` 选择器，并通过 `pinset list flutter --available` 同时显示 Flutter 与捆绑 Dart 的精确版本。
+
+- 官方元数据来自 Google Storage 上按 Linux、Windows、macOS 分发的三个 Flutter release JSON；
+- 只有同时具备 Windows x64、Linux x64、macOS x64 和 macOS arm64 工件，且 release hash、Flutter 版本和 Dart 版本一致的 stable 发布才可用；
+- 锁文件记录 stable 渠道、捆绑 Dart 版本、release hash、逐平台规范归档路径和 SHA-256；
+- Windows/macOS 使用 ZIP，Linux 使用 TAR.XZ，均 strip 顶层 `flutter/` 后验证 `bin/flutter`、`bin/dart` 和内置 Dart SDK；
+- Flutter 官方归档使用独立的 3 GiB 下载、12 GiB 解压和 250,000 条目安全上限，其他 Provider 继续使用较低默认限额；
+- `flutter` 与 `dart` 必须解析到同一安装目录，受管进程获得对应 `FLUTTER_ROOT`；用户未显式设置时注入 `FLUTTER_SUPPRESS_ANALYTICS=true`；
+- 支持只读识别和显式导入 `.fvmrc`，保留原文件，不接管 FVM 缓存；
+- `flutter upgrade`、`flutter downgrade`、`flutter channel` 在受管 SDK 启动前被拒绝，版本变化必须重新通过 Pinset 选择和安装；
+- 不管理 Flutter/Dart 项目依赖、pub 缓存、移动端/桌面端平台 SDK、模拟器或设备。
+
 ## 7. 安全和供应链
 
 ### 7.1 Provider 归档
@@ -381,6 +396,7 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 - Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，计划在稳定版加入。
 - pnpm/Bun 使用 npm 平台包的 SHA-512 SRI，并在锁定阶段验证 npm registry ECDSA 签名；安装阶段重新计算 SHA-512。
 - Go 使用官方下载 JSON 中逐工件提供的 SHA-256；锁文件中的规范 URL、目标和归档格式必须与内置 Go Provider 一致。
+- Flutter 使用官方 release JSON 中逐工件提供的 SHA-256；三个平台索引必须对 Flutter 版本、Dart 版本和 release hash 达成一致。
 
 ### 7.2 Pinset Release
 
@@ -418,7 +434,7 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 
 ## 9. Beta 验收
 
-### 9.1 本地检查
+### 9.1 Quality 检查
 
 - `cargo fmt --all -- --check`；
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`；
@@ -429,7 +445,7 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 - shim 轻依赖检查；
 - `git diff --check`。
 
-这些检查只使用临时目录、假归档和本地服务，不在开发机安装真实运行时。
+开发机只执行格式化和 `git diff --check` 等静态操作。Clippy、编译、测试和脚本执行全部由 GitHub Actions 临时虚拟机完成，不在开发机或 WSL 运行。
 
 ### 9.2 Release 检查
 
@@ -437,15 +453,16 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、一个 pnpm 和一个 Bun；
+- 安装一个全局 Node、一个项目 Node、pnpm、Bun 和 Go；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx；
-- 验证 PATH 直接调用的 node/npm/npx/corepack/pnpm/bun/bunx；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt；
+- 验证 PATH 直接调用的全部 Provider 命令；
 - 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
+- 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由、`.fvmrc` 导入和原地变更拦截；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
-任一平台失败都不发布 Release。
+任一必需的 Quality、构建或轻量真实运行时任务失败都不发布 Release。Flutter SDK 单个归档超过 1.8 GiB，不在 GitHub Actions 下载；全局/项目覆盖、Flutter/Dart 同源、`FLUTTER_ROOT` 和 SDK 重用由发布后的隔离虚拟机使用完整验收脚本验证。
 
 ## 10. 稳定版前待办
 
@@ -456,6 +473,6 @@ Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `curren
 - 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
-- 完成 Node、pnpm、Bun、Go 的三平台真实运行时验收。
+- 完成 Flutter/Dart 的发布后隔离虚拟机真实运行时验收。
 
-后续按 Flutter、CPython、Java、Rustup 的顺序扩展。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+后续按 CPython、Java、Rustup 的顺序扩展。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

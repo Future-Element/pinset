@@ -20,6 +20,7 @@ pub enum RuntimeMetadataKind {
     Node,
     Npm,
     Go,
+    Flutter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,12 +28,14 @@ pub enum RuntimeInstallKind {
     Node,
     Npm,
     Go,
+    Flutter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEnvironmentKind {
     None,
     Go,
+    Flutter,
 }
 
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
@@ -68,7 +71,21 @@ const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
     installer: RuntimeInstallKind::Go,
     environment: RuntimeEnvironmentKind::Go,
 };
-const PROVIDERS: &[RuntimeProvider] = &[NODE_PROVIDER, PNPM_PROVIDER, BUN_PROVIDER, GO_PROVIDER];
+const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "flutter",
+    commands: &["flutter", "dart"],
+    command_layout: RuntimeCommandLayout::Bin,
+    metadata: RuntimeMetadataKind::Flutter,
+    installer: RuntimeInstallKind::Flutter,
+    environment: RuntimeEnvironmentKind::Flutter,
+};
+const PROVIDERS: &[RuntimeProvider] = &[
+    NODE_PROVIDER,
+    PNPM_PROVIDER,
+    BUN_PROVIDER,
+    GO_PROVIDER,
+    FLUTTER_PROVIDER,
+];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
     PROVIDERS
@@ -117,9 +134,16 @@ mod tests {
             runtime_provider_for_command("gofmt").map(|provider| provider.tool),
             Some("go")
         );
+        assert_eq!(
+            runtime_provider("flutter").expect("flutter").commands,
+            ["flutter", "dart"]
+        );
+        assert_eq!(
+            runtime_provider_for_command("dart").map(|provider| provider.tool),
+            Some("flutter")
+        );
         assert!(runtime_provider("python").is_none());
         assert!(runtime_provider_for_command("python").is_none());
-        assert!(runtime_provider_for_command("flutter").is_none());
     }
 
     #[test]

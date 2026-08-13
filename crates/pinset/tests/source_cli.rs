@@ -211,6 +211,80 @@ fn tests_a_go_source_read_only_against_its_download_index() {
     assert!(!home.join("installs").exists());
 }
 
+#[test]
+fn tests_a_flutter_source_read_only_against_all_platform_indexes() {
+    let root = tempdir().expect("temporary PINSET_HOME");
+    let home = root.path().join("isolated-home");
+    let version = "3.47.0";
+    let release_hash = "cd".repeat(20);
+    let sha256 = "ab".repeat(32);
+    let entry = |archive: &str, dart_arch: &str| {
+        serde_json::json!({
+            "hash": release_hash.clone(),
+            "channel": "stable",
+            "version": version,
+            "dart_sdk_version": "3.13.0",
+            "dart_sdk_arch": dart_arch,
+            "archive": archive,
+            "sha256": sha256.clone()
+        })
+    };
+    let linux = serde_json::json!({"releases": [entry(
+        "stable/linux/flutter_linux_3.47.0-stable.tar.xz",
+        "x64"
+    )]})
+    .to_string()
+    .into_bytes();
+    let windows = serde_json::json!({"releases": [entry(
+        "stable/windows/flutter_windows_3.47.0-stable.zip",
+        "x64"
+    )]})
+    .to_string()
+    .into_bytes();
+    let macos = serde_json::json!({"releases": [
+        entry("stable/macos/flutter_macos_3.47.0-stable.zip", "x64"),
+        entry("stable/macos/flutter_macos_arm64_3.47.0-stable.zip", "arm64")
+    ]})
+    .to_string()
+    .into_bytes();
+    let (base_url, server) = serve_sequence(vec![
+        (
+            "GET /flutter_infra_release/releases/releases_linux.json",
+            linux,
+        ),
+        (
+            "GET /flutter_infra_release/releases/releases_windows.json",
+            windows,
+        ),
+        (
+            "GET /flutter_infra_release/releases/releases_macos.json",
+            macos,
+        ),
+    ]);
+
+    pinset(
+        &home,
+        &[
+            "source",
+            "add",
+            "flutter",
+            "local",
+            "--base-url",
+            &base_url,
+            "--allow-insecure",
+        ],
+    )
+    .assert_success("added flutter local");
+    let tested = pinset(
+        &home,
+        &["--lang", "zh-CN", "source", "test", "flutter", "local"],
+    );
+    server.join().expect("server");
+    tested.assert_success_contains("安装源测试通过");
+    tested.assert_success_contains("稳定版本数=1");
+    assert!(!home.join("installs").exists());
+}
+
 fn serve_sequence(responses: Vec<(&'static str, Vec<u8>)>) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
     let address = listener.local_addr().expect("server address");

@@ -1,10 +1,10 @@
 # Pinset Plans
 
-当前规划版本：`v0.4.0`
+当前规划版本：`v0.5.0`
 
 当前发布候选：无
 
-最新已发布版本：`v0.3.0`
+最新已发布版本：`v0.4.0`
 
 更新时间：`2026-08-13`
 
@@ -20,7 +20,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 4. `v0.6.0`：Java，首期仅支持 Eclipse Temurin JDK。
 5. `v0.7.0`：Rust，通过 rustup 委托管理工具链。
 
-各版本暂不承诺日期。只有对应 Provider 在 Ubuntu、Windows、macOS 三平台 GitHub Actions 虚拟机完成真实安装和命令验证后，才能进入发布流程。
+各版本暂不承诺日期。GitHub Actions 负责三平台构建、质量检查和体积适合自动化的真实运行时验收；Flutter SDK 等超大工件保留完整验收脚本，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
 
 ## 版本路线
 
@@ -36,7 +36,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.2.0` | 已发布 | pnpm、Bun Provider，通用 Provider/锁文件/命令路由基础 |
 | `v0.2.1` | 已发布 | pnpm、Bun 项目版本切换和安装路径修复 |
 | `v0.3.0` | 已发布 | Go Provider、Native Provider 通用化 |
-| `v0.4.0` | 规划中 | Flutter SDK Provider、内置 Dart 路由 |
+| `v0.4.0` | 已发布 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.5.0` | 规划中 | CPython Provider |
 | `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
 | `v0.7.0` | 规划中 | rustup 委托式 Rust Provider |
@@ -75,6 +75,8 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - Node.js、pnpm、Bun 既有行为没有回归。
 
 ## v0.4.0 — Flutter SDK Provider
+
+实现状态：核心 Provider、锁文件、安装与路由已完成并发布；Actions 覆盖三平台构建和 Flutter 自动化测试，真实 SDK 大包验收转由发布后的隔离虚拟机执行。
 
 ### 目标
 
@@ -204,8 +206,8 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 - 本地只进行代码和文档编辑、只读检查，以及 `git diff --check` 这类不执行项目代码的静态差异检查。
 - 不在本机或 WSL 执行 Cargo build/test、Pinset 安装命令、运行时下载、全局切换或项目切换测试。
 - Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行格式、Clippy、单元测试和脚本测试。
-- Provider 变更在合并和发布前必须通过可手动触发的 Ubuntu、Windows、macOS 三平台真实运行时验收。
-- 任一必需平台失败时不得发布；修复后必须重新运行完整矩阵。
+- Provider 变更在合并和发布前必须通过 Ubuntu、Windows、macOS 三平台构建和 Quality 检查；体积适合的运行时继续执行三平台真实验收。
+- Flutter SDK 等超大工件不在 GitHub Actions 下载；发布后使用保留的完整验收脚本在隔离虚拟机验证，发现问题后通过补丁版本修复。
 - 本地静态检查不等同于运行验证，最终结论以 GitHub Actions 记录和虚拟机人工验收为准。
 
 ## 发布流程
@@ -213,7 +215,7 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 1. 在功能分支完成代码、文档、版本号和变更记录。
 2. 经用户明确授权后暂存、提交、推送并创建 Pull Request。
 3. 等待 Pull Request Quality 工作流通过。
-4. 对新增或修改的 Provider 手动触发 Ubuntu、Windows、macOS 三平台真实运行时验收。
+4. 对新增或修改的 Provider 触发三平台构建；体积适合的运行时执行真实验收，超大运行时记录发布后虚拟机验收边界。
 5. 经用户明确确认后合并到 `main`。
 6. 创建签名版本标签并触发 Release 工作流。
 7. 确认 release assets、checksums、SBOM/provenance 和各平台安装脚本可用后宣布发布完成。
@@ -237,5 +239,5 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 | Python 第三方预构建工件无法只靠语言版本复现 | 锁定 build ID、variant、来源和校验值 |
 | Java 厂商、JDK/JRE 和 JVM 类型产生歧义 | 首期仅 Temurin JDK/HotSpot/GA，并在新 schema 中显式记录分发属性 |
 | Rust 与 rustup 重复管理造成命令和状态冲突 | 使用 Delegated Provider，不重做 rustup 的安装与组件能力 |
-| 本地运行验证污染用户开发环境 | 所有构建、测试和真实安装验证放到 GitHub Actions 虚拟机 |
-| 三平台矩阵消耗较高 | PR 默认运行 Quality；完整矩阵用于 Provider 变更、合并前验收和发布 |
+| 本地运行验证污染用户开发环境 | 开发机只做静态检查；真实安装使用 GitHub Actions 或用户隔离虚拟机 |
+| 超大 SDK 持续占用托管 Runner | Actions 不下载 Flutter 等超大工件；保留完整脚本供发布后虚拟机验收 |

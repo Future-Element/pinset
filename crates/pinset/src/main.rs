@@ -16,22 +16,23 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DownloadProgressEvent, Error, GlobalConfig, GoMetadataClient, InstallLimits,
-    Installer, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient, RuntimeInstallKind,
-    RuntimeMetadataKind, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
-    clean_download_cache, command_tool, create_project_config, current_target_for_tool,
-    ensure_shims, find_optional_project_config, find_project_config, global_config_path,
-    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
-    install_locked_go, install_locked_node, install_locked_npm_tool, is_managed_command_shim,
-    list_download_cache, list_installed_tool_versions, load_global_config, load_lockfile,
-    load_optional_global_config, load_optional_lockfile, load_project_config, load_source_config,
-    load_user_settings, lockfile_path, path_with_selected_tools, pinset_home, resolve_command,
-    resolve_tool_selection, runtime_command_directory, runtime_environment_for_install,
-    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
-    save_source_config, save_user_settings, selected_runtime_environment, source_config_path,
-    uninstall_node_version, uninstall_tool_version, user_settings_path, validate_exact_go_version,
-    validate_exact_node_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools,
+    ArtifactIntegrity, DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig,
+    GoMetadataClient, InstallLimits, Installer, LockedTool, Lockfile, NodeMetadataClient,
+    NpmMetadataClient, RuntimeInstallKind, RuntimeMetadataKind, SUPPORTED_SOURCE_PROVIDERS,
+    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
+    current_target_for_tool, ensure_shims, find_optional_project_config, find_project_config,
+    global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_flutter, install_locked_go,
+    install_locked_node, install_locked_npm_tool, is_managed_command_shim, list_download_cache,
+    list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
+    load_optional_lockfile, load_project_config, load_source_config, load_user_settings,
+    lockfile_path, path_with_selected_tools, pinset_home, resolve_command, resolve_tool_selection,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state, save_lockfile, save_project_config, save_source_config,
+    save_user_settings, selected_runtime_environment, source_config_path, uninstall_node_version,
+    uninstall_tool_version, user_settings_path, validate_exact_flutter_version,
+    validate_exact_go_version, validate_exact_node_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -59,7 +60,7 @@ enum Commands {
     Init,
     /// Show or set a default runtime version used outside projects.
     Global {
-        /// Selection such as node@lts, pnpm@11, bun@1.3 or go@1.25.
+        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25 or flutter@3.47.
         selection: Option<String>,
         /// Update the global selection and lock without downloading the runtime.
         #[arg(long, requires = "selection")]
@@ -67,7 +68,7 @@ enum Commands {
     },
     /// Select and lock a runtime version for the current project or globally.
     Use {
-        /// Selection such as node@24, pnpm@11, bun@1.3 or go@1.25.
+        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25 or flutter@3.47.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -78,7 +79,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm, bun or go.
+        /// Tool to clear: node, pnpm, bun, go or flutter.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -116,7 +117,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm, bun or go.
+        /// Tool to list: node, pnpm, bun, go or flutter.
         tool: String,
         /// Query the official provider index instead of local installations.
         #[arg(long)]
@@ -153,7 +154,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Preview or explicitly import legacy Node.js version files.
+    /// Preview or explicitly import supported legacy runtime version files.
     #[command(group(
         clap::ArgGroup::new("import_mode")
             .required(true)
@@ -166,13 +167,13 @@ enum Commands {
         /// Import one detected value into Pinset without changing the legacy file.
         #[arg(long)]
         apply: bool,
-        /// Select a legacy source when detected files disagree (for example nvm or volta).
+        /// Select a legacy source when detected files disagree (for example nvm, volta or fvm).
         #[arg(long = "from", requires = "apply")]
         source: Option<String>,
         /// Import as the global default instead of the current project selection.
         #[arg(long, requires = "apply")]
         global: bool,
-        /// Write the Pinset selection and lock without installing Node.js.
+        /// Write the Pinset selection and lock without installing the runtime.
         #[arg(long, requires = "apply")]
         no_install: bool,
         #[arg(long)]
@@ -267,7 +268,7 @@ enum SourceCommands {
         /// Allow an HTTP source, intended only for explicitly trusted LAN services.
         #[arg(long)]
         allow_insecure: bool,
-        /// Trust this HTTPS source for Node index and SHASUMS metadata as well as archives.
+        /// Trust this HTTPS source for provider metadata as well as archives.
         #[arg(long, conflicts_with = "allow_insecure")]
         trust_metadata: bool,
     },
@@ -280,7 +281,7 @@ enum SourceCommands {
     },
     /// Remove an inactive custom source.
     Remove { provider: String, alias: String },
-    /// Read-only connectivity and Node index validation for one source.
+    /// Read-only connectivity and provider metadata validation for one source.
     Test {
         provider: String,
         /// Source alias. Defaults to the active source.
@@ -451,6 +452,16 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                             println!("go@{}", release.version);
                         }
                     }
+                    RuntimeMetadataKind::Flutter => {
+                        for release in
+                            flutter_metadata_client(&pinset_home()?)?.available_releases()?
+                        {
+                            println!(
+                                "flutter@{} dart@{} stable",
+                                release.version, release.dart_version
+                            );
+                        }
+                    }
                 }
             } else {
                 let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
@@ -562,16 +573,19 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             cwd,
         } => {
             let cwd = effective_cwd(cwd)?;
-            let candidates = detect_legacy_node_configs(&cwd)?;
+            let mut candidates = detect_legacy_node_configs(&cwd)?;
+            if let Some(candidate) = detect_fvm_config(&cwd)? {
+                candidates.push(candidate);
+            }
             if candidates.is_empty() {
                 println!("{}", catalog.import_none(&cwd));
             } else if dry_run {
                 print_import_candidates(&candidates, catalog);
             } else {
                 let candidate = select_legacy_candidate(&candidates, source.as_deref(), catalog)?;
-                let selector = normalize_legacy_node_selector(&candidate.version)?;
+                let selector = normalize_legacy_selector(&candidate.tool, &candidate.version)?;
                 select_tool(
-                    &format!("node@{selector}"),
+                    &format!("{}@{selector}", candidate.tool),
                     global,
                     no_install,
                     true,
@@ -582,6 +596,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                     "{}",
                     catalog.import_applied(
                         &candidate.kind,
+                        &candidate.tool,
                         &candidate.version,
                         &candidate.path,
                         if global { "global" } else { "project" },
@@ -683,6 +698,9 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Go => {
             validate_exact_go_version(version)?;
         }
+        RuntimeMetadataKind::Flutter => {
+            validate_exact_flutter_version(version)?;
+        }
     }
     Ok(())
 }
@@ -707,6 +725,9 @@ fn resolve_locked_tool(
             Ok(client.resolve_tool(tool, &version)?)
         }
         RuntimeMetadataKind::Go => Ok(go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?),
+        RuntimeMetadataKind::Flutter => {
+            Ok(flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?)
+        }
     }
 }
 
@@ -999,7 +1020,7 @@ fn install_tool_from_lock(
         .ok_or_else(|| Error::LockedToolMissing {
             tool: tool.to_owned(),
         })?;
-    let installer = Installer::new(InstallLimits::default())?
+    let installer = Installer::new(InstallLimits::for_tool(tool))?
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
     let provider = runtime_provider(tool).expect("locked tool provider exists");
@@ -1012,6 +1033,10 @@ fn install_tool_from_lock(
         RuntimeInstallKind::Go => {
             let sources = load_source_config(&source_config_path(home))?;
             install_locked_go(&installer, home, &sources, locked_tool, &target)?
+        }
+        RuntimeInstallKind::Flutter => {
+            let sources = load_source_config(&source_config_path(home))?;
+            install_locked_flutter(&installer, home, &sources, locked_tool, &target)?
         }
     };
     if outcome.reused_existing {
@@ -1495,6 +1520,9 @@ fn execute_selected(
             )
         };
     let runtime_path = path_with_selected_tools(&executable, cwd, &home)?;
+    if source != "system" {
+        validate_managed_runtime_invocation(&tool, command_name, &command[1..])?;
+    }
     let mut child = command_for_runtime(&executable);
     child
         .args(&command[1..])
@@ -1604,6 +1632,7 @@ struct DoctorRoutingIssue {
 
 #[derive(Debug, Clone, Serialize)]
 struct LegacyNodeConfig {
+    tool: String,
     kind: String,
     version: String,
     path: PathBuf,
@@ -1850,6 +1879,7 @@ fn detect_legacy_node_configs(
             let version = fs::read_to_string(&path)?.trim().to_owned();
             if !version.is_empty() {
                 candidates.push(LegacyNodeConfig {
+                    tool: "node".to_owned(),
                     kind: kind.to_owned(),
                     version,
                     path,
@@ -1867,6 +1897,7 @@ fn detect_legacy_node_configs(
             .and_then(serde_json::Value::as_str)
         {
             candidates.push(LegacyNodeConfig {
+                tool: "node".to_owned(),
                 kind: "volta".to_owned(),
                 version: version.to_owned(),
                 path,
@@ -1884,6 +1915,7 @@ fn detect_legacy_node_configs(
                 .flatten()
         }) {
             candidates.push(LegacyNodeConfig {
+                tool: "node".to_owned(),
                 kind: "asdf".to_owned(),
                 version: version.to_owned(),
                 path,
@@ -1902,6 +1934,7 @@ fn detect_legacy_node_configs(
                     .and_then(toml::Value::as_str)
             }) {
                 candidates.push(LegacyNodeConfig {
+                    tool: "node".to_owned(),
                     kind: "mise".to_owned(),
                     version: version.to_owned(),
                     path,
@@ -1912,15 +1945,42 @@ fn detect_legacy_node_configs(
     Ok(candidates)
 }
 
+fn detect_fvm_config(cwd: &Path) -> Result<Option<LegacyNodeConfig>, Box<dyn std::error::Error>> {
+    let path = cwd.join(".fvmrc");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?;
+    let Some(version) = value.get("flutter").and_then(serde_json::Value::as_str) else {
+        return Err(format!(
+            "{} does not contain a string flutter version",
+            path.display()
+        )
+        .into());
+    };
+    validate_exact_flutter_version(version)?;
+    Ok(Some(LegacyNodeConfig {
+        tool: "flutter".to_owned(),
+        kind: "fvm".to_owned(),
+        version: version.to_owned(),
+        path,
+    }))
+}
+
 fn print_import_candidates(candidates: &[LegacyNodeConfig], catalog: Catalog) {
     let distinct = candidates
         .iter()
-        .map(|candidate| candidate.version.as_str())
+        .map(|candidate| (candidate.tool.as_str(), candidate.version.as_str()))
         .collect::<std::collections::BTreeSet<_>>();
     for candidate in candidates {
         println!(
             "{}",
-            catalog.import_candidate(&candidate.kind, &candidate.version, &candidate.path,)
+            catalog.import_candidate(
+                &candidate.kind,
+                &candidate.tool,
+                &candidate.version,
+                &candidate.path,
+            )
         );
     }
     if distinct.len() > 1 {
@@ -1951,12 +2011,26 @@ fn select_legacy_candidate<'a>(
 
     let normalized = candidates
         .iter()
-        .map(|candidate| normalize_legacy_node_selector(&candidate.version))
+        .map(|candidate| {
+            normalize_legacy_selector(&candidate.tool, &candidate.version)
+                .map(|version| (candidate.tool.clone(), version))
+        })
         .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
     if normalized.len() > 1 {
         return Err(catalog.import_apply_conflict(normalized.len()).into());
     }
     Ok(&candidates[0])
+}
+
+fn normalize_legacy_selector(
+    tool: &str,
+    value: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if tool == "flutter" {
+        validate_exact_flutter_version(value)?;
+        return Ok(value.to_owned());
+    }
+    normalize_legacy_node_selector(value)
 }
 
 fn normalize_legacy_node_selector(value: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -2376,6 +2450,18 @@ fn run_source_command(
                     }
                     releases.len()
                 }
+                Some(RuntimeMetadataKind::Flutter) => {
+                    let client = FlutterMetadataClient::for_base_url(&source.base_url)?;
+                    let releases = client.available_releases()?;
+                    if releases.is_empty() {
+                        return Err(Error::InvalidFlutterIndex {
+                            reason: "source indexes contain no supported stable releases"
+                                .to_owned(),
+                        }
+                        .into());
+                    }
+                    releases.len()
+                }
                 Some(RuntimeMetadataKind::Npm) | None => {
                     return Err(format!(
                         "source testing is not available for provider {provider:?}"
@@ -2480,6 +2566,21 @@ fn go_metadata_client(home: &Path) -> Result<GoMetadataClient, Box<dyn std::erro
         Ok(GoMetadataClient::official()?)
     } else {
         Ok(GoMetadataClient::for_source(
+            &source.base_url,
+            &source.alias,
+        )?)
+    }
+}
+
+fn flutter_metadata_client(
+    home: &Path,
+) -> Result<FlutterMetadataClient, Box<dyn std::error::Error>> {
+    let config = load_source_config(&source_config_path(home))?;
+    let source = config.metadata_source("flutter")?;
+    if source.kind == pinset_core::SourceKind::Official {
+        Ok(FlutterMetadataClient::official()?)
+    } else {
+        Ok(FlutterMetadataClient::for_source(
             &source.base_url,
             &source.alias,
         )?)

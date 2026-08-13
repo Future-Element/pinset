@@ -195,6 +195,52 @@ fn installed_shim_passes_through_to_system_path_without_recursing() {
     assert!(stdout.contains("source=system"), "stdout: {stdout}");
 }
 
+#[test]
+fn blocks_mutating_a_managed_flutter_sdk_before_invoking_it() {
+    let root = tempdir().expect("temp directory");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir_all(&project).expect("project");
+    fs::write(
+        project.join("pinset.toml"),
+        "schema = 2\n[tools]\nflutter = \"3.47.0\"\n",
+    )
+    .expect("project config");
+    create_fake_flutter(&home, "3.47.0");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
+        .args(["--as", "flutter", "--cwd"])
+        .arg(&project)
+        .args(["--", "upgrade"])
+        .env("PINSET_HOME", &home)
+        .output()
+        .expect("run shim");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "managed Flutter must not be invoked"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("refusing to run `flutter upgrade` against a Pinset-managed Flutter SDK"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let dart = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
+        .args(["--as", "dart", "--cwd"])
+        .arg(&project)
+        .args(["--", "--version"])
+        .env("PINSET_HOME", &home)
+        .output()
+        .expect("run Dart shim");
+    assert!(dart.status.success());
+    let stdout = String::from_utf8_lossy(&dart.stdout);
+    assert!(stdout.contains("dart:3.47.0:--version"), "stdout: {stdout}");
+    assert!(stdout.contains("root="), "stdout: {stdout}");
+}
+
 fn create_fake_node(home: &Path, version: &str) -> PathBuf {
     let install_dir = home
         .join("installs")
@@ -235,6 +281,43 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake node permissions");
         executable
+    }
+}
+
+fn create_fake_flutter(home: &Path, version: &str) {
+    let bin = home
+        .join("installs")
+        .join("flutter")
+        .join(version)
+        .join(pinset_core::current_target_for_tool("flutter"))
+        .join("bin");
+    fs::create_dir_all(&bin).expect("Flutter bin");
+
+    #[cfg(windows)]
+    for command in ["flutter", "dart"] {
+        fs::write(
+            bin.join(format!("{command}.cmd")),
+            format!("@echo off\r\necho {command}:%PINSET_SELECTED_VERSION%:%*\r\necho root=%FLUTTER_ROOT%\r\n"),
+        )
+        .expect("fake Flutter command");
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        for command in ["flutter", "dart"] {
+            let executable = bin.join(command);
+            fs::write(
+                &executable,
+                format!(
+                    "#!/bin/sh\nprintf '{command}:%s:%s\\nroot=%s\\n' \"$PINSET_SELECTED_VERSION\" \"$*\" \"$FLUTTER_ROOT\"\n"
+                ),
+            )
+            .expect("fake Flutter command");
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+                .expect("fake Flutter permissions");
+        }
     }
 }
 

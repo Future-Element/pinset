@@ -14,6 +14,10 @@ $ProjectPnpmSelector = if ($env:PINSET_PROJECT_PNPM_SELECTOR) { $env:PINSET_PROJ
 $ProjectBunSelector = if ($env:PINSET_PROJECT_BUN_SELECTOR) { $env:PINSET_PROJECT_BUN_SELECTOR } else { '1.2' }
 $GlobalGoSelector = if ($env:PINSET_GLOBAL_GO_SELECTOR) { $env:PINSET_GLOBAL_GO_SELECTOR } else { 'latest' }
 $ProjectGoSelector = if ($env:PINSET_PROJECT_GO_SELECTOR) { $env:PINSET_PROJECT_GO_SELECTOR } else { '1.24' }
+$GlobalFlutterSelector = if ($env:PINSET_GLOBAL_FLUTTER_SELECTOR) { $env:PINSET_GLOBAL_FLUTTER_SELECTOR } else { 'latest' }
+$ProjectFlutterSelector = if ($env:PINSET_PROJECT_FLUTTER_SELECTOR) { $env:PINSET_PROJECT_FLUTTER_SELECTOR } else { '3.44' }
+$SkipFlutterRuntimeValue = if ($env:PINSET_SKIP_FLUTTER_RUNTIME) { $env:PINSET_SKIP_FLUTTER_RUNTIME } else { '0' }
+$SkipFlutterRuntime = $SkipFlutterRuntimeValue -eq '1'
 $VersionPattern = '^\d+\.\d+\.\d+$'
 
 if ($GlobalVersion -notmatch $VersionPattern -or $ProjectVersion -notmatch $VersionPattern -or
@@ -22,6 +26,9 @@ if ($GlobalVersion -notmatch $VersionPattern -or $ProjectVersion -notmatch $Vers
 }
 if (-not (Test-Path -LiteralPath $Pinset -PathType Leaf)) {
     throw "PINSET_BIN is not a file: $Pinset"
+}
+if ($SkipFlutterRuntimeValue -notin @('0', '1')) {
+    throw 'PINSET_SKIP_FLUTTER_RUNTIME must be 0 or 1'
 }
 
 $TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pinset-acceptance-" + [guid]::NewGuid().ToString('N'))
@@ -50,11 +57,35 @@ function Assert-VersionOutput {
     }
 }
 
+function ConvertFrom-FlutterMachineOutput {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Output,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $Value = (($Output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+    $JsonStart = $Value.IndexOf('{')
+    $JsonEnd = $Value.LastIndexOf('}')
+    if ($JsonStart -lt 0 -or $JsonEnd -lt $JsonStart) {
+        throw "$Label did not return Flutter machine JSON: '$Value'"
+    }
+
+    $Json = $Value.Substring($JsonStart, $JsonEnd - $JsonStart + 1)
+    try {
+        return $Json | ConvertFrom-Json
+    }
+    catch {
+        throw "$Label returned invalid Flutter machine JSON: $($_.Exception.Message)"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
     Remove-Item Env:PINSET_LANG -ErrorAction SilentlyContinue
     Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUTTER_ROOT -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUTTER_SUPPRESS_ANALYTICS -ErrorAction SilentlyContinue
     Set-Location $TestRoot
 
     & $Pinset --lang zh-CN | Out-Null
@@ -72,6 +103,18 @@ try {
     if (-not ((& $Pinset list go --available) -match '^go@\d+\.\d+\.\d+$')) {
         throw 'no supported Go release was listed as available'
     }
+    $FlutterReleases = @(& $Pinset list flutter --available)
+    if (-not ($FlutterReleases -match '^flutter@\d+\.\d+\.\d+ dart@\d+\.\d+\.\d+ stable$')) {
+        throw 'no supported Flutter release was listed as available'
+    }
+    $ProjectFlutterMatch = $FlutterReleases |
+        Where-Object { $_ -match "^flutter@$([regex]::Escape($ProjectFlutterSelector))\.(\d+) " } |
+        Select-Object -First 1
+    $ProjectFlutterVersionMatch = [regex]::Match([string]$ProjectFlutterMatch, '^flutter@(\d+\.\d+\.\d+) ')
+    if (-not $ProjectFlutterMatch -or -not $ProjectFlutterVersionMatch.Success) {
+        throw "no Flutter release matched project selector '$ProjectFlutterSelector'"
+    }
+    $ProjectFlutterVersion = $ProjectFlutterVersionMatch.Groups[1].Value
     & $Pinset global "pnpm@$GlobalPnpmSelector"
     $GlobalPnpmVersion = ((& $Pinset exec -- pnpm --version) | Out-String).Trim()
     if ($GlobalPnpmVersion -notmatch '^11\.') {
@@ -85,6 +128,18 @@ try {
         throw "global Go returned an invalid version: '$GlobalGoOutput'"
     }
     $GlobalGoVersion = $GlobalGoMatch.Groups[1].Value
+    if (-not $SkipFlutterRuntime) {
+        & $Pinset global "flutter@$GlobalFlutterSelector"
+        $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
+        $GlobalFlutterVersion = [string]$GlobalFlutterInfo.frameworkVersion
+        $GlobalDartVersion = [string]$GlobalFlutterInfo.dartSdkVersion
+        if ($GlobalFlutterVersion -notmatch $VersionPattern -or $GlobalDartVersion -notmatch $VersionPattern) {
+            throw 'global Flutter returned invalid Flutter or Dart version metadata'
+        }
+        if ($ProjectFlutterVersion -eq $GlobalFlutterVersion) {
+            throw 'project Flutter acceptance version must differ from the global version'
+        }
+    }
     Assert-ExactOutput "v$GlobalVersion" (& $Pinset exec -- node --version) 'global pinset exec node'
     Assert-VersionOutput (& $Pinset exec -- npm --version) 'global pinset exec npm'
     Assert-VersionOutput (& $Pinset exec -- npx --version) 'global pinset exec npx'
@@ -99,6 +154,20 @@ try {
     $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
     if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
         throw "global Go reported an unmanaged GOROOT: '$GlobalGoRoot'"
+    }
+    if (-not $SkipFlutterRuntime) {
+        $GlobalFlutterPath = ((& $Pinset which flutter) | Out-String).Trim()
+        $GlobalDartPath = ((& $Pinset which dart) | Out-String).Trim()
+        if ((Split-Path -Parent $GlobalFlutterPath) -ne (Split-Path -Parent $GlobalDartPath)) {
+            throw 'global Flutter and Dart resolved from different SDK directories'
+        }
+        $GlobalFlutterRoot = Split-Path -Parent (Split-Path -Parent $GlobalFlutterPath)
+        $FlutterEnvironmentScript = Join-Path $TestRoot 'verify_flutter_env.dart'
+        Set-Content -LiteralPath $FlutterEnvironmentScript -Value "import 'dart:io'; void main() => print(Platform.environment['FLUTTER_ROOT']);" -NoNewline
+        Assert-ExactOutput $GlobalFlutterRoot (& $Pinset exec -- dart $FlutterEnvironmentScript) 'global Flutter root'
+        if (((& $Pinset exec -- dart --version 2>&1) | Out-String).Trim() -notmatch "Dart SDK version: $([regex]::Escape($GlobalDartVersion))") {
+            throw 'global bundled Dart returned an unexpected version'
+        }
     }
 
     $ShimDirectory = ((& $Pinset shim path) | Out-String).Trim()
@@ -117,6 +186,22 @@ try {
         throw 'global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
+    if (-not $SkipFlutterRuntime) {
+        $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
+        if ($DirectGlobalFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
+            throw 'global direct Flutter returned an unexpected version'
+        }
+        if (((& dart --version 2>&1) | Out-String).Trim() -notmatch "Dart SDK version: $([regex]::Escape($GlobalDartVersion))") {
+            throw 'global direct Dart returned an unexpected version'
+        }
+        foreach ($mutation in @('upgrade', 'downgrade', 'channel')) {
+            $MutationOutput = @(& flutter $mutation 2>&1 | ForEach-Object { $_.ToString() })
+            if ($LASTEXITCODE -eq 0 -or ($MutationOutput -join "`n") -notmatch "refusing to run ``flutter $mutation`` against a Pinset-managed Flutter SDK") {
+                throw "managed flutter $mutation was not blocked"
+            }
+        }
+    }
+    & $Pinset cache clean
 
     $Project = Join-Path $TestRoot 'project'
     New-Item -ItemType Directory -Path $Project | Out-Null
@@ -142,6 +227,18 @@ try {
         throw "project Go selector resolved to unexpected version '$ProjectGoOutput'"
     }
     $ProjectGoVersion = $ProjectGoMatch.Groups[1].Value
+    if (-not $SkipFlutterRuntime) {
+        Set-Content -LiteralPath (Join-Path $Project '.fvmrc') -Value "{`"flutter`":`"$ProjectFlutterVersion`"}" -NoNewline
+        & $Pinset import --apply --from fvm --no-install
+    }
+    & $Pinset install --locked
+    if (-not $SkipFlutterRuntime) {
+        $ProjectFlutterInfo = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'project Flutter'
+        if ($ProjectFlutterInfo.frameworkVersion -ne $ProjectFlutterVersion) {
+            throw "project Flutter returned unexpected version '$($ProjectFlutterInfo.frameworkVersion)'"
+        }
+        $ProjectDartVersion = [string]$ProjectFlutterInfo.dartSdkVersion
+    }
     Assert-ExactOutput "v$ProjectVersion" (& node --version) 'project direct node'
     Assert-VersionOutput (& npm --version) 'project direct npm'
     Assert-VersionOutput (& npx --version) 'project direct npx'
@@ -152,6 +249,23 @@ try {
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
     if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
         throw "project Go reported an unmanaged GOROOT: '$ProjectGoRoot'"
+    }
+    if (-not $SkipFlutterRuntime) {
+        $ProjectFlutterPath = ((& $Pinset which flutter) | Out-String).Trim()
+        $ProjectDartPath = ((& $Pinset which dart) | Out-String).Trim()
+        if ((Split-Path -Parent $ProjectFlutterPath) -ne (Split-Path -Parent $ProjectDartPath)) {
+            throw 'project Flutter and Dart resolved from different SDK directories'
+        }
+        $ProjectFlutterRoot = Split-Path -Parent (Split-Path -Parent $ProjectFlutterPath)
+        Assert-ExactOutput $ProjectFlutterRoot (& dart $FlutterEnvironmentScript) 'project Flutter root'
+        if (((& dart --version 2>&1) | Out-String).Trim() -notmatch "Dart SDK version: $([regex]::Escape($ProjectDartVersion))") {
+            throw 'project bundled Dart returned an unexpected version'
+        }
+    }
+    & $Pinset cache clean
+    $LockedReuse = ((& $Pinset install --locked) | Out-String)
+    if (-not $SkipFlutterRuntime -and $LockedReuse -notmatch "flutter@$([regex]::Escape($ProjectFlutterVersion)) is already installed") {
+        throw 'locked Flutter install did not reuse the completed SDK'
     }
     $PnpmChildNodeOutput = @(& pnpm exec node --version 2>&1 | ForEach-Object { $_.ToString() })
     $PnpmChildNodeStatus = $LASTEXITCODE
@@ -174,7 +288,21 @@ try {
         throw 'restored global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
-    Write-Host 'Windows real Node, pnpm, Bun and Go acceptance passed'
+    if (-not $SkipFlutterRuntime) {
+        $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
+        if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
+            throw 'restored global Flutter returned an unexpected version'
+        }
+        if (((& dart --version 2>&1) | Out-String).Trim() -notmatch "Dart SDK version: $([regex]::Escape($GlobalDartVersion))") {
+            throw 'restored global Dart returned an unexpected version'
+        }
+    }
+    if ($SkipFlutterRuntime) {
+        Write-Host 'Windows real Node, pnpm, Bun and Go acceptance passed; Flutter runtime download skipped'
+    }
+    else {
+        Write-Host 'Windows real Node, pnpm, Bun, Go and Flutter acceptance passed'
+    }
 }
 finally {
     $env:PATH = $OriginalPath

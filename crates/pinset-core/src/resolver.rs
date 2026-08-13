@@ -392,8 +392,44 @@ pub fn runtime_environment_for_install(
             }
             variables
         }
+        Some(RuntimeEnvironmentKind::Flutter) => {
+            let mut variables = vec![RuntimeEnvironmentVariable {
+                name: "FLUTTER_ROOT",
+                value: install_dir.as_os_str().to_owned(),
+            }];
+            if env::var_os("FLUTTER_SUPPRESS_ANALYTICS").is_none() {
+                variables.push(RuntimeEnvironmentVariable {
+                    name: "FLUTTER_SUPPRESS_ANALYTICS",
+                    value: OsString::from("true"),
+                });
+            }
+            variables
+        }
         Some(RuntimeEnvironmentKind::None) | None => Vec::new(),
     }
+}
+
+pub fn validate_managed_runtime_invocation(
+    tool: &str,
+    command: &str,
+    arguments: &[OsString],
+) -> Result<()> {
+    if tool != "flutter" || command != "flutter" {
+        return Ok(());
+    }
+    let Some(subcommand) = arguments
+        .iter()
+        .filter_map(|argument| argument.to_str())
+        .find(|argument| !argument.starts_with('-'))
+    else {
+        return Ok(());
+    };
+    if matches!(subcommand, "upgrade" | "downgrade" | "channel") {
+        return Err(Error::ManagedFlutterMutation {
+            command: format!("flutter {subcommand}"),
+        });
+    }
+    Ok(())
 }
 
 pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
@@ -434,6 +470,36 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn blocks_in_place_flutter_sdk_mutations_but_allows_project_commands() {
+        for subcommand in ["upgrade", "downgrade", "channel"] {
+            assert!(matches!(
+                validate_managed_runtime_invocation(
+                    "flutter",
+                    "flutter",
+                    &[OsString::from(subcommand)]
+                ),
+                Err(Error::ManagedFlutterMutation { .. })
+            ));
+            assert!(matches!(
+                validate_managed_runtime_invocation(
+                    "flutter",
+                    "flutter",
+                    &[OsString::from("--verbose"), OsString::from(subcommand)]
+                ),
+                Err(Error::ManagedFlutterMutation { .. })
+            ));
+        }
+        validate_managed_runtime_invocation(
+            "flutter",
+            "flutter",
+            &[OsString::from("pub"), OsString::from("get")],
+        )
+        .expect("flutter pub remains available");
+        validate_managed_runtime_invocation("flutter", "dart", &[OsString::from("--version")])
+            .expect("bundled Dart remains available");
+    }
 
     #[test]
     fn resolves_node_from_nearest_project_config() {

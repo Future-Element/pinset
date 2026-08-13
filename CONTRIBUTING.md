@@ -1,6 +1,6 @@
 # Contributing to Pinset
 
-感谢你帮助改进 Pinset。项目当前支持 Node、pnpm 与 Bun Provider，优先保证跨平台行为、安全边界和可复现安装。
+感谢你帮助改进 Pinset。项目当前开发版本支持 Node、pnpm、Bun、Go 与 Flutter Provider，优先保证跨平台行为、安全边界和可复现安装。
 
 ## 开发环境
 
@@ -27,7 +27,7 @@ Windows 完整卸载脚本使用独立 PowerShell 临时目录测试：
 ./scripts/tests/uninstall_ps1_test.ps1
 ```
 
-这些测试不会安装真实 Node、pnpm、Bun、Python 或 Flutter。真实运行时烟雾测试应在明确隔离的临时环境中进行，并在 PR 中说明平台与结果。
+这些测试不会安装真实 Node、pnpm、Bun、Go、Python 或 Flutter。构建、测试和真实运行时验收必须在 GitHub Actions 临时虚拟机中进行，并在 PR 中说明平台与结果；开发机和 WSL 只做编辑、格式化及静态差异检查。
 
 ## Pull Request
 
