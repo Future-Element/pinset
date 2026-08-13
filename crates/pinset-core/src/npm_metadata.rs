@@ -255,7 +255,7 @@ impl NpmMetadataClient {
         validate_manifest_identity(wrapper, version, &manifest)?;
         let keys = self.registry_keys()?;
         verify_package_signature(&manifest, &keys)?;
-        let wrapper_overlay = if tool == "pnpm" {
+        let wrapper_overlay = if tool == "pnpm" && pnpm_uses_wrapper_overlay(&parsed) {
             let (canonical_url, artifact_path) =
                 official_tarball(wrapper, version, &manifest.dist)?;
             crate::ArtifactIntegrity::parse(&manifest.dist.integrity)?;
@@ -439,6 +439,10 @@ fn supported_version(tool: &str, version: &Version) -> bool {
     }
 }
 
+pub(crate) fn pnpm_uses_wrapper_overlay(version: &Version) -> bool {
+    version.major >= 11
+}
+
 fn exact_dependency_version(value: &str) -> Option<&str> {
     let value = value.strip_prefix('=').unwrap_or(value);
     Version::parse(value).ok().map(|_| value)
@@ -529,5 +533,11 @@ mod tests {
         assert!(!supported_version("pnpm", &Version::new(12, 0, 0)));
         assert!(supported_version("bun", &Version::new(1, 3, 0)));
         assert!(!supported_version("bun", &Version::new(2, 0, 0)));
+    }
+
+    #[test]
+    fn pnpm_wrapper_overlay_matches_official_package_generations() {
+        assert!(!pnpm_uses_wrapper_overlay(&Version::new(10, 34, 5)));
+        assert!(pnpm_uses_wrapper_overlay(&Version::new(11, 21, 0)));
     }
 }

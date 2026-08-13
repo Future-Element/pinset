@@ -425,15 +425,23 @@ fn validate_locked_npm_artifact(tool: &LockedTool, artifact: &LockedArtifact) ->
         });
     }
     if tool.name == "pnpm" {
-        if artifact.overlays.len() != 1 {
+        let uses_wrapper_overlay = pnpm_uses_wrapper_overlay(&tool.version)?;
+        let overlays_are_valid = if uses_wrapper_overlay {
+            artifact.overlays.len() == 1
+        } else {
+            artifact.overlays.len() <= 1
+        };
+        if !overlays_are_valid {
             return Err(Error::InvalidLockfile {
                 reason: format!(
-                    "pnpm artifact {} must contain the @pnpm/exe overlay",
-                    artifact.target
+                    "pnpm {} artifact {} contains an invalid @pnpm/exe overlay count",
+                    tool.version, artifact.target
                 ),
             });
         }
-        validate_pnpm_overlay(&tool.version, &artifact.overlays[0])?;
+        if let Some(overlay) = artifact.overlays.first() {
+            validate_pnpm_overlay(&tool.version, overlay)?;
+        }
     } else if !artifact.overlays.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!(
@@ -443,6 +451,19 @@ fn validate_locked_npm_artifact(tool: &LockedTool, artifact: &LockedArtifact) ->
         });
     }
     Ok(())
+}
+
+fn pnpm_uses_wrapper_overlay(version: &str) -> Result<bool> {
+    match version
+        .split_once('.')
+        .and_then(|(major, _)| major.parse::<u64>().ok())
+    {
+        Some(10) => Ok(false),
+        Some(11) => Ok(true),
+        _ => Err(Error::InvalidLockfile {
+            reason: format!("unsupported pnpm version {version}"),
+        }),
+    }
 }
 
 fn validate_pnpm_overlay(version: &str, overlay: &LockedArtifactOverlay) -> Result<()> {
@@ -560,6 +581,30 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_pnpm_overlay_by_package_generation() {
+        let pnpm_10 = locked_pnpm_artifact("10.34.5", false);
+        let pnpm_10_tool = locked_pnpm_tool("10.34.5", pnpm_10.clone());
+        validate_locked_npm_artifact(&pnpm_10_tool, &pnpm_10).expect("pnpm 10 artifact");
+
+        let pnpm_10_with_overlay = locked_pnpm_artifact("10.34.5", true);
+        let pnpm_10_with_overlay_tool = locked_pnpm_tool("10.34.5", pnpm_10_with_overlay.clone());
+        validate_locked_npm_artifact(&pnpm_10_with_overlay_tool, &pnpm_10_with_overlay)
+            .expect("legacy pnpm 10 artifact");
+
+        let pnpm_11 = locked_pnpm_artifact("11.21.0", true);
+        let pnpm_11_tool = locked_pnpm_tool("11.21.0", pnpm_11.clone());
+        validate_locked_npm_artifact(&pnpm_11_tool, &pnpm_11).expect("pnpm 11 artifact");
+
+        let pnpm_11_without_overlay = locked_pnpm_artifact("11.21.0", false);
+        let pnpm_11_without_overlay_tool =
+            locked_pnpm_tool("11.21.0", pnpm_11_without_overlay.clone());
+        assert!(matches!(
+            validate_locked_npm_artifact(&pnpm_11_without_overlay_tool, &pnpm_11_without_overlay),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -575,6 +620,44 @@ mod tests {
             archive_root: plan.archive_root,
             verification: "nodejs-shasums-https".to_owned(),
             overlays: Vec::new(),
+        }
+    }
+
+    fn locked_pnpm_tool(version: &str, artifact: LockedArtifact) -> LockedTool {
+        LockedTool {
+            name: "pnpm".to_owned(),
+            requested: version.to_owned(),
+            version: version.to_owned(),
+            provider: "pnpm-npm".to_owned(),
+            artifacts: vec![artifact],
+        }
+    }
+
+    fn locked_pnpm_artifact(version: &str, with_overlay: bool) -> LockedArtifact {
+        let artifact_path = format!("@pnpm/linux-x64/-/linux-x64-{version}.tgz");
+        LockedArtifact {
+            target: "linux-x86_64".to_owned(),
+            canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
+            artifact_path,
+            sha256: String::new(),
+            integrity: Some(format!("sha512:{}", "ab".repeat(64))),
+            format: LockedArtifactFormat::TarGz,
+            archive_root: "package".to_owned(),
+            verification: "npm-registry-signature-sha512".to_owned(),
+            overlays: with_overlay
+                .then(|| {
+                    let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
+                    LockedArtifactOverlay {
+                        canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
+                        artifact_path,
+                        integrity: format!("sha512:{}", "cd".repeat(64)),
+                        format: LockedArtifactFormat::TarGz,
+                        archive_root: "package".to_owned(),
+                        verification: "npm-registry-signature-sha512".to_owned(),
+                    }
+                })
+                .into_iter()
+                .collect(),
         }
     }
 }

@@ -8,12 +8,14 @@ if (-not $env:PINSET_BIN) {
 $Pinset = [System.IO.Path]::GetFullPath($env:PINSET_BIN)
 $GlobalVersion = if ($env:PINSET_GLOBAL_VERSION) { $env:PINSET_GLOBAL_VERSION } else { '24.0.0' }
 $ProjectVersion = if ($env:PINSET_PROJECT_VERSION) { $env:PINSET_PROJECT_VERSION } else { '22.0.0' }
-$PnpmVersion = if ($env:PINSET_PNPM_VERSION) { $env:PINSET_PNPM_VERSION } else { '11.21.0' }
 $BunVersion = if ($env:PINSET_BUN_VERSION) { $env:PINSET_BUN_VERSION } else { '1.3.14' }
+$GlobalPnpmSelector = if ($env:PINSET_GLOBAL_PNPM_SELECTOR) { $env:PINSET_GLOBAL_PNPM_SELECTOR } else { 'latest' }
+$ProjectPnpmSelector = if ($env:PINSET_PROJECT_PNPM_SELECTOR) { $env:PINSET_PROJECT_PNPM_SELECTOR } else { '10' }
+$ProjectBunSelector = if ($env:PINSET_PROJECT_BUN_SELECTOR) { $env:PINSET_PROJECT_BUN_SELECTOR } else { '1.2' }
 $VersionPattern = '^\d+\.\d+\.\d+$'
 
 if ($GlobalVersion -notmatch $VersionPattern -or $ProjectVersion -notmatch $VersionPattern -or
-    $PnpmVersion -notmatch $VersionPattern -or $BunVersion -notmatch $VersionPattern) {
+    $BunVersion -notmatch $VersionPattern) {
     throw 'acceptance versions must use x.y.z'
 }
 if (-not (Test-Path -LiteralPath $Pinset -PathType Leaf)) {
@@ -58,19 +60,23 @@ try {
     }
 
     & $Pinset use "node@$GlobalVersion" --global
-    if (-not ((& $Pinset list pnpm --available) -contains "pnpm@$PnpmVersion")) {
-        throw "pnpm@$PnpmVersion was not listed as available"
+    if (-not ((& $Pinset list pnpm --available) -match '^pnpm@10\.')) {
+        throw 'no pnpm 10 release was listed as available'
     }
     if (-not ((& $Pinset list bun --available) -contains "bun@$BunVersion")) {
         throw "bun@$BunVersion was not listed as available"
     }
-    & $Pinset use "pnpm@$PnpmVersion" --global
+    & $Pinset global "pnpm@$GlobalPnpmSelector"
+    $GlobalPnpmVersion = ((& $Pinset exec -- pnpm --version) | Out-String).Trim()
+    if ($GlobalPnpmVersion -notmatch '^11\.') {
+        throw "global pnpm selector resolved to unexpected version '$GlobalPnpmVersion'"
+    }
     & $Pinset use "bun@$BunVersion" --global
     Assert-ExactOutput "v$GlobalVersion" (& $Pinset exec -- node --version) 'global pinset exec node'
     Assert-VersionOutput (& $Pinset exec -- npm --version) 'global pinset exec npm'
     Assert-VersionOutput (& $Pinset exec -- npx --version) 'global pinset exec npx'
     Assert-VersionOutput (& $Pinset exec -- corepack --version) 'global pinset exec corepack'
-    Assert-ExactOutput $PnpmVersion (& $Pinset exec -- pnpm --version) 'global pinset exec pnpm'
+    Assert-ExactOutput $GlobalPnpmVersion (& $Pinset exec -- pnpm --version) 'global pinset exec pnpm'
     Assert-ExactOutput $BunVersion (& $Pinset exec -- bun --version) 'global pinset exec bun'
     Assert-ExactOutput $BunVersion (& $Pinset exec -- bunx --version) 'global pinset exec bunx'
 
@@ -83,7 +89,7 @@ try {
     Assert-VersionOutput (& npm --version) 'global direct npm'
     Assert-VersionOutput (& npx --version) 'global direct npx'
     Assert-VersionOutput (& corepack --version) 'global direct corepack'
-    Assert-ExactOutput $PnpmVersion (& pnpm --version) 'global direct pnpm'
+    Assert-ExactOutput $GlobalPnpmVersion (& pnpm --version) 'global direct pnpm'
     Assert-ExactOutput $BunVersion (& bun --version) 'global direct bun'
     Assert-ExactOutput $BunVersion (& bunx --version) 'global direct bunx'
 
@@ -93,12 +99,23 @@ try {
     Set-Content -LiteralPath (Join-Path $Project 'package.json') -Value '{"private":true}' -NoNewline
     & $Pinset init
     & $Pinset use "node@$ProjectVersion"
+    & $Pinset use "pnpm@$ProjectPnpmSelector"
+    $ProjectPnpmVersion = ((& pnpm --version) | Out-String).Trim()
+    if ($ProjectPnpmVersion -notmatch '^10\.') {
+        throw "project pnpm selector resolved to unexpected version '$ProjectPnpmVersion'"
+    }
+    & $Pinset uninstall "pnpm@$ProjectPnpmVersion" --force
+    & $Pinset use "bun@$ProjectBunSelector"
+    $ProjectBunVersion = ((& bun --version) | Out-String).Trim()
+    if ($ProjectBunVersion -notmatch '^1\.2\.') {
+        throw "project Bun selector resolved to unexpected version '$ProjectBunVersion'"
+    }
     Assert-ExactOutput "v$ProjectVersion" (& node --version) 'project direct node'
     Assert-VersionOutput (& npm --version) 'project direct npm'
     Assert-VersionOutput (& npx --version) 'project direct npx'
     Assert-VersionOutput (& corepack --version) 'project direct corepack'
-    Assert-ExactOutput $PnpmVersion (& pnpm --version) 'project direct pnpm'
-    Assert-ExactOutput $BunVersion (& bun --version) 'project direct bun'
+    Assert-ExactOutput $ProjectPnpmVersion (& pnpm --version) 'project direct pnpm'
+    Assert-ExactOutput $ProjectBunVersion (& bun --version) 'project direct bun'
     $PnpmChildNodeOutput = @(& pnpm exec node --version 2>&1 | ForEach-Object { $_.ToString() })
     $PnpmChildNodeStatus = $LASTEXITCODE
     Write-Host "pnpm exec node --version => status=$PnpmChildNodeStatus output=$($PnpmChildNodeOutput -join ' | ')"
@@ -114,7 +131,7 @@ try {
 
     Set-Location $TestRoot
     Assert-ExactOutput "v$GlobalVersion" (& node --version) 'restored global direct node'
-    Assert-ExactOutput $PnpmVersion (& pnpm --version) 'restored global direct pnpm'
+    Assert-ExactOutput $GlobalPnpmVersion (& pnpm --version) 'restored global direct pnpm'
     Assert-ExactOutput $BunVersion (& bun --version) 'restored global direct bun'
     Write-Host 'Windows real Node, pnpm and Bun acceptance passed'
 }

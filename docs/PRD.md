@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.2.0`
+文档版本：`v0.2.1`
 产品阶段：`Multi-provider development`
-更新时间：`2026-08-12`
+更新时间：`2026-08-13`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
 
-`v0.2.0` 支持 Node.js、pnpm 和 Bun。Python 和 Flutter 暂不纳入。
+`v0.2.1` 支持 Node.js、pnpm 和 Bun。Python 和 Flutter 暂不纳入。
 
 ### 1.1 目标
 

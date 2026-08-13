@@ -3,10 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use semver::Version;
+
 use crate::{
     ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error,
     InstallOutcome, InstallRequest, Installer, LockedArtifactFormat, LockedArtifactOverlay,
-    LockedTool, Result, tool_targets,
+    LockedTool, Result, npm_metadata::pnpm_uses_wrapper_overlay, tool_targets,
 };
 
 pub fn install_locked_npm_tool(
@@ -38,8 +40,20 @@ pub fn install_locked_npm_tool(
         LockedArtifactFormat::Zip => ArtifactFormat::Zip,
         LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
     };
-    let base_artifacts = artifact
-        .overlays
+    let use_overlays = if locked_tool.name == "pnpm" {
+        let version = Version::parse(&locked_tool.version).map_err(|_| Error::InvalidLockfile {
+            reason: format!("invalid pnpm version {}", locked_tool.version),
+        })?;
+        pnpm_uses_wrapper_overlay(&version)
+    } else {
+        true
+    };
+    let overlays = if use_overlays {
+        artifact.overlays.as_slice()
+    } else {
+        &[]
+    };
+    let base_artifacts = overlays
         .iter()
         .map(overlay_install_spec)
         .collect::<Result<Vec<_>>>()?;

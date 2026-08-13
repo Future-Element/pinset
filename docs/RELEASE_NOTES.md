@@ -1,8 +1,17 @@
 # Pinset Release Notes
 
-## v0.2.0（待发布）
+## v0.2.1
 
-- 目标日期：`2026-08-12`
+- 发布日期：`2026-08-13`
+- 阶段：多 Provider Beta 补丁
+- GitHub Release：[v0.2.1](https://github.com/Future-Element/pinset/releases/tag/v0.2.1)
+- 修复 pnpm 10 官方平台包为单个独立可执行文件、没有 pnpm 11 `dist/` 叠加层时的安装失败；
+- 增加全局 `pnpm@latest`、项目 `pnpm@10` 与项目 `bun@1.2` 组合安装的三平台虚拟机回归验收；
+- 不改变 pnpm 11 的 `@pnpm/exe` overlay、npm registry 签名或 SHA-512 校验。
+
+## v0.2.0
+
+- 发布日期：`2026-08-12`
 - 阶段：多 Provider Beta / GitHub Release
 - 许可证：MIT
 - Pinset 归档：Linux x64、Windows x64、macOS Apple Silicon
@@ -20,7 +29,7 @@
 - 子进程使用多 Provider 组合 PATH，并排除 Pinset shim，支持工具之间安全调用；
 - 本地版本列表和卸载扩展到 pnpm/Bun。
 
-发布候选已通过 Windows 与 Ubuntu WSL 完整测试、`.tar.gz + SHA512`、多 Provider PATH、旧 Node 回归、官方 registry 版本列表和精确签名锁验证。本地访问运行时归档 CDN 时传输停滞，因此 Linux、Windows、macOS Release Runner 的真实 Node/pnpm/Bun 安装与执行仍是创建公开 Release 的阻断门禁。
+该版本已由 Linux、Windows 与 macOS GitHub Actions Release Runner 完成真实 Node/pnpm/Bun 安装与执行验收。
 
 ## v0.1.0-beta.1
 
