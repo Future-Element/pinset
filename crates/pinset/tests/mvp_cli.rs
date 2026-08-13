@@ -234,7 +234,7 @@ fn shim_migration_registers_new_routes_and_preserves_legacy_entries() {
 }
 
 #[test]
-fn doctor_reports_all_node_provider_commands_and_path_shadowing() {
+fn doctor_reports_all_provider_commands_and_path_shadowing() {
     let root = tempdir().expect("temporary root");
     let project = root.path().join("project");
     let home = root.path().join("home");
@@ -290,7 +290,9 @@ fn doctor_reports_all_node_provider_commands_and_path_shadowing() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         commands,
-        ["bun", "bunx", "corepack", "node", "npm", "npx", "pnpm"]
+        [
+            "bun", "bunx", "corepack", "go", "gofmt", "node", "npm", "npx", "pnpm",
+        ]
             .into_iter()
             .collect()
     );
