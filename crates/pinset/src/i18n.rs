@@ -210,34 +210,34 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("global") => {
-                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3] [--no-install]"
+                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js、pnpm 或 Bun 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3> [--global] [--no-install]"
+                "选择并锁定 Node.js、pnpm、Bun 或 Go 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25> [--global] [--no-install]"
             }
             Some("unset") => {
-                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun> [--global] [--cwd <目录>]"
+                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go] [--cwd <目录>]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun> [--available]"
+                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go> [--available]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun>@x.y.z [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go>@x.y.z [--cwd <目录>] [--force]"
             }
             Some("cache") => {
                 "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"
             }
             Some("exec") => {
-                "使用当前选择或一次性 Node.js 版本执行命令。\n\n用法：pinset exec [--cwd <目录>] [node@<版本选择器>] -- <命令> [参数...]"
+                "使用当前选择或一次性运行时版本执行命令。\n\n用法：pinset exec [--cwd <目录>] [<工具>@<版本选择器>] -- <命令> [参数...]"
             }
             Some("doctor") => {
                 "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
@@ -840,6 +840,7 @@ impl Catalog {
                     "provider-route-shadowed" => "Pinset 命令路由被更早的 PATH 项遮蔽",
                     "provider-route-conflict" => "目标目录存在外部同名命令",
                     "provider-route-missing" => "Provider 命令路由缺失",
+                    "go-toolchain-override" => "显式 GOTOOLCHAIN 可能绕过 Pinset 锁定",
                     _ => code,
                 };
                 format!(
@@ -989,15 +990,8 @@ impl Catalog {
 
     pub fn selection_error(self) -> &'static str {
         match self.language {
-            Language::English => "selection must use node@<selector>",
-            Language::SimplifiedChinese => "版本选择必须使用 node@<选择器> 格式",
-        }
-    }
-
-    pub fn node_only_error(self) -> &'static str {
-        match self.language {
-            Language::English => "this operation only accepts the node tool",
-            Language::SimplifiedChinese => "此操作只接受 node 工具",
+            Language::English => "selection must use <tool>@<selector>",
+            Language::SimplifiedChinese => "版本选择必须使用 <工具>@<选择器> 格式",
         }
     }
 

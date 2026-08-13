@@ -108,7 +108,7 @@ if (Test-Path -LiteralPath $PinsetHome) {
 
 $cliPath = Join-Path $InstallDir 'pinset.exe'
 $routerPath = Join-Path $InstallDir 'pinset-shim.exe'
-$routeCommands = @('node', 'npm', 'npx', 'corepack')
+$routeCommands = @('node', 'npm', 'npx', 'corepack', 'pnpm', 'bun', 'bunx', 'go', 'gofmt')
 
 function Test-ManagedRoute([string]$Path) {
     if ((Paths-Equal $Path $cliPath) -or (Paths-Equal $Path $routerPath)) {

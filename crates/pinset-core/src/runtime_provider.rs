@@ -3,6 +3,9 @@ pub struct RuntimeProvider {
     pub tool: &'static str,
     pub commands: &'static [&'static str],
     pub command_layout: RuntimeCommandLayout,
+    pub metadata: RuntimeMetadataKind,
+    pub installer: RuntimeInstallKind,
+    pub environment: RuntimeEnvironmentKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,23 +15,60 @@ pub enum RuntimeCommandLayout {
     Bin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMetadataKind {
+    Node,
+    Npm,
+    Go,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeInstallKind {
+    Node,
+    Npm,
+    Go,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEnvironmentKind {
+    None,
+    Go,
+}
+
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
     command_layout: RuntimeCommandLayout::NodeNative,
+    metadata: RuntimeMetadataKind::Node,
+    installer: RuntimeInstallKind::Node,
+    environment: RuntimeEnvironmentKind::None,
 };
 const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "pnpm",
     commands: &["pnpm"],
     command_layout: RuntimeCommandLayout::Root,
+    metadata: RuntimeMetadataKind::Npm,
+    installer: RuntimeInstallKind::Npm,
+    environment: RuntimeEnvironmentKind::None,
 };
 const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "bun",
     commands: &["bun", "bunx"],
     command_layout: RuntimeCommandLayout::Bin,
+    metadata: RuntimeMetadataKind::Npm,
+    installer: RuntimeInstallKind::Npm,
+    environment: RuntimeEnvironmentKind::None,
 };
-const PROVIDERS: &[RuntimeProvider] = &[NODE_PROVIDER, PNPM_PROVIDER, BUN_PROVIDER];
+const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "go",
+    commands: &["go", "gofmt"],
+    command_layout: RuntimeCommandLayout::Bin,
+    metadata: RuntimeMetadataKind::Go,
+    installer: RuntimeInstallKind::Go,
+    environment: RuntimeEnvironmentKind::Go,
+};
+const PROVIDERS: &[RuntimeProvider] = &[NODE_PROVIDER, PNPM_PROVIDER, BUN_PROVIDER, GO_PROVIDER];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
     PROVIDERS
@@ -68,6 +108,14 @@ mod tests {
         assert_eq!(
             runtime_provider("bun").expect("bun").commands,
             ["bun", "bunx"]
+        );
+        assert_eq!(
+            runtime_provider("go").expect("go").commands,
+            ["go", "gofmt"]
+        );
+        assert_eq!(
+            runtime_provider_for_command("gofmt").map(|provider| provider.tool),
+            Some("go")
         );
         assert!(runtime_provider("python").is_none());
         assert!(runtime_provider_for_command("python").is_none());

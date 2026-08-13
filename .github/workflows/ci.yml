@@ -93,7 +93,7 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
-      - name: Run real Node, pnpm and Bun acceptance on macOS
+      - name: Run real Node, pnpm, Bun and Go acceptance on macOS
         if: runner.os == 'macOS'
         shell: bash
         env:
@@ -106,7 +106,7 @@ jobs:
           PINSET_BUN_VERSION: 1.3.14
         run: bash scripts/tests/ubuntu_runtime_acceptance.sh
 
-      - name: Run real Node, pnpm and Bun acceptance on Windows
+      - name: Run real Node, pnpm, Bun and Go acceptance on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -181,7 +181,7 @@ jobs:
       - name: Build locked release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
-      - name: Run real Node acceptance in an isolated home
+      - name: Run real Node, pnpm, Bun and Go acceptance in an isolated home
         env:
           PINSET_BIN: ${{ github.workspace }}/target/release/pinset
           PINSET_GLOBAL_VERSION: 24.0.0

@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.2.1`
-产品阶段：`Multi-provider development`
+文档版本：`v0.3.0`
+产品阶段：`Go Provider development`
 更新时间：`2026-08-13`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
 
-`v0.2.1` 支持 Node.js、pnpm 和 Bun。Python 和 Flutter 暂不纳入。
+`v0.3.0` 在 Node.js、pnpm 和 Bun 基础上新增 Go Provider。Python、Flutter、Java 和 Rust 暂不纳入本版本。
 
 ### 1.1 目标
 
@@ -28,7 +28,7 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 1.3 本版本不做
 
-- 不接入 Python、Flutter、Java 等其他 Provider；
+- 不接入 Python、Flutter、Java、Rust 等其他 Provider；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
 - 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
@@ -61,7 +61,7 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`。
 
 ## 3. 支持矩阵
 
@@ -86,6 +86,17 @@ curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`
 
 WSL 使用 Linux 归档，不能运行 Windows `.exe`，也不能复用 Windows 中的 Node 安装。
 
+### 3.3 Go 官方归档目标
+
+| 目标 | 状态 |
+| --- | --- |
+| `windows-x86_64` | 支持 ZIP |
+| `linux-x86_64` | 支持 TAR.GZ |
+| `macos-x86_64` | Provider 支持 TAR.GZ |
+| `macos-aarch64` | Provider 支持 TAR.GZ |
+
+Go available 列表只显示稳定、具有全部上述工件且每个工件都带有效 SHA-256 的版本。
+
 ## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
@@ -99,6 +110,7 @@ schema = 2
 node = "24.0.0"
 pnpm = "11.21.0"
 bun = "1.3.14"
+go = "1.25.1"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -127,7 +139,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略。
 
 ### 4.5 通用命令路由
 
@@ -253,7 +265,7 @@ pinset list node --available
 9. 写完整安装收据；
 10. 原子发布到最终目录。
 
-ZIP/TAR.XZ 必须拒绝路径穿越、绝对路径、特殊文件、逃逸符号链接、冲突路径、条目数超限和展开大小超限。
+ZIP/TAR.XZ/TAR.GZ 必须拒绝路径穿越、绝对路径、特殊文件、逃逸符号链接、冲突路径、条目数超限和展开大小超限。
 
 ### 5.10 下载体验
 
@@ -268,7 +280,7 @@ ZIP/TAR.XZ 必须拒绝路径穿越、绝对路径、特殊文件、逃逸符号
 
 ### 5.11 镜像和回退
 
-普通镜像只替换归档 URL，SHA-256 仍从 Node 官方 HTTPS `SHASUMS256.txt` 获取。使用 `--trust-metadata` 后，自定义 HTTPS 镜像也可以提供 `index.json` 和 SHASUMS，`source list` 会标记这类来源。
+普通镜像只替换归档 URL，SHA-256 仍从 Node 官方 HTTPS `SHASUMS256.txt` 或 Go 官方 HTTPS 下载索引获取。使用 `--trust-metadata` 后，自定义 HTTPS 镜像也可以提供对应元数据，`source list` 会标记这类来源。
 
 `--allow-insecure` 只用于可信的 HTTP 内网服务，不能与 `--trust-metadata` 同时使用。
 
@@ -313,7 +325,7 @@ pinset cache import <archive> --sha256 <hash>
 - `PINSET_HOME`；
 - 项目和全局配置/锁文件；
 - 生效来源和安装状态；
-- 四个 Node 命令的 PATH 候选和遮挡；
+- 所有已开放 Provider 命令的 PATH 候选和遮挡；
 - Pinset 路由所有权；
 - 旧 shim 和已知旧管理器；
 - 可执行的修复建议。
@@ -345,6 +357,20 @@ pnpm Provider 支持稳定版 10 和 11，Bun Provider 支持稳定版 1.x。两
 
 多个 Provider 同时选择时，子进程 PATH 依次包含当前命令目录和其他已选择、已安装 Provider 的命令目录，再追加继承 PATH；Pinset shim 目录必须排除，以防脚本中的跨工具调用递归进入 shim。
 
+## 6.2 Go Provider
+
+Go Provider 支持精确版本、主版本、主次版本、`latest` 和 `current` 选择器，并通过 `pinset list go --available` 查看满足全部发布目标的稳定版本。
+
+- 官方元数据来自 `https://go.dev/dl/?mode=json&include=all`；
+- 版本索引必须同时提供 filename、OS、arch、version、size、kind 和 SHA-256；
+- 只接受 `kind=archive` 且身份与内置目标规划完全一致的工件；
+- Windows 使用 ZIP，Linux/macOS 使用 TAR.GZ，均 strip 顶层 `go/` 后验证 `bin/go` 和 `bin/gofmt`；
+- 锁文件记录规范化的精确 `x.y.z`，历史补丁零版本仍映射到上游省略 `.0` 的归档名；
+- 受管进程的 `GOROOT` 必须指向所选安装目录；
+- 用户未显式设置 `GOTOOLCHAIN` 时注入 `local`，用户显式设置时保留原值并由诊断提示可能绕过锁定；
+- 保留用户的 `GOPATH`、`GOMODCACHE`、`GOCACHE`，不修改 `go.mod` 或 `go.work`；
+- 不管理 Go module 依赖、代理凭据、交叉编译器、TinyGo 或系统 C 工具链。
+
 ## 7. 安全和供应链
 
 ### 7.1 Provider 归档
@@ -354,6 +380,7 @@ pnpm Provider 支持稳定版 10 和 11，Bun Provider 支持稳定版 1.x。两
 - 所有归档在解压前校验；
 - Beta 尚未验证 Node 上游 `SHASUMS256.txt.sig` 的 OpenPGP 签名，计划在稳定版加入。
 - pnpm/Bun 使用 npm 平台包的 SHA-512 SRI，并在锁定阶段验证 npm registry ECDSA 签名；安装阶段重新计算 SHA-512。
+- Go 使用官方下载 JSON 中逐工件提供的 SHA-256；锁文件中的规范 URL、目标和归档格式必须与内置 Go Provider 一致。
 
 ### 7.2 Pinset Release
 
@@ -429,6 +456,6 @@ pnpm Provider 支持稳定版 10 和 11，Bun Provider 支持稳定版 1.x。两
 - 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
-- 完成 Node、pnpm、Bun 的三平台真实运行时验收。
+- 完成 Node、pnpm、Bun、Go 的三平台真实运行时验收。
 
-Python 和 Flutter 排在当前三个 Provider 稳定之后。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+后续按 Flutter、CPython、Java、Rustup 的顺序扩展。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

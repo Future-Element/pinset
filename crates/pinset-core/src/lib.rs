@@ -3,6 +3,12 @@ mod config;
 mod download_cache;
 mod error;
 mod global_state;
+#[cfg(feature = "go-metadata")]
+mod go_metadata;
+#[cfg(feature = "go-provider")]
+mod go_provider;
+#[cfg(all(feature = "installer", feature = "go-provider", feature = "lockfile"))]
+mod go_runtime;
 #[cfg(feature = "installer")]
 mod installer;
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
@@ -51,6 +57,14 @@ pub use global_state::{
     global_config_path, global_lockfile_path, global_state_dir, load_global_config,
     load_optional_global_config,
 };
+#[cfg(feature = "go-metadata")]
+pub use go_metadata::{GoMetadataClient, GoRelease};
+#[cfg(feature = "go-provider")]
+pub use go_provider::{
+    GO_TARGETS, GoArchiveFormat, GoArtifactPlan, plan_go_artifact, validate_exact_go_version,
+};
+#[cfg(all(feature = "installer", feature = "go-provider", feature = "lockfile"))]
+pub use go_runtime::install_locked_go;
 #[cfg(feature = "installer")]
 pub use installer::{
     ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
@@ -85,18 +99,19 @@ pub use npm_metadata::{
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 pub use npm_runtime::install_locked_npm_tool;
 pub use resolver::{
-    CommandResolution, SelectionSource, ToolSelection, command_tool, find_system_commands,
-    path_with_selected_runtime, path_with_selected_tools, pinset_home, pinset_home_from_env,
-    resolve_command, resolve_command_with_path, resolve_from_env, resolve_tool_selection,
-    runtime_command_directory,
+    CommandResolution, RuntimeEnvironmentVariable, SelectionSource, ToolSelection, command_tool,
+    find_system_commands, path_with_selected_runtime, path_with_selected_tools, pinset_home,
+    pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_from_env,
+    resolve_tool_selection, runtime_command_directory, runtime_environment_for_install,
+    selected_runtime_environment,
 };
 pub use runtime_lifecycle::{
     InstalledToolVersion, ToolVersionReference, UninstallToolOutcome, find_tool_version_references,
     list_installed_tool_versions, uninstall_tool_version,
 };
 pub use runtime_provider::{
-    RuntimeCommandLayout, RuntimeProvider, runtime_provider, runtime_provider_for_command,
-    runtime_providers,
+    RuntimeCommandLayout, RuntimeEnvironmentKind, RuntimeInstallKind, RuntimeMetadataKind,
+    RuntimeProvider, runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 pub use shim_install::{
     ShimInstallMethod, ShimInstallResult, ensure_shims, install_shims, is_managed_command_shim,

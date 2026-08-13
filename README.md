@@ -3,22 +3,25 @@
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
 [![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
 
-Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用一致的命令管理 Node.js、Python、Flutter 等运行时，减少在 fnm、nvm、uv、FVM 之间切换的学习和维护成本。
+Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用一致的命令管理 Node.js、Go、Python、Flutter 等运行时，减少在 fnm、nvm、Go 工具链、uv、FVM 之间切换的学习和维护成本。
 
 `v0.2.0` 在已验证的 Node.js 管理基础上新增独立的 pnpm 与 Bun Provider。Python 和 Flutter 尚未支持。当前功能包括：
 
 `v0.2.1` 修复 pnpm 10 独立可执行包被错误套用 pnpm 11 `dist/` 叠加层规则的问题，并覆盖项目 pnpm 10 与 Bun 1.2 的组合安装。
 
+`v0.3.0` 正在开发 Go Provider，并将 Provider 的元数据、安装器和受管环境策略收敛到统一清单。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
+- Go 的精确、主版本、主次版本、`latest`/`current` 选择器；
 - Windows x64、Linux x64、macOS Apple Silicon 的 Pinset Release；
-- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx` 统一路由；
+- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx`、`go`、`gofmt` 统一路由；
 - 可提交的 `pinset.toml` 和 `pinset.lock`；
 - Node SHA-256、npm SHA-512 SRI 与 registry ECDSA 签名校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
 - 国内或企业镜像、有序回退、可选的可信元数据镜像和离线缓存导入；
 - 中英文提示、旧 Node 管理器配置导入、诊断、安全卸载；
-- 三平台自动构建、真实 Node/pnpm/Bun 验收、CycloneDX SBOM 和 GitHub 构建来源证明。
+- 三平台自动构建、真实 Node/pnpm/Bun/Go 验收、CycloneDX SBOM 和 GitHub 构建来源证明。
 
 ## 快速安装
 
@@ -39,10 +42,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-固定安装 `v0.2.0`：
+固定安装最新已发布的 `v0.2.1`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.2.0/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.2.1/install.sh | sh
 ```
 
 自定义安装目录：
@@ -132,9 +135,10 @@ schema = 2
 node = "22.0.0"
 pnpm = "11.21.0"
 bun = "1.3.14"
+go = "1.25.1"
 ```
 
-`pinset.lock` 保存解析后的精确版本、平台归档、完整性值和来源信息。Node 使用官方 SHA-256；pnpm/Bun 使用 npm 包的 SHA-512 SRI，并在生成锁文件前验证 registry ECDSA 签名。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
+`pinset.lock` 保存解析后的精确版本、平台归档、完整性值和来源信息。Node 和 Go 使用官方 SHA-256；pnpm/Bun 使用 npm 包的 SHA-512 SRI，并在生成锁文件前验证 registry ECDSA 签名。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
 
 在项目目录中，项目版本优先于全局版本；离开项目目录后自动恢复全局版本。如果项目或全局声明了版本但安装缺失，Pinset 会明确报错，不会静默换成系统 Node。
 
@@ -203,6 +207,25 @@ pnpm 与 Bun 是独立运行时，不依赖已选择的 Node，也不通过 Core
 
 精确版本可离线解析选择器，但生成可安装锁仍需读取官方 npm 单版本元数据并验证包签名。`list --available` 使用 npm abbreviated metadata，过滤预发布版本以及缺少任一受支持平台包的版本。
 
+## Go
+
+Go 与其他 Provider 使用相同的项目、全局、available、安装、卸载和命令路由流程：
+
+```shell
+pinset list go --available
+pinset global go@latest
+pinset use go@1.25
+pinset current go
+go version
+gofmt -w main.go
+```
+
+Pinset 从 Go 官方下载 JSON 索引读取稳定版本和 Windows x64、Linux x64、macOS x64/arm64 工件，锁定官方 SHA-256 后再安装。历史上省略补丁零的版本会规范化为 `x.y.0`，但仍使用对应的官方归档名。
+
+受管 Go 命令会获得与所选安装一致的 `GOROOT`。如果调用 Pinset 时没有显式设置 `GOTOOLCHAIN`，Pinset 为受管进程设置 `GOTOOLCHAIN=local`，避免 `go.mod` 或 `go.work` 绕过 Pinset 锁定并静默下载另一套工具链；显式用户设置会被保留。
+
+Pinset 不修改 `go.mod`/`go.work`，也不管理 Go module 依赖、`GOPATH`、`GOMODCACHE` 或 `GOCACHE`。
+
 ### 解析优先级
 
 ```text
@@ -229,6 +252,8 @@ pinset which npm
 ```shell
 pinset exec -- node --version
 pinset exec -- npm ci
+pinset exec -- go version
+pinset exec go@1.25 -- go version
 pinset exec -- npx vite
 ```
 
@@ -460,9 +485,9 @@ gh attestation verify pinset-linux-x86_64.tar.gz \
 
 来源证明关联 Release 归档与构建它的仓库、提交和工作流，但不等于安全审计；仍应结合 SHA-256、SBOM 和自己的信任策略判断。
 
-## 从源码构建和测试
+## 开发验证
 
-要求 Rust 1.85 或更高版本：
+项目要求 Rust 1.85 或更高版本。Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行：
 
 ```shell
 cargo fmt --all -- --check
@@ -471,7 +496,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-本地 Rust 测试只使用临时目录、假归档、本地 HTTP 服务和假运行时，不会安装真实运行时。Release 工作流会在 Linux、Windows、macOS 的隔离 GitHub Runner 中安装两个真实 Node 版本、一个 pnpm 版本和一个 Bun 版本，验证全局/项目组合、项目覆盖、跨 Provider 子进程 PATH，以及七个受管命令的 `pinset exec`/shim 调用方式。
+真实运行时验收只在 GitHub Actions 隔离 Runner 中执行。工作流会在 Linux、Windows、macOS 安装 Node、pnpm、Bun 和 Go，验证 available、全局/项目组合、项目覆盖、跨 Provider 子进程 PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`，以及受管命令的 `pinset exec`/shim 调用方式。
 
 Linux/WSL 构建产物：
 
@@ -484,10 +509,10 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## Beta 限制
 
-- 当前支持 Node.js、pnpm 和 Bun；Python、Flutter 和其他 Provider 尚未开放。
+- 当前开发版本支持 Node.js、pnpm、Bun 和 Go；Python、Flutter 和其他 Provider 尚未开放。
 - Pinset Release 暂无 Linux arm64、macOS Intel 安装包。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
-- Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 中的 SHA-256，但 Beta 尚未验证该清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。
+- Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 和 Go 官方下载索引中的 SHA-256，但 Beta 尚未验证 Node 清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。
 - Pinset 不自动修改 shell profile、系统 PATH 或 IDE 配置。
 - 这是预发布版本，配置 schema 仍可能在稳定版前调整；任何迁移都会在 Release Notes 中说明。
 
