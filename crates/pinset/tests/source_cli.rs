@@ -274,7 +274,7 @@ fn tests_a_flutter_source_read_only_against_all_platform_indexes() {
             "--allow-insecure",
         ],
     )
-    .assert_success("added Flutter local");
+    .assert_success("added flutter local");
     let tested = pinset(
         &home,
         &["--lang", "zh-CN", "source", "test", "flutter", "local"],
