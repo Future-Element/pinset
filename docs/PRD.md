@@ -1,7 +1,7 @@
 # Pinset PRD
 
 文档版本：`v0.4.0`
-产品阶段：`Flutter Provider development`
+产品阶段：`Flutter Provider release`
 更新时间：`2026-08-13`
 
 ## 1. 产品简介
@@ -453,16 +453,16 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go，以及全局/项目两套不同版本的 Flutter SDK；
+- 安装一个全局 Node、一个项目 Node、pnpm、Bun 和 Go；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/flutter/dart；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt；
 - 验证 PATH 直接调用的全部 Provider 命令；
 - 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
-- 验证 Flutter 项目覆盖、`.fvmrc` 导入、Flutter/Dart 同源、`FLUTTER_ROOT`、已安装 SDK 重用和原地变更拦截；
+- 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由、`.fvmrc` 导入和原地变更拦截；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
-任一平台失败都不发布 Release。
+任一必需的 Quality、构建或轻量真实运行时任务失败都不发布 Release。Flutter SDK 单个归档超过 1.8 GiB，不在 GitHub Actions 下载；全局/项目覆盖、Flutter/Dart 同源、`FLUTTER_ROOT` 和 SDK 重用由发布后的隔离虚拟机使用完整验收脚本验证。
 
 ## 10. 稳定版前待办
 
@@ -473,6 +473,6 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 - 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
-- 完成 Node、pnpm、Bun、Go、Flutter/Dart 的三平台真实运行时验收。
+- 完成 Flutter/Dart 的发布后隔离虚拟机真实运行时验收。
 
 后续按 CPython、Java、Rustup 的顺序扩展。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

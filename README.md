@@ -11,7 +11,7 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 
 `v0.3.0` 新增 Go Provider，并将 Provider 的元数据、安装器和受管环境策略收敛到统一清单。
 
-当前开发中的 `v0.4.0` 新增 Flutter stable SDK Provider，并将 SDK 内置 Dart 作为同一个锁定与路由单元。
+`v0.4.0` 新增 Flutter stable SDK Provider，并将 SDK 内置 Dart 作为同一个锁定与路由单元。
 
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
@@ -24,7 +24,7 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 - Node SHA-256、npm SHA-512 SRI 与 registry ECDSA 签名校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
 - 国内或企业镜像、有序回退、可选的可信元数据镜像和离线缓存导入；
 - 中英文提示、旧 Node 管理器与 `.fvmrc` 配置导入、诊断、安全卸载；
-- 三平台自动构建、真实 Node/pnpm/Bun/Go/Flutter/Dart 验收、CycloneDX SBOM 和 GitHub 构建来源证明。
+- 三平台自动构建、真实 Node/pnpm/Bun/Go 验收、Flutter/Dart 元数据与安装逻辑测试、CycloneDX SBOM 和 GitHub 构建来源证明。
 
 ## 快速安装
 
@@ -45,10 +45,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-固定安装最新已发布的 `v0.3.0`：
+固定安装最新已发布的 `v0.4.0`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.3.0/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.4.0/install.sh | sh
 ```
 
 自定义安装目录：
@@ -527,7 +527,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-真实运行时验收只在 GitHub Actions 隔离 Runner 中执行。工作流会在 Linux、Windows、macOS 安装 Node、pnpm、Bun、Go 和两套 Flutter SDK，验证 available、全局/项目组合、项目覆盖、跨 Provider 子进程 PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`、Flutter/Dart 同源、`FLUTTER_ROOT`、`.fvmrc` 导入、SDK 重用、原地升级拦截，以及受管命令的 `pinset exec`/shim 调用方式。
+GitHub Actions 会在 Linux、Windows、macOS 隔离 Runner 中安装 Node、pnpm、Bun 和 Go，验证 available、全局/项目组合、项目覆盖、跨 Provider 子进程 PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`，并通过单元测试覆盖 Flutter/Dart 元数据、锁文件、安装安全、路由、`.fvmrc` 导入和原地升级拦截。Flutter SDK 单个归档可超过 1.8 GiB，因此 Actions 默认设置 `PINSET_SKIP_FLUTTER_RUNTIME=1`，不下载真实 SDK；完整验收脚本保留默认模式，供发布后在隔离虚拟机验证 Flutter/Dart 同源、`FLUTTER_ROOT`、SDK 重用和全局/项目覆盖。
 
 Linux/WSL 构建产物：
 
@@ -540,7 +540,7 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## Beta 限制
 
-- 当前开发版本支持 Node.js、pnpm、Bun、Go 和 Flutter stable SDK（含内置 Dart）；Python、Java、Rust 和其他 Provider 尚未开放。
+- 当前版本支持 Node.js、pnpm、Bun、Go 和 Flutter stable SDK（含内置 Dart）；Python、Java、Rust 和其他 Provider 尚未开放。
 - Pinset Release 暂无 Linux arm64、macOS Intel 安装包。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
 - Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 和 Go 官方下载索引中的 SHA-256，但 Beta 尚未验证 Node 清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。

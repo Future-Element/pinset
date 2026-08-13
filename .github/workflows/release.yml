@@ -126,7 +126,7 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
-      - name: Run real Node, pnpm, Bun, Go and Flutter acceptance on Linux and macOS
+      - name: Run real Node, pnpm, Bun and Go acceptance on Linux and macOS
         if: runner.os != 'Windows'
         shell: bash
         env:
@@ -139,9 +139,10 @@ jobs:
           PINSET_BUN_VERSION: 1.3.14
           PINSET_GLOBAL_FLUTTER_SELECTOR: latest
           PINSET_PROJECT_FLUTTER_SELECTOR: 3.44
+          PINSET_SKIP_FLUTTER_RUNTIME: 1
         run: bash scripts/tests/ubuntu_runtime_acceptance.sh
 
-      - name: Run real Node, pnpm, Bun, Go and Flutter acceptance on Windows
+      - name: Run real Node, pnpm, Bun and Go acceptance on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -154,6 +155,7 @@ jobs:
           PINSET_BUN_VERSION: 1.3.14
           PINSET_GLOBAL_FLUTTER_SELECTOR: latest
           PINSET_PROJECT_FLUTTER_SELECTOR: 3.44
+          PINSET_SKIP_FLUTTER_RUNTIME: 1
         run: ./scripts/tests/windows_runtime_acceptance.ps1
 
       - name: Test Unix curl installer
