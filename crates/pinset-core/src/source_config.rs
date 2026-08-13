@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::{Error, Result};
 
-pub const SUPPORTED_SOURCE_PROVIDERS: [&str; 3] = ["node", "python", "flutter"];
+pub const SUPPORTED_SOURCE_PROVIDERS: [&str; 4] = ["node", "go", "python", "flutter"];
 const SOURCE_CONFIG_SCHEMA: u32 = 1;
 const OFFICIAL_ALIAS: &str = "official";
 
@@ -538,6 +538,7 @@ fn join_artifact_url(alias: &str, base_url: &str, artifact_path: &str) -> Result
 fn official_base_url(provider: &str) -> &'static str {
     match provider {
         "node" => "https://nodejs.org/dist/",
+        "go" => "https://go.dev/dl/",
         "python" => "https://github.com/astral-sh/python-build-standalone/releases/download/",
         "flutter" => "https://storage.googleapis.com/",
         _ => unreachable!(),

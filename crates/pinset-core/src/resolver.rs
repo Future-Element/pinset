@@ -8,9 +8,10 @@ use std::{
 #[cfg(test)]
 use crate::current_target;
 use crate::{
-    Error, Result, RuntimeCommandLayout, current_target_for_tool, find_optional_project_config,
-    global_config_path, is_managed_command_shim, load_optional_global_config, load_project_config,
-    runtime_provider, runtime_provider_for_command, runtime_providers,
+    Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
+    find_optional_project_config, global_config_path, is_managed_command_shim,
+    load_optional_global_config, load_project_config, runtime_provider,
+    runtime_provider_for_command, runtime_providers,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +47,12 @@ pub struct CommandResolution {
     pub source: SelectionSource,
     pub selection_path: Option<PathBuf>,
     pub executable: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEnvironmentVariable {
+    pub name: &'static str,
+    pub value: OsString,
 }
 
 pub fn command_tool(command: &str) -> Option<&'static str> {
@@ -340,6 +347,53 @@ pub fn path_with_selected_tools(
         }
     }
     env::join_paths(entries).map_err(|source| Error::RuntimePathJoin { source })
+}
+
+pub fn selected_runtime_environment(
+    cwd: &Path,
+    pinset_home: &Path,
+) -> Vec<RuntimeEnvironmentVariable> {
+    let mut variables = Vec::new();
+    for provider in runtime_providers() {
+        if provider.environment == RuntimeEnvironmentKind::None {
+            continue;
+        }
+        let Ok(selection) = resolve_tool_selection(provider.tool, cwd, pinset_home) else {
+            continue;
+        };
+        let install_dir = pinset_home
+            .join("installs")
+            .join(provider.tool)
+            .join(selection.version)
+            .join(current_target_for_tool(provider.tool));
+        if !install_dir.is_dir() {
+            continue;
+        }
+        variables.extend(runtime_environment_for_install(provider.tool, &install_dir));
+    }
+    variables
+}
+
+pub fn runtime_environment_for_install(
+    tool: &str,
+    install_dir: &Path,
+) -> Vec<RuntimeEnvironmentVariable> {
+    match runtime_provider(tool).map(|provider| provider.environment) {
+        Some(RuntimeEnvironmentKind::Go) => {
+            let mut variables = vec![RuntimeEnvironmentVariable {
+                name: "GOROOT",
+                value: install_dir.as_os_str().to_owned(),
+            }];
+            if env::var_os("GOTOOLCHAIN").is_none() {
+                variables.push(RuntimeEnvironmentVariable {
+                    name: "GOTOOLCHAIN",
+                    value: OsString::from("local"),
+                });
+            }
+            variables
+        }
+        Some(RuntimeEnvironmentKind::None) | None => Vec::new(),
+    }
 }
 
 pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {

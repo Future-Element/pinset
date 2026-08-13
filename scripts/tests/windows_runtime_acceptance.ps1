@@ -12,6 +12,8 @@ $BunVersion = if ($env:PINSET_BUN_VERSION) { $env:PINSET_BUN_VERSION } else { '1
 $GlobalPnpmSelector = if ($env:PINSET_GLOBAL_PNPM_SELECTOR) { $env:PINSET_GLOBAL_PNPM_SELECTOR } else { 'latest' }
 $ProjectPnpmSelector = if ($env:PINSET_PROJECT_PNPM_SELECTOR) { $env:PINSET_PROJECT_PNPM_SELECTOR } else { '10' }
 $ProjectBunSelector = if ($env:PINSET_PROJECT_BUN_SELECTOR) { $env:PINSET_PROJECT_BUN_SELECTOR } else { '1.2' }
+$GlobalGoSelector = if ($env:PINSET_GLOBAL_GO_SELECTOR) { $env:PINSET_GLOBAL_GO_SELECTOR } else { 'latest' }
+$ProjectGoSelector = if ($env:PINSET_PROJECT_GO_SELECTOR) { $env:PINSET_PROJECT_GO_SELECTOR } else { '1.24' }
 $VersionPattern = '^\d+\.\d+\.\d+$'
 
 if ($GlobalVersion -notmatch $VersionPattern -or $ProjectVersion -notmatch $VersionPattern -or
@@ -52,6 +54,7 @@ try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
     Remove-Item Env:PINSET_LANG -ErrorAction SilentlyContinue
+    Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue
     Set-Location $TestRoot
 
     & $Pinset --lang zh-CN | Out-Null
@@ -66,12 +69,22 @@ try {
     if (-not ((& $Pinset list bun --available) -contains "bun@$BunVersion")) {
         throw "bun@$BunVersion was not listed as available"
     }
+    if (-not ((& $Pinset list go --available) -match '^go@\d+\.\d+\.\d+$')) {
+        throw 'no supported Go release was listed as available'
+    }
     & $Pinset global "pnpm@$GlobalPnpmSelector"
     $GlobalPnpmVersion = ((& $Pinset exec -- pnpm --version) | Out-String).Trim()
     if ($GlobalPnpmVersion -notmatch '^11\.') {
         throw "global pnpm selector resolved to unexpected version '$GlobalPnpmVersion'"
     }
     & $Pinset use "bun@$BunVersion" --global
+    & $Pinset global "go@$GlobalGoSelector"
+    $GlobalGoOutput = ((& $Pinset exec -- go version) | Out-String).Trim()
+    $GlobalGoMatch = [regex]::Match($GlobalGoOutput, '^go version go(\d+\.\d+\.\d+)')
+    if (-not $GlobalGoMatch.Success) {
+        throw "global Go returned an invalid version: '$GlobalGoOutput'"
+    }
+    $GlobalGoVersion = $GlobalGoMatch.Groups[1].Value
     Assert-ExactOutput "v$GlobalVersion" (& $Pinset exec -- node --version) 'global pinset exec node'
     Assert-VersionOutput (& $Pinset exec -- npm --version) 'global pinset exec npm'
     Assert-VersionOutput (& $Pinset exec -- npx --version) 'global pinset exec npx'
@@ -79,6 +92,14 @@ try {
     Assert-ExactOutput $GlobalPnpmVersion (& $Pinset exec -- pnpm --version) 'global pinset exec pnpm'
     Assert-ExactOutput $BunVersion (& $Pinset exec -- bun --version) 'global pinset exec bun'
     Assert-ExactOutput $BunVersion (& $Pinset exec -- bunx --version) 'global pinset exec bunx'
+    if (((& $Pinset exec -- go version) | Out-String).Trim() -notmatch "^go version go$([regex]::Escape($GlobalGoVersion))") {
+        throw 'global pinset exec Go returned an unexpected version'
+    }
+    Assert-ExactOutput 'local' (& $Pinset exec -- go env GOTOOLCHAIN) 'global pinset exec Go toolchain policy'
+    $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
+    if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
+        throw "global Go reported an unmanaged GOROOT: '$GlobalGoRoot'"
+    }
 
     $ShimDirectory = ((& $Pinset shim path) | Out-String).Trim()
     if (-not $ShimDirectory) {
@@ -92,6 +113,10 @@ try {
     Assert-ExactOutput $GlobalPnpmVersion (& pnpm --version) 'global direct pnpm'
     Assert-ExactOutput $BunVersion (& bun --version) 'global direct bun'
     Assert-ExactOutput $BunVersion (& bunx --version) 'global direct bunx'
+    if (((& go version) | Out-String).Trim() -notmatch "^go version go$([regex]::Escape($GlobalGoVersion))") {
+        throw 'global direct Go returned an unexpected version'
+    }
+    Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
 
     $Project = Join-Path $TestRoot 'project'
     New-Item -ItemType Directory -Path $Project | Out-Null
@@ -110,12 +135,24 @@ try {
     if ($ProjectBunVersion -notmatch '^1\.2\.') {
         throw "project Bun selector resolved to unexpected version '$ProjectBunVersion'"
     }
+    & $Pinset use "go@$ProjectGoSelector"
+    $ProjectGoOutput = ((& go version) | Out-String).Trim()
+    $ProjectGoMatch = [regex]::Match($ProjectGoOutput, '^go version go(\d+\.\d+\.\d+)')
+    if (-not $ProjectGoMatch.Success -or $ProjectGoMatch.Groups[1].Value -notmatch "^$([regex]::Escape($ProjectGoSelector))\.") {
+        throw "project Go selector resolved to unexpected version '$ProjectGoOutput'"
+    }
+    $ProjectGoVersion = $ProjectGoMatch.Groups[1].Value
     Assert-ExactOutput "v$ProjectVersion" (& node --version) 'project direct node'
     Assert-VersionOutput (& npm --version) 'project direct npm'
     Assert-VersionOutput (& npx --version) 'project direct npx'
     Assert-VersionOutput (& corepack --version) 'project direct corepack'
     Assert-ExactOutput $ProjectPnpmVersion (& pnpm --version) 'project direct pnpm'
     Assert-ExactOutput $ProjectBunVersion (& bun --version) 'project direct bun'
+    Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'project direct Go toolchain policy'
+    $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
+    if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
+        throw "project Go reported an unmanaged GOROOT: '$ProjectGoRoot'"
+    }
     $PnpmChildNodeOutput = @(& pnpm exec node --version 2>&1 | ForEach-Object { $_.ToString() })
     $PnpmChildNodeStatus = $LASTEXITCODE
     Write-Host "pnpm exec node --version => status=$PnpmChildNodeStatus output=$($PnpmChildNodeOutput -join ' | ')"
@@ -133,7 +170,11 @@ try {
     Assert-ExactOutput "v$GlobalVersion" (& node --version) 'restored global direct node'
     Assert-ExactOutput $GlobalPnpmVersion (& pnpm --version) 'restored global direct pnpm'
     Assert-ExactOutput $BunVersion (& bun --version) 'restored global direct bun'
-    Write-Host 'Windows real Node, pnpm and Bun acceptance passed'
+    if (((& go version) | Out-String).Trim() -notmatch "^go version go$([regex]::Escape($GlobalGoVersion))") {
+        throw 'restored global direct Go returned an unexpected version'
+    }
+    Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
+    Write-Host 'Windows real Node, pnpm, Bun and Go acceptance passed'
 }
 finally {
     $env:PATH = $OriginalPath

@@ -9,7 +9,8 @@ use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactIntegrity, Error, NodeArchiveFormat, Result, SourceConfig, plan_node_artifact,
+    ArtifactIntegrity, Error, GO_TARGETS, GoArchiveFormat, NodeArchiveFormat, Result, SourceConfig,
+    plan_go_artifact, plan_node_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -294,7 +295,10 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
 fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     let provider_supported = matches!(
         (tool.name.as_str(), tool.provider.as_str()),
-        ("node", "nodejs-official") | ("pnpm", "pnpm-npm") | ("bun", "bun-npm")
+        ("node", "nodejs-official")
+            | ("pnpm", "pnpm-npm")
+            | ("bun", "bun-npm")
+            | ("go", "go-official")
     );
     if !provider_supported {
         return Err(Error::InvalidLockfile {
@@ -321,6 +325,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         }
         match tool.name.as_str() {
             "node" => validate_locked_node_artifact(&tool.version, artifact)?,
+            "go" => validate_locked_go_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
         }
@@ -332,6 +337,19 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
                     reason: format!("missing Node MVP artifact for {target}"),
                 });
             }
+        }
+    } else if tool.name == "go" {
+        for target in GO_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Go artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != GO_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: "Go lock contains an unsupported artifact target".to_owned(),
+            });
         }
     } else {
         for (target, _) in npm_tool_targets(&tool.name) {
@@ -350,6 +368,46 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     if tool.artifacts.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("{} has no artifacts", tool.name),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_go_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
+    let plan = plan_go_artifact(&SourceConfig::default(), version, &artifact.target)?;
+    let expected_format = match plan.format {
+        GoArchiveFormat::Zip => LockedArtifactFormat::Zip,
+        GoArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+    };
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != expected_format
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Go provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid Go SHA-256 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "go-download-json-sha256"
+        && !artifact
+            .verification
+            .starts_with("go-download-json-sha256-source:")
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported Go verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("Go artifact {} cannot contain overlays", artifact.target),
         });
     }
     Ok(())
@@ -378,7 +436,11 @@ fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Re
             reason: format!("invalid SHA-256 for {}", artifact.target),
         });
     }
-    if artifact.verification != "nodejs-shasums-https" {
+    if artifact.verification != "nodejs-shasums-https"
+        && !artifact
+            .verification
+            .starts_with("nodejs-shasums-https-source:")
+    {
         return Err(Error::InvalidLockfile {
             reason: format!("unsupported verification for {}", artifact.target),
         });
@@ -605,6 +667,41 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_go_provider_identity_and_required_targets() {
+        let artifacts = GO_TARGETS
+            .into_iter()
+            .map(|target| locked_go_artifact("1.25.1", target))
+            .collect::<Vec<_>>();
+        let tool = LockedTool {
+            name: "go".to_owned(),
+            requested: "1.25.1".to_owned(),
+            version: "1.25.1".to_owned(),
+            provider: "go-official".to_owned(),
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect("Go lock");
+
+        let mut invalid = tool;
+        invalid.artifacts[0].canonical_url = "https://example.invalid/go.zip".to_owned();
+        assert!(matches!(
+            validate_locked_tool(&invalid),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let incomplete = LockedTool {
+            name: "go".to_owned(),
+            requested: "1.25.1".to_owned(),
+            version: "1.25.1".to_owned(),
+            provider: "go-official".to_owned(),
+            artifacts: artifacts.into_iter().skip(1).collect(),
+        };
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -630,6 +727,24 @@ mod tests {
             version: version.to_owned(),
             provider: "pnpm-npm".to_owned(),
             artifacts: vec![artifact],
+        }
+    }
+
+    fn locked_go_artifact(version: &str, target: &str) -> LockedArtifact {
+        let plan = plan_go_artifact(&SourceConfig::default(), version, target).expect("Go plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: "ab".repeat(32),
+            integrity: None,
+            format: match plan.format {
+                GoArchiveFormat::Zip => LockedArtifactFormat::Zip,
+                GoArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+            },
+            archive_root: plan.archive_root,
+            verification: "go-download-json-sha256".to_owned(),
+            overlays: Vec::new(),
         }
     }
 

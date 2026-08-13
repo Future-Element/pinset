@@ -1,5 +1,16 @@
 # Pinset Release Notes
 
+## v0.3.0
+
+- 发布日期：`2026-08-13`
+- 阶段：Go Provider / Native Provider 通用化
+- GitHub Release：[v0.3.0](https://github.com/Future-Element/pinset/releases/tag/v0.3.0)
+- 新增 `pinset list go --available`、`go@latest`、主版本、主次版本和精确版本选择；
+- 新增 Go 官方下载 JSON、四平台归档身份和逐工件 SHA-256 锁定；
+- 新增 `go`、`gofmt` 命令路由，以及受管 `GOROOT` 和默认 `GOTOOLCHAIN=local`；
+- Provider 清单开始统一描述元数据、安装器、命令目录和受管环境策略；
+- GitHub Actions 三平台真实运行时验收扩展到 Go；
+
 ## v0.2.1
 
 - 发布日期：`2026-08-13`

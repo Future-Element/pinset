@@ -16,19 +16,20 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DownloadProgressEvent, Error, GlobalConfig, InstallLimits, Installer,
-    LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
-    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
-    current_target, current_target_for_tool, ensure_shims, find_optional_project_config,
-    find_project_config, global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_node, install_locked_npm_tool,
-    is_managed_command_shim, list_download_cache, list_installed_tool_versions, load_global_config,
-    load_lockfile, load_optional_global_config, load_optional_lockfile, load_project_config,
-    load_source_config, load_user_settings, lockfile_path, node_command_directory,
-    path_with_selected_tools, pinset_home, resolve_command, resolve_tool_selection,
-    runtime_command_directory, runtime_provider, save_global_config, save_global_state,
-    save_lockfile, save_project_config, save_source_config, save_user_settings, source_config_path,
-    uninstall_node_version, uninstall_tool_version, user_settings_path,
+    ArtifactIntegrity, DownloadProgressEvent, Error, GlobalConfig, GoMetadataClient, InstallLimits,
+    Installer, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient, RuntimeInstallKind,
+    RuntimeMetadataKind, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
+    clean_download_cache, command_tool, create_project_config, current_target_for_tool,
+    ensure_shims, find_optional_project_config, find_project_config, global_config_path,
+    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
+    install_locked_go, install_locked_node, install_locked_npm_tool, is_managed_command_shim,
+    list_download_cache, list_installed_tool_versions, load_global_config, load_lockfile,
+    load_optional_global_config, load_optional_lockfile, load_project_config, load_source_config,
+    load_user_settings, lockfile_path, path_with_selected_tools, pinset_home, resolve_command,
+    resolve_tool_selection, runtime_command_directory, runtime_environment_for_install,
+    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
+    save_source_config, save_user_settings, selected_runtime_environment, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path, validate_exact_go_version,
     validate_exact_node_version, validate_lock_matches_selection, validate_lock_matches_tool,
     validate_lock_matches_tools,
 };
@@ -58,7 +59,7 @@ enum Commands {
     Init,
     /// Show or set a default runtime version used outside projects.
     Global {
-        /// Selection such as node@lts, pnpm@11 or bun@1.3.
+        /// Selection such as node@lts, pnpm@11, bun@1.3 or go@1.25.
         selection: Option<String>,
         /// Update the global selection and lock without downloading the runtime.
         #[arg(long, requires = "selection")]
@@ -66,7 +67,7 @@ enum Commands {
     },
     /// Select and lock a runtime version for the current project or globally.
     Use {
-        /// Selection such as node@24, pnpm@11 or bun@1.3.
+        /// Selection such as node@24, pnpm@11, bun@1.3 or go@1.25.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -77,7 +78,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm or bun.
+        /// Tool to clear: node, pnpm, bun or go.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -115,7 +116,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm or bun.
+        /// Tool to list: node, pnpm, bun or go.
         tool: String,
         /// Query the official provider index instead of local installations.
         #[arg(long)]
@@ -254,7 +255,7 @@ enum CacheCommands {
 enum SourceCommands {
     /// List built-in and custom sources.
     List {
-        /// Limit output to node, python or flutter.
+        /// Limit output to node, go, python or flutter.
         provider: Option<String>,
     },
     /// Add a custom source. HTTPS is required by default.
@@ -423,22 +424,32 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         Commands::List { tool, available } => {
             require_provider(&tool)?;
             if available {
-                if tool == "node" {
-                    let releases = node_metadata_client(&pinset_home()?)?.available_releases()?;
-                    for release in releases {
-                        println!(
-                            "{}",
-                            catalog.available_node(
-                                &release.version,
-                                &release.date,
-                                release.lts.as_deref(),
-                                release.security,
-                            )
-                        );
+                let provider = runtime_provider(&tool).expect("required provider exists");
+                match provider.metadata {
+                    RuntimeMetadataKind::Node => {
+                        let releases =
+                            node_metadata_client(&pinset_home()?)?.available_releases()?;
+                        for release in releases {
+                            println!(
+                                "{}",
+                                catalog.available_node(
+                                    &release.version,
+                                    &release.date,
+                                    release.lts.as_deref(),
+                                    release.security,
+                                )
+                            );
+                        }
                     }
-                } else {
-                    for release in NpmMetadataClient::official()?.available_releases(&tool)? {
-                        println!("{}@{}", tool, release.version);
+                    RuntimeMetadataKind::Npm => {
+                        for release in NpmMetadataClient::official()?.available_releases(&tool)? {
+                            println!("{}@{}", tool, release.version);
+                        }
+                    }
+                    RuntimeMetadataKind::Go => {
+                        for release in go_metadata_client(&pinset_home()?)?.available_releases()? {
+                            println!("go@{}", release.version);
+                        }
                     }
                 }
             } else {
@@ -649,17 +660,6 @@ fn parse_tool_selection(
     Ok((tool.to_owned(), version.to_owned()))
 }
 
-fn parse_node_selection(
-    selection: &str,
-    catalog: Catalog,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let (tool, version) = parse_tool_selection(selection, catalog)?;
-    if tool != "node" {
-        return Err(catalog.node_only_error().into());
-    }
-    Ok(version)
-}
-
 fn require_provider(tool: &str) -> Result<(), Box<dyn std::error::Error>> {
     runtime_provider(tool)
         .map(|_| ())
@@ -670,12 +670,18 @@ fn validate_exact_tool_version(
     tool: &str,
     version: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if tool == "node" {
-        validate_exact_node_version(version)?;
-    } else {
-        let resolved = NpmMetadataClient::official()?.resolve_version_selector(tool, version)?;
-        if resolved != version {
-            return Err(format!("{tool}@{version} is not an exact stable version").into());
+    let provider = runtime_provider(tool).expect("validated provider");
+    match provider.metadata {
+        RuntimeMetadataKind::Node => validate_exact_node_version(version)?,
+        RuntimeMetadataKind::Npm => {
+            let resolved =
+                NpmMetadataClient::official()?.resolve_version_selector(tool, version)?;
+            if resolved != version {
+                return Err(format!("{tool}@{version} is not an exact stable version").into());
+            }
+        }
+        RuntimeMetadataKind::Go => {
+            validate_exact_go_version(version)?;
         }
     }
     Ok(())
@@ -685,17 +691,23 @@ fn resolve_locked_tool(
     tool: &str,
     selector: &str,
 ) -> Result<LockedTool, Box<dyn std::error::Error>> {
-    if tool == "node" {
-        let lockfile = node_metadata_client(&pinset_home()?)?
-            .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-        return Ok(lockfile
-            .tool("node")
-            .expect("generated Node lock contains node")
-            .clone());
+    let provider = runtime_provider(tool).expect("validated provider");
+    match provider.metadata {
+        RuntimeMetadataKind::Node => {
+            let lockfile = node_metadata_client(&pinset_home()?)?
+                .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+            Ok(lockfile
+                .tool("node")
+                .expect("generated Node lock contains node")
+                .clone())
+        }
+        RuntimeMetadataKind::Npm => {
+            let client = NpmMetadataClient::official()?;
+            let version = client.resolve_version_selector(tool, selector)?;
+            Ok(client.resolve_tool(tool, &version)?)
+        }
+        RuntimeMetadataKind::Go => Ok(go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?),
     }
-    let client = NpmMetadataClient::official()?;
-    let version = client.resolve_version_selector(tool, selector)?;
-    Ok(client.resolve_tool(tool, &version)?)
 }
 
 fn new_lockfile() -> Lockfile {
@@ -990,11 +1002,17 @@ fn install_tool_from_lock(
     let installer = Installer::new(InstallLimits::default())?
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
-    let outcome = if tool == "node" {
-        let sources = load_source_config(&source_config_path(home))?;
-        install_locked_node(&installer, home, &sources, locked_tool, &target)?
-    } else {
-        install_locked_npm_tool(&installer, home, locked_tool, &target)?
+    let provider = runtime_provider(tool).expect("locked tool provider exists");
+    let outcome = match provider.installer {
+        RuntimeInstallKind::Node => {
+            let sources = load_source_config(&source_config_path(home))?;
+            install_locked_node(&installer, home, &sources, locked_tool, &target)?
+        }
+        RuntimeInstallKind::Npm => install_locked_npm_tool(&installer, home, locked_tool, &target)?,
+        RuntimeInstallKind::Go => {
+            let sources = load_source_config(&source_config_path(home))?;
+            install_locked_go(&installer, home, &sources, locked_tool, &target)?
+        }
     };
     if outcome.reused_existing {
         if tool == "node" {
@@ -1414,14 +1432,18 @@ fn execute_selected(
     command: &[OsString],
     catalog: Catalog,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let (ephemeral_selector, mut command) = command
+    let (ephemeral_selection, mut command) = command
         .first()
         .and_then(|value| value.to_str())
-        .filter(|value| value.starts_with("node@"))
+        .filter(|value| {
+            value.split_once('@').is_some_and(|(tool, selector)| {
+                !selector.is_empty() && runtime_provider(tool).is_some()
+            })
+        })
         .map_or((None, command), |selection| {
             (Some(selection), &command[1..])
         });
-    if ephemeral_selector.is_some() && command.first().is_some_and(|value| value == "--") {
+    if ephemeral_selection.is_some() && command.first().is_some_and(|value| value == "--") {
         command = &command[1..];
     }
     let command_name = command
@@ -1429,14 +1451,15 @@ fn execute_selected(
         .and_then(|value| value.to_str())
         .ok_or_else(|| catalog.utf8_command_error())?;
     let home = pinset_home()?;
-    let (executable, tool, version, source, config_path) =
-        if let Some(selection) = ephemeral_selector {
-            let selector = parse_node_selection(selection, catalog)?;
-            let version = node_metadata_client(&home)?.resolve_version_selector(&selector)?;
+    let (executable, tool, version, source, config_path, ephemeral_environment) =
+        if let Some(selection) = ephemeral_selection {
+            let (tool, selector) = parse_tool_selection(selection, catalog)?;
+            let locked_tool = resolve_locked_tool(&tool, &selector)?;
+            let version = locked_tool.version;
             if selector != version {
-                println!("{}", catalog.selector_resolved(&selector, &version));
+                println!("{tool}@{selector} resolved to {tool}@{version}");
             }
-            if command_tool(command_name) != Some("node") {
+            if command_tool(command_name) != Some(tool.as_str()) {
                 return Err(Error::UnsupportedCommand {
                     command: command_name.to_owned(),
                 }
@@ -1444,21 +1467,22 @@ fn execute_selected(
             }
             let install_dir = home
                 .join("installs")
-                .join("node")
+                .join(&tool)
                 .join(&version)
-                .join(current_target());
-            let command_dir = node_command_directory(&install_dir, &current_target())?;
+                .join(current_target_for_tool(&tool));
+            let command_dir = runtime_command_directory(&tool, &install_dir);
             let executable = runtime_command_path(&command_dir, command_name);
             if !executable.is_file() {
                 return Err(Error::RuntimeCommandNotFound {
-                    tool: "node".to_owned(),
-                    version,
+                    tool: tool.clone(),
+                    version: version.clone(),
                     command: command_name.to_owned(),
                     searched: executable.display().to_string(),
                 }
                 .into());
             }
-            (executable, "node".to_owned(), version, "ephemeral", None)
+            let environment = runtime_environment_for_install(&tool, &install_dir);
+            (executable, tool, version, "ephemeral", None, environment)
         } else {
             let resolution = resolve_command(command_name, cwd, &home)?;
             (
@@ -1467,6 +1491,7 @@ fn execute_selected(
                 resolution.version,
                 resolution.source.as_str(),
                 resolution.selection_path,
+                Vec::new(),
             )
         };
     let runtime_path = path_with_selected_tools(&executable, cwd, &home)?;
@@ -1478,6 +1503,12 @@ fn execute_selected(
         .env("PINSET_SELECTED_TOOL", &tool)
         .env("PINSET_SELECTED_VERSION", &version)
         .env("PINSET_SELECTION_SOURCE", source);
+    for variable in selected_runtime_environment(cwd, &home) {
+        child.env(variable.name, variable.value);
+    }
+    for variable in ephemeral_environment {
+        child.env(variable.name, variable.value);
+    }
     if let Some(path) = &config_path {
         child.env("PINSET_CONFIG_PATH", path);
     } else {
@@ -1670,7 +1701,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
     } else {
         existing_shim_commands(&legacy_shims, &commands)
     };
-    let routing_issues = collect_routing_issues(
+    let mut routing_issues = collect_routing_issues(
         pinset_core::runtime_providers()
             .iter()
             .any(|provider| resolve_tool_selection(provider.tool, cwd, &home).is_ok()),
@@ -1681,6 +1712,9 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         &legacy_shims,
         &legacy_commands,
     );
+    if let Some(issue) = go_toolchain_routing_issue(cwd, &home) {
+        routing_issues.push(issue);
+    }
     Ok(DoctorReport {
         schema: 1,
         cwd: cwd.display().to_string(),
@@ -1790,6 +1824,20 @@ fn collect_routing_issues(
         }
     }
     issues
+}
+
+fn go_toolchain_routing_issue(cwd: &Path, home: &Path) -> Option<DoctorRoutingIssue> {
+    resolve_tool_selection("go", cwd, home).ok()?;
+    let value = env::var_os("GOTOOLCHAIN")?;
+    if value.to_string_lossy().eq_ignore_ascii_case("local") {
+        return None;
+    }
+    Some(DoctorRoutingIssue {
+        code: "go-toolchain-override",
+        command: Some("go".to_owned()),
+        path: None,
+        action: "unset GOTOOLCHAIN or set it to local to enforce the Pinset lock",
+    })
 }
 
 fn detect_legacy_node_configs(
@@ -2121,7 +2169,7 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
     let selected = pinset_core::runtime_providers()
         .iter()
         .any(|provider| resolve_tool_selection(provider.tool, cwd, &home).is_ok());
-    for issue in collect_routing_issues(
+    let mut routing_issues = collect_routing_issues(
         selected,
         &commands,
         &path_candidates,
@@ -2129,7 +2177,11 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
         &shim_binary,
         &legacy_shims,
         &legacy_commands,
-    ) {
+    );
+    if let Some(issue) = go_toolchain_routing_issue(cwd, &home) {
+        routing_issues.push(issue);
+    }
+    for issue in routing_issues {
         println!(
             "{}",
             catalog.doctor_routing_issue(
@@ -2302,23 +2354,42 @@ fn run_source_command(
             println!("{}", catalog.source_changed("removed", &provider, &alias));
         }
         SourceCommands::Test { provider, alias } => {
-            if provider != "node" {
-                return Err(catalog.node_only_error().into());
-            }
             let source = config.source(&provider, alias.as_deref())?;
-            let client = NodeMetadataClient::for_base_url(&source.base_url)?;
-            let releases = client.available_releases()?;
-            let newest = releases.first().ok_or_else(|| Error::InvalidNodeIndex {
-                reason: "source index contains no supported stable releases".to_owned(),
-            })?;
-            client.resolve_exact_lock(&newest.version, "pinset source test")?;
+            let releases = match runtime_provider(&provider).map(|provider| provider.metadata) {
+                Some(RuntimeMetadataKind::Node) => {
+                    let client = NodeMetadataClient::for_base_url(&source.base_url)?;
+                    let releases = client.available_releases()?;
+                    let newest = releases.first().ok_or_else(|| Error::InvalidNodeIndex {
+                        reason: "source index contains no supported stable releases".to_owned(),
+                    })?;
+                    client.resolve_exact_lock(&newest.version, "pinset source test")?;
+                    releases.len()
+                }
+                Some(RuntimeMetadataKind::Go) => {
+                    let client = GoMetadataClient::for_base_url(&source.base_url)?;
+                    let releases = client.available_releases()?;
+                    if releases.is_empty() {
+                        return Err(Error::InvalidGoIndex {
+                            reason: "source index contains no supported stable releases".to_owned(),
+                        }
+                        .into());
+                    }
+                    releases.len()
+                }
+                Some(RuntimeMetadataKind::Npm) | None => {
+                    return Err(format!(
+                        "source testing is not available for provider {provider:?}"
+                    )
+                    .into());
+                }
+            };
             println!(
                 "{}",
                 catalog.source_test_ok(
                     &provider,
                     &source.alias,
                     &source.base_url,
-                    releases.len(),
+                    releases,
                     source.base_url.starts_with("https://"),
                 )
             );
@@ -2396,6 +2467,19 @@ fn node_metadata_client(home: &Path) -> Result<NodeMetadataClient, Box<dyn std::
         Ok(NodeMetadataClient::official()?)
     } else {
         Ok(NodeMetadataClient::for_source(
+            &source.base_url,
+            &source.alias,
+        )?)
+    }
+}
+
+fn go_metadata_client(home: &Path) -> Result<GoMetadataClient, Box<dyn std::error::Error>> {
+    let config = load_source_config(&source_config_path(home))?;
+    let source = config.metadata_source("go")?;
+    if source.kind == pinset_core::SourceKind::Official {
+        Ok(GoMetadataClient::official()?)
+    } else {
+        Ok(GoMetadataClient::for_source(
             &source.base_url,
             &source.alias,
         )?)

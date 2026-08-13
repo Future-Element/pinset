@@ -172,6 +172,45 @@ fn tests_a_node_source_read_only_against_its_version_index() {
     assert!(!home.join("installs").exists());
 }
 
+#[test]
+fn tests_a_go_source_read_only_against_its_download_index() {
+    let root = tempdir().expect("temporary PINSET_HOME");
+    let home = root.path().join("isolated-home");
+    let hash = "ab".repeat(32);
+    let index = serde_json::json!([{
+        "version": "go1.25.1",
+        "stable": true,
+        "files": [
+            {"filename":"go1.25.1.windows-amd64.zip","os":"windows","arch":"amd64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
+            {"filename":"go1.25.1.darwin-arm64.tar.gz","os":"darwin","arch":"arm64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
+            {"filename":"go1.25.1.darwin-amd64.tar.gz","os":"darwin","arch":"amd64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
+            {"filename":"go1.25.1.linux-amd64.tar.gz","os":"linux","arch":"amd64","version":"go1.25.1","sha256":hash,"size":1,"kind":"archive"}
+        ]
+    }])
+    .to_string()
+    .into_bytes();
+    let (base_url, server) = serve_sequence(vec![("GET /?mode=json&include=all", index)]);
+
+    pinset(
+        &home,
+        &[
+            "source",
+            "add",
+            "go",
+            "local",
+            "--base-url",
+            &base_url,
+            "--allow-insecure",
+        ],
+    )
+    .assert_success("added go local");
+    let tested = pinset(&home, &["--lang", "zh-CN", "source", "test", "go", "local"]);
+    server.join().expect("server");
+    tested.assert_success_contains("安装源测试通过");
+    tested.assert_success_contains("稳定版本数=1");
+    assert!(!home.join("installs").exists());
+}
+
 fn serve_sequence(responses: Vec<(&'static str, Vec<u8>)>) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
     let address = listener.local_addr().expect("server address");

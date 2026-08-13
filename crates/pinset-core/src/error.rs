@@ -225,7 +225,9 @@ pub enum Error {
     PinsetHomeUnavailable,
 
     #[cfg(feature = "sources")]
-    #[error("unsupported source provider \"{provider}\"; expected one of: node, python, flutter")]
+    #[error(
+        "unsupported source provider \"{provider}\"; expected one of: node, go, python, flutter"
+    )]
     UnsupportedSourceProvider { provider: String },
 
     #[cfg(feature = "sources")]
@@ -323,6 +325,48 @@ pub enum Error {
     #[cfg(feature = "node-provider")]
     #[error("invalid exact Node.js version \"{version}\"; expected x.y.z without a leading 'v'")]
     InvalidNodeVersion { version: String },
+
+    #[cfg(feature = "go-provider")]
+    #[error("invalid exact Go version \"{version}\"; expected x.y.z without a leading 'go' or 'v'")]
+    InvalidGoVersion { version: String },
+
+    #[cfg(feature = "go-provider")]
+    #[error("unsupported Go target \"{target}\"")]
+    UnsupportedGoTarget { target: String },
+
+    #[cfg(feature = "go-metadata")]
+    #[error(
+        "invalid Go selector \"{selector}\"; expected x.y.z, a major/minor prefix, latest or current"
+    )]
+    InvalidGoSelector { selector: String },
+
+    #[cfg(feature = "go-metadata")]
+    #[error("official Go index contains no supported release matching \"{selector}\"")]
+    GoSelectorNotFound { selector: String },
+
+    #[cfg(feature = "go-metadata")]
+    #[error("failed to request Go download metadata {url}: {source}")]
+    GoMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "go-metadata")]
+    #[error("failed while reading Go download metadata {url}: {source}")]
+    GoMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "go-metadata")]
+    #[error("Go download index exceeds {limit} bytes")]
+    GoMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "go-metadata")]
+    #[error("invalid Go download index: {reason}")]
+    InvalidGoIndex { reason: String },
 
     #[cfg(feature = "node-metadata")]
     #[error(
@@ -552,6 +596,7 @@ pub enum Error {
 
     #[cfg(any(
         feature = "installer",
+        feature = "go-metadata",
         feature = "node-metadata",
         feature = "npm-metadata"
     ))]
