@@ -758,7 +758,9 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             "@echo off\r\nif \"%1\"==\"exit23\" exit /b 23\r\necho system:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
         )
         .expect("fake system node");
-        for command in ["npm", "npx", "corepack", "pnpm", "bun", "bunx"] {
+        for command in [
+            "npm", "npx", "corepack", "pnpm", "bun", "bunx", "go", "gofmt", "flutter", "dart",
+        ] {
             fs::write(
                 directory.join(format!("{command}.cmd")),
                 format!("@echo off\r\necho fake {command}\r\n"),
@@ -783,7 +785,9 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake system node permissions");
-        for command in ["npm", "npx", "corepack", "pnpm", "bun", "bunx"] {
+        for command in [
+            "npm", "npx", "corepack", "pnpm", "bun", "bunx", "go", "gofmt", "flutter", "dart",
+        ] {
             let command_path = directory.join(command);
             fs::write(
                 &command_path,
