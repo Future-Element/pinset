@@ -34,13 +34,19 @@ struct FlutterIndex {
 
 #[derive(Debug, Clone, Deserialize)]
 struct FlutterIndexRelease {
+    #[serde(default)]
     hash: String,
+    #[serde(default)]
     channel: String,
+    #[serde(default)]
     version: String,
+    #[serde(default)]
     dart_sdk_version: String,
     #[serde(default)]
     dart_sdk_arch: String,
+    #[serde(default)]
     archive: String,
+    #[serde(default)]
     sha256: String,
 }
 
@@ -407,6 +413,24 @@ mod tests {
             artifact.sha256 == "ab".repeat(32)
                 && artifact.verification == "flutter-release-json-sha256-source:custom"
         }));
+    }
+
+    #[test]
+    fn skips_incomplete_historical_release_records() {
+        let body = serde_json::json!({
+            "releases": [{
+                "hash": "cd".repeat(20),
+                "channel": "stable",
+                "version": "1.0.0",
+                "archive": "stable/linux/flutter_linux_1.0.0-stable.tar.xz",
+                "sha256": "ab".repeat(32)
+            }]
+        })
+        .to_string();
+
+        let parsed = parse_index(&body, "linux", &["linux-x86_64"])
+            .expect("incomplete records remain parseable");
+        assert!(parsed[0].1.is_empty());
     }
 
     fn release_fixtures(version: &str, complete: bool) -> (String, String, String) {
