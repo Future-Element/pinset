@@ -588,8 +588,7 @@ mod tests {
         validate_locked_npm_artifact(&pnpm_10_tool, &pnpm_10).expect("pnpm 10 artifact");
 
         let pnpm_10_with_overlay = locked_pnpm_artifact("10.34.5", true);
-        let pnpm_10_with_overlay_tool =
-            locked_pnpm_tool("10.34.5", pnpm_10_with_overlay.clone());
+        let pnpm_10_with_overlay_tool = locked_pnpm_tool("10.34.5", pnpm_10_with_overlay.clone());
         validate_locked_npm_artifact(&pnpm_10_with_overlay_tool, &pnpm_10_with_overlay)
             .expect("legacy pnpm 10 artifact");
 
@@ -645,19 +644,20 @@ mod tests {
             format: LockedArtifactFormat::TarGz,
             archive_root: "package".to_owned(),
             verification: "npm-registry-signature-sha512".to_owned(),
-            overlays: with_overlay.then(|| {
-                let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
-                LockedArtifactOverlay {
-                    canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
-                    artifact_path,
-                    integrity: format!("sha512:{}", "cd".repeat(64)),
-                    format: LockedArtifactFormat::TarGz,
-                    archive_root: "package".to_owned(),
-                    verification: "npm-registry-signature-sha512".to_owned(),
-                }
-            })
-            .into_iter()
-            .collect(),
+            overlays: with_overlay
+                .then(|| {
+                    let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
+                    LockedArtifactOverlay {
+                        canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
+                        artifact_path,
+                        integrity: format!("sha512:{}", "cd".repeat(64)),
+                        format: LockedArtifactFormat::TarGz,
+                        archive_root: "package".to_owned(),
+                        verification: "npm-registry-signature-sha512".to_owned(),
+                    }
+                })
+                .into_iter()
+                .collect(),
         }
     }
 }
