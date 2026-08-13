@@ -7,6 +7,8 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 
 `v0.2.0` 在已验证的 Node.js 管理基础上新增独立的 pnpm 与 Bun Provider。Python 和 Flutter 尚未支持。当前功能包括：
 
+`v0.2.1` 修复 pnpm 10 独立可执行包被错误套用 pnpm 11 `dist/` 叠加层规则的问题，并覆盖项目 pnpm 10 与 Bun 1.2 的组合安装。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
