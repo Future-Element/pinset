@@ -1,9 +1,10 @@
 # Pinset Release Notes
 
-## v0.2.1（待验证）
+## v0.2.1
 
-- 目标日期：`2026-08-13`
+- 发布日期：`2026-08-13`
 - 阶段：多 Provider Beta 补丁
+- GitHub Release：[v0.2.1](https://github.com/Future-Element/pinset/releases/tag/v0.2.1)
 - 修复 pnpm 10 官方平台包为单个独立可执行文件、没有 pnpm 11 `dist/` 叠加层时的安装失败；
 - 增加全局 `pnpm@latest`、项目 `pnpm@10` 与项目 `bun@1.2` 组合安装的三平台虚拟机回归验收；
 - 不改变 pnpm 11 的 `@pnpm/exe` overlay、npm registry 签名或 SHA-512 校验。
