@@ -9,7 +9,7 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 
 `v0.2.1` 修复 pnpm 10 独立可执行包被错误套用 pnpm 11 `dist/` 叠加层规则的问题，并覆盖项目 pnpm 10 与 Bun 1.2 的组合安装。
 
-`v0.3.0` 正在开发 Go Provider，并将 Provider 的元数据、安装器和受管环境策略收敛到统一清单。
+`v0.3.0` 新增 Go Provider，并将 Provider 的元数据、安装器和受管环境策略收敛到统一清单。
 
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
@@ -42,10 +42,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-固定安装最新已发布的 `v0.2.1`：
+固定安装最新已发布的 `v0.3.0`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.2.1/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.3.0/install.sh | sh
 ```
 
 自定义安装目录：

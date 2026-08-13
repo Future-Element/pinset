@@ -1,10 +1,10 @@
 # Pinset Plans
 
-当前规划版本：`v0.3.0`
+当前规划版本：`v0.4.0`
 
 当前发布候选：无
 
-最新已发布版本：`v0.2.1`
+最新已发布版本：`v0.3.0`
 
 更新时间：`2026-08-13`
 
@@ -35,7 +35,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.1.0-beta.1` | 已发布 | 简短安装命令、断点续传、可信镜像、离线导入和三平台 Node 测试 |
 | `v0.2.0` | 已发布 | pnpm、Bun Provider，通用 Provider/锁文件/命令路由基础 |
 | `v0.2.1` | 已发布 | pnpm、Bun 项目版本切换和安装路径修复 |
-| `v0.3.0` | 开发中 | Go Provider、Native Provider 通用化 |
+| `v0.3.0` | 已发布 | Go Provider、Native Provider 通用化 |
 | `v0.4.0` | 规划中 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.5.0` | 规划中 | CPython Provider |
 | `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
