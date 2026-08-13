@@ -2,6 +2,16 @@ mod config;
 #[cfg(feature = "installer")]
 mod download_cache;
 mod error;
+#[cfg(feature = "flutter-metadata")]
+mod flutter_metadata;
+#[cfg(feature = "flutter-provider")]
+mod flutter_provider;
+#[cfg(all(
+    feature = "installer",
+    feature = "flutter-provider",
+    feature = "lockfile"
+))]
+mod flutter_runtime;
 mod global_state;
 #[cfg(feature = "go-metadata")]
 mod go_metadata;
@@ -48,6 +58,19 @@ pub use download_cache::{
     import_download_cache, import_download_cache_with_integrity, list_download_cache,
 };
 pub use error::{Error, Result};
+#[cfg(feature = "flutter-metadata")]
+pub use flutter_metadata::{FlutterMetadataClient, FlutterRelease};
+#[cfg(feature = "flutter-provider")]
+pub use flutter_provider::{
+    FLUTTER_TARGETS, FlutterArchiveFormat, FlutterArtifactPlan, plan_flutter_artifact,
+    validate_exact_flutter_version,
+};
+#[cfg(all(
+    feature = "installer",
+    feature = "flutter-provider",
+    feature = "lockfile"
+))]
+pub use flutter_runtime::install_locked_flutter;
 #[cfg(feature = "state-write")]
 pub use global_state::save_global_config;
 #[cfg(all(feature = "state-write", feature = "lockfile"))]
@@ -103,7 +126,7 @@ pub use resolver::{
     find_system_commands, path_with_selected_runtime, path_with_selected_tools, pinset_home,
     pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_from_env,
     resolve_tool_selection, runtime_command_directory, runtime_environment_for_install,
-    selected_runtime_environment,
+    selected_runtime_environment, validate_managed_runtime_invocation,
 };
 pub use runtime_lifecycle::{
     InstalledToolVersion, ToolVersionReference, UninstallToolOutcome, find_tool_version_references,

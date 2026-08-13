@@ -368,6 +368,53 @@ pub enum Error {
     #[error("invalid Go download index: {reason}")]
     InvalidGoIndex { reason: String },
 
+    #[cfg(feature = "flutter-provider")]
+    #[error("invalid exact Flutter version \"{version}\"; expected x.y.z")]
+    InvalidFlutterVersion { version: String },
+
+    #[cfg(feature = "flutter-provider")]
+    #[error("unsupported Flutter target \"{target}\"")]
+    UnsupportedFlutterTarget { target: String },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error(
+        "invalid Flutter selector \"{selector}\"; expected x.y.z, a major/minor prefix, latest or current"
+    )]
+    InvalidFlutterSelector { selector: String },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error("official Flutter indexes contain no stable release matching \"{selector}\"")]
+    FlutterSelectorNotFound { selector: String },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error("failed to request Flutter release metadata {url}: {source}")]
+    FlutterMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error("failed while reading Flutter release metadata {url}: {source}")]
+    FlutterMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error("Flutter release index exceeds {limit} bytes")]
+    FlutterMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "flutter-metadata")]
+    #[error("invalid Flutter release index: {reason}")]
+    InvalidFlutterIndex { reason: String },
+
+    #[error(
+        "refusing to run `{command}` against a Pinset-managed Flutter SDK; select another version with `pinset use flutter@<version>` or `pinset global flutter@<version>`"
+    )]
+    ManagedFlutterMutation { command: String },
+
     #[cfg(feature = "node-metadata")]
     #[error(
         "invalid Node.js selector \"{selector}\"; expected x.y.z, a major/minor prefix, lts or current"

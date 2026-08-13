@@ -210,28 +210,28 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("global") => {
-                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25] [--no-install]"
+                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|flutter@3.47] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js、pnpm、Bun 或 Go 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25> [--global] [--no-install]"
+                "选择并锁定 Node.js、pnpm、Bun、Go 或 Flutter 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|flutter@3.47> [--global] [--no-install]"
             }
             Some("unset") => {
-                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go> [--global] [--cwd <目录>]"
+                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|flutter> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|flutter>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|flutter] [--cwd <目录>]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go> [--available]"
+                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|flutter> [--available]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go>@x.y.z [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|flutter>@x.y.z [--cwd <目录>] [--force]"
             }
             Some("cache") => {
                 "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"
@@ -243,7 +243,7 @@ impl Catalog {
                 "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
             }
             Some("import") => {
-                "预览或显式导入旧 Node.js 管理器配置；不会改写旧文件。\n\n用法：\n  pinset import --dry-run [--cwd <目录>]\n  pinset import --apply [--from <来源>] [--global] [--no-install] [--cwd <目录>]"
+                "预览或显式导入旧 Node.js/FVM 管理器配置；不会改写旧文件。\n\n用法：\n  pinset import --dry-run [--cwd <目录>]\n  pinset import --apply [--from <来源>] [--global] [--no-install] [--cwd <目录>]"
             }
             Some("shim") => {
                 "查看、修复或迁移 Pinset Provider 命令路由。\n\n用法：\n  pinset shim path\n  pinset shim install [--provider <工具>] [--binary <文件>] [--dir <目录>] [命令...]\n  pinset shim migrate [--provider <工具>] [--dir <目录>]"
@@ -475,23 +475,24 @@ impl Catalog {
     pub fn import_none(self, cwd: &Path) -> String {
         match self.language {
             Language::English => format!(
-                "no legacy Node.js version configuration detected in {}",
+                "no supported legacy runtime version configuration detected in {}",
                 cwd.display()
             ),
             Language::SimplifiedChinese => {
-                format!("在 {} 中未检测到旧 Node.js 版本配置", cwd.display())
+                format!("在 {} 中未检测到受支持的旧运行时版本配置", cwd.display())
             }
         }
     }
 
-    pub fn import_candidate(self, kind: &str, version: &str, path: &Path) -> String {
+    pub fn import_candidate(self, kind: &str, tool: &str, version: &str, path: &Path) -> String {
+        let display_tool = if tool == "node" { "Node.js" } else { "Flutter" };
         match self.language {
             Language::English => format!(
-                "detected {kind} node={version} path={} action=none",
+                "detected {kind} {tool}={version} path={} action=none",
                 path.display()
             ),
             Language::SimplifiedChinese => format!(
-                "检测到 {kind}：Node.js {version}；路径={}；操作=无（仅预览）",
+                "检测到 {kind}：{display_tool} {version}；路径={}；操作=无（仅预览）",
                 path.display()
             ),
         }
@@ -500,10 +501,10 @@ impl Catalog {
     pub fn import_conflict(self, versions: usize) -> String {
         match self.language {
             Language::English => format!(
-                "conflict: detected {versions} distinct Node.js versions; no configuration was changed"
+                "conflict: detected {versions} distinct runtime selections; no configuration was changed"
             ),
             Language::SimplifiedChinese => {
-                format!("发现冲突：检测到 {versions} 个不同 Node.js 版本；未修改任何配置")
+                format!("发现冲突：检测到 {versions} 个不同运行时选择；未修改任何配置")
             }
         }
     }
@@ -511,10 +512,10 @@ impl Catalog {
     pub fn import_apply_conflict(self, versions: usize) -> String {
         match self.language {
             Language::English => format!(
-                "cannot import: detected {versions} distinct Node.js selections; pass --from <source>"
+                "cannot import: detected {versions} distinct runtime selections; pass --from <source>"
             ),
             Language::SimplifiedChinese => format!(
-                "无法导入：检测到 {versions} 个不同 Node.js 选择；请使用 --from <来源> 明确指定"
+                "无法导入：检测到 {versions} 个不同运行时选择；请使用 --from <来源> 明确指定"
             ),
         }
     }
@@ -530,14 +531,22 @@ impl Catalog {
         }
     }
 
-    pub fn import_applied(self, kind: &str, version: &str, path: &Path, scope: &str) -> String {
+    pub fn import_applied(
+        self,
+        kind: &str,
+        tool: &str,
+        version: &str,
+        path: &Path,
+        scope: &str,
+    ) -> String {
+        let display_tool = if tool == "node" { "Node.js" } else { "Flutter" };
         match self.language {
             Language::English => format!(
-                "imported {kind} node={version} into Pinset {scope} state; legacy file preserved: {}",
+                "imported {kind} {tool}={version} into Pinset {scope} state; legacy file preserved: {}",
                 path.display()
             ),
             Language::SimplifiedChinese => format!(
-                "已将 {kind} 的 Node.js {version} 导入 Pinset {}状态；旧文件已保留：{}",
+                "已将 {kind} 的 {display_tool} {version} 导入 Pinset {}状态；旧文件已保留：{}",
                 if scope == "global" {
                     "全局"
                 } else {

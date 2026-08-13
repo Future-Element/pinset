@@ -30,7 +30,7 @@ try {
     [IO.File]::WriteAllText($cli, 'pinset test binary')
     [IO.File]::WriteAllText($router, 'pinset shim test binary')
 
-    foreach ($command in @('node', 'npm', 'go')) {
+    foreach ($command in @('node', 'npm', 'go', 'flutter', 'dart')) {
         $escapedRouter = $router.Replace('%', '%%')
         $wrapper = "@echo off`r`nsetlocal DisableDelayedExpansion`r`n`"$escapedRouter`" --as $command -- %*`r`nexit /b %ERRORLEVEL%`r`n"
         [IO.File]::WriteAllText((Join-Path $installDir "$command.cmd"), $wrapper)
@@ -118,6 +118,8 @@ try {
         (Join-Path $installDir 'npm.cmd'),
         (Join-Path $shimDir 'corepack.exe'),
         (Join-Path $installDir 'go.cmd'),
+        (Join-Path $installDir 'flutter.cmd'),
+        (Join-Path $installDir 'dart.cmd'),
         (Join-Path $pathDir 'npx.exe'),
         $pinsetHome
     )) {

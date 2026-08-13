@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, io::Read, time::Duration};
+use std::{cmp::Reverse, collections::BTreeMap, io::Read, time::Duration};
 
 use reqwest::{Url, blocking::Client};
 use serde::Deserialize;
@@ -122,6 +122,7 @@ impl GoMetadataClient {
             requested: release.version.clone(),
             version: release.version,
             provider: "go-official".to_owned(),
+            metadata: BTreeMap::new(),
             artifacts,
         })
     }

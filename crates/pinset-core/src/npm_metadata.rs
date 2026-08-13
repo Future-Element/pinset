@@ -307,6 +307,7 @@ impl NpmMetadataClient {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: format!("{tool}-npm"),
+            metadata: std::collections::BTreeMap::new(),
             artifacts,
         })
     }

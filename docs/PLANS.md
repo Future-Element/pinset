@@ -36,7 +36,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.2.0` | 已发布 | pnpm、Bun Provider，通用 Provider/锁文件/命令路由基础 |
 | `v0.2.1` | 已发布 | pnpm、Bun 项目版本切换和安装路径修复 |
 | `v0.3.0` | 已发布 | Go Provider、Native Provider 通用化 |
-| `v0.4.0` | 规划中 | Flutter SDK Provider、内置 Dart 路由 |
+| `v0.4.0` | 开发中 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.5.0` | 规划中 | CPython Provider |
 | `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
 | `v0.7.0` | 规划中 | rustup 委托式 Rust Provider |
@@ -75,6 +75,8 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - Node.js、pnpm、Bun 既有行为没有回归。
 
 ## v0.4.0 — Flutter SDK Provider
+
+实现状态：核心 Provider、锁文件、安装与路由已进入功能分支开发；三平台 GitHub Actions 真实 SDK 验收尚未执行。
 
 ### 目标
 

@@ -46,6 +46,8 @@ ln "$INSTALL_DIR/pinset-shim" "$INSTALL_DIR/npm"
 cp "$INSTALL_DIR/pinset-shim" "$INSTALL_DIR/npx"
 ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/corepack"
 ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/go"
+ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/flutter"
+ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/dart"
 cp "$INSTALL_DIR/pinset-shim" "$PATH_DIR/npx"
 printf 'foreign command\n' > "$PATH_DIR/python"
 printf 'project config\n' > "$PROJECT_DIR/pinset.toml"
@@ -112,6 +114,8 @@ HOME="$TEST_HOME" PATH="$PATH_DIR:$PATH" sh "$ROOT/uninstall.sh" --yes \
 [ ! -e "$INSTALL_DIR/npx" ]
 [ ! -e "$SHIM_DIR/corepack" ]
 [ ! -e "$SHIM_DIR/go" ]
+[ ! -e "$SHIM_DIR/flutter" ]
+[ ! -e "$SHIM_DIR/dart" ]
 [ ! -e "$PATH_DIR/npx" ]
 [ ! -e "$PINSET_DATA_HOME" ]
 [ -f "$PATH_DIR/python" ]

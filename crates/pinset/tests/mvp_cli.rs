@@ -291,7 +291,8 @@ fn doctor_reports_all_provider_commands_and_path_shadowing() {
     assert_eq!(
         commands,
         [
-            "bun", "bunx", "corepack", "go", "gofmt", "node", "npm", "npx", "pnpm",
+            "bun", "bunx", "corepack", "dart", "flutter", "go", "gofmt", "node", "npm", "npx",
+            "pnpm",
         ]
         .into_iter()
         .collect()

@@ -9,8 +9,9 @@ use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactIntegrity, Error, GO_TARGETS, GoArchiveFormat, NodeArchiveFormat, Result, SourceConfig,
-    plan_go_artifact, plan_node_artifact,
+    ArtifactIntegrity, Error, FLUTTER_TARGETS, FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat,
+    NodeArchiveFormat, Result, SourceConfig, plan_flutter_artifact, plan_go_artifact,
+    plan_node_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -38,6 +39,8 @@ pub struct LockedTool {
     pub requested: String,
     pub version: String,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
     #[serde(rename = "artifact")]
     pub artifacts: Vec<LockedArtifact>,
 }
@@ -100,6 +103,7 @@ impl Lockfile {
                 requested: version.clone(),
                 version,
                 provider: "nodejs-official".to_owned(),
+                metadata: BTreeMap::new(),
                 artifacts,
             }],
         }
@@ -299,6 +303,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             | ("pnpm", "pnpm-npm")
             | ("bun", "bun-npm")
             | ("go", "go-official")
+            | ("flutter", "flutter-official")
     );
     if !provider_supported {
         return Err(Error::InvalidLockfile {
@@ -316,6 +321,11 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             ),
         });
     }
+    if tool.name != "flutter" && !tool.metadata.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("{} lock cannot contain provider metadata", tool.name),
+        });
+    }
     let mut targets = HashSet::with_capacity(tool.artifacts.len());
     for artifact in &tool.artifacts {
         if !targets.insert(artifact.target.as_str()) {
@@ -326,6 +336,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         match tool.name.as_str() {
             "node" => validate_locked_node_artifact(&tool.version, artifact)?,
             "go" => validate_locked_go_artifact(&tool.version, artifact)?,
+            "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
         }
@@ -351,6 +362,20 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
                 reason: "Go lock contains an unsupported artifact target".to_owned(),
             });
         }
+    } else if tool.name == "flutter" {
+        validate_flutter_metadata(tool)?;
+        for target in FLUTTER_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Flutter artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != FLUTTER_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: "Flutter lock contains an unsupported artifact target".to_owned(),
+            });
+        }
     } else {
         for (target, _) in npm_tool_targets(&tool.name) {
             if !targets.contains(target) {
@@ -368,6 +393,80 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     if tool.artifacts.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("{} has no artifacts", tool.name),
+        });
+    }
+    Ok(())
+}
+
+fn validate_flutter_metadata(tool: &LockedTool) -> Result<()> {
+    let expected = ["channel", "dart_version", "release_hash"];
+    if tool.metadata.len() != expected.len()
+        || expected.iter().any(|key| !tool.metadata.contains_key(*key))
+        || tool.metadata.get("channel").map(String::as_str) != Some("stable")
+        || tool
+            .metadata
+            .get("dart_version")
+            .is_none_or(|value| !is_exact_numeric_triplet(value))
+        || tool.metadata.get("release_hash").is_none_or(|value| {
+            value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(Error::InvalidLockfile {
+            reason: "Flutter lock metadata must contain stable channel, bundled Dart version and release hash"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn is_exact_numeric_triplet(value: &str) -> bool {
+    let parts = value.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_digit())
+                && part.parse::<u64>().is_ok()
+        })
+}
+
+fn validate_locked_flutter_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
+    let plan = plan_flutter_artifact(&SourceConfig::default(), version, &artifact.target)?;
+    let expected_format = match plan.format {
+        FlutterArchiveFormat::Zip => LockedArtifactFormat::Zip,
+        FlutterArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
+    };
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != expected_format
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Flutter provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid Flutter SHA-256 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "flutter-release-json-sha256"
+        && !artifact
+            .verification
+            .starts_with("flutter-release-json-sha256-source:")
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported Flutter verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "Flutter artifact {} cannot contain overlays",
+                artifact.target
+            ),
         });
     }
     Ok(())
@@ -678,6 +777,7 @@ mod tests {
             requested: "1.25.1".to_owned(),
             version: "1.25.1".to_owned(),
             provider: "go-official".to_owned(),
+            metadata: BTreeMap::new(),
             artifacts: artifacts.clone(),
         };
         validate_locked_tool(&tool).expect("Go lock");
@@ -694,8 +794,55 @@ mod tests {
             requested: "1.25.1".to_owned(),
             version: "1.25.1".to_owned(),
             provider: "go-official".to_owned(),
+            metadata: BTreeMap::new(),
             artifacts: artifacts.into_iter().skip(1).collect(),
         };
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_flutter_provider_metadata_identity_and_required_targets() {
+        let artifacts = FLUTTER_TARGETS
+            .into_iter()
+            .map(|target| locked_flutter_artifact("3.47.0", target))
+            .collect::<Vec<_>>();
+        let mut metadata = BTreeMap::new();
+        metadata.insert("channel".to_owned(), "stable".to_owned());
+        metadata.insert("dart_version".to_owned(), "3.13.0".to_owned());
+        metadata.insert("release_hash".to_owned(), "cd".repeat(20));
+        let tool = LockedTool {
+            name: "flutter".to_owned(),
+            requested: "3.47.0".to_owned(),
+            version: "3.47.0".to_owned(),
+            provider: "flutter-official".to_owned(),
+            metadata,
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect("Flutter lock");
+
+        let mut invalid_metadata = tool.clone();
+        invalid_metadata
+            .metadata
+            .insert("channel".to_owned(), "beta".to_owned());
+        assert!(matches!(
+            validate_locked_tool(&invalid_metadata),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut invalid_dart_version = tool.clone();
+        invalid_dart_version
+            .metadata
+            .insert("dart_version".to_owned(), "3.13".to_owned());
+        assert!(matches!(
+            validate_locked_tool(&invalid_dart_version),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut incomplete = tool;
+        incomplete.artifacts = artifacts.into_iter().skip(1).collect();
         assert!(matches!(
             validate_locked_tool(&incomplete),
             Err(Error::InvalidLockfile { .. })
@@ -726,6 +873,7 @@ mod tests {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: "pnpm-npm".to_owned(),
+            metadata: BTreeMap::new(),
             artifacts: vec![artifact],
         }
     }
@@ -744,6 +892,25 @@ mod tests {
             },
             archive_root: plan.archive_root,
             verification: "go-download-json-sha256".to_owned(),
+            overlays: Vec::new(),
+        }
+    }
+
+    fn locked_flutter_artifact(version: &str, target: &str) -> LockedArtifact {
+        let plan =
+            plan_flutter_artifact(&SourceConfig::default(), version, target).expect("Flutter plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: "ab".repeat(32),
+            integrity: None,
+            format: match plan.format {
+                FlutterArchiveFormat::Zip => LockedArtifactFormat::Zip,
+                FlutterArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
+            },
+            archive_root: plan.archive_root,
+            verification: "flutter-release-json-sha256".to_owned(),
             overlays: Vec::new(),
         }
     }

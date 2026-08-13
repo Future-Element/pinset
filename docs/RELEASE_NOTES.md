@@ -1,5 +1,14 @@
 # Pinset Release Notes
 
+## v0.4.0（开发中）
+
+- 新增 Flutter stable SDK Provider，支持精确版本、主版本、主次版本、`latest`/`current` 与 `list flutter --available`；
+- 将 Flutter 与其内置 Dart 锁定为同一运行时单元，记录渠道、Dart 版本、release hash、四平台归档身份和 SHA-256；
+- 新增 `flutter`、`dart` 路由和受管 `FLUTTER_ROOT`，保留用户显式设置的 `FLUTTER_SUPPRESS_ANALYTICS`；
+- 支持预览和显式导入 `.fvmrc`，不修改旧文件、不接管 FVM 缓存；
+- 在启动受管 SDK 前拒绝 `flutter upgrade`、`flutter downgrade` 和 `flutter channel`；
+- GitHub Actions 真实运行时验收扩展到全局/项目 Flutter 版本覆盖、内置 Dart 同源、SDK 重用和三平台安装；该矩阵通过前不发布。
+
 ## v0.3.0
 
 - 发布日期：`2026-08-13`
