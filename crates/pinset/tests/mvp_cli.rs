@@ -293,8 +293,8 @@ fn doctor_reports_all_provider_commands_and_path_shadowing() {
         [
             "bun", "bunx", "corepack", "go", "gofmt", "node", "npm", "npx", "pnpm",
         ]
-            .into_iter()
-            .collect()
+        .into_iter()
+        .collect()
     );
     assert!(
         report["routing_issues"]
