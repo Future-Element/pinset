@@ -362,15 +362,6 @@ impl Catalog {
         }
     }
 
-    pub fn selector_resolved(self, selector: &str, version: &str) -> String {
-        match self.language {
-            Language::English => format!("resolved node@{selector} to node@{version}"),
-            Language::SimplifiedChinese => {
-                format!("已将 node@{selector} 解析为精确版本 node@{version}")
-            }
-        }
-    }
-
     pub fn no_installed_node(self) -> &'static str {
         match self.language {
             Language::English => "no Node.js versions are installed by Pinset",
