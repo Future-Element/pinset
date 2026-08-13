@@ -52,6 +52,28 @@ function Assert-VersionOutput {
     }
 }
 
+function ConvertFrom-FlutterMachineOutput {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Output,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $Value = (($Output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+    $JsonStart = $Value.IndexOf('{')
+    $JsonEnd = $Value.LastIndexOf('}')
+    if ($JsonStart -lt 0 -or $JsonEnd -lt $JsonStart) {
+        throw "$Label did not return Flutter machine JSON: '$Value'"
+    }
+
+    $Json = $Value.Substring($JsonStart, $JsonEnd - $JsonStart + 1)
+    try {
+        return $Json | ConvertFrom-Json
+    }
+    catch {
+        throw "$Label returned invalid Flutter machine JSON: $($_.Exception.Message)"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
@@ -102,7 +124,7 @@ try {
     }
     $GlobalGoVersion = $GlobalGoMatch.Groups[1].Value
     & $Pinset global "flutter@$GlobalFlutterSelector"
-    $GlobalFlutterInfo = (((& $Pinset exec -- flutter --version --machine) | Out-String).Trim() | ConvertFrom-Json)
+    $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
     $GlobalFlutterVersion = [string]$GlobalFlutterInfo.frameworkVersion
     $GlobalDartVersion = [string]$GlobalFlutterInfo.dartSdkVersion
     if ($GlobalFlutterVersion -notmatch $VersionPattern -or $GlobalDartVersion -notmatch $VersionPattern) {
@@ -155,7 +177,7 @@ try {
         throw 'global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
-    $DirectGlobalFlutter = (((& flutter --version --machine) | Out-String).Trim() | ConvertFrom-Json)
+    $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
     if ($DirectGlobalFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
         throw 'global direct Flutter returned an unexpected version'
     }
@@ -197,7 +219,7 @@ try {
     Set-Content -LiteralPath (Join-Path $Project '.fvmrc') -Value "{`"flutter`":`"$ProjectFlutterVersion`"}" -NoNewline
     & $Pinset import --apply --from fvm --no-install
     & $Pinset install --locked
-    $ProjectFlutterInfo = (((& flutter --version --machine) | Out-String).Trim() | ConvertFrom-Json)
+    $ProjectFlutterInfo = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'project Flutter'
     if ($ProjectFlutterInfo.frameworkVersion -ne $ProjectFlutterVersion) {
         throw "project Flutter returned unexpected version '$($ProjectFlutterInfo.frameworkVersion)'"
     }
@@ -249,7 +271,7 @@ try {
         throw 'restored global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
-    $RestoredFlutter = (((& flutter --version --machine) | Out-String).Trim() | ConvertFrom-Json)
+    $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
     if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
         throw 'restored global Flutter returned an unexpected version'
     }

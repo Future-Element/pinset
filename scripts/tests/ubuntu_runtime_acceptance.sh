@@ -88,7 +88,7 @@ printf 'package p\nfunc f( ){ }\n' | "$PINSET_BIN" exec -- gofmt | grep -F 'func
 GLOBAL_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
 GLOBAL_DART_PATH="$("$PINSET_BIN" which dart)"
 test "$(dirname "$GLOBAL_FLUTTER_PATH")" = "$(dirname "$GLOBAL_DART_PATH")"
-GLOBAL_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$GLOBAL_FLUTTER_PATH")/.." && pwd)"
+GLOBAL_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$GLOBAL_FLUTTER_PATH")/.." && pwd -P)"
 printf "import 'dart:io'; void main() => print(Platform.environment['FLUTTER_ROOT']);\n" > verify_flutter_env.dart
 "$PINSET_BIN" exec -- dart verify_flutter_env.dart | grep -Fx "$GLOBAL_FLUTTER_ROOT"
 "$PINSET_BIN" exec -- dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
@@ -165,7 +165,7 @@ go env GOROOT | grep -F "$PINSET_HOME/installs/go/$PROJECT_GO_VERSION/"
 PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
 PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"
 test "$(dirname "$PROJECT_FLUTTER_PATH")" = "$(dirname "$PROJECT_DART_PATH")"
-PROJECT_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$PROJECT_FLUTTER_PATH")/.." && pwd)"
+PROJECT_FLUTTER_ROOT="$(CDPATH= cd -- "$(dirname "$PROJECT_FLUTTER_PATH")/.." && pwd -P)"
 dart "$TEST_ROOT/verify_flutter_env.dart" | grep -Fx "$PROJECT_FLUTTER_ROOT"
 dart --version 2>&1 | grep -F "Dart SDK version: $PROJECT_DART_VERSION"
 "$PINSET_BIN" cache clean
