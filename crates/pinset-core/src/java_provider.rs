@@ -52,9 +52,9 @@ impl JavaVersion {
         }
         let parts = version.split('.').collect::<Vec<_>>();
         if !(parts.len() == 3 || parts.len() == 4)
-            || parts.iter().any(|part| {
-                part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())
-            })
+            || parts
+                .iter()
+                .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
         {
             return Err(Error::InvalidJavaVersion {
                 version: value.to_owned(),
@@ -217,9 +217,9 @@ fn java_platform(target: &str) -> Result<(&'static str, &'static str, JavaArchiv
 
 fn validate_release_name(release_name: &str) -> Result<()> {
     if release_name.is_empty()
-        || !release_name.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'_' | b'-')
-        })
+        || !release_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'_' | b'-'))
     {
         return Err(Error::InvalidJavaArtifact {
             reason: format!("invalid release name {release_name:?}"),
@@ -240,8 +240,7 @@ fn validate_package_name(
     if !package_name.starts_with(&prefix)
         || !package_name.ends_with(&suffix)
         || package_name.bytes().any(|byte| {
-            !(byte.is_ascii_alphanumeric()
-                || matches!(byte, b'.' | b'+' | b'_' | b'-'))
+            !(byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'_' | b'-'))
         })
     {
         return Err(Error::InvalidJavaArtifact {
@@ -252,8 +251,7 @@ fn validate_package_name(
 }
 
 fn release_segment_matches(segment: &str, release_name: &str) -> bool {
-    segment == release_name
-        || segment.eq_ignore_ascii_case(&release_name.replace('+', "%2B"))
+    segment == release_name || segment.eq_ignore_ascii_case(&release_name.replace('+', "%2B"))
 }
 
 #[cfg(test)]
@@ -296,13 +294,15 @@ mod tests {
 
     #[test]
     fn rejects_cross_target_or_nonofficial_archives() {
-        assert!(plan_java_artifact(
-            "21.0.8+9",
-            "jdk-21.0.8+9",
-            "linux-x86_64",
-            "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.8_9.tar.gz",
-            "https://example.com/archive.tar.gz",
-        )
-        .is_err());
+        assert!(
+            plan_java_artifact(
+                "21.0.8+9",
+                "jdk-21.0.8+9",
+                "linux-x86_64",
+                "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.8_9.tar.gz",
+                "https://example.com/archive.tar.gz",
+            )
+            .is_err()
+        );
     }
 }

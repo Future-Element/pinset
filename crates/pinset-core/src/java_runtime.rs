@@ -26,12 +26,13 @@ pub fn install_locked_java(
             tool: "java".to_owned(),
             target: target.to_owned(),
         })?;
-    let release_name = locked_java
-        .metadata
-        .get("release_name")
-        .ok_or_else(|| Error::InvalidLockfile {
-            reason: "Java lock has no release_name metadata".to_owned(),
-        })?;
+    let release_name =
+        locked_java
+            .metadata
+            .get("release_name")
+            .ok_or_else(|| Error::InvalidLockfile {
+                reason: "Java lock has no release_name metadata".to_owned(),
+            })?;
     let package_name = artifact
         .canonical_url
         .rsplit('/')

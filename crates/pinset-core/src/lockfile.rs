@@ -1217,11 +1217,7 @@ mod tests {
         }
     }
 
-    fn locked_java_artifact(
-        version: &str,
-        release_name: &str,
-        target: &str,
-    ) -> LockedArtifact {
+    fn locked_java_artifact(version: &str, release_name: &str, target: &str) -> LockedArtifact {
         let (os, arch, extension) = match target {
             "windows-x86_64" => ("windows", "x64", "zip"),
             "linux-x86_64" => ("linux", "x64", "tar.gz"),
@@ -1235,14 +1231,8 @@ mod tests {
             release_name.replace('+', "%2B"),
             package,
         );
-        let plan = plan_java_artifact(
-            version,
-            release_name,
-            target,
-            &package,
-            &canonical_url,
-        )
-        .expect("Java plan");
+        let plan = plan_java_artifact(version, release_name, target, &package, &canonical_url)
+            .expect("Java plan");
         LockedArtifact {
             target: target.to_owned(),
             canonical_url: plan.canonical_url,

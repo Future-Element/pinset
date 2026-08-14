@@ -313,10 +313,7 @@ impl JavaMetadataClient {
     }
 }
 
-fn parse_feature_releases(
-    releases: Vec<ApiRelease>,
-    lts: bool,
-) -> Vec<SupportedJavaRelease> {
+fn parse_feature_releases(releases: Vec<ApiRelease>, lts: bool) -> Vec<SupportedJavaRelease> {
     releases
         .into_iter()
         .filter_map(|release| parse_release(release, lts))
@@ -407,11 +404,12 @@ fn select_release(
             });
     }
     if normalized == "lts" {
-        return releases.into_iter().find(|release| release.lts).ok_or_else(|| {
-            Error::JavaSelectorNotFound {
+        return releases
+            .into_iter()
+            .find(|release| release.lts)
+            .ok_or_else(|| Error::JavaSelectorNotFound {
                 selector: selector.to_owned(),
-            }
-        });
+            });
     }
     if normalized.contains('+') {
         let exact = JavaVersion::parse(&normalized).map_err(|_| Error::InvalidJavaSelector {
@@ -467,10 +465,10 @@ mod tests {
 
     #[test]
     fn parses_only_complete_temurin_jdk_releases() {
-        let complete: ApiRelease = serde_json::from_value(fixture_release("21.0.8+9", true))
-            .expect("complete fixture");
-        let incomplete: ApiRelease = serde_json::from_value(fixture_release("21.0.7+6", false))
-            .expect("incomplete fixture");
+        let complete: ApiRelease =
+            serde_json::from_value(fixture_release("21.0.8+9", true)).expect("complete fixture");
+        let incomplete: ApiRelease =
+            serde_json::from_value(fixture_release("21.0.7+6", false)).expect("incomplete fixture");
         let releases = parse_feature_releases(vec![complete, incomplete], true);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].version.to_string(), "21.0.8+9");

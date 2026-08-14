@@ -97,7 +97,9 @@ const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
 };
 const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "java",
-    commands: &["java", "javac", "jar", "javadoc", "javap", "keytool", "jshell"],
+    commands: &[
+        "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell",
+    ],
     command_layout: RuntimeCommandLayout::Java,
     metadata: RuntimeMetadataKind::Java,
     installer: RuntimeInstallKind::Java,
@@ -187,7 +189,9 @@ mod tests {
         assert_eq!(
             runtime_provider("java").map(|provider| provider.commands),
             Some(
-                &["java", "javac", "jar", "javadoc", "javap", "keytool", "jshell"][..]
+                &[
+                    "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell"
+                ][..]
             )
         );
         assert_eq!(

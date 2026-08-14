@@ -31,10 +31,7 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
         &python_executable(&environment).display().to_string(),
     );
     let pip = pinset(&project, &home, &["which", "pip"]);
-    assert_success_contains(
-        &pip,
-        &python_executable(&environment).display().to_string(),
-    );
+    assert_success_contains(&pip, &python_executable(&environment).display().to_string());
 
     let executed = pinset(&project, &home, &["exec", "--", "pytest", "tests/unit"]);
     assert_success_contains(&executed, "fake-pytest tests/unit");

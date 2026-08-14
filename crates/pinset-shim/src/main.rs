@@ -54,11 +54,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let runtime_arguments = if resolution.source == pinset_core::SelectionSource::System {
         invocation.arguments.clone()
     } else {
-        managed_runtime_arguments(
-            &resolution.tool,
-            &invocation.command,
-            &invocation.arguments,
-        )
+        managed_runtime_arguments(&resolution.tool, &invocation.command, &invocation.arguments)
     };
 
     let runtime_path = path_with_selected_tools(&resolution.executable, &invocation.cwd, &home)?;

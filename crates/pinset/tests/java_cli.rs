@@ -47,17 +47,10 @@ fn routes_managed_jdk_commands_and_sets_java_home_without_shell_profile_changes(
     );
     let executed = pinset(&project, &home, &["exec", "--", "java", "Hello"]);
     assert_success_contains(&executed, "fake-java Hello");
-    assert_success_contains(
-        &executed,
-        &format!("JAVA_HOME={}", java_home.display()),
-    );
+    assert_success_contains(&executed, &format!("JAVA_HOME={}", java_home.display()));
     assert_success_contains(&executed, "CLASSPATH=fixture-classpath");
     assert_success_contains(
-        &pinset(
-            &project,
-            &home,
-            &["exec", "--", "javac", "Hello.java"],
-        ),
+        &pinset(&project, &home, &["exec", "--", "javac", "Hello.java"]),
         "fake-javac Hello.java",
     );
 }
