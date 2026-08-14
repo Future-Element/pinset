@@ -33,6 +33,30 @@ if [[ "$SKIP_FLUTTER_RUNTIME" != "0" && "$SKIP_FLUTTER_RUNTIME" != "1" ]]; then
   exit 2
 fi
 
+assert_pinset_pip_routes_to_python() {
+  local label="$1"
+  local expected actual pip_command
+  expected="$("$PINSET_BIN" exec -- python -m pip --version)"
+  printf '%s: %s\n' "$label python -m pip" "$expected"
+  printf '%s\n' "$expected" | grep -E '^pip [0-9]+(\.[0-9]+)+'
+  for pip_command in pip pip3; do
+    actual="$("$PINSET_BIN" exec -- "$pip_command" --version)"
+    test "$actual" = "$expected"
+  done
+}
+
+assert_direct_pip_routes_to_python() {
+  local label="$1"
+  local expected actual pip_command
+  expected="$(python -m pip --version)"
+  printf '%s: %s\n' "$label python -m pip" "$expected"
+  printf '%s\n' "$expected" | grep -E '^pip [0-9]+(\.[0-9]+)+'
+  for pip_command in pip pip3; do
+    actual="$("$pip_command" --version)"
+    test "$actual" = "$expected"
+  done
+}
+
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -123,8 +147,7 @@ grep -F '来源=全局' global-current.txt
 "$PINSET_BIN" exec -- go version | grep -F "go version go$GLOBAL_GO_VERSION"
 "$PINSET_BIN" exec -- go env GOTOOLCHAIN | grep -Fx 'local'
 "$PINSET_BIN" exec -- python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
-"$PINSET_BIN" exec -- pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
-"$PINSET_BIN" exec -- pip3 --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+assert_pinset_pip_routes_to_python 'global pinset exec'
 "$PINSET_BIN" exec -- javac -version 2>&1 | grep -F 'javac '
 "$PINSET_BIN" exec -- java -version 2>&1 | grep -F 'Temurin'
 "$PINSET_BIN" exec -- go env GOROOT | grep -F "$PINSET_HOME/installs/go/$GLOBAL_GO_VERSION/"
@@ -152,8 +175,7 @@ go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
 python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
 python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
-pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
-pip3 --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+assert_direct_pip_routes_to_python 'global direct'
 javac -version 2>&1 | grep -F 'javac '
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
@@ -226,10 +248,8 @@ go env GOROOT | grep -F "$PINSET_HOME/installs/go/$PROJECT_GO_VERSION/"
 PROJECT_VENV="$(CDPATH= cd -- .venv && pwd -P)"
 python -c 'import os,sys; print(os.path.realpath(sys.prefix))' | grep -Fx "$PROJECT_VENV"
 "$PINSET_BIN" exec -- python3 -c 'import os; print(os.environ["VIRTUAL_ENV"])' | grep -F '/.venv'
-"$PINSET_BIN" exec -- pip --version | grep -F "$PROJECT_VENV"
-"$PINSET_BIN" exec -- pip3 --version | grep -F "$PROJECT_VENV"
-pip --version | grep -F "$PROJECT_VENV"
-pip3 --version | grep -F "$PROJECT_VENV"
+assert_pinset_pip_routes_to_python 'project pinset exec'
+assert_direct_pip_routes_to_python 'project direct'
 test -f .venv/.pinset-venv.toml
 javac "$TEST_ROOT/PinsetJavaProbe.java"
 java -cp "$TEST_ROOT" PinsetJavaProbe | tee project-java.txt
@@ -270,7 +290,7 @@ bun --version | grep -Fx "$BUN_VERSION"
 go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
 python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
-pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+assert_direct_pip_routes_to_python 'restored global direct'
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"

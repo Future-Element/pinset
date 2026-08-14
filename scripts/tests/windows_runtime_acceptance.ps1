@@ -82,6 +82,32 @@ function ConvertFrom-FlutterMachineOutput {
     }
 }
 
+function Assert-PinsetPipRoutesToPython {
+    param([Parameter(Mandatory = $true)][string]$Label)
+
+    $Expected = ((& $Pinset exec -- python -m pip --version) | Out-String).Trim()
+    if ($Expected -notmatch '^pip \d+(\.\d+)+') {
+        throw "$Label python -m pip returned an invalid version: '$Expected'"
+    }
+    Write-Host "${Label} python -m pip: $Expected"
+    foreach ($PipCommand in @('pip', 'pip3')) {
+        Assert-ExactOutput $Expected @(& $Pinset exec -- $PipCommand --version) "$Label $PipCommand"
+    }
+}
+
+function Assert-DirectPipRoutesToPython {
+    param([Parameter(Mandatory = $true)][string]$Label)
+
+    $Expected = ((& python -m pip --version) | Out-String).Trim()
+    if ($Expected -notmatch '^pip \d+(\.\d+)+') {
+        throw "$Label python -m pip returned an invalid version: '$Expected'"
+    }
+    Write-Host "${Label} python -m pip: $Expected"
+    foreach ($PipCommand in @('pip', 'pip3')) {
+        Assert-ExactOutput $Expected @(& $PipCommand --version) "$Label $PipCommand"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
@@ -165,6 +191,7 @@ public class PinsetJavaProbe {
         System.out.println("JAVA_HOME=" + System.getenv("JAVA_HOME"));
     }
 }
+
 '@
     & $Pinset exec -- javac $JavaProbePath
     $GlobalJavaProbe = @(& $Pinset exec -- java -cp $TestRoot PinsetJavaProbe)
@@ -199,13 +226,7 @@ public class PinsetJavaProbe {
     }
     Assert-ExactOutput 'local' (& $Pinset exec -- go env GOTOOLCHAIN) 'global pinset exec Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& $Pinset exec -- python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global pinset exec Python'
-    $GlobalPythonRoot = Join-Path $env:PINSET_HOME "installs\python\$GlobalPythonVersion"
-    foreach ($PipCommand in @('pip', 'pip3')) {
-        $PipOutput = ((& $Pinset exec -- $PipCommand --version) | Out-String).Trim()
-        if ($PipOutput -notlike "*$GlobalPythonRoot*") {
-            throw "global pinset exec $PipCommand did not use the selected Python: '$PipOutput'"
-        }
-    }
+    Assert-PinsetPipRoutesToPython 'global pinset exec'
     if (((& $Pinset exec -- javac -version 2>&1) | Out-String).Trim() -notmatch '^javac ') {
         throw 'global pinset exec javac returned an invalid version'
     }
@@ -246,12 +267,7 @@ public class PinsetJavaProbe {
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python'
     Assert-ExactOutput $GlobalPythonVersion (& python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python3'
-    foreach ($PipCommand in @('pip', 'pip3')) {
-        $PipOutput = ((& $PipCommand --version) | Out-String).Trim()
-        if ($PipOutput -notlike "*$GlobalPythonRoot*") {
-            throw "global direct $PipCommand did not use the selected Python: '$PipOutput'"
-        }
-    }
+    Assert-DirectPipRoutesToPython 'global direct'
     if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
         throw 'global direct Java probe did not run'
     }
@@ -323,16 +339,8 @@ public class PinsetJavaProbe {
     $ProjectVenv = Join-Path $Project '.venv'
     Assert-ExactOutput $ProjectVenv (& python -c "import sys; print(sys.prefix)") 'project direct Python environment'
     Assert-ExactOutput $ProjectVenv (& $Pinset exec -- python3 -c "import os; print(os.environ['VIRTUAL_ENV'])") 'project pinset exec Python environment'
-    $ProjectPipOutput = ((& $Pinset exec -- pip --version) | Out-String).Trim()
-    if ($ProjectPipOutput -notlike "*$ProjectVenv*") {
-        throw "project pip did not run from .venv: '$ProjectPipOutput'"
-    }
-    foreach ($PipCommand in @('pip', 'pip3')) {
-        $ProjectPipOutput = ((& $PipCommand --version) | Out-String).Trim()
-        if ($ProjectPipOutput -notlike "*$ProjectVenv*") {
-            throw "project direct $PipCommand did not run from .venv: '$ProjectPipOutput'"
-        }
-    }
+    Assert-PinsetPipRoutesToPython 'project pinset exec'
+    Assert-DirectPipRoutesToPython 'project direct'
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectVenv '.pinset-venv.toml') -PathType Leaf)) {
         throw 'project Python environment has no Pinset ownership marker'
     }
@@ -391,9 +399,7 @@ public class PinsetJavaProbe {
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'restored global Python'
-    if (((& pip --version) | Out-String).Trim() -notlike "*$GlobalPythonRoot*") {
-        throw 'restored global pip did not use the selected Python'
-    }
+    Assert-DirectPipRoutesToPython 'restored global direct'
     if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
         throw 'restored global Java probe did not run'
     }
