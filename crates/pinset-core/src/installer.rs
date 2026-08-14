@@ -494,9 +494,7 @@ impl Installer {
                     if attempt < DOWNLOAD_ATTEMPTS_PER_SOURCE
                         && is_retryable_source_error(&error) =>
                 {
-                    std::thread::sleep(
-                        DOWNLOAD_RETRY_BASE_DELAY.saturating_mul(attempt as u32),
-                    );
+                    std::thread::sleep(DOWNLOAD_RETRY_BASE_DELAY.saturating_mul(attempt as u32));
                 }
                 Err(error) => {
                     self.report_progress(DownloadProgressEvent::Failed);
@@ -1746,19 +1744,21 @@ mod tests {
         let (url, server) = serve_interrupted_then_range(archive.clone(), split);
         let request = request(root.path(), url, hash.clone());
 
-        let outcome = test_installer()
-            .install(&request)
-            .expect("retried install");
+        let outcome = test_installer().install(&request).expect("retried install");
         server.join().expect("interrupted range server");
 
         assert_eq!(outcome.bytes_downloaded, archive.len() as u64);
         assert!(outcome.install_dir.join("bin/node.exe").is_file());
-        assert!(download_cache_path(root.path(), &hash)
-            .expect("download cache path")
-            .is_file());
-        assert!(!download_partial_path(root.path(), &hash)
-            .expect("partial path")
-            .exists());
+        assert!(
+            download_cache_path(root.path(), &hash)
+                .expect("download cache path")
+                .is_file()
+        );
+        assert!(
+            !download_partial_path(root.path(), &hash)
+                .expect("partial path")
+                .exists()
+        );
     }
 
     #[test]
