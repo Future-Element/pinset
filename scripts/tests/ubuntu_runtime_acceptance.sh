@@ -80,7 +80,7 @@ printf '%s\n' "$GLOBAL_GO_VERSION" | grep -E "$VERSION_PATTERN"
 GLOBAL_PYTHON_VERSION="$("$PINSET_BIN" exec -- python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
 printf '%s\n' "$GLOBAL_PYTHON_VERSION" | grep -E "$VERSION_PATTERN"
 "$PINSET_BIN" global "java@$GLOBAL_JAVA_SELECTOR"
-GLOBAL_JAVA_VERSION="$("$PINSET_BIN" current java | sed -n 's/^java \([^ ]*\) installed.*/\1/p')"
+GLOBAL_JAVA_VERSION="$("$PINSET_BIN" --lang en current java | sed -n 's/^java \([^ ]*\) installed.*/\1/p')"
 printf '%s\n' "$GLOBAL_JAVA_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+$'
 cat > PinsetJavaProbe.java <<'JAVA'
 public class PinsetJavaProbe {
@@ -235,7 +235,7 @@ javac "$TEST_ROOT/PinsetJavaProbe.java"
 java -cp "$TEST_ROOT" PinsetJavaProbe | tee project-java.txt
 grep -Fx 'pinset-java-ok' project-java.txt
 grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" project-java.txt
-"$PINSET_BIN" current java | grep -F "java $GLOBAL_JAVA_VERSION installed"
+"$PINSET_BIN" --lang en current java | grep -F "java $GLOBAL_JAVA_VERSION installed"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
   PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"

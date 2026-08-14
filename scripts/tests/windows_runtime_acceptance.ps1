@@ -150,7 +150,7 @@ try {
         throw "global Python returned an invalid version: '$GlobalPythonVersion'"
     }
     & $Pinset global "java@$GlobalJavaSelector"
-    $GlobalJavaCurrent = ((& $Pinset current java) | Out-String).Trim()
+    $GlobalJavaCurrent = ((& $Pinset --lang en current java) | Out-String).Trim()
     $GlobalJavaMatch = [regex]::Match($GlobalJavaCurrent, '^java ([^ ]+) installed')
     if (-not $GlobalJavaMatch.Success -or $GlobalJavaMatch.Groups[1].Value -notmatch '^\d+\.\d+\.\d+(\.\d+)?\+\d+$') {
         throw "global Java returned an invalid current selection: '$GlobalJavaCurrent'"
@@ -342,7 +342,7 @@ public class PinsetJavaProbe {
         -not ($ProjectJavaProbe -match "^JAVA_HOME=$([regex]::Escape($ExpectedJavaRoot))")) {
         throw "project Java probe did not use the selected JDK: '$($ProjectJavaProbe -join ' | ')'"
     }
-    if (((& $Pinset current java) | Out-String).Trim() -notmatch "^java $([regex]::Escape($GlobalJavaVersion)) installed") {
+    if (((& $Pinset --lang en current java) | Out-String).Trim() -notmatch "^java $([regex]::Escape($GlobalJavaVersion)) installed") {
         throw 'project Java selection was not reported as installed'
     }
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
