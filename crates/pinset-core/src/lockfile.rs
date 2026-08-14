@@ -9,11 +9,12 @@ use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactIntegrity, Error, FLUTTER_TARGETS, FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat,
-    JAVA_TARGETS, JavaArchiveFormat, JavaVersion, NodeArchiveFormat, PYTHON_TARGETS,
-    PYTHON_VARIANT, RUST_COMPONENTS, RUST_PROFILE, RUST_TARGETS, Result, RustArchiveFormat,
-    SourceConfig, parse_python_distribution, plan_flutter_artifact, plan_go_artifact,
-    plan_java_artifact, plan_node_artifact, plan_python_artifact, plan_rust_artifact,
+    ArtifactIntegrity, DOTNET_TARGETS, DotnetArchiveFormat, DotnetVersion, Error, FLUTTER_TARGETS,
+    FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat, JAVA_TARGETS, JavaArchiveFormat,
+    JavaVersion, NodeArchiveFormat, PYTHON_TARGETS, PYTHON_VARIANT, RUST_COMPONENTS, RUST_PROFILE,
+    RUST_TARGETS, Result, RustArchiveFormat, SourceConfig, parse_python_distribution,
+    plan_dotnet_artifact, plan_flutter_artifact, plan_go_artifact, plan_java_artifact,
+    plan_node_artifact, plan_python_artifact, plan_rust_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -308,6 +309,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             | ("flutter", "flutter-official")
             | ("java", "adoptium-temurin")
             | ("rust", "rust-official")
+            | ("dotnet", "microsoft-dotnet-sdk")
             | ("python", "python-build-standalone")
     );
     if !provider_supported {
@@ -330,6 +332,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         && tool.name != "java"
         && tool.name != "python"
         && tool.name != "rust"
+        && tool.name != "dotnet"
         && !tool.metadata.is_empty()
     {
         return Err(Error::InvalidLockfile {
@@ -349,6 +352,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
             "java" => validate_locked_java_artifact(tool, artifact)?,
             "rust" => validate_locked_rust_artifact(tool, artifact)?,
+            "dotnet" => validate_locked_dotnet_artifact(tool, artifact)?,
             "python" => validate_locked_python_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
@@ -429,6 +433,20 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         if targets.len() != RUST_TARGETS.len() {
             return Err(Error::InvalidLockfile {
                 reason: "Rust lock contains an unsupported artifact target".to_owned(),
+            });
+        }
+    } else if tool.name == "dotnet" {
+        validate_dotnet_metadata(tool)?;
+        for target in DOTNET_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing .NET SDK artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != DOTNET_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: ".NET SDK lock contains an unsupported artifact target".to_owned(),
             });
         }
     } else {
@@ -564,6 +582,52 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
     if tool.metadata != expected {
         return Err(Error::InvalidLockfile {
             reason: "Rust lock metadata must identify one stable default-profile v2 manifest"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_dotnet_metadata(tool: &LockedTool) -> Result<()> {
+    let version = DotnetVersion::parse(&tool.version)?;
+    let release_version = tool
+        .metadata
+        .get("release_version")
+        .filter(|value| DotnetVersion::parse(value).is_ok())
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: ".NET SDK lock metadata has no exact release version".to_owned(),
+        })?;
+    let release_date = tool
+        .metadata
+        .get("release_date")
+        .filter(|value| valid_release_date(value))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: ".NET SDK lock metadata has no valid release date".to_owned(),
+        })?;
+    let release_type = tool
+        .metadata
+        .get("release_type")
+        .filter(|value| matches!(value.as_str(), "lts" | "sts"))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: ".NET SDK lock metadata has no GA release type".to_owned(),
+        })?;
+    let support_phase = tool
+        .metadata
+        .get("support_phase")
+        .filter(|value| matches!(value.as_str(), "active" | "maintenance"))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: ".NET SDK lock metadata is not in a supported phase".to_owned(),
+        })?;
+    let expected = BTreeMap::from([
+        ("channel".to_owned(), version.channel()),
+        ("release_date".to_owned(), release_date.clone()),
+        ("release_type".to_owned(), release_type.clone()),
+        ("release_version".to_owned(), release_version.clone()),
+        ("support_phase".to_owned(), support_phase.clone()),
+    ]);
+    if tool.metadata != expected {
+        return Err(Error::InvalidLockfile {
+            reason: ".NET SDK lock metadata must identify one supported Microsoft GA SDK release"
                 .to_owned(),
         });
     }
@@ -846,6 +910,48 @@ fn validate_locked_rust_artifact(tool: &LockedTool, artifact: &LockedArtifact) -
     if !artifact.overlays.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("Rust artifact {} cannot contain overlays", artifact.target),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_dotnet_artifact(
+    tool: &LockedTool,
+    artifact: &LockedArtifact,
+) -> Result<()> {
+    let plan = plan_dotnet_artifact(&tool.version, &artifact.target, &artifact.canonical_url)?;
+    let expected_format = match plan.format {
+        DotnetArchiveFormat::Zip => LockedArtifactFormat::Zip,
+        DotnetArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+    };
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != expected_format
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Microsoft .NET SDK provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha512 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid .NET SDK SHA-512 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "dotnet-release-metadata-sha512" {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported .NET SDK verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                ".NET SDK artifact {} cannot contain overlays",
+                artifact.target
+            ),
         });
     }
     Ok(())
@@ -1283,6 +1389,46 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_official_dotnet_sdk_metadata_and_required_targets() {
+        let version = "10.0.400";
+        let artifacts = DOTNET_TARGETS
+            .into_iter()
+            .map(|target| locked_dotnet_artifact(version, target))
+            .collect::<Vec<_>>();
+        let tool = LockedTool {
+            name: "dotnet".to_owned(),
+            requested: version.to_owned(),
+            version: version.to_owned(),
+            provider: "microsoft-dotnet-sdk".to_owned(),
+            metadata: BTreeMap::from([
+                ("channel".to_owned(), "10.0".to_owned()),
+                ("release_date".to_owned(), "2026-08-11".to_owned()),
+                ("release_type".to_owned(), "lts".to_owned()),
+                ("release_version".to_owned(), "10.0.14".to_owned()),
+                ("support_phase".to_owned(), "active".to_owned()),
+            ]),
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect(".NET SDK lock");
+
+        let mut invalid = tool.clone();
+        invalid
+            .metadata
+            .insert("support_phase".to_owned(), "eol".to_owned());
+        assert!(matches!(
+            validate_locked_tool(&invalid),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut incomplete = tool;
+        incomplete.artifacts = artifacts.into_iter().skip(1).collect();
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -1411,6 +1557,35 @@ mod tests {
             format: LockedArtifactFormat::TarXz,
             archive_root: plan.archive_root,
             verification: "rust-v2-manifest-sha256".to_owned(),
+            overlays: Vec::new(),
+        }
+    }
+
+    fn locked_dotnet_artifact(version: &str, target: &str) -> LockedArtifact {
+        let (rid, extension) = match target {
+            "windows-x86_64" => ("win-x64", "zip"),
+            "linux-x86_64" => ("linux-x64", "tar.gz"),
+            "macos-x86_64" => ("osx-x64", "tar.gz"),
+            "macos-aarch64" => ("osx-arm64", "tar.gz"),
+            _ => unreachable!("known .NET SDK target"),
+        };
+        let canonical_url = format!(
+            "https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/dotnet-sdk-{version}-{rid}.{extension}"
+        );
+        let plan =
+            plan_dotnet_artifact(version, target, &canonical_url).expect(".NET SDK plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: String::new(),
+            integrity: Some(format!("sha512:{}", "ab".repeat(64))),
+            format: match plan.format {
+                DotnetArchiveFormat::Zip => LockedArtifactFormat::Zip,
+                DotnetArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+            },
+            archive_root: plan.archive_root,
+            verification: "dotnet-release-metadata-sha512".to_owned(),
             overlays: Vec::new(),
         }
     }

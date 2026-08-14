@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.7.0`
-产品阶段：`Rust stable Provider development`
+文档版本：`v0.8.0`
+产品阶段：`Microsoft .NET SDK Provider released`
 更新时间：`2026-08-14`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
-`v0.7.0` 在 Node.js、pnpm、Bun、Go、Flutter、CPython 和 Eclipse Temurin JDK Provider 基础上新增 Rust stable Provider。Pinset 直接使用 Rust 官方 release manifests 锁定并安装 default profile 工具链，不依赖或接管其他 Rust 工具链管理器。
+`v0.8.0` 在现有 Node.js、pnpm、Bun、Go、Flutter、CPython、Eclipse Temurin JDK 和 Rust stable Provider 基础上新增 Microsoft .NET SDK Provider。Pinset 直接使用官方 release metadata 锁定受支持 GA 通道的四平台 SDK 与 SHA-512，不依赖或接管其他 .NET SDK 管理器。
 
 ### 1.1 目标
 
@@ -29,7 +29,7 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 1.3 本版本不做
 
-- 不接入 Rust beta/nightly、自定义 channel、额外 target、组件增删能力或其他新 Provider，也不扩展到其他 JDK 厂商、JRE、OpenJ9、EA、JavaFX 或 GraalVM；
+- 不接入 .NET preview/RC/nightly、runtime-only、ASP.NET Core Runtime、Desktop Runtime、workloads 或 Visual Studio，也不扩展到其他 JDK 厂商、JRE、OpenJ9、EA、JavaFX 或 GraalVM；
 - 不管理 Android SDK/NDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
@@ -63,7 +63,7 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`、`pip`、`pip3`，Flutter Provider 注册 `flutter`、`dart`，Java Provider 注册 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`，Rust Provider 注册 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`、`pip`、`pip3`，Flutter Provider 注册 `flutter`、`dart`，Java Provider 注册 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`，Rust Provider 注册 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy`，.NET Provider 注册 `dotnet`。
 
 ## 3. 支持矩阵
 
@@ -132,6 +132,17 @@ Java available 列表只显示 Eclipse vendor、JDK image、HotSpot、normal hea
 
 Rust available 列表来自官方 stable manifests；生成可安装锁时，所选版本必须在同一 v2 release manifest 中具备四个目标的组合工具链归档、有效 SHA-256 和完整 default profile 组件。
 
+### 3.7 Microsoft .NET SDK 发行目标
+
+| 目标 | .NET RID | 状态 |
+| --- | --- | --- |
+| `windows-x86_64` | `win-x64` | 支持 ZIP |
+| `linux-x86_64` | `linux-x64` | 支持 TAR.GZ |
+| `macos-x86_64` | `osx-x64` | Provider 支持 TAR.GZ |
+| `macos-aarch64` | `osx-arm64` | Provider 支持 TAR.GZ |
+
+.NET available 列表只显示 active/maintenance 支持阶段的 GA LTS/STS SDK；每个 SDK 必须具备四个官方 RID 归档、规范 Microsoft URL 和有效 SHA-512。
+
 ## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
@@ -149,6 +160,7 @@ go = "1.25.1"
 python = "3.14.7+20260807"
 java = "21.0.8+9"
 rust = "1.97.1"
+dotnet = "10.0.400"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -177,7 +189,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、`pip`、`pip3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护；Java Provider 声明 JDK 命令、平台 `JAVA_HOME` 和环境诊断策略；Rust Provider 声明 stable v2 manifest、default profile、工具链命令和用户环境保留策略。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、`pip`、`pip3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护；Java Provider 声明 JDK 命令、平台 `JAVA_HOME` 和环境诊断策略；Rust Provider 声明 stable v2 manifest、default profile、工具链命令和用户环境保留策略；.NET Provider 声明官方 GA SDK metadata、`dotnet` 和 `DOTNET_ROOT`。
 
 ### 4.5 通用命令路由
 
@@ -297,7 +309,7 @@ pinset list node --available
 3. 检查已有安装收据；
 4. 检查内容寻址缓存；
 5. 按来源下载或断点续传；
-6. 校验下载大小和 SHA-256；
+6. 校验下载大小和锁文件声明的 SHA-256 或 SHA-512；
 7. 在随机临时目录安全解压；
 8. 验证必需命令；
 9. 写完整安装收据；
@@ -462,6 +474,18 @@ Rust Provider 支持 `stable`/`latest`/`current`、主版本、主次版本和�
 - 保留用户的 `CARGO_HOME`、`RUSTUP_HOME` 与 `RUSTFLAGS`，不创建或修改外部管理器配置，不修改 shell profile；
 - 不管理 Cargo 依赖、crate 发布、原生链接器、系统 SDK、交叉编译环境，也不提供 beta/nightly、额外 target 或组件增删。
 
+## 6.7 Microsoft .NET SDK Provider
+
+.NET Provider 支持 `latest`/`current`、`lts`、主版本、`major.minor` 通道和精确 `x.y.zzz` SDK 版本，并通过 `pinset list dotnet --available` 显示 release type、support phase 与发布日期。
+
+- 版本发现来自 Microsoft 官方 `releases-index.json` 和各通道 `releases.json`；
+- 只接受 active/maintenance 阶段的 GA LTS/STS 通道，同时要求四个支持 RID 的 SDK 归档完整；
+- 锁文件记录 channel、release type、support phase、runtime release version、release date、规范归档 URL 和逐平台 SHA-512；
+- Windows 使用 ZIP，Linux/macOS 使用 `tar.gz`，安装根目录必须包含 `dotnet`/`dotnet.exe`；
+- 路由 `dotnet`，并为受管进程设置匹配安装根目录的 `DOTNET_ROOT`；
+- 保留用户的 `DOTNET_CLI_HOME`、`NUGET_PACKAGES`、NuGet 配置和遥测选项，不修改 `global.json`、项目文件、shell profile 或系统 SDK；
+- 不管理 runtime-only、ASP.NET Core Runtime、Desktop Runtime、workloads、templates、Visual Studio 或 NuGet 依赖。
+
 ## 7. 安全和供应链
 
 ### 7.1 Provider 归档
@@ -476,6 +500,7 @@ Rust Provider 支持 `stable`/`latest`/`current`、主版本、主次版本和�
 - Python 使用官方版本注册表中的逐工件 SHA-256，并校验平台、variant、归档格式和规范 GitHub Release 身份。
 - Java 使用 Adoptium API 逐工件 SHA-256，严格校验 Temurin GitHub Release 仓库、Feature、目标平台、包名和签名链接身份。
 - Rust 先验证官方 v2 release manifest 的 SHA-256，再使用其中的逐目标 SHA-256 校验组合工具链归档；清单日期、渠道、profile、组件、URL 和 target identity 都必须与内置 Provider 一致。
+- .NET 使用 Microsoft 官方 release metadata 中的逐 RID SHA-512，锁文件同时校验 SDK 版本、通道、支持阶段、URL、RID 和归档格式。
 
 ### 7.2 Pinset Release
 
@@ -524,27 +549,16 @@ Rust Provider 支持 `stable`/`latest`/`current`、主版本、主次版本和�
 - shim 轻依赖检查；
 - `git diff --check`。
 
-本项目不在维护者本机或 WSL 运行构建、测试、Pinset 或运行时安装；所有格式、Clippy、测试、构建和运行时验收均在 GitHub Actions 隔离 Runner 执行。单平台结果不能替代三平台结果。
+本项目不在维护者本机或 WSL 运行构建、测试、Pinset 或运行时安装；普通 CI 只执行三平台 release 构建和打包，格式、Clippy、单元测试与小型脚本测试在 Release Quality 门禁执行，真实运行时下载与验收仅在发布后的隔离虚拟机执行。单平台结果不能替代三平台结果。
 
 ### 9.2 Release 检查
 
-每个支持平台必须在隔离 Runner 中：
+GitHub Actions 的每个支持平台必须：
 
 - 构建 locked release 二进制；
-- 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go、Python、一个 Temurin JDK 和一个 Rust stable 工具链；
-- 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3/pip/pip3/java/javac/rustc/cargo/rustfmt，以及项目环境脚本；
-- 验证 PATH 直接调用的全部 Provider 命令；
-- 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
-- 验证 Python 项目 `.venv` 自动创建、无激活路由、所有权拒绝和显式重建；
-- 编译并运行最小 Java 程序，验证 `java.home`、`JAVA_HOME`、项目选择来源和已安装 JDK 重用；
-- 使用 `rustc` 编译并运行最小 Rust 程序，验证项目选择、命令路由、锁文件和已安装工具链重用；
-- 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由和原地变更拦截；
-- 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
-任一必需的 Quality、构建或轻量真实运行时任务失败都不发布 Release。Flutter SDK 单个归档超过 1.8 GiB，不在 GitHub Actions 下载；全局/项目覆盖、Flutter/Dart 同源、`FLUTTER_ROOT` 和 SDK 重用由发布后的隔离虚拟机使用完整验收脚本验证。
+任一必需的 Quality、构建或打包任务失败都不发布 Release。除编译 Pinset 必需的 Rust 构建工具链外，GitHub Actions 不通过 Pinset 下载任何 Provider 真实运行时；Node、pnpm、Bun、Go、Python、Flutter、Java、Rust 和 .NET 的 available、全局/项目覆盖、环境变量、编译运行与安装复用，统一由发布后的隔离虚拟机使用完整验收脚本验证。
 
 ## 10. 稳定版前待办
 

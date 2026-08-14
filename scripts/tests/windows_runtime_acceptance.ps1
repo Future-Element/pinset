@@ -18,6 +18,7 @@ $GlobalPythonSelector = if ($env:PINSET_GLOBAL_PYTHON_SELECTOR) { $env:PINSET_GL
 $ProjectPythonSelector = if ($env:PINSET_PROJECT_PYTHON_SELECTOR) { $env:PINSET_PROJECT_PYTHON_SELECTOR } else { '3.13' }
 $GlobalJavaSelector = if ($env:PINSET_GLOBAL_JAVA_SELECTOR) { $env:PINSET_GLOBAL_JAVA_SELECTOR } else { 'lts' }
 $GlobalRustSelector = if ($env:PINSET_GLOBAL_RUST_SELECTOR) { $env:PINSET_GLOBAL_RUST_SELECTOR } else { 'latest' }
+$GlobalDotnetSelector = if ($env:PINSET_GLOBAL_DOTNET_SELECTOR) { $env:PINSET_GLOBAL_DOTNET_SELECTOR } else { 'lts' }
 $GlobalFlutterSelector = if ($env:PINSET_GLOBAL_FLUTTER_SELECTOR) { $env:PINSET_GLOBAL_FLUTTER_SELECTOR } else { 'latest' }
 $ProjectFlutterSelector = if ($env:PINSET_PROJECT_FLUTTER_SELECTOR) { $env:PINSET_PROJECT_FLUTTER_SELECTOR } else { '3.44' }
 $SkipFlutterRuntimeValue = if ($env:PINSET_SKIP_FLUTTER_RUNTIME) { $env:PINSET_SKIP_FLUTTER_RUNTIME } else { '0' }
@@ -139,6 +140,7 @@ try {
     Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
     Remove-Item Env:JDK_JAVA_OPTIONS -ErrorAction SilentlyContinue
     Remove-Item Env:_JAVA_OPTIONS -ErrorAction SilentlyContinue
+    Remove-Item Env:DOTNET_ROOT -ErrorAction SilentlyContinue
     Set-Location $TestRoot
 
     & $Pinset --lang zh-CN | Out-Null
@@ -164,6 +166,9 @@ try {
     }
     if (-not ((& $Pinset list rust --available) -match '^rust@\d+\.\d+\.\d+ stable \(\d{4}-\d{2}-\d{2}\)$')) {
         throw 'no supported stable Rust release was listed as available'
+    }
+    if (-not ((& $Pinset list dotnet --available) -match '^dotnet@\d+\.\d+\.\d+ (lts|sts) (active|maintenance) \(\d{4}-\d{2}-\d{2}\)$')) {
+        throw 'no supported .NET SDK release was listed as available'
     }
     $FlutterReleases = @(& $Pinset list flutter --available)
     if (-not ($FlutterReleases -match '^flutter@\d+\.\d+\.\d+ dart@\d+\.\d+\.\d+ stable$')) {
@@ -234,6 +239,34 @@ public class PinsetJavaProbe {
     $RustProbeExe = Join-Path $TestRoot 'pinset-rust-probe.exe'
     & $Pinset exec -- rustc $RustProbePath -o $RustProbeExe
     Assert-ExactOutput 'pinset-rust-ok' (& $RustProbeExe) 'global Rust compile and run'
+    & $Pinset global "dotnet@$GlobalDotnetSelector"
+    $GlobalDotnetVersion = ((& $Pinset exec -- dotnet --version) | Out-String).Trim()
+    if ($GlobalDotnetVersion -notmatch $VersionPattern) {
+        throw "global .NET SDK returned an invalid version: '$GlobalDotnetVersion'"
+    }
+    $GlobalDotnetMajor = $GlobalDotnetVersion.Split('.')[0]
+    $DotnetProbe = Join-Path $TestRoot 'dotnet-probe'
+    New-Item -ItemType Directory -Path $DotnetProbe | Out-Null
+    Set-Content -LiteralPath (Join-Path $DotnetProbe 'PinsetDotnetProbe.csproj') -Value @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net$GlobalDotnetMajor.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+"@
+    Set-Content -LiteralPath (Join-Path $DotnetProbe 'Program.cs') -Value @'
+Console.WriteLine("pinset-dotnet-ok");
+Console.WriteLine($"DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT")}");
+'@
+    $GlobalDotnetProbe = @(& $Pinset exec -- dotnet run --project (Join-Path $DotnetProbe 'PinsetDotnetProbe.csproj'))
+    if ($GlobalDotnetProbe -notcontains 'pinset-dotnet-ok') {
+        throw "global .NET SDK probe did not run: '$($GlobalDotnetProbe -join ' | ')'"
+    }
+    $ExpectedDotnetRoot = Join-Path $env:PINSET_HOME "installs\dotnet\$GlobalDotnetVersion\windows-x86_64"
+    if ($GlobalDotnetProbe -notcontains "DOTNET_ROOT=$ExpectedDotnetRoot") {
+        throw "global .NET SDK probe reported an unmanaged DOTNET_ROOT: '$($GlobalDotnetProbe -join ' | ')'"
+    }
     if (-not $SkipFlutterRuntime) {
         & $Pinset global "flutter@$GlobalFlutterSelector"
         $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
@@ -271,6 +304,7 @@ public class PinsetJavaProbe {
     if (((& $Pinset exec -- rustfmt --version) | Out-String).Trim() -notmatch '^rustfmt ') {
         throw 'global pinset exec rustfmt returned an invalid version'
     }
+    Assert-ExactOutput $GlobalDotnetVersion (& $Pinset exec -- dotnet --version) 'global pinset exec dotnet'
     $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
     if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
         throw "global Go reported an unmanaged GOROOT: '$GlobalGoRoot'"
@@ -318,6 +352,7 @@ public class PinsetJavaProbe {
     if (((& cargo --version) | Out-String).Trim() -notmatch '^cargo ') {
         throw 'global direct cargo returned an invalid version'
     }
+    Assert-ExactOutput $GlobalDotnetVersion (& dotnet --version) 'global direct dotnet'
     if (-not $SkipFlutterRuntime) {
         $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
         if ($DirectGlobalFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -366,6 +401,7 @@ public class PinsetJavaProbe {
     }
     & $Pinset use "java@$GlobalJavaVersion" --no-install
     & $Pinset use "rust@$GlobalRustVersion" --no-install
+    & $Pinset use "dotnet@$GlobalDotnetVersion" --no-install
     if (-not $SkipFlutterRuntime) {
         & $Pinset use "flutter@$ProjectFlutterVersion" --no-install
     }
@@ -407,6 +443,13 @@ public class PinsetJavaProbe {
     $ProjectRustProbeExe = Join-Path $Project 'pinset-rust-probe.exe'
     & rustc $RustProbePath -o $ProjectRustProbeExe
     Assert-ExactOutput 'pinset-rust-ok' (& $ProjectRustProbeExe) 'project Rust compile and run'
+    $ProjectDotnetProbe = @(& dotnet run --project (Join-Path $DotnetProbe 'PinsetDotnetProbe.csproj'))
+    if ($ProjectDotnetProbe -notcontains 'pinset-dotnet-ok') {
+        throw "project .NET SDK probe did not run: '$($ProjectDotnetProbe -join ' | ')'"
+    }
+    if (((& $Pinset --lang en current dotnet) | Out-String).Trim() -notmatch "^dotnet $([regex]::Escape($GlobalDotnetVersion)) installed") {
+        throw 'project .NET SDK selection was not reported as installed'
+    }
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
     if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
         throw "project Go reported an unmanaged GOROOT: '$ProjectGoRoot'"
@@ -430,6 +473,9 @@ public class PinsetJavaProbe {
     }
     if ($LockedReuse -notmatch "rust@$([regex]::Escape($GlobalRustVersion)) is already installed") {
         throw 'locked Rust install did not reuse the completed toolchain'
+    }
+    if ($LockedReuse -notmatch "dotnet@$([regex]::Escape($GlobalDotnetVersion)) is already installed") {
+        throw 'locked .NET SDK install did not reuse the completed SDK'
     }
     if (-not $SkipFlutterRuntime -and $LockedReuse -notmatch "flutter@$([regex]::Escape($ProjectFlutterVersion)) is already installed") {
         throw 'locked Flutter install did not reuse the completed SDK'
@@ -466,6 +512,7 @@ public class PinsetJavaProbe {
     if (((& cargo --version) | Out-String).Trim() -notmatch '^cargo ') {
         throw 'restored global cargo returned an invalid version'
     }
+    Assert-ExactOutput $GlobalDotnetVersion (& dotnet --version) 'restored global dotnet'
     if (-not $SkipFlutterRuntime) {
         $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
         if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -476,10 +523,10 @@ public class PinsetJavaProbe {
         }
     }
     if ($SkipFlutterRuntime) {
-        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java and Rust acceptance passed; Flutter runtime download skipped'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java, Rust and .NET acceptance passed; Flutter runtime download skipped'
     }
     else {
-        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java, Rust and Flutter acceptance passed'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java, Rust, .NET and Flutter acceptance passed'
     }
 }
 finally {

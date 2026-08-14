@@ -15,6 +15,7 @@ GLOBAL_PYTHON_SELECTOR="${PINSET_GLOBAL_PYTHON_SELECTOR:-latest}"
 PROJECT_PYTHON_SELECTOR="${PINSET_PROJECT_PYTHON_SELECTOR:-3.13}"
 GLOBAL_JAVA_SELECTOR="${PINSET_GLOBAL_JAVA_SELECTOR:-lts}"
 GLOBAL_RUST_SELECTOR="${PINSET_GLOBAL_RUST_SELECTOR:-latest}"
+GLOBAL_DOTNET_SELECTOR="${PINSET_GLOBAL_DOTNET_SELECTOR:-lts}"
 GLOBAL_FLUTTER_SELECTOR="${PINSET_GLOBAL_FLUTTER_SELECTOR:-latest}"
 PROJECT_FLUTTER_SELECTOR="${PINSET_PROJECT_FLUTTER_SELECTOR:-3.44}"
 SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-0}"
@@ -73,6 +74,7 @@ unset CLASSPATH
 unset JAVA_TOOL_OPTIONS
 unset JDK_JAVA_OPTIONS
 unset _JAVA_OPTIONS
+unset DOTNET_ROOT
 
 cd "$TEST_ROOT"
 
@@ -87,6 +89,7 @@ grep -F 'language = "zh-CN"' "$PINSET_HOME/settings.toml"
 "$PINSET_BIN" list python --available | grep -E '^python@[0-9]+\.[0-9]+\.[0-9]+\+[0-9]{8} '
 "$PINSET_BIN" list java --available | grep -E '^java@[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+ temurin (lts|ga) '
 "$PINSET_BIN" list rust --available | grep -E '^rust@[0-9]+\.[0-9]+\.[0-9]+ stable \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
+"$PINSET_BIN" list dotnet --available | grep -E '^dotnet@[0-9]+\.[0-9]+\.[0-9]+ (lts|sts) (active|maintenance) \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
 FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
 printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
 PROJECT_FLUTTER_VERSION="$(
@@ -111,6 +114,9 @@ printf '%s\n' "$GLOBAL_JAVA_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+
 "$PINSET_BIN" global "rust@$GLOBAL_RUST_SELECTOR"
 GLOBAL_RUST_VERSION="$("$PINSET_BIN" exec -- rustc --version | sed -n 's/^rustc \([^ ]*\).*/\1/p')"
 printf '%s\n' "$GLOBAL_RUST_VERSION" | grep -E "$VERSION_PATTERN"
+"$PINSET_BIN" global "dotnet@$GLOBAL_DOTNET_SELECTOR"
+GLOBAL_DOTNET_VERSION="$("$PINSET_BIN" exec -- dotnet --version)"
+printf '%s\n' "$GLOBAL_DOTNET_VERSION" | grep -E "$VERSION_PATTERN"
 cat > PinsetJavaProbe.java <<'JAVA'
 public class PinsetJavaProbe {
     public static void main(String[] args) {
@@ -140,6 +146,23 @@ fn main() {
 RUST
 "$PINSET_BIN" exec -- rustc PinsetRustProbe.rs -o pinset-rust-probe
 ./pinset-rust-probe | grep -Fx 'pinset-rust-ok'
+mkdir dotnet-probe
+GLOBAL_DOTNET_MAJOR="${GLOBAL_DOTNET_VERSION%%.*}"
+cat > dotnet-probe/PinsetDotnetProbe.csproj <<DOTNET_PROJECT
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net${GLOBAL_DOTNET_MAJOR}.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+DOTNET_PROJECT
+cat > dotnet-probe/Program.cs <<'DOTNET_SOURCE'
+Console.WriteLine("pinset-dotnet-ok");
+Console.WriteLine($"DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT")}");
+DOTNET_SOURCE
+"$PINSET_BIN" exec -- dotnet run --project dotnet-probe/PinsetDotnetProbe.csproj | tee global-dotnet.txt
+grep -Fx 'pinset-dotnet-ok' global-dotnet.txt
+grep -F "DOTNET_ROOT=$PINSET_HOME/installs/dotnet/$GLOBAL_DOTNET_VERSION/" global-dotnet.txt
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" global "flutter@$GLOBAL_FLUTTER_SELECTOR"
   GLOBAL_FLUTTER_JSON="$("$PINSET_BIN" exec -- flutter --version --machine)"
@@ -173,6 +196,7 @@ assert_pinset_pip_routes_to_python 'global pinset exec'
 "$PINSET_BIN" exec -- rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
 "$PINSET_BIN" exec -- cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
 "$PINSET_BIN" exec -- rustfmt --version | grep -E '^rustfmt [0-9]+\.[0-9]+\.[0-9]+'
+"$PINSET_BIN" exec -- dotnet --version | grep -Fx "$GLOBAL_DOTNET_VERSION"
 "$PINSET_BIN" exec -- go env GOROOT | grep -F "$PINSET_HOME/installs/go/$GLOBAL_GO_VERSION/"
 printf 'package p\nfunc f( ){ }\n' | "$PINSET_BIN" exec -- gofmt | grep -F 'func f() {}'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
@@ -203,6 +227,7 @@ javac -version 2>&1 | grep -F 'javac '
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
 cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
+dotnet --version | grep -Fx "$GLOBAL_DOTNET_VERSION"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
@@ -236,6 +261,7 @@ PROJECT_PYTHON_VERSION="$(python -c 'import sys; print(".".join(map(str, sys.ver
 printf '%s\n' "$PROJECT_PYTHON_VERSION" | grep -E "^${PROJECT_PYTHON_SELECTOR//./\.}\."
 "$PINSET_BIN" use "java@$GLOBAL_JAVA_VERSION" --no-install
 "$PINSET_BIN" use "rust@$GLOBAL_RUST_VERSION" --no-install
+"$PINSET_BIN" use "dotnet@$GLOBAL_DOTNET_VERSION" --no-install
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" use "flutter@$PROJECT_FLUTTER_VERSION" --no-install
 fi
@@ -285,6 +311,8 @@ grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" project-jav
 "$PINSET_BIN" --lang en current rustc | grep -F "rust $GLOBAL_RUST_VERSION installed"
 rustc "$TEST_ROOT/PinsetRustProbe.rs" -o project-rust-probe
 ./project-rust-probe | grep -Fx 'pinset-rust-ok'
+dotnet run --project "$TEST_ROOT/dotnet-probe/PinsetDotnetProbe.csproj" | grep -Fx 'pinset-dotnet-ok'
+"$PINSET_BIN" --lang en current dotnet | grep -F "dotnet $GLOBAL_DOTNET_VERSION installed"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
   PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"
@@ -297,6 +325,7 @@ fi
 "$PINSET_BIN" install --locked | tee locked-reuse.txt
 grep -F "java@$GLOBAL_JAVA_VERSION is already installed" locked-reuse.txt
 grep -F "rust@$GLOBAL_RUST_VERSION is already installed" locked-reuse.txt
+grep -F "dotnet@$GLOBAL_DOTNET_VERSION is already installed" locked-reuse.txt
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   grep -F "flutter@$PROJECT_FLUTTER_VERSION is already installed" locked-reuse.txt
 fi
@@ -324,13 +353,14 @@ assert_direct_pip_routes_to_python 'restored global direct'
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
 cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
+dotnet --version | grep -Fx "$GLOBAL_DOTNET_VERSION"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
 fi
 
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
-  echo "Unix real Node, pnpm, Bun, Go, Python, Java, Rust and Flutter acceptance passed"
+  echo "Unix real Node, pnpm, Bun, Go, Python, Java, Rust, .NET and Flutter acceptance passed"
 else
-  echo "Unix real Node, pnpm, Bun, Go, Python, Java and Rust acceptance passed; Flutter runtime download skipped"
+  echo "Unix real Node, pnpm, Bun, Go, Python, Java, Rust and .NET acceptance passed; Flutter runtime download skipped"
 fi

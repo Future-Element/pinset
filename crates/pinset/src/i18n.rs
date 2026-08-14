@@ -246,28 +246,28 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("global") => {
-                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47] [--no-install]"
+                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@lts|rust@stable|dotnet@lts] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js、pnpm、Bun、Go、Python 或 Flutter 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47> [--global] [--no-install]"
+                "选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@21|rust@1.97|dotnet@10> [--global] [--no-install]"
             }
             Some("unset") => {
-                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|python|flutter> [--global] [--cwd <目录>]"
+                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|python|flutter|java|rust|dotnet> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--cwd <目录>]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|python|flutter> [--available]"
+                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|python|flutter|java|rust|dotnet> [--available]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|python|flutter>@<精确版本> [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<精确版本> [--cwd <目录>] [--force]"
             }
             Some("cache") => {
                 "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"

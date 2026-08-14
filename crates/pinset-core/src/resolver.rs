@@ -499,6 +499,10 @@ pub fn runtime_environment_for_install(
             name: "JAVA_HOME",
             value: java_home_for_install(install_dir).into_os_string(),
         }],
+        Some(RuntimeEnvironmentKind::Dotnet) => vec![RuntimeEnvironmentVariable {
+            name: "DOTNET_ROOT",
+            value: install_dir.as_os_str().to_owned(),
+        }],
         Some(RuntimeEnvironmentKind::Python | RuntimeEnvironmentKind::None) | None => Vec::new(),
     }
 }
@@ -692,6 +696,19 @@ mod tests {
             [RuntimeEnvironmentVariable {
                 name: "JAVA_HOME",
                 value: expected_home.into_os_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn exposes_the_selected_dotnet_sdk_root() {
+        let install = PathBuf::from("pinset-dotnet");
+        assert_eq!(runtime_command_directory("dotnet", &install), install);
+        assert_eq!(
+            runtime_environment_for_install("dotnet", &install),
+            [RuntimeEnvironmentVariable {
+                name: "DOTNET_ROOT",
+                value: install.into_os_string(),
             }]
         );
     }

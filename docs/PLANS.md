@@ -1,10 +1,10 @@
 # Pinset Plans
 
-当前规划版本：`v0.7.0`
+当前规划版本：`v0.8.0`
 
-当前发布候选：`v0.7.0`
+当前发布候选：`v0.8.0`
 
-最新已发布版本：`v0.6.1`
+最新已发布版本：`v0.8.0`
 
 更新时间：`2026-08-14`
 
@@ -19,8 +19,9 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 3. `v0.5.0`：CPython。
 4. `v0.6.0`：Java，首期仅支持 Eclipse Temurin JDK。
 5. `v0.7.0`：Rust 原生 Provider，使用 Rust 官方 stable v2 manifests 与 default profile 工具链。
+6. `v0.8.0`：Microsoft .NET SDK Provider，使用官方 release metadata 与逐平台 SHA-512。
 
-各版本暂不承诺日期。GitHub Actions 负责三平台构建、质量检查和体积适合自动化的真实运行时验收；Flutter SDK 等超大工件保留完整验收脚本，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
+各版本暂不承诺日期。普通 CI 只负责三平台构建和打包；Release 工作流保留质量门禁与发布供应链产物。除编译 Pinset 必需的 Rust 构建工具链外，Actions 不再通过 Pinset 下载 Node、Flutter、JDK、Rust 工具链、.NET SDK 等 Provider 工件。完整验收脚本继续保留，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
 
 ## 版本路线
 
@@ -42,7 +43,8 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.5.0` | 已发布 | CPython Provider、项目 `.venv` 与无激活路由 |
 | `v0.6.0` | 已发布 | Eclipse Temurin JDK Provider、Python pip/pip3 路由修复 |
 | `v0.6.1` | 已发布 | 检测 PATH 中被系统命令遮挡的 Provider 路由并给出当前 Shell 激活命令 |
-| `v0.7.0` | 开发中 | Rust stable Provider、官方 v2 manifest 锁定、default profile 工具链与命令路由 |
+| `v0.7.0` | 已发布 | Rust stable Provider、官方 v2 manifest 锁定、default profile 工具链与命令路由 |
+| `v0.8.0` | 已发布 | Microsoft .NET SDK Provider、受支持 GA 通道、官方 SHA-512 锁定与 `dotnet` 路由 |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
 
@@ -180,7 +182,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 
 ## v0.7.0 — 原生 Rust Provider
 
-实现状态：官方分发边界已冻结，核心 Provider、元数据解析、锁文件、安装、命令路由和三平台验收脚本开发中。
+实现状态：核心 Provider、元数据解析、锁文件、安装、命令路由和三平台验收脚本已完成并发布。
 
 ### 目标
 
@@ -211,6 +213,39 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - manifest 与归档 SHA-256、官方 URL、target、profile 或组件身份不一致时锁文件验证失败。
 - Rust 接入不会改变其他 Native Provider 的下载和安装语义。
 
+## v0.8.0 — Microsoft .NET SDK Provider
+
+实现状态：核心 Provider、官方元数据解析、锁文件、安装、命令路由和手动虚拟机验收脚本已完成并发布；真实 SDK 验收不进入 GitHub Actions。
+
+### 目标
+
+- 首期只管理 Microsoft 官方 .NET SDK，不拆分管理 .NET Runtime、ASP.NET Core Runtime、Desktop Runtime 或 workloads。
+- 支持 `pinset list dotnet --available`、`pinset global dotnet@<selector>`、`pinset use dotnet@<selector>`、锁定安装、卸载、`which`、`current` 和 `exec`。
+- 支持 `latest`/`current`、`lts`、主版本、`major.minor` 通道和精确 SDK 版本；锁文件只保存精确 `x.y.zzz` SDK 版本。
+- 路由 `dotnet`，并只为 Pinset 受管子进程设置与所选 SDK 一致的 `DOTNET_ROOT`。
+
+### 技术范围
+
+- 版本发现来自 Microsoft 官方 `releases-index.json` 与各通道 `releases.json`，只接受 `active`/`maintenance` 支持阶段的 GA `lts`/`sts` 通道，排除 preview、RC、go-live 和 EOL。
+- 四个 Provider 目标为 Windows x64、Linux x64、macOS x64 和 macOS arm64；Windows 使用 ZIP，其余平台使用 `tar.gz`。
+- 锁文件记录 SDK 版本、通道、release type、support phase、runtime release version、发布日期、官方归档 URL 和逐平台 SHA-512。
+- 安装后校验归档根目录的 `dotnet`/`dotnet.exe`，复用现有安全解压、内容寻址缓存、并发锁和原子提交。
+- 保留用户的 `DOTNET_CLI_HOME`、`NUGET_PACKAGES`、NuGet 配置和遥测选项，不修改 shell profile、系统 SDK、项目文件或 workload 状态。
+
+### 不包含
+
+- preview/RC/nightly、EOL 通道、Linux arm64、Alpine/musl 和其他首期未列出的 RID。
+- .NET Runtime-only、ASP.NET Core Runtime、Windows Desktop Runtime、workloads、templates 或 Visual Studio 管理。
+- NuGet 包解析、restore 策略、`global.json` 自动修改，以及导入其他 .NET 管理器的安装目录。
+
+### 验收条件
+
+- 官方 available 列表只出现仍受支持且四个平台归档完整的 GA SDK；浮动选择器稳定解析为精确 SDK。
+- 锁文件拒绝非 Microsoft 官方 URL、错误 RID/格式、缺失平台、EOL/preview metadata 和不匹配的 SHA-512 身份。
+- Windows、Linux、macOS 隔离虚拟机可安装并执行 `dotnet --version`，且 `DOTNET_ROOT`、PATH、锁文件和实际 host 来自同一安装。
+- 可用所选 SDK 编译并运行最小 Console 项目，验证全局选择、项目选择、离开项目后的全局恢复和已安装 SDK 复用。
+- GitHub Actions 仅编译、测试 Pinset 自身并打包，不下载或执行真实 .NET SDK；真实验收由发布后的虚拟机脚本完成。
+
 ## Provider 架构约束
 
 从 `v0.3.0` 开始，新 Provider 必须复用同一套核心生命周期：
@@ -230,21 +265,20 @@ Provider 特有逻辑应留在 Provider 内，核心层只处理公共生命周�
 Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解析结果，因此本机运行验收必须使用独立的临时 `PINSET_HOME`、项目目录和 shim 目录。
 
 - 本项目开发不在维护者本机或 WSL 执行 Pinset、构建、测试或运行时下载，避免污染真实工具链和用户状态。
-- 格式化、Clippy、单元测试、构建及运行时验收统一放到 GitHub Actions 隔离虚拟机执行。
-- Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行格式、Clippy、单元测试和脚本测试。
-- Provider 变更在合并和发布前必须通过 Ubuntu、Windows、macOS 三平台构建和 Quality 检查；体积适合的运行时继续执行三平台真实验收。
-- Flutter SDK 等超大工件不在 GitHub Actions 下载；发布后使用保留的完整验收脚本在隔离虚拟机验证，发现问题后通过补丁版本修复。
+- 普通 push/Pull Request CI 只在 GitHub Actions 隔离虚拟机执行三平台 release 构建和打包；真实运行时验收不进入 Actions。
+- 格式、Clippy、单元测试和小型脚本测试作为 Release 工作流的质量门禁执行。
+- Provider 变更在发布前必须通过 Ubuntu、Windows、macOS 三平台构建和 Release Quality 检查。
+- 所有真实运行时均不在 GitHub Actions 下载；发布后使用保留的完整验收脚本在隔离虚拟机验证，发现问题后通过补丁版本修复。
 - 单平台本地通过不等于三平台通过，最终结论以 GitHub Actions 记录和各目标平台验收为准。
 
 ## 发布流程
 
 1. 在功能分支完成代码、文档、版本号和变更记录。
 2. 经用户明确授权后暂存、提交、推送并创建 Pull Request。
-3. 等待 Pull Request Quality 工作流通过。
-4. 对新增或修改的 Provider 触发三平台构建；体积适合的运行时执行真实验收，超大运行时记录发布后虚拟机验收边界。
-5. 经用户明确确认后合并到 `main`。
-6. 创建签名版本标签并触发 Release 工作流。
-7. 确认 release assets、checksums、SBOM/provenance 和各平台安装脚本可用后宣布发布完成。
+3. 等待 Pull Request 的 Linux、Windows、macOS 三平台构建通过；真实运行时验收统一记录为发布后虚拟机验收边界。
+4. 经用户明确确认后合并到 `main`。
+5. 创建签名版本标签并触发包含 Quality 门禁的 Release 工作流。
+6. 确认 release assets、checksums、SBOM/provenance 和各平台安装脚本可用后宣布发布完成。
 
 ## 跨版本加固项
 
