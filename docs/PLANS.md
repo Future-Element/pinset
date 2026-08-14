@@ -4,7 +4,7 @@
 
 当前发布候选：无
 
-最新已发布版本：`v0.4.1`
+最新已发布版本：`v0.4.2`
 
 更新时间：`2026-08-14`
 
@@ -38,6 +38,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.3.0` | 已发布 | Go Provider、Native Provider 通用化 |
 | `v0.4.0` | 已发布 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.4.1` | 已发布 | macOS liblzma 静态链接与发布依赖门禁 |
+| `v0.4.2` | 已发布 | 大型运行时下载自动重试与断点续传 |
 | `v0.5.0` | 规划中 | CPython Provider |
 | `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
 | `v0.7.0` | 规划中 | rustup 委托式 Rust Provider |

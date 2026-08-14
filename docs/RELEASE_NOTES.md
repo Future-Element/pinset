@@ -1,5 +1,15 @@
 # Pinset Release Notes
 
+## v0.4.2
+
+- 发布日期：`2026-08-14`
+- 阶段：大型运行时下载可靠性补丁
+- GitHub Release：[v0.4.2](https://github.com/Future-Element/pinset/releases/tag/v0.4.2)
+- 同一下载源遇到请求或响应体读取中断时自动进行最多 3 次下载尝试；
+- 重试复用按完整性摘要隔离的 `.part` 文件，并使用经过 `Content-Range` 校验的 HTTP Range 请求续传，避免重新下载完整 Flutter SDK；
+- 校验和不匹配、超限和不安全缓存条目仍然立即失败，不会作为网络抖动重试；
+- 自动化测试使用小型本地 HTTP 故障注入归档，不在 GitHub Actions 下载 Flutter 大包。
+
 ## v0.4.1
 
 - 发布日期：`2026-08-14`
