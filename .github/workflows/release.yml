@@ -134,7 +134,7 @@ jobs:
           target/release/pinset
           target/release/pinset-shim
 
-      - name: Run real Node, pnpm, Bun, Go and Python acceptance on Linux and macOS
+      - name: Run real Node, pnpm, Bun, Go, Python and Java acceptance on Linux and macOS
         if: runner.os != 'Windows'
         shell: bash
         env:
@@ -150,7 +150,7 @@ jobs:
           PINSET_SKIP_FLUTTER_RUNTIME: 1
         run: bash scripts/tests/ubuntu_runtime_acceptance.sh
 
-      - name: Run real Node, pnpm, Bun, Go and Python acceptance on Windows
+      - name: Run real Node, pnpm, Bun, Go, Python and Java acceptance on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         env:

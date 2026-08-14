@@ -16,6 +16,7 @@ $GlobalGoSelector = if ($env:PINSET_GLOBAL_GO_SELECTOR) { $env:PINSET_GLOBAL_GO_
 $ProjectGoSelector = if ($env:PINSET_PROJECT_GO_SELECTOR) { $env:PINSET_PROJECT_GO_SELECTOR } else { '1.24' }
 $GlobalPythonSelector = if ($env:PINSET_GLOBAL_PYTHON_SELECTOR) { $env:PINSET_GLOBAL_PYTHON_SELECTOR } else { 'latest' }
 $ProjectPythonSelector = if ($env:PINSET_PROJECT_PYTHON_SELECTOR) { $env:PINSET_PROJECT_PYTHON_SELECTOR } else { '3.13' }
+$GlobalJavaSelector = if ($env:PINSET_GLOBAL_JAVA_SELECTOR) { $env:PINSET_GLOBAL_JAVA_SELECTOR } else { 'lts' }
 $GlobalFlutterSelector = if ($env:PINSET_GLOBAL_FLUTTER_SELECTOR) { $env:PINSET_GLOBAL_FLUTTER_SELECTOR } else { 'latest' }
 $ProjectFlutterSelector = if ($env:PINSET_PROJECT_FLUTTER_SELECTOR) { $env:PINSET_PROJECT_FLUTTER_SELECTOR } else { '3.44' }
 $SkipFlutterRuntimeValue = if ($env:PINSET_SKIP_FLUTTER_RUNTIME) { $env:PINSET_SKIP_FLUTTER_RUNTIME } else { '0' }
@@ -81,6 +82,48 @@ function ConvertFrom-FlutterMachineOutput {
     }
 }
 
+function Assert-PinsetPipRoutesToPython {
+    param([Parameter(Mandatory = $true)][string]$Label)
+
+    $Expected = ((& $Pinset exec -- python -m pip --version) | Out-String).Trim()
+    if ($Expected -notmatch '^pip \d+(\.\d+)+') {
+        throw "$Label python -m pip returned an invalid version: '$Expected'"
+    }
+    Write-Host "${Label} python -m pip: $Expected"
+    foreach ($PipCommand in @('pip', 'pip3')) {
+        $ActualLines = @(& $Pinset exec -- $PipCommand --version 2>&1)
+        $Status = $LASTEXITCODE
+        $Actual = (($ActualLines | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+        if ($Status -ne 0) {
+            throw "$Label $PipCommand failed with exit code ${Status}: '$Actual'"
+        }
+        if ($Actual -ne $Expected) {
+            throw "$Label $PipCommand expected '$Expected', got '$Actual'"
+        }
+    }
+}
+
+function Assert-DirectPipRoutesToPython {
+    param([Parameter(Mandatory = $true)][string]$Label)
+
+    $Expected = ((& python -m pip --version) | Out-String).Trim()
+    if ($Expected -notmatch '^pip \d+(\.\d+)+') {
+        throw "$Label python -m pip returned an invalid version: '$Expected'"
+    }
+    Write-Host "${Label} python -m pip: $Expected"
+    foreach ($PipCommand in @('pip', 'pip3')) {
+        $ActualLines = @(& $PipCommand --version 2>&1)
+        $Status = $LASTEXITCODE
+        $Actual = (($ActualLines | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+        if ($Status -ne 0) {
+            throw "$Label $PipCommand failed with exit code ${Status}: '$Actual'"
+        }
+        if ($Actual -ne $Expected) {
+            throw "$Label $PipCommand expected '$Expected', got '$Actual'"
+        }
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
@@ -90,6 +133,11 @@ try {
     Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     Remove-Item Env:FLUTTER_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:FLUTTER_SUPPRESS_ANALYTICS -ErrorAction SilentlyContinue
+    Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+    Remove-Item Env:CLASSPATH -ErrorAction SilentlyContinue
+    Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
+    Remove-Item Env:JDK_JAVA_OPTIONS -ErrorAction SilentlyContinue
+    Remove-Item Env:_JAVA_OPTIONS -ErrorAction SilentlyContinue
     Set-Location $TestRoot
 
     & $Pinset --lang zh-CN | Out-Null
@@ -109,6 +157,9 @@ try {
     }
     if (-not ((& $Pinset list python --available) -match '^python@\d+\.\d+\.\d+\+\d{8} ')) {
         throw 'no supported Python release was listed as available'
+    }
+    if (-not ((& $Pinset list java --available) -match '^java@\d+\.\d+\.\d+(\.\d+)?\+\d+ temurin (lts|ga) ')) {
+        throw 'no supported Eclipse Temurin JDK release was listed as available'
     }
     $FlutterReleases = @(& $Pinset list flutter --available)
     if (-not ($FlutterReleases -match '^flutter@\d+\.\d+\.\d+ dart@\d+\.\d+\.\d+ stable$')) {
@@ -140,6 +191,33 @@ try {
     if ($GlobalPythonVersion -notmatch $VersionPattern) {
         throw "global Python returned an invalid version: '$GlobalPythonVersion'"
     }
+    & $Pinset global "java@$GlobalJavaSelector"
+    $GlobalJavaCurrent = ((& $Pinset --lang en current java) | Out-String).Trim()
+    $GlobalJavaMatch = [regex]::Match($GlobalJavaCurrent, '^java ([^ ]+) installed')
+    if (-not $GlobalJavaMatch.Success -or $GlobalJavaMatch.Groups[1].Value -notmatch '^\d+\.\d+\.\d+(\.\d+)?\+\d+$') {
+        throw "global Java returned an invalid current selection: '$GlobalJavaCurrent'"
+    }
+    $GlobalJavaVersion = $GlobalJavaMatch.Groups[1].Value
+    $JavaProbePath = Join-Path $TestRoot 'PinsetJavaProbe.java'
+    Set-Content -LiteralPath $JavaProbePath -Value @'
+public class PinsetJavaProbe {
+    public static void main(String[] args) {
+        System.out.println("pinset-java-ok");
+        System.out.println("java.home=" + System.getProperty("java.home"));
+        System.out.println("JAVA_HOME=" + System.getenv("JAVA_HOME"));
+    }
+}
+
+'@
+    & $Pinset exec -- javac $JavaProbePath
+    $GlobalJavaProbe = @(& $Pinset exec -- java -cp $TestRoot PinsetJavaProbe)
+    if ($GlobalJavaProbe -notcontains 'pinset-java-ok') {
+        throw "global Java probe did not run: '$($GlobalJavaProbe -join ' | ') '"
+    }
+    $ExpectedJavaRoot = Join-Path $env:PINSET_HOME "installs\java\$GlobalJavaVersion"
+    if (-not ($GlobalJavaProbe -match "^JAVA_HOME=$([regex]::Escape($ExpectedJavaRoot))")) {
+        throw "global Java probe reported an unmanaged JAVA_HOME: '$($GlobalJavaProbe -join ' | ')'"
+    }
     if (-not $SkipFlutterRuntime) {
         & $Pinset global "flutter@$GlobalFlutterSelector"
         $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
@@ -164,6 +242,10 @@ try {
     }
     Assert-ExactOutput 'local' (& $Pinset exec -- go env GOTOOLCHAIN) 'global pinset exec Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& $Pinset exec -- python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global pinset exec Python'
+    Assert-PinsetPipRoutesToPython 'global pinset exec'
+    if (((& $Pinset exec -- javac -version 2>&1) | Out-String).Trim() -notmatch '^javac ') {
+        throw 'global pinset exec javac returned an invalid version'
+    }
     $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
     if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
         throw "global Go reported an unmanaged GOROOT: '$GlobalGoRoot'"
@@ -201,6 +283,10 @@ try {
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python'
     Assert-ExactOutput $GlobalPythonVersion (& python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python3'
+    Assert-DirectPipRoutesToPython 'global direct'
+    if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
+        throw 'global direct Java probe did not run'
+    }
     if (-not $SkipFlutterRuntime) {
         $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
         if ($DirectGlobalFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -247,6 +333,7 @@ try {
     if ($ProjectPythonVersion -notmatch "^$([regex]::Escape($ProjectPythonSelector))\.") {
         throw "project Python selector resolved to unexpected version '$ProjectPythonVersion'"
     }
+    & $Pinset use "java@$GlobalJavaVersion" --no-install
     if (-not $SkipFlutterRuntime) {
         & $Pinset use "flutter@$ProjectFlutterVersion" --no-install
     }
@@ -268,12 +355,19 @@ try {
     $ProjectVenv = Join-Path $Project '.venv'
     Assert-ExactOutput $ProjectVenv (& python -c "import sys; print(sys.prefix)") 'project direct Python environment'
     Assert-ExactOutput $ProjectVenv (& $Pinset exec -- python3 -c "import os; print(os.environ['VIRTUAL_ENV'])") 'project pinset exec Python environment'
-    $ProjectPipOutput = ((& $Pinset exec -- pip --version) | Out-String).Trim()
-    if ($ProjectPipOutput -notlike "*$ProjectVenv*") {
-        throw "project pip did not run from .venv: '$ProjectPipOutput'"
-    }
+    Assert-PinsetPipRoutesToPython 'project pinset exec'
+    Assert-DirectPipRoutesToPython 'project direct'
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectVenv '.pinset-venv.toml') -PathType Leaf)) {
         throw 'project Python environment has no Pinset ownership marker'
+    }
+    & javac $JavaProbePath
+    $ProjectJavaProbe = @(& java -cp $TestRoot PinsetJavaProbe)
+    if ($ProjectJavaProbe -notcontains 'pinset-java-ok' -or
+        -not ($ProjectJavaProbe -match "^JAVA_HOME=$([regex]::Escape($ExpectedJavaRoot))")) {
+        throw "project Java probe did not use the selected JDK: '$($ProjectJavaProbe -join ' | ')'"
+    }
+    if (((& $Pinset --lang en current java) | Out-String).Trim() -notmatch "^java $([regex]::Escape($GlobalJavaVersion)) installed") {
+        throw 'project Java selection was not reported as installed'
     }
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
     if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
@@ -293,6 +387,9 @@ try {
     }
     & $Pinset cache clean
     $LockedReuse = ((& $Pinset install --locked) | Out-String)
+    if ($LockedReuse -notmatch "java@$([regex]::Escape($GlobalJavaVersion)) is already installed") {
+        throw 'locked Java install did not reuse the completed JDK'
+    }
     if (-not $SkipFlutterRuntime -and $LockedReuse -notmatch "flutter@$([regex]::Escape($ProjectFlutterVersion)) is already installed") {
         throw 'locked Flutter install did not reuse the completed SDK'
     }
@@ -318,6 +415,10 @@ try {
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
     Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'restored global Python'
+    Assert-DirectPipRoutesToPython 'restored global direct'
+    if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
+        throw 'restored global Java probe did not run'
+    }
     if (-not $SkipFlutterRuntime) {
         $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
         if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -328,10 +429,10 @@ try {
         }
     }
     if ($SkipFlutterRuntime) {
-        Write-Host 'Windows real Node, pnpm, Bun, Go and Python acceptance passed; Flutter runtime download skipped'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python and Java acceptance passed; Flutter runtime download skipped'
     }
     else {
-        Write-Host 'Windows real Node, pnpm, Bun, Go, Python and Flutter acceptance passed'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java and Flutter acceptance passed'
     }
 }
 finally {

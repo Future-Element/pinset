@@ -12,6 +12,7 @@ pub struct RuntimeProvider {
 pub enum RuntimeCommandLayout {
     NodeNative,
     Python,
+    Java,
     Root,
     Bin,
 }
@@ -22,6 +23,7 @@ pub enum RuntimeMetadataKind {
     Npm,
     Go,
     Flutter,
+    Java,
     Python,
 }
 
@@ -31,6 +33,7 @@ pub enum RuntimeInstallKind {
     Npm,
     Go,
     Flutter,
+    Java,
     Python,
 }
 
@@ -39,6 +42,7 @@ pub enum RuntimeEnvironmentKind {
     None,
     Go,
     Flutter,
+    Java,
     Python,
 }
 
@@ -85,11 +89,21 @@ const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
 };
 const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "python",
-    commands: &["python", "python3"],
+    commands: &["python", "python3", "pip", "pip3"],
     command_layout: RuntimeCommandLayout::Python,
     metadata: RuntimeMetadataKind::Python,
     installer: RuntimeInstallKind::Python,
     environment: RuntimeEnvironmentKind::Python,
+};
+const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "java",
+    commands: &[
+        "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell",
+    ],
+    command_layout: RuntimeCommandLayout::Java,
+    metadata: RuntimeMetadataKind::Java,
+    installer: RuntimeInstallKind::Java,
+    environment: RuntimeEnvironmentKind::Java,
 };
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
@@ -98,6 +112,7 @@ const PROVIDERS: &[RuntimeProvider] = &[
     GO_PROVIDER,
     FLUTTER_PROVIDER,
     PYTHON_PROVIDER,
+    JAVA_PROVIDER,
 ];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
@@ -157,11 +172,31 @@ mod tests {
         );
         assert_eq!(
             runtime_provider("python").map(|provider| provider.commands),
-            Some(&["python", "python3"][..])
+            Some(&["python", "python3", "pip", "pip3"][..])
         );
         assert_eq!(
             runtime_provider_for_command("python3").map(|provider| provider.tool),
             Some("python")
+        );
+        assert_eq!(
+            runtime_provider_for_command("pip").map(|provider| provider.tool),
+            Some("python")
+        );
+        assert_eq!(
+            runtime_provider_for_command("pip3").map(|provider| provider.tool),
+            Some("python")
+        );
+        assert_eq!(
+            runtime_provider("java").map(|provider| provider.commands),
+            Some(
+                &[
+                    "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell"
+                ][..]
+            )
+        );
+        assert_eq!(
+            runtime_provider_for_command("javac").map(|provider| provider.tool),
+            Some("java")
         );
     }
 

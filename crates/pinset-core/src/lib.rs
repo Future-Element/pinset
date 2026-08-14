@@ -23,6 +23,12 @@ mod go_runtime;
 mod installer;
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
 mod integrity;
+#[cfg(feature = "java-metadata")]
+mod java_metadata;
+#[cfg(feature = "java-provider")]
+mod java_provider;
+#[cfg(all(feature = "installer", feature = "java-provider", feature = "lockfile"))]
+mod java_runtime;
 #[cfg(feature = "lockfile")]
 mod lockfile;
 #[cfg(feature = "node-provider")]
@@ -106,6 +112,15 @@ pub use installer::{
 };
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
 pub use integrity::{ArtifactIntegrity, IntegrityAlgorithm};
+#[cfg(feature = "java-metadata")]
+pub use java_metadata::{JavaMetadataClient, JavaRelease};
+#[cfg(feature = "java-provider")]
+pub use java_provider::{
+    JAVA_TARGETS, JavaArchiveFormat, JavaArtifactPlan, JavaVersion, plan_java_artifact,
+    validate_exact_java_version,
+};
+#[cfg(all(feature = "installer", feature = "java-provider", feature = "lockfile"))]
+pub use java_runtime::install_locked_java;
 #[cfg(feature = "lockfile")]
 pub use lockfile::{
     LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat,
@@ -152,10 +167,11 @@ pub use python_venv::{
 };
 pub use resolver::{
     CommandResolution, RuntimeEnvironmentVariable, SelectionSource, ToolSelection, command_tool,
-    find_system_commands, path_with_selected_runtime, path_with_selected_tools, pinset_home,
-    pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_from_env,
-    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
-    runtime_command_directory, runtime_environment_for_install, selected_runtime_environment,
+    find_system_commands, java_home_for_install, managed_runtime_arguments,
+    path_with_selected_runtime, path_with_selected_tools, pinset_home, pinset_home_from_env,
+    resolve_command, resolve_command_with_path, resolve_from_env, resolve_project_python_command,
+    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
+    runtime_environment_for_install, selected_runtime_environment,
     validate_managed_runtime_invocation,
 };
 pub use runtime_lifecycle::{

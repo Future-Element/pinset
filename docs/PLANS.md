@@ -1,10 +1,10 @@
 # Pinset Plans
 
-当前规划版本：`v0.5.0`
+当前规划版本：`v0.7.0`
 
 当前发布候选：无
 
-最新已发布版本：`v0.4.2`
+最新已发布版本：`v0.6.0`
 
 更新时间：`2026-08-14`
 
@@ -39,8 +39,8 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.4.0` | 已发布 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.4.1` | 已发布 | macOS liblzma 静态链接与发布依赖门禁 |
 | `v0.4.2` | 已发布 | 大型运行时下载自动重试与断点续传 |
-| `v0.5.0` | 开发中 | CPython Provider、项目 `.venv` 与无激活路由 |
-| `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
+| `v0.5.0` | 已发布 | CPython Provider、项目 `.venv` 与无激活路由 |
+| `v0.6.0` | 已发布 | Eclipse Temurin JDK Provider、Python pip/pip3 路由修复 |
 | `v0.7.0` | 规划中 | 原生 Rust Provider |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
@@ -108,13 +108,15 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 
 ## v0.5.0 — CPython Provider
 
-实现状态：核心 Provider、官方元数据、锁文件、安装、项目 `.venv`、shim/`exec` 自动路由和 Windows 真实运行时验收已完成；三平台 CI 验收仍待工作流运行。
+实现状态：核心 Provider、官方元数据、锁文件、安装、项目 `.venv`、shim/`exec` 自动路由和三平台 Release 验收已完成并发布。
+
+兼容性修复：`v0.6.0` 补齐 `pip`/`pip3` shim，并统一通过所选解释器的 `python -m pip` 执行，覆盖全局 Python 和项目 `.venv`。
 
 ### 目标
 
 - 首期只管理 CPython 解释器，不扩展到 PyPy、GraalPy 等实现。
 - 支持 `pinset list python --available`、`use`、`global` 和项目锁定。
-- 项目选择 Python 时创建项目根目录 `.venv`，路由 `python`、`python3`，无需手动激活虚拟环境。
+- 项目选择 Python 时创建项目根目录 `.venv`，路由 `python`、`python3`、`pip`、`pip3`，无需手动激活虚拟环境。
 - 支持 `pinset exec -- <项目环境命令>` 运行 `.venv` 中的脚本，例如 `pip`、`pytest`。
 
 ### 技术范围
@@ -137,35 +139,43 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - 三平台虚拟机可安装并运行锁定版本的解释器。
 - 全局版本、项目版本、离线缓存和损坏工件场景均被覆盖。
 - 锁文件能精确区分 Python 版本相同但构建不同的工件。
-- 项目 `python`/`python3` 与 `pinset exec -- pip` 均自动指向 `.venv`，进程获得 `VIRTUAL_ENV` 且不继承 `PYTHONHOME`。
+- 全局及项目 `python`/`python3`/`pip`/`pip3` 均指向同一个选中解释器；项目命令自动指向 `.venv`，进程获得 `VIRTUAL_ENV` 且不继承 `PYTHONHOME`。
 - 未标记 `.venv` 不会被采用或删除，普通 `venv create` 不重建现有环境，`venv recreate` 才执行受保护的重建。
 
 ## v0.6.0 — Java Provider
+
+实现状态：核心 Provider、官方元数据、锁文件、安装、命令路由、Python pip 兼容性修复和三平台 Release 验收已完成并发布。
 
 ### 目标
 
 - 首期只支持 Eclipse Temurin JDK、HotSpot、GA 正式版本。
 - 支持 `pinset list java --available`、`use`、`global` 和项目锁定。
-- 路由 `java`、`javac`、`jar`、`javadoc`、`jshell`、`keytool` 等 JDK 命令，并设置正确的 `JAVA_HOME`。
+- 路由 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool` 和可用时的 `jshell`，并设置正确的 `JAVA_HOME`。
+- 支持 `latest`/`current`、`lts`、Feature 版本、主次前缀、Update 版本和包含 `+build` 的精确版本。
 
 ### 技术范围
 
-- 通过 Adoptium API 获取版本、操作系统、架构、包类型和工件信息。
-- 校验 SHA-256，并评估将上游 GPG 签名纳入强校验链。
-- 将锁文件升级到能够明确表达 distribution、package type、JVM implementation 和 release kind 的 schema；旧锁文件必须保持可读并提供清晰迁移路径。
+- 通过 Adoptium API v3 获取 Temurin GA 发布、LTS Feature、四个平台归档和最终 GitHub Release URL。
+- 使用 Java 专用版本模型排序 `x.y.z+build`，构建号参与精确身份和新旧比较，不套用忽略构建元数据的普通 SemVer 规则。
+- 继续使用锁文件 schema 2 的 Provider metadata，记录 distribution、vendor、image type、JVM implementation、heap size、release type、Feature、release name、OpenJDK version 和逐平台签名链接，无需迁移旧锁文件。
+- 安装阶段强制校验 Adoptium API 提供的 SHA-256；记录 GPG 签名链接，但在完成密钥固定、轮换和吊销策略前不把系统 `gpg` 作为运行依赖。
+- Windows 使用 ZIP，Linux/macOS 使用 `tar.gz`；macOS 的 `JAVA_HOME` 指向归档内 `Contents/Home`，其他平台指向安装根目录。
+- 只为 Pinset 启动的受管子进程设置 `JAVA_HOME` 和组合 PATH，不修改 shell profile 或系统环境变量；保留 `CLASSPATH`、`JAVA_TOOL_OPTIONS`、`JDK_JAVA_OPTIONS`、`_JAVA_OPTIONS` 并由 `doctor` 提示其影响。
 
 ### 不包含
 
-- 多厂商 JDK、JRE、OpenJ9、早期访问版和自定义 JVM 构建。
+- 多厂商 JDK、JRE、OpenJ9、早期访问版、nightly、JavaFX、GraalVM 和自定义 JVM 构建。
 - Maven、Gradle、Ant 或 Java 项目依赖管理。
 - 自动修改项目的 Gradle/Maven toolchain 配置。
+- 接管或删除系统 JDK、修改 `cacerts`，以及导入 SDKMAN、jEnv、asdf 等外部管理器状态。
 
 ### 验收条件
 
 - 三平台虚拟机可安装并运行 `java -version` 与 `javac -version`。
-- `JAVA_HOME`、`PATH` 和锁文件都指向同一安装。
-- LTS、最新 GA、精确版本和主版本选择器行为稳定。
-- 旧 schema 项目继续可用，新 schema 的厂商和包类型没有歧义。
+- 三平台可编译并运行一个最小 Java 程序，`java.home`、`JAVA_HOME`、PATH 和锁文件都指向同一安装。
+- LTS、最新 GA、Feature、Update 和精确 build 选择器行为稳定，锁文件保存最终工件 URL、SHA-256 和签名链接。
+- 项目选择优先于全局选择；已选 JDK 命令缺失时明确失败，不静默回退到系统 Java。
+- 旧 schema 2 项目继续可用，Java 分发、JDK/JRE、HotSpot/OpenJ9 和 GA/EA 身份没有歧义。
 
 ## v0.7.0 — 原生 Rust Provider
 
@@ -202,8 +212,8 @@ Provider 特有逻辑应留在 Provider 内，核心层只处理公共生命周�
 
 Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解析结果，因此本机运行验收必须使用独立的临时 `PINSET_HOME`、项目目录和 shim 目录。
 
-- 本地可执行格式化、Clippy、测试和隔离运行时验收，但不得写入真实 Pinset 状态或用户项目。
-- 临时验收完成后清理明确验证过的测试目录；无法清理时必须报告残留位置。
+- 本项目开发不在维护者本机或 WSL 执行 Pinset、构建、测试或运行时下载，避免污染真实工具链和用户状态。
+- 格式化、Clippy、单元测试、构建及运行时验收统一放到 GitHub Actions 隔离虚拟机执行。
 - Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行格式、Clippy、单元测试和脚本测试。
 - Provider 变更在合并和发布前必须通过 Ubuntu、Windows、macOS 三平台构建和 Quality 检查；体积适合的运行时继续执行三平台真实验收。
 - Flutter SDK 等超大工件不在 GitHub Actions 下载；发布后使用保留的完整验收脚本在隔离虚拟机验证，发现问题后通过补丁版本修复。
@@ -236,7 +246,7 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 | Go 自动工具链下载绕过项目锁定 | 受管子进程默认使用 `GOTOOLCHAIN=local`，同时尊重并诊断用户显式配置 |
 | Flutter SDK 会原地更新并维护可变 cache | 将 SDK 和 cache 生命周期显式建模，阻止受管安装原地切换版本 |
 | Python 第三方预构建工件无法只靠语言版本复现 | 锁定 build ID、variant、来源和校验值 |
-| Java 厂商、JDK/JRE 和 JVM 类型产生歧义 | 首期仅 Temurin JDK/HotSpot/GA，并在新 schema 中显式记录分发属性 |
+| Java 厂商、JDK/JRE 和 JVM 类型产生歧义 | 首期仅 Temurin JDK/HotSpot/GA，并在 schema 2 Provider metadata 中显式记录分发属性 |
 | Rust 组件与 target 范围过大 | 开发前单独冻结原生分发来源和最小组件边界，不接管其他管理器状态 |
 | 本地运行验证污染用户开发环境 | 使用临时 `PINSET_HOME`、临时项目和临时 shim 目录隔离验收 |
 | 超大 SDK 持续占用托管 Runner | Actions 不下载 Flutter 等超大工件；保留完整脚本供发布后虚拟机验收 |

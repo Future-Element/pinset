@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.5.0`
-产品阶段：`CPython Provider development`
+文档版本：`v0.6.0`
+产品阶段：`Eclipse Temurin JDK Provider development`
 更新时间：`2026-08-14`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
-`v0.5.0` 在 Node.js、pnpm、Bun、Go 和 Flutter 基础上新增 CPython Provider，并将项目级 `.venv` 纳入 Pinset 自有生命周期。Java 和 Rust 暂不纳入本版本。
+`v0.6.0` 在已发布的 Node.js、pnpm、Bun、Go、Flutter 和 CPython Provider 基础上新增 Eclipse Temurin JDK Provider。首期仅管理 JDK/HotSpot/GA 正式版本，Rust 暂不纳入本版本。
 
 ### 1.1 目标
 
@@ -29,8 +29,8 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 1.3 本版本不做
 
-- 不接入 Java、Rust 等其他 Provider；
-- 不管理 Android SDK/NDK、JDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
+- 不接入 Rust 等其他 Provider，也不扩展到其他 JDK 厂商、JRE、OpenJ9、EA、nightly、JavaFX 或 GraalVM；
+- 不管理 Android SDK/NDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
 - 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
@@ -63,7 +63,7 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`，Flutter Provider 注册 `flutter`、`dart`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`、`pip`、`pip3`，Flutter Provider 注册 `flutter`、`dart`，Java Provider 注册 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`。
 
 ## 3. 支持矩阵
 
@@ -110,6 +110,17 @@ Go available 列表只显示稳定、具有全部上述工件且每个工件都�
 
 Python available 列表只显示稳定、同时具备四个 `install_only` 工件且每个工件带有效 SHA-256 的 CPython 发行版。
 
+### 3.5 Eclipse Temurin JDK 发行目标
+
+| 目标 | Adoptium OS/Arch | 状态 |
+| --- | --- | --- |
+| `windows-x86_64` | `windows` / `x64` | 支持 ZIP |
+| `linux-x86_64` | `linux` / `x64` | 支持 TAR.GZ |
+| `macos-x86_64` | `mac` / `x64` | Provider 支持 TAR.GZ |
+| `macos-aarch64` | `mac` / `aarch64` | Provider 支持 TAR.GZ |
+
+Java available 列表只显示 Eclipse vendor、JDK image、HotSpot、normal heap、GA release type 且同时具备四个目标、有效 SHA-256 与签名链接的 Temurin 发布。
+
 ## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
@@ -125,6 +136,7 @@ pnpm = "11.21.0"
 bun = "1.3.14"
 go = "1.25.1"
 python = "3.14.7+20260807"
+java = "21.0.8+9"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -153,7 +165,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、`pip`、`pip3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护；Java Provider 声明 JDK 命令、平台 `JAVA_HOME` 和环境诊断策略。
 
 ### 4.5 通用命令路由
 
@@ -406,11 +418,25 @@ CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `c
 - 只接受四个支持目标都存在的 `install_only` TAR.GZ 工件；
 - 锁文件精确记录 `x.y.z+YYYYMMDD` 发行身份、CPython 版本、构建 ID、variant、归档 URL 和 SHA-256；
 - 全局选择路由基础解释器；项目选择通过锁定解释器的标准库 `venv` 创建项目根目录 `.venv`；
-- 项目中的 `python`、`python3` 自动解析为 `.venv` 解释器，`pinset exec -- <命令>` 还可运行 `.venv/bin` 或 `.venv/Scripts` 下的项目脚本；
+- 全局及项目中的 `python`、`python3`、`pip`、`pip3` 自动解析为同一个选中解释器；`pip`/`pip3` 统一执行 `python -m pip`，项目中指向 `.venv`；
+- `pinset exec -- <命令>` 还可运行 `.venv/bin` 或 `.venv/Scripts` 下的其他项目脚本；
 - 受管 Python 进程设置 `VIRTUAL_ENV` 并移除 `PYTHONHOME`，不要求执行虚拟环境激活脚本；
 - `.venv/.pinset-venv.toml` 记录 schema、精确发行版和目标；无标记、标记不匹配、符号链接或损坏环境都拒绝接管；
 - `pinset venv create` 只创建或验证，`status` 只读，`recreate` 才能在所有权验证后删除并重建；
 - 不解析 Python 包依赖、不决定包安装策略、不管理全局包，也不读取其他管理器的声明。
+
+## 6.5 Eclipse Temurin JDK Provider
+
+Java Provider 支持 `latest`/`current`、`lts`、Feature 主版本、主次前缀、Update 版本和包含 `+build` 的精确版本，并通过 `pinset list java --available` 显示完整锁定身份。
+
+- 官方元数据来自 Adoptium API v3 的 available releases 与 GA assets；
+- 只接受 Eclipse Temurin、JDK、HotSpot、normal heap、GA、project=jdk 的四平台归档，不接受安装器包；
+- Java 使用专用版本模型，`+build` 参与身份和排序；锁文件中的规范版本形如 `21.0.8+9`；
+- schema 2 Provider metadata 记录 distribution、vendor、image type、JVM implementation、heap size、release type、Feature、release name、OpenJDK version 和逐平台签名链接；
+- 每个工件锁定最终 GitHub Release URL、包名、归档格式和 Adoptium SHA-256；签名链接进入锁文件，但在完成密钥治理前不调用系统 `gpg`；
+- macOS 解压后以 `Contents/Home` 为 `JAVA_HOME`，Windows/Linux 以安装根目录为 `JAVA_HOME`；命令 PATH 始终来自同一个 JDK；
+- `CLASSPATH`、`JAVA_TOOL_OPTIONS`、`JDK_JAVA_OPTIONS`、`_JAVA_OPTIONS` 保留用户值，`doctor` 在选择 Java 时报告其潜在影响；
+- 不修改 shell profile、系统环境、Gradle/Maven toolchain 或 `cacerts`，不接管系统 JDK 和外部管理器状态。
 
 ## 7. 安全和供应链
 
@@ -424,6 +450,7 @@ CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `c
 - Go 使用官方下载 JSON 中逐工件提供的 SHA-256；锁文件中的规范 URL、目标和归档格式必须与内置 Go Provider 一致。
 - Flutter 使用官方 release JSON 中逐工件提供的 SHA-256；三个平台索引必须对 Flutter 版本、Dart 版本和 release hash 达成一致。
 - Python 使用官方版本注册表中的逐工件 SHA-256，并校验平台、variant、归档格式和规范 GitHub Release 身份。
+- Java 使用 Adoptium API 逐工件 SHA-256，严格校验 Temurin GitHub Release 仓库、Feature、目标平台、包名和签名链接身份。
 
 ### 7.2 Pinset Release
 
@@ -472,7 +499,7 @@ CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `c
 - shim 轻依赖检查；
 - `git diff --check`。
 
-开发机运行测试时必须使用临时 `PINSET_HOME`、临时项目和临时 shim 目录，不得写入真实用户状态。单平台本地通过不能替代 GitHub Actions 三平台结果。
+本项目不在维护者本机或 WSL 运行构建、测试、Pinset 或运行时安装；所有格式、Clippy、测试、构建和运行时验收均在 GitHub Actions 隔离 Runner 执行。单平台结果不能替代三平台结果。
 
 ### 9.2 Release 检查
 
@@ -480,12 +507,13 @@ CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `c
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go 和 Python；
+- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go、Python 和一个 Temurin JDK；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3，以及项目环境脚本；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3/pip/pip3/java/javac，以及项目环境脚本；
 - 验证 PATH 直接调用的全部 Provider 命令；
 - 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
 - 验证 Python 项目 `.venv` 自动创建、无激活路由、所有权拒绝和显式重建；
+- 编译并运行最小 Java 程序，验证 `java.home`、`JAVA_HOME`、项目选择来源和已安装 JDK 重用；
 - 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由和原地变更拦截；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
@@ -503,4 +531,4 @@ CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `c
 - 完成发布回滚、撤回和安全公告流程；
 - 完成 Flutter/Dart 的发布后隔离虚拟机真实运行时验收。
 
-后续按 Java、Rust 的顺序扩展。新 Provider 必须保持 Pinset 独立安装与状态边界，复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+后续按 Rust 的顺序扩展。新 Provider 必须保持 Pinset 独立安装与状态边界，复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

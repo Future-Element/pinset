@@ -788,6 +788,10 @@ impl Catalog {
                     "provider-route-conflict" => "目标目录存在外部同名命令",
                     "provider-route-missing" => "Provider 命令路由缺失",
                     "go-toolchain-override" => "显式 GOTOOLCHAIN 可能绕过 Pinset 锁定",
+                    "java-classpath-override" => "CLASSPATH 可能影响 Java 类路径解析",
+                    "java-tool-options-override" => "JAVA_TOOL_OPTIONS 会自动传入 JVM",
+                    "jdk-java-options-override" => "JDK_JAVA_OPTIONS 会自动传入 java 启动器",
+                    "java-legacy-options-override" => "_JAVA_OPTIONS 可能被 JVM 自动读取",
                     _ => code,
                 };
                 format!(

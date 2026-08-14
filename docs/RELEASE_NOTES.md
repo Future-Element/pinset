@@ -1,5 +1,19 @@
 # Pinset Release Notes
 
+## v0.6.0
+
+- 发布日期：`2026-08-14`
+- GitHub Release：[v0.6.0](https://github.com/Future-Element/pinset/releases/tag/v0.6.0)
+- 阶段：Eclipse Temurin JDK Provider；
+- 修复 v0.5.0 Python Provider 只注册 `python`/`python3`、导致全局和直接调用缺少 `pip` 的问题；新增 `pip`/`pip3` shim，并统一通过所选解释器执行 `python -m pip`；
+- 新增 `pinset list java --available`、`global`、`use`、`install`、`current`、`which`、`exec`、shim 和卸载生命周期；
+- 首期只接受 Eclipse Temurin、JDK、HotSpot、normal heap、GA 正式版本，支持 `latest`/`current`、`lts`、Feature、Update 和精确 `+build` 选择器；
+- 使用 Adoptium API v3 锁定 Windows x64、Linux x64、macOS x64/arm64 的最终 GitHub Release 归档、SHA-256、release identity 和签名链接；
+- 路由 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`，受管子进程获得匹配 JDK 的 `JAVA_HOME`，macOS 正确使用 `Contents/Home`；
+- 保持锁文件 schema 2，通过 Provider metadata 明确记录分发、vendor、JDK/JRE、JVM、GA/EA 等身份，不要求旧锁文件迁移；
+- 保留用户的 Java 相关环境选项并由 `doctor` 提示其影响，不修改 shell profile、系统 JDK、项目 toolchain 或 `cacerts`；
+- Quality 使用小型夹具和假归档；workflow dispatch 与 Release 在 Linux、Windows、macOS 虚拟机下载一个真实 Temurin JDK，编译并运行最小 Java 程序。Flutter SDK 仍不进入 GitHub Actions 真实下载。
+
 ## v0.5.0
 
 - 发布日期：`2026-08-14`

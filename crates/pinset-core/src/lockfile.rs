@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ArtifactIntegrity, Error, FLUTTER_TARGETS, FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat,
-    NodeArchiveFormat, PYTHON_TARGETS, PYTHON_VARIANT, Result, SourceConfig,
-    parse_python_distribution, plan_flutter_artifact, plan_go_artifact, plan_node_artifact,
-    plan_python_artifact,
+    JAVA_TARGETS, JavaArchiveFormat, JavaVersion, NodeArchiveFormat, PYTHON_TARGETS,
+    PYTHON_VARIANT, Result, SourceConfig, parse_python_distribution, plan_flutter_artifact,
+    plan_go_artifact, plan_java_artifact, plan_node_artifact, plan_python_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -305,6 +305,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             | ("bun", "bun-npm")
             | ("go", "go-official")
             | ("flutter", "flutter-official")
+            | ("java", "adoptium-temurin")
             | ("python", "python-build-standalone")
     );
     if !provider_supported {
@@ -323,7 +324,11 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             ),
         });
     }
-    if tool.name != "flutter" && tool.name != "python" && !tool.metadata.is_empty() {
+    if tool.name != "flutter"
+        && tool.name != "java"
+        && tool.name != "python"
+        && !tool.metadata.is_empty()
+    {
         return Err(Error::InvalidLockfile {
             reason: format!("{} lock cannot contain provider metadata", tool.name),
         });
@@ -339,6 +344,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             "node" => validate_locked_node_artifact(&tool.version, artifact)?,
             "go" => validate_locked_go_artifact(&tool.version, artifact)?,
             "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
+            "java" => validate_locked_java_artifact(tool, artifact)?,
             "python" => validate_locked_python_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
@@ -391,6 +397,20 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         if targets.len() != PYTHON_TARGETS.len() {
             return Err(Error::InvalidLockfile {
                 reason: "Python lock contains an unsupported artifact target".to_owned(),
+            });
+        }
+    } else if tool.name == "java" {
+        validate_java_metadata(tool)?;
+        for target in JAVA_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Java artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != JAVA_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: "Java lock contains an unsupported artifact target".to_owned(),
             });
         }
     } else {
@@ -450,6 +470,48 @@ fn validate_python_metadata(tool: &LockedTool) -> Result<()> {
     if tool.metadata != expected {
         return Err(Error::InvalidLockfile {
             reason: "Python lock metadata must identify the exact CPython version, standalone build and install_only variant"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_java_metadata(tool: &LockedTool) -> Result<()> {
+    let version = JavaVersion::parse(&tool.version)?;
+    let release_name = tool
+        .metadata
+        .get("release_name")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Java lock metadata has no release name".to_owned(),
+        })?;
+    let openjdk_version = tool
+        .metadata
+        .get("openjdk_version")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Java lock metadata has no OpenJDK version".to_owned(),
+        })?;
+    let mut expected = BTreeMap::from([
+        ("distribution".to_owned(), "eclipse-temurin".to_owned()),
+        ("vendor".to_owned(), "eclipse".to_owned()),
+        ("image_type".to_owned(), "jdk".to_owned()),
+        ("jvm_impl".to_owned(), "hotspot".to_owned()),
+        ("heap_size".to_owned(), "normal".to_owned()),
+        ("release_type".to_owned(), "ga".to_owned()),
+        ("feature_version".to_owned(), version.feature().to_string()),
+        ("release_name".to_owned(), release_name.clone()),
+        ("openjdk_version".to_owned(), openjdk_version.clone()),
+    ]);
+    for artifact in &tool.artifacts {
+        expected.insert(
+            format!("signature_link.{}", artifact.target),
+            format!("{}.sig", artifact.canonical_url),
+        );
+    }
+    if tool.metadata != expected {
+        return Err(Error::InvalidLockfile {
+            reason: "Java lock metadata must identify one Eclipse Temurin GA JDK/HotSpot release and each archive signature"
                 .to_owned(),
         });
     }
@@ -619,6 +681,62 @@ fn validate_locked_python_artifact(version: &str, artifact: &LockedArtifact) -> 
                 "Python artifact {} cannot contain overlays",
                 artifact.target
             ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_java_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
+    let release_name = tool
+        .metadata
+        .get("release_name")
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Java lock metadata has no release_name".to_owned(),
+        })?;
+    let package_name = artifact
+        .canonical_url
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: format!("Java artifact {} has no package name", artifact.target),
+        })?;
+    let plan = plan_java_artifact(
+        &tool.version,
+        release_name,
+        &artifact.target,
+        package_name,
+        &artifact.canonical_url,
+    )?;
+    let expected_format = match plan.format {
+        JavaArchiveFormat::Zip => LockedArtifactFormat::Zip,
+        JavaArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+    };
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != expected_format
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Eclipse Temurin provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid Java SHA-256 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "adoptium-api-sha256" {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported Java verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("Java artifact {} cannot contain overlays", artifact.target),
         });
     }
     Ok(())
@@ -964,6 +1082,59 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_temurin_metadata_signatures_and_required_targets() {
+        let version = "21.0.8+9";
+        let release_name = "jdk-21.0.8+9";
+        let artifacts = JAVA_TARGETS
+            .into_iter()
+            .map(|target| locked_java_artifact(version, release_name, target))
+            .collect::<Vec<_>>();
+        let mut metadata = BTreeMap::from([
+            ("distribution".to_owned(), "eclipse-temurin".to_owned()),
+            ("vendor".to_owned(), "eclipse".to_owned()),
+            ("image_type".to_owned(), "jdk".to_owned()),
+            ("jvm_impl".to_owned(), "hotspot".to_owned()),
+            ("heap_size".to_owned(), "normal".to_owned()),
+            ("release_type".to_owned(), "ga".to_owned()),
+            ("feature_version".to_owned(), "21".to_owned()),
+            ("release_name".to_owned(), release_name.to_owned()),
+            ("openjdk_version".to_owned(), "21.0.8+9-LTS".to_owned()),
+        ]);
+        for artifact in &artifacts {
+            metadata.insert(
+                format!("signature_link.{}", artifact.target),
+                format!("{}.sig", artifact.canonical_url),
+            );
+        }
+        let tool = LockedTool {
+            name: "java".to_owned(),
+            requested: version.to_owned(),
+            version: version.to_owned(),
+            provider: "adoptium-temurin".to_owned(),
+            metadata,
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect("Java lock");
+
+        let mut invalid_signature = tool.clone();
+        invalid_signature.metadata.insert(
+            "signature_link.linux-x86_64".to_owned(),
+            "https://example.invalid/jdk.sig".to_owned(),
+        );
+        assert!(matches!(
+            validate_locked_tool(&invalid_signature),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut incomplete = tool;
+        incomplete.artifacts = artifacts.into_iter().skip(1).collect();
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -1042,6 +1213,38 @@ mod tests {
             format: LockedArtifactFormat::TarGz,
             archive_root: plan.archive_root,
             verification: "python-build-standalone-versions-sha256".to_owned(),
+            overlays: Vec::new(),
+        }
+    }
+
+    fn locked_java_artifact(version: &str, release_name: &str, target: &str) -> LockedArtifact {
+        let (os, arch, extension) = match target {
+            "windows-x86_64" => ("windows", "x64", "zip"),
+            "linux-x86_64" => ("linux", "x64", "tar.gz"),
+            "macos-x86_64" => ("mac", "x64", "tar.gz"),
+            "macos-aarch64" => ("mac", "aarch64", "tar.gz"),
+            _ => unreachable!("known Java target"),
+        };
+        let package = format!("OpenJDK21U-jdk_{arch}_{os}_hotspot_21.0.8_9.{extension}");
+        let canonical_url = format!(
+            "https://github.com/adoptium/temurin21-binaries/releases/download/{}/{}",
+            release_name.replace('+', "%2B"),
+            package,
+        );
+        let plan = plan_java_artifact(version, release_name, target, &package, &canonical_url)
+            .expect("Java plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: "ab".repeat(32),
+            integrity: None,
+            format: match plan.format {
+                JavaArchiveFormat::Zip => LockedArtifactFormat::Zip,
+                JavaArchiveFormat::TarGz => LockedArtifactFormat::TarGz,
+            },
+            archive_root: plan.archive_root,
+            verification: "adoptium-api-sha256".to_owned(),
             overlays: Vec::new(),
         }
     }

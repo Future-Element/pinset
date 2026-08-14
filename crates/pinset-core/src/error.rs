@@ -419,6 +419,52 @@ pub enum Error {
     #[error("invalid Python release metadata: {reason}")]
     InvalidPythonIndex { reason: String },
 
+    #[cfg(feature = "java-provider")]
+    #[error("invalid exact Java version \"{version}\"; expected x.y.z+build")]
+    InvalidJavaVersion { version: String },
+
+    #[cfg(feature = "java-provider")]
+    #[error("unsupported Java target \"{target}\"")]
+    UnsupportedJavaTarget { target: String },
+
+    #[cfg(feature = "java-provider")]
+    #[error("invalid Eclipse Temurin artifact identity: {reason}")]
+    InvalidJavaArtifact { reason: String },
+
+    #[cfg(feature = "java-metadata")]
+    #[error(
+        "invalid Java selector \"{selector}\"; expected a feature, feature/minor prefix, update, exact build, lts, latest or current"
+    )]
+    InvalidJavaSelector { selector: String },
+
+    #[cfg(feature = "java-metadata")]
+    #[error("Adoptium metadata contains no supported Temurin JDK matching \"{selector}\"")]
+    JavaSelectorNotFound { selector: String },
+
+    #[cfg(feature = "java-metadata")]
+    #[error("failed to request Adoptium metadata {url}: {source}")]
+    JavaMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "java-metadata")]
+    #[error("failed while reading Adoptium metadata {url}: {source}")]
+    JavaMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "java-metadata")]
+    #[error("Adoptium metadata exceeds {limit} bytes")]
+    JavaMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "java-metadata")]
+    #[error("invalid Adoptium metadata: {reason}")]
+    InvalidJavaIndex { reason: String },
+
     #[error("project Python environment {path} is not owned by Pinset")]
     PythonEnvironmentNotOwned { path: PathBuf },
 

@@ -135,7 +135,7 @@ pub fn project_python_command_candidates(
     environment: &ProjectPythonEnvironment,
     command: &str,
 ) -> Vec<PathBuf> {
-    if matches!(command, "python" | "python3") {
+    if matches!(command, "python" | "python3" | "pip" | "pip3") {
         return vec![environment.python.clone()];
     }
     executable_candidates(&environment.command_directory, command)

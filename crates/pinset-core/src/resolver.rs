@@ -495,6 +495,10 @@ pub fn runtime_environment_for_install(
             }
             variables
         }
+        Some(RuntimeEnvironmentKind::Java) => vec![RuntimeEnvironmentVariable {
+            name: "JAVA_HOME",
+            value: java_home_for_install(install_dir).into_os_string(),
+        }],
         Some(RuntimeEnvironmentKind::Python | RuntimeEnvironmentKind::None) | None => Vec::new(),
     }
 }
@@ -530,7 +534,16 @@ pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
         }
         Some(RuntimeCommandLayout::Python) if cfg!(windows) => install_dir.to_path_buf(),
         Some(RuntimeCommandLayout::Python) => install_dir.join("bin"),
+        Some(RuntimeCommandLayout::Java) => java_home_for_install(install_dir).join("bin"),
         Some(RuntimeCommandLayout::Root) | None => install_dir.to_path_buf(),
+    }
+}
+
+pub fn java_home_for_install(install_dir: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        install_dir.join("Contents").join("Home")
+    } else {
+        install_dir.to_path_buf()
     }
 }
 
@@ -539,6 +552,10 @@ pub fn runtime_command_candidates(tool: &str, command: &str, install_dir: &Path)
     if tool != "python" {
         return executable_candidates(&directory, command);
     }
+    let command = match command {
+        "pip" | "pip3" => "python",
+        command => command,
+    };
     if cfg!(windows) {
         return executable_candidates(&directory, "python");
     }
@@ -548,6 +565,20 @@ pub fn runtime_command_candidates(tool: &str, command: &str, install_dir: &Path)
         ["python", "python3"]
     };
     names.into_iter().map(|name| directory.join(name)).collect()
+}
+
+pub fn managed_runtime_arguments(
+    tool: &str,
+    command: &str,
+    arguments: &[OsString],
+) -> Vec<OsString> {
+    let mut resolved = Vec::with_capacity(arguments.len() + 2);
+    if tool == "python" && matches!(command, "pip" | "pip3") {
+        resolved.push(OsString::from("-m"));
+        resolved.push(OsString::from("pip"));
+    }
+    resolved.extend_from_slice(arguments);
+    resolved
 }
 
 #[cfg(test)]
@@ -641,6 +672,49 @@ mod tests {
         assert_eq!(resolution.source, SelectionSource::Project);
         assert_eq!(resolution.executable, executable);
         assert_eq!(resolution.selection_path, Some(project.join("pinset.toml")));
+    }
+
+    #[test]
+    fn derives_java_home_and_command_directory_from_the_platform_layout() {
+        let install = PathBuf::from("pinset-java");
+        let expected_home = if cfg!(target_os = "macos") {
+            install.join("Contents/Home")
+        } else {
+            install.clone()
+        };
+        assert_eq!(java_home_for_install(&install), expected_home);
+        assert_eq!(
+            runtime_command_directory("java", &install),
+            expected_home.join("bin")
+        );
+        assert_eq!(
+            runtime_environment_for_install("java", &install),
+            [RuntimeEnvironmentVariable {
+                name: "JAVA_HOME",
+                value: expected_home.into_os_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn routes_pip_through_the_selected_python_module() {
+        let install = PathBuf::from("pinset-python");
+        assert_eq!(
+            runtime_command_candidates("python", "pip", &install),
+            runtime_command_candidates("python", "python", &install)
+        );
+        assert_eq!(
+            managed_runtime_arguments(
+                "python",
+                "pip3",
+                &[OsString::from("install"), OsString::from("ruff")]
+            ),
+            ["-m", "pip", "install", "ruff"].map(OsString::from)
+        );
+        assert_eq!(
+            managed_runtime_arguments("python", "python", &[OsString::from("--version")]),
+            [OsString::from("--version")]
+        );
     }
 
     #[test]
