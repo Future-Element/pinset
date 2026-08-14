@@ -775,13 +775,7 @@ impl Installer {
             {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
-            let Some(relative) = strip_entry_path(
-                &archived_path,
-                strip_components,
-                entry.is_dir(),
-                &entry_name,
-            )?
-            else {
+            let Some(relative) = strip_entry_path(&archived_path, strip_components) else {
                 continue;
             };
             let collision_key = archive_collision_key(&relative);
@@ -952,9 +946,7 @@ impl Installer {
             {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
-            let Some(relative) =
-                strip_entry_path(&archived_path, strip_components, is_directory, &entry_name)?
-            else {
+            let Some(relative) = strip_entry_path(&archived_path, strip_components) else {
                 continue;
             };
             if !include_prefixes.is_empty()
@@ -1281,27 +1273,17 @@ fn validate_artifact_request(artifact: &ArtifactSpec, strip_components: usize) -
     Ok(())
 }
 
-fn strip_entry_path(
-    path: &Path,
-    strip_components: usize,
-    is_directory: bool,
-    entry_name: &str,
-) -> Result<Option<PathBuf>> {
+fn strip_entry_path(path: &Path, strip_components: usize) -> Option<PathBuf> {
     let components = path.components().collect::<Vec<_>>();
-    if components.len() <= strip_components && !is_directory {
-        return Err(Error::UnsafeArchiveEntry {
-            entry: entry_name.to_owned(),
-        });
-    }
     if components.len() <= strip_components {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(
+    Some(
         components
             .into_iter()
             .skip(strip_components)
             .collect::<PathBuf>(),
-    ))
+    )
 }
 
 fn resolve_archive_symlink(link_path: &Path, target: &Path) -> Option<PathBuf> {
@@ -2348,6 +2330,16 @@ mod tests {
                 .append(&header, io::empty())
                 .expect("directory entry");
         }
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path("rust-1.97.1-x86_64-unknown-linux-gnu/LICENSE-APACHE")
+            .expect("license path");
+        header.set_size(b"fake license".len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(b"fake license"))
+            .expect("license entry");
         for (path, content) in [
             (
                 "rust-1.97.1-x86_64-unknown-linux-gnu/rustc/bin/rustc",
