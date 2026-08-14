@@ -19,7 +19,9 @@ fn resolves_lists_and_executes_a_managed_flutter_sdk_with_its_bundled_dart() {
     .expect("config");
 
     let install_dir = home
-        .join("installs/flutter/3.47.0")
+        .join("installs")
+        .join("flutter")
+        .join("3.47.0")
         .join(pinset_core::current_target_for_tool("flutter"));
     let bin_dir = install_dir.join("bin");
     fs::create_dir_all(&bin_dir).expect("Flutter bin");
@@ -86,20 +88,14 @@ fn resolves_lists_and_executes_a_managed_flutter_sdk_with_its_bundled_dart() {
 }
 
 #[test]
-fn previews_an_fvm_project_without_changing_it() {
+fn does_not_expose_an_external_manager_import_command() {
     let root = tempdir().expect("root");
     let project = root.path().join("project");
     let home = root.path().join("home");
     fs::create_dir(&project).expect("project");
-    fs::write(
-        project.join(".fvmrc"),
-        "{\n  \"flutter\": \"3.47.0\",\n  \"flavors\": {}\n}\n",
-    )
-    .expect("FVM config");
-
-    let preview = pinset(&project, &home, &["import", "--dry-run"]);
-    assert_success_contains(&preview, "detected fvm flutter=3.47.0");
-    assert_success_contains(&preview, "action=none");
+    let output = pinset(&project, &home, &["import", "--dry-run"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand 'import'"));
     assert!(!project.join("pinset.toml").exists());
     assert!(!project.join("pinset.lock").exists());
     assert!(!home.exists());

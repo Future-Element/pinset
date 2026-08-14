@@ -18,7 +18,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 2. `v0.4.0`：Flutter SDK，同时管理其内置 Dart。
 3. `v0.5.0`：CPython。
 4. `v0.6.0`：Java，首期仅支持 Eclipse Temurin JDK。
-5. `v0.7.0`：Rust，通过 rustup 委托管理工具链。
+5. `v0.7.0`：Rust 原生 Provider，具体分发来源另行评估。
 
 各版本暂不承诺日期。GitHub Actions 负责三平台构建、质量检查和体积适合自动化的真实运行时验收；Flutter SDK 等超大工件保留完整验收脚本，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
 
@@ -39,9 +39,9 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.4.0` | 已发布 | Flutter SDK Provider、内置 Dart 路由 |
 | `v0.4.1` | 已发布 | macOS liblzma 静态链接与发布依赖门禁 |
 | `v0.4.2` | 已发布 | 大型运行时下载自动重试与断点续传 |
-| `v0.5.0` | 规划中 | CPython Provider |
+| `v0.5.0` | 开发中 | CPython Provider、项目 `.venv` 与无激活路由 |
 | `v0.6.0` | 规划中 | Eclipse Temurin JDK Provider |
-| `v0.7.0` | 规划中 | rustup 委托式 Rust Provider |
+| `v0.7.0` | 规划中 | 原生 Rust Provider |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
 
@@ -83,7 +83,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 ### 目标
 
 - 管理 Flutter SDK，并将其捆绑的 Dart 视为同一个不可拆分的运行时单元。
-- 支持 `pinset list flutter --available`、`use`、`global`、项目锁定和导入现有项目版本声明。
+- 支持 `pinset list flutter --available`、`use`、`global` 和项目锁定。
 - 路由 `flutter`、`dart`，并确保两者始终来自同一套 Flutter SDK。
 - 首期支持 stable 渠道、精确版本、主版本和主次版本选择器。
 
@@ -91,7 +91,6 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 
 - 锁文件记录 Flutter 版本、渠道、Dart 版本、平台工件和校验信息。
 - 处理 Flutter SDK 的 `bin/cache` 初始化与复用，避免只复制命令入口而遗漏实际运行依赖。
-- 识别并导入 `.fvmrc`，但不接管 FVM 的缓存和目录。
 - 阻止受管 SDK 通过 `flutter upgrade`、`flutter channel`、`flutter downgrade` 原地改变版本；版本变化必须通过 Pinset 重新解析和安装。
 
 ### 不包含
@@ -109,30 +108,37 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 
 ## v0.5.0 — CPython Provider
 
+实现状态：核心 Provider、官方元数据、锁文件、安装、项目 `.venv`、shim/`exec` 自动路由和 Windows 真实运行时验收已完成；三平台 CI 验收仍待工作流运行。
+
 ### 目标
 
 - 首期只管理 CPython 解释器，不扩展到 PyPy、GraalPy 等实现。
-- 支持 `pinset list python --available`、`use`、`global`、项目锁定和 `.python-version` 导入。
-- 路由 `python`、`python3` 以及安装包明确提供的基础命令。
+- 支持 `pinset list python --available`、`use`、`global` 和项目锁定。
+- 项目选择 Python 时创建项目根目录 `.venv`，路由 `python`、`python3`，无需手动激活虚拟环境。
+- 支持 `pinset exec -- <项目环境命令>` 运行 `.venv` 中的脚本，例如 `pip`、`pytest`。
 
 ### 技术范围
 
 - 以 Astral `python-build-standalone` 作为跨平台预构建分发来源。
 - 锁文件除 Python 版本外，还记录构建 ID、发行变体、来源和校验值，避免同一 CPython 版本对应不同构建却无法复现。
-- 明确区分解释器安装与项目虚拟环境；用户仍可使用 Python 自身能力创建虚拟环境，但 Pinset 不负责创建、激活或同步虚拟环境。
+- 全局解释器安装与项目 `.venv` 分离；项目环境由锁定解释器通过标准库 `venv` 创建。
+- `.venv` 写入 Pinset 所有权标记；缺少标记、版本不匹配、符号链接或损坏环境均拒绝接管。
+- `pinset venv create/status/recreate` 提供显式生命周期；只有 `recreate` 可以在验证所有权后删除并重建环境。
+- Pinset 只读取自己的 `pinset.toml` 和 `pinset.lock`，不识别或导入其他运行时管理器的声明。
 
 ### 不包含
 
-- pip、uv、Poetry、PDM、Conda 等依赖或环境管理器。
-- Python 包依赖解析、虚拟环境生命周期和项目依赖锁定。
+- Python 包依赖解析、项目依赖锁定、包安装策略或全局包管理。
+- 非 Pinset 创建的虚拟环境接管，以及其他运行时管理器的配置迁移。
 - 从源码编译 CPython 或管理系统级 C/C++ 构建依赖。
 
 ### 验收条件
 
 - 三平台虚拟机可安装并运行锁定版本的解释器。
-- `.python-version` 可以安全导入，无法映射的声明会明确报错而不是猜测。
 - 全局版本、项目版本、离线缓存和损坏工件场景均被覆盖。
 - 锁文件能精确区分 Python 版本相同但构建不同的工件。
+- 项目 `python`/`python3` 与 `pinset exec -- pip` 均自动指向 `.venv`，进程获得 `VIRTUAL_ENV` 且不继承 `PYTHONHOME`。
+- 未标记 `.venv` 不会被采用或删除，普通 `venv create` 不重建现有环境，`venv recreate` 才执行受保护的重建。
 
 ## v0.6.0 — Java Provider
 
@@ -161,31 +167,22 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - LTS、最新 GA、精确版本和主版本选择器行为稳定。
 - 旧 schema 项目继续可用，新 schema 的厂商和包类型没有歧义。
 
-## v0.7.0 — rustup 委托式 Rust Provider
+## v0.7.0 — 原生 Rust Provider
 
 ### 目标
 
-- 不重复实现 rustup 已成熟的工具链、组件、target 和代理命令管理。
-- Pinset 负责项目声明、选择器解析、锁定意图、环境接入和诊断；rustup 负责实际工具链下载、安装和组件维护。
-- 支持识别和导入 `rust-toolchain.toml`，并为未安装工具链提供明确操作提示。
-
-### Provider 模型
-
-- `NativeProvider`：Pinset 直接解析、下载、校验、安装并路由运行时；Node.js、pnpm、Bun、Go、Flutter、Python、Java 属于此类。
-- `DelegatedProvider`：Pinset 管理声明和诊断，将安装与组件生命周期委托给官方管理器；Rust/rustup 首先采用此类。
+- 保持 Pinset 独立边界，由 Pinset 自己完成项目声明、版本锁定、下载、校验、安装、路由和诊断。
+- 具体官方分发、组件粒度与 target 支持在进入开发前单独立项，不预先承诺兼容外部管理器状态。
 
 ### 不包含
 
-- 自行下载和解压 Rust toolchain。
-- 重做 rustup 的 component、target、profile 和 update 机制。
+- 导入、复用或修改其他 Rust 工具链管理器的配置与安装目录。
 - Cargo 包依赖、crate 发布或项目构建管理。
 
 ### 验收条件
 
-- 在已安装 rustup 的三平台虚拟机中，Pinset 能正确识别、锁定并激活项目工具链。
-- 缺少 rustup、缺少工具链、组件不完整和声明冲突均有可诊断错误。
-- `rust-toolchain.toml` 与 Pinset 配置冲突时，不静默选择其中一方。
-- Rust 接入不会改变 Native Provider 的下载和安装语义。
+- 三平台虚拟机中可由 Pinset 独立安装、锁定并路由项目工具链。
+- Rust 接入不会改变其他 Native Provider 的下载和安装语义。
 
 ## Provider 架构约束
 
@@ -203,14 +200,14 @@ Provider 特有逻辑应留在 Provider 内，核心层只处理公共生命周�
 
 ## 验证边界
 
-Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解析结果，因此开发机和 WSL 不作为本项目的运行验证环境。
+Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解析结果，因此本机运行验收必须使用独立的临时 `PINSET_HOME`、项目目录和 shim 目录。
 
-- 本地只进行代码和文档编辑、只读检查，以及 `git diff --check` 这类不执行项目代码的静态差异检查。
-- 不在本机或 WSL 执行 Cargo build/test、Pinset 安装命令、运行时下载、全局切换或项目切换测试。
+- 本地可执行格式化、Clippy、测试和隔离运行时验收，但不得写入真实 Pinset 状态或用户项目。
+- 临时验收完成后清理明确验证过的测试目录；无法清理时必须报告残留位置。
 - Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行格式、Clippy、单元测试和脚本测试。
 - Provider 变更在合并和发布前必须通过 Ubuntu、Windows、macOS 三平台构建和 Quality 检查；体积适合的运行时继续执行三平台真实验收。
 - Flutter SDK 等超大工件不在 GitHub Actions 下载；发布后使用保留的完整验收脚本在隔离虚拟机验证，发现问题后通过补丁版本修复。
-- 本地静态检查不等同于运行验证，最终结论以 GitHub Actions 记录和虚拟机人工验收为准。
+- 单平台本地通过不等于三平台通过，最终结论以 GitHub Actions 记录和各目标平台验收为准。
 
 ## 发布流程
 
@@ -240,6 +237,6 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 | Flutter SDK 会原地更新并维护可变 cache | 将 SDK 和 cache 生命周期显式建模，阻止受管安装原地切换版本 |
 | Python 第三方预构建工件无法只靠语言版本复现 | 锁定 build ID、variant、来源和校验值 |
 | Java 厂商、JDK/JRE 和 JVM 类型产生歧义 | 首期仅 Temurin JDK/HotSpot/GA，并在新 schema 中显式记录分发属性 |
-| Rust 与 rustup 重复管理造成命令和状态冲突 | 使用 Delegated Provider，不重做 rustup 的安装与组件能力 |
-| 本地运行验证污染用户开发环境 | 开发机只做静态检查；真实安装使用 GitHub Actions 或用户隔离虚拟机 |
+| Rust 组件与 target 范围过大 | 开发前单独冻结原生分发来源和最小组件边界，不接管其他管理器状态 |
+| 本地运行验证污染用户开发环境 | 使用临时 `PINSET_HOME`、临时项目和临时 shim 目录隔离验收 |
 | 超大 SDK 持续占用托管 Runner | Actions 不下载 Flutter 等超大工件；保留完整脚本供发布后虚拟机验收 |

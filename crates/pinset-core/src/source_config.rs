@@ -201,6 +201,13 @@ impl SourceConfig {
                 reason: "trusted metadata sources must use HTTPS".to_owned(),
             });
         }
+        if trust_metadata && provider == "python" {
+            return Err(Error::InvalidSourceBaseUrl {
+                url: base_url.to_owned(),
+                reason: "Python release metadata is fixed to Pinset's official registry; custom sources can mirror locked archives only"
+                    .to_owned(),
+            });
+        }
         let configured = self.providers.entry(provider.to_owned()).or_default();
         if configured.sources.contains_key(alias) {
             return Err(Error::SourceAlreadyExists {
@@ -405,6 +412,13 @@ fn validate_loaded_config(config: &mut SourceConfig) -> Result<()> {
                 return Err(Error::InvalidSourceBaseUrl {
                     url: source.base_url.clone(),
                     reason: "trusted metadata sources must use HTTPS".to_owned(),
+                });
+            }
+            if source.trust_metadata && provider == "python" {
+                return Err(Error::InvalidSourceBaseUrl {
+                    url: source.base_url.clone(),
+                    reason: "Python release metadata is fixed to Pinset's official registry; custom sources can mirror locked archives only"
+                        .to_owned(),
                 });
             }
         }
@@ -841,6 +855,18 @@ mod tests {
         let mut insecure = SourceConfig::default();
         assert!(matches!(
             insecure.add("node", "lan", "http://127.0.0.1:8080/node/", true, true,),
+            Err(Error::InvalidSourceBaseUrl { .. })
+        ));
+
+        let mut python = SourceConfig::default();
+        assert!(matches!(
+            python.add(
+                "python",
+                "trusted",
+                "https://mirror.example/python/",
+                false,
+                true,
+            ),
             Err(Error::InvalidSourceBaseUrl { .. })
         ));
     }

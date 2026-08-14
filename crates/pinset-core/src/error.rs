@@ -19,7 +19,7 @@ pub enum Error {
         source: toml::de::Error,
     },
 
-    #[error("unsupported pinset.toml schema {actual}; this spike supports schema 1")]
+    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1 and 2")]
     UnsupportedSchema { actual: u32 },
 
     #[error("global config does not exist: {path}")]
@@ -122,7 +122,7 @@ pub enum Error {
     },
 
     #[cfg(feature = "lockfile")]
-    #[error("unsupported pinset.lock schema {actual}; this version supports schema 1")]
+    #[error("unsupported pinset.lock schema {actual}; this version supports schemas 1 and 2")]
     UnsupportedLockfileSchema { actual: u32 },
 
     #[cfg(feature = "lockfile")]
@@ -229,6 +229,9 @@ pub enum Error {
         "unsupported source provider \"{provider}\"; expected one of: node, go, python, flutter"
     )]
     UnsupportedSourceProvider { provider: String },
+
+    #[error("unsupported runtime provider \"{provider}\"")]
+    UnsupportedRuntimeProvider { provider: String },
 
     #[cfg(feature = "sources")]
     #[error("invalid source alias \"{alias}\"; use lowercase letters, digits, '.', '_' or '-'")]
@@ -375,6 +378,98 @@ pub enum Error {
     #[cfg(feature = "flutter-provider")]
     #[error("unsupported Flutter target \"{target}\"")]
     UnsupportedFlutterTarget { target: String },
+
+    #[cfg(feature = "python-provider")]
+    #[error("invalid exact Python distribution \"{version}\"; expected x.y.z+YYYYMMDD")]
+    InvalidPythonVersion { version: String },
+
+    #[cfg(feature = "python-provider")]
+    #[error("unsupported Python target \"{target}\"")]
+    UnsupportedPythonTarget { target: String },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("invalid Python selector \"{selector}\"")]
+    InvalidPythonSelector { selector: String },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("Python metadata contains no stable release matching \"{selector}\"")]
+    PythonSelectorNotFound { selector: String },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("failed to request Python release metadata {url}: {source}")]
+    PythonMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("failed while reading Python release metadata {url}: {source}")]
+    PythonMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("Python release metadata exceeds {limit} bytes")]
+    PythonMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "python-metadata")]
+    #[error("invalid Python release metadata: {reason}")]
+    InvalidPythonIndex { reason: String },
+
+    #[error("project Python environment {path} is not owned by Pinset")]
+    PythonEnvironmentNotOwned { path: PathBuf },
+
+    #[error(
+        "project Python environment {path} selects {actual}, but the project locks {expected}; run `pinset venv recreate`"
+    )]
+    PythonEnvironmentMismatch {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("project Python environment {path} is missing; run `pinset venv create`")]
+    PythonEnvironmentMissing { path: PathBuf },
+
+    #[error("project Python environment requires a project-level Python selection in {path}")]
+    PythonEnvironmentSelectionMissing { path: PathBuf },
+
+    #[error("failed to run the managed Python interpreter while creating {path}: {source}")]
+    PythonEnvironmentCreate {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("managed Python failed to create {path} (exit code {code})")]
+    PythonEnvironmentCreateFailed { path: PathBuf, code: i32 },
+
+    #[error("failed to remove managed Python environment {path}: {source}")]
+    RemovePythonEnvironment {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to read Python environment marker {path}: {source}")]
+    ReadPythonEnvironmentMarker {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("invalid Python environment marker {path}: {reason}")]
+    InvalidPythonEnvironmentMarker { path: PathBuf, reason: String },
+
+    #[error("failed to write Python environment marker {path}: {source}")]
+    WritePythonEnvironmentMarker {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[cfg(feature = "flutter-metadata")]
     #[error(

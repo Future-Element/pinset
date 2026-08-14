@@ -77,7 +77,7 @@ impl Catalog {
                 format!("错误：项目配置 {} 格式无效：{source}", path.display())
             }
             Error::UnsupportedSchema { actual } => {
-                format!("错误：不支持 pinset.toml schema {actual}，当前仅支持 schema 1")
+                format!("错误：不支持 pinset.toml schema {actual}，当前支持 schema 1 和 2")
             }
             Error::GlobalConfigNotFound { path } => {
                 format!("错误：全局配置不存在：{}", path.display())
@@ -141,6 +141,42 @@ impl Catalog {
             Error::InvalidNodeIndex { reason } => {
                 format!("错误：Node.js 官方版本索引无效：{reason}")
             }
+            Error::InvalidPythonVersion { version } => {
+                format!("错误：Python 精确发行版 {version:?} 无效，应为 x.y.z+YYYYMMDD")
+            }
+            Error::InvalidPythonSelector { selector } => format!(
+                "错误：Python 选择器 {selector:?} 无效，可使用 x.y.z、主版本、主次版本、latest 或 current"
+            ),
+            Error::PythonSelectorNotFound { selector } => {
+                format!(
+                    "错误：官方注册表中没有与 {selector:?} 匹配且支持全部目标平台的稳定 Python 发行版"
+                )
+            }
+            Error::InvalidPythonIndex { reason } => {
+                format!("错误：Python 官方版本注册表无效：{reason}")
+            }
+            Error::PythonEnvironmentNotOwned { path } => {
+                format!(
+                    "错误：项目虚拟环境 {} 不属于 Pinset，拒绝接管",
+                    path.display()
+                )
+            }
+            Error::PythonEnvironmentMismatch {
+                path,
+                expected,
+                actual,
+            } => format!(
+                "错误：项目虚拟环境 {} 使用 {actual}，但项目锁定 {expected}；请显式运行 `pinset venv recreate`",
+                path.display()
+            ),
+            Error::PythonEnvironmentMissing { path } => format!(
+                "错误：项目虚拟环境 {} 不存在；请运行 `pinset venv create`",
+                path.display()
+            ),
+            Error::PythonEnvironmentSelectionMissing { path } => format!(
+                "错误：{} 中没有项目级 Python 选择，无法管理虚拟环境",
+                path.display()
+            ),
             Error::NodeVersionNotInstalled { version } => {
                 format!("错误：Pinset 未安装 Node.js {version}")
             }
@@ -195,7 +231,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  unset      Clear a project or global selection\n  install    Install a locked or explicit version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  import     Preview or apply legacy manager configuration\n  shim       Repair or migrate command shims\n  activate   Enable provider command routing in a shell\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  unset      Clear a project or global selection\n  install    Install a locked or explicit version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  venv       Manage the project Python environment\n  shim       Repair or migrate command shims\n  activate   Enable provider command routing in a shell\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -210,28 +246,28 @@ impl Catalog {
         match command {
             Some("init") => "创建项目配置。\n\n用法：pinset init",
             Some("global") => {
-                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|flutter@3.47] [--no-install]"
+                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js、pnpm、Bun、Go 或 Flutter 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|flutter@3.47> [--global] [--no-install]"
+                "选择并锁定 Node.js、pnpm、Bun、Go、Python 或 Flutter 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47> [--global] [--no-install]"
             }
             Some("unset") => {
-                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|flutter> [--global] [--cwd <目录>]"
+                "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|python|flutter> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|flutter>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|flutter] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter] [--cwd <目录>]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|flutter> [--available]"
+                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|python|flutter> [--available]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|flutter>@x.y.z [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|python|flutter>@<精确版本> [--cwd <目录>] [--force]"
             }
             Some("cache") => {
                 "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"
@@ -242,8 +278,8 @@ impl Catalog {
             Some("doctor") => {
                 "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
             }
-            Some("import") => {
-                "预览或显式导入旧 Node.js/FVM 管理器配置；不会改写旧文件。\n\n用法：\n  pinset import --dry-run [--cwd <目录>]\n  pinset import --apply [--from <来源>] [--global] [--no-install] [--cwd <目录>]"
+            Some("venv") => {
+                "管理 Pinset 创建并校验归属的项目 Python .venv，无需手动激活。\n\n用法：pinset venv <create|status|recreate> [--cwd <目录>]"
             }
             Some("shim") => {
                 "查看、修复或迁移 Pinset Provider 命令路由。\n\n用法：\n  pinset shim path\n  pinset shim install [--provider <工具>] [--binary <文件>] [--dir <目录>] [命令...]\n  pinset shim migrate [--provider <工具>] [--dir <目录>]"
@@ -255,7 +291,7 @@ impl Catalog {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  unset      清除项目或全局选择\n  install    安装锁定或指定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  import     预览或应用旧管理器配置\n  shim       管理和迁移命令 shim\n  activate   为当前 Shell 启用命令路由\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  unset      清除项目或全局选择\n  install    安装锁定或指定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  venv       管理项目 Python 虚拟环境\n  shim       管理和迁移命令 shim\n  activate   为当前 Shell 启用命令路由\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -300,18 +336,19 @@ impl Catalog {
         }
     }
 
-    pub fn selection_unset(self, scope: &str, path: &Path, changed: bool) -> String {
+    pub fn selection_unset(self, scope: &str, tool: &str, path: &Path, changed: bool) -> String {
+        let tool = self.tool_name(tool);
         match self.language {
             Language::English if changed => format!(
-                "cleared {scope} Node.js selection in {}; installed runtimes and command routes were preserved",
+                "cleared {scope} {tool} selection in {}; installed runtimes and command routes were preserved",
                 path.display()
             ),
             Language::English => format!(
-                "no {scope} Node.js selection was configured in {}",
+                "no {scope} {tool} selection was configured in {}",
                 path.display()
             ),
             Language::SimplifiedChinese if changed => format!(
-                "已清除{} Node.js 选择：{}；已安装运行时和命令路由保持不变",
+                "已清除{} {tool} 选择：{}；已安装运行时和命令路由保持不变",
                 if scope == "global" {
                     "全局"
                 } else {
@@ -320,7 +357,7 @@ impl Catalog {
                 path.display()
             ),
             Language::SimplifiedChinese => format!(
-                "{}未配置 Node.js 选择：{}",
+                "{}未配置 {tool} 选择：{}",
                 if scope == "global" {
                     "全局"
                 } else {
@@ -468,91 +505,6 @@ impl Catalog {
                 } else {
                     "不适用（显式允许的不安全 HTTP）"
                 }
-            ),
-        }
-    }
-
-    pub fn import_none(self, cwd: &Path) -> String {
-        match self.language {
-            Language::English => format!(
-                "no supported legacy runtime version configuration detected in {}",
-                cwd.display()
-            ),
-            Language::SimplifiedChinese => {
-                format!("在 {} 中未检测到受支持的旧运行时版本配置", cwd.display())
-            }
-        }
-    }
-
-    pub fn import_candidate(self, kind: &str, tool: &str, version: &str, path: &Path) -> String {
-        let display_tool = if tool == "node" { "Node.js" } else { "Flutter" };
-        match self.language {
-            Language::English => format!(
-                "detected {kind} {tool}={version} path={} action=none",
-                path.display()
-            ),
-            Language::SimplifiedChinese => format!(
-                "检测到 {kind}：{display_tool} {version}；路径={}；操作=无（仅预览）",
-                path.display()
-            ),
-        }
-    }
-
-    pub fn import_conflict(self, versions: usize) -> String {
-        match self.language {
-            Language::English => format!(
-                "conflict: detected {versions} distinct runtime selections; no configuration was changed"
-            ),
-            Language::SimplifiedChinese => {
-                format!("发现冲突：检测到 {versions} 个不同运行时选择；未修改任何配置")
-            }
-        }
-    }
-
-    pub fn import_apply_conflict(self, versions: usize) -> String {
-        match self.language {
-            Language::English => format!(
-                "cannot import: detected {versions} distinct runtime selections; pass --from <source>"
-            ),
-            Language::SimplifiedChinese => format!(
-                "无法导入：检测到 {versions} 个不同运行时选择；请使用 --from <来源> 明确指定"
-            ),
-        }
-    }
-
-    pub fn import_source_not_found(self, source: &str, available: &str) -> String {
-        match self.language {
-            Language::English => {
-                format!("legacy source {source:?} was not detected; available sources: {available}")
-            }
-            Language::SimplifiedChinese => {
-                format!("未检测到旧配置来源 {source:?}；可用来源：{available}")
-            }
-        }
-    }
-
-    pub fn import_applied(
-        self,
-        kind: &str,
-        tool: &str,
-        version: &str,
-        path: &Path,
-        scope: &str,
-    ) -> String {
-        let display_tool = if tool == "node" { "Node.js" } else { "Flutter" };
-        match self.language {
-            Language::English => format!(
-                "imported {kind} {tool}={version} into Pinset {scope} state; legacy file preserved: {}",
-                path.display()
-            ),
-            Language::SimplifiedChinese => format!(
-                "已将 {kind} 的 {display_tool} {version} 导入 Pinset {}状态；旧文件已保留：{}",
-                if scope == "global" {
-                    "全局"
-                } else {
-                    "项目"
-                },
-                path.display()
             ),
         }
     }
@@ -806,11 +758,6 @@ impl Catalog {
                 path.display(),
                 match owner {
                     "pinset" => "Pinset shim",
-                    "nvm" => "nvm",
-                    "fnm" => "fnm",
-                    "asdf" => "asdf",
-                    "mise" => "mise",
-                    "volta" => "Volta",
                     "foreign-in-pinset-directory" => "Pinset 目录中的外部文件",
                     _ => "系统或其他工具",
                 },
@@ -1022,6 +969,7 @@ impl Catalog {
             "selection" => "当前选择",
             "lockfile" => "锁文件",
             "runtime" => "运行时",
+            "python_environment" => "Python 项目虚拟环境",
             "shim_path" => "Shim 路径",
             "path_node" => "PATH 中的 Node",
             _ => key,
@@ -1032,6 +980,7 @@ impl Catalog {
         match state {
             "ok" => "正常",
             "missing" => "缺失",
+            "invalid" => "无效",
             "active" => "已启用",
             "not-on-path" => "未加入 PATH",
             _ => state,

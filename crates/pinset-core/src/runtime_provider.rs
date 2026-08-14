@@ -11,6 +11,7 @@ pub struct RuntimeProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeCommandLayout {
     NodeNative,
+    Python,
     Root,
     Bin,
 }
@@ -21,6 +22,7 @@ pub enum RuntimeMetadataKind {
     Npm,
     Go,
     Flutter,
+    Python,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +31,7 @@ pub enum RuntimeInstallKind {
     Npm,
     Go,
     Flutter,
+    Python,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +39,7 @@ pub enum RuntimeEnvironmentKind {
     None,
     Go,
     Flutter,
+    Python,
 }
 
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
@@ -79,12 +83,21 @@ const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
     installer: RuntimeInstallKind::Flutter,
     environment: RuntimeEnvironmentKind::Flutter,
 };
+const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "python",
+    commands: &["python", "python3"],
+    command_layout: RuntimeCommandLayout::Python,
+    metadata: RuntimeMetadataKind::Python,
+    installer: RuntimeInstallKind::Python,
+    environment: RuntimeEnvironmentKind::Python,
+};
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
     PNPM_PROVIDER,
     BUN_PROVIDER,
     GO_PROVIDER,
     FLUTTER_PROVIDER,
+    PYTHON_PROVIDER,
 ];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
@@ -120,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_providers_and_commands_are_not_invented() {
+    fn declares_each_supported_provider_command_set() {
         assert_eq!(runtime_provider("pnpm").expect("pnpm").commands, ["pnpm"]);
         assert_eq!(
             runtime_provider("bun").expect("bun").commands,
@@ -142,8 +155,14 @@ mod tests {
             runtime_provider_for_command("dart").map(|provider| provider.tool),
             Some("flutter")
         );
-        assert!(runtime_provider("python").is_none());
-        assert!(runtime_provider_for_command("python").is_none());
+        assert_eq!(
+            runtime_provider("python").map(|provider| provider.commands),
+            Some(&["python", "python3"][..])
+        );
+        assert_eq!(
+            runtime_provider_for_command("python3").map(|provider| provider.tool),
+            Some("python")
+        );
     }
 
     #[test]

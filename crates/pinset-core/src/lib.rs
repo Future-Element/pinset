@@ -37,6 +37,17 @@ mod node_runtime;
 mod npm_metadata;
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 mod npm_runtime;
+#[cfg(feature = "python-metadata")]
+mod python_metadata;
+#[cfg(feature = "python-provider")]
+mod python_provider;
+#[cfg(all(
+    feature = "installer",
+    feature = "python-provider",
+    feature = "lockfile"
+))]
+mod python_runtime;
+mod python_venv;
 mod resolver;
 mod runtime_lifecycle;
 mod runtime_provider;
@@ -121,12 +132,31 @@ pub use npm_metadata::{
 };
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 pub use npm_runtime::install_locked_npm_tool;
+#[cfg(feature = "python-metadata")]
+pub use python_metadata::{PythonMetadataClient, PythonRelease};
+#[cfg(feature = "python-provider")]
+pub use python_provider::{
+    PYTHON_TARGETS, PYTHON_VARIANT, PythonArtifactPlan, is_exact_python_version,
+    parse_python_distribution, plan_python_artifact, validate_exact_python_version,
+};
+#[cfg(all(
+    feature = "installer",
+    feature = "python-provider",
+    feature = "lockfile"
+))]
+pub use python_runtime::install_locked_python;
+pub use python_venv::{
+    PYTHON_ENVIRONMENT_DIR, PYTHON_ENVIRONMENT_MARKER, ProjectPythonEnvironment,
+    create_project_python_environment, load_project_python_environment,
+    project_python_command_candidates, project_python_environment_path,
+};
 pub use resolver::{
     CommandResolution, RuntimeEnvironmentVariable, SelectionSource, ToolSelection, command_tool,
     find_system_commands, path_with_selected_runtime, path_with_selected_tools, pinset_home,
     pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_from_env,
-    resolve_tool_selection, runtime_command_directory, runtime_environment_for_install,
-    selected_runtime_environment, validate_managed_runtime_invocation,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, selected_runtime_environment,
+    validate_managed_runtime_invocation,
 };
 pub use runtime_lifecycle::{
     InstalledToolVersion, ToolVersionReference, UninstallToolOutcome, find_tool_version_references,

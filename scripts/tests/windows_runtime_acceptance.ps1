@@ -14,6 +14,8 @@ $ProjectPnpmSelector = if ($env:PINSET_PROJECT_PNPM_SELECTOR) { $env:PINSET_PROJ
 $ProjectBunSelector = if ($env:PINSET_PROJECT_BUN_SELECTOR) { $env:PINSET_PROJECT_BUN_SELECTOR } else { '1.2' }
 $GlobalGoSelector = if ($env:PINSET_GLOBAL_GO_SELECTOR) { $env:PINSET_GLOBAL_GO_SELECTOR } else { 'latest' }
 $ProjectGoSelector = if ($env:PINSET_PROJECT_GO_SELECTOR) { $env:PINSET_PROJECT_GO_SELECTOR } else { '1.24' }
+$GlobalPythonSelector = if ($env:PINSET_GLOBAL_PYTHON_SELECTOR) { $env:PINSET_GLOBAL_PYTHON_SELECTOR } else { 'latest' }
+$ProjectPythonSelector = if ($env:PINSET_PROJECT_PYTHON_SELECTOR) { $env:PINSET_PROJECT_PYTHON_SELECTOR } else { '3.13' }
 $GlobalFlutterSelector = if ($env:PINSET_GLOBAL_FLUTTER_SELECTOR) { $env:PINSET_GLOBAL_FLUTTER_SELECTOR } else { 'latest' }
 $ProjectFlutterSelector = if ($env:PINSET_PROJECT_FLUTTER_SELECTOR) { $env:PINSET_PROJECT_FLUTTER_SELECTOR } else { '3.44' }
 $SkipFlutterRuntimeValue = if ($env:PINSET_SKIP_FLUTTER_RUNTIME) { $env:PINSET_SKIP_FLUTTER_RUNTIME } else { '0' }
@@ -84,6 +86,8 @@ try {
     $env:PINSET_HOME = Join-Path $TestRoot 'pinset-home'
     Remove-Item Env:PINSET_LANG -ErrorAction SilentlyContinue
     Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue
+    Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
+    Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     Remove-Item Env:FLUTTER_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:FLUTTER_SUPPRESS_ANALYTICS -ErrorAction SilentlyContinue
     Set-Location $TestRoot
@@ -102,6 +106,9 @@ try {
     }
     if (-not ((& $Pinset list go --available) -match '^go@\d+\.\d+\.\d+$')) {
         throw 'no supported Go release was listed as available'
+    }
+    if (-not ((& $Pinset list python --available) -match '^python@\d+\.\d+\.\d+\+\d{8} ')) {
+        throw 'no supported Python release was listed as available'
     }
     $FlutterReleases = @(& $Pinset list flutter --available)
     if (-not ($FlutterReleases -match '^flutter@\d+\.\d+\.\d+ dart@\d+\.\d+\.\d+ stable$')) {
@@ -128,6 +135,11 @@ try {
         throw "global Go returned an invalid version: '$GlobalGoOutput'"
     }
     $GlobalGoVersion = $GlobalGoMatch.Groups[1].Value
+    & $Pinset global "python@$GlobalPythonSelector"
+    $GlobalPythonVersion = ((& $Pinset exec -- python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") | Out-String).Trim()
+    if ($GlobalPythonVersion -notmatch $VersionPattern) {
+        throw "global Python returned an invalid version: '$GlobalPythonVersion'"
+    }
     if (-not $SkipFlutterRuntime) {
         & $Pinset global "flutter@$GlobalFlutterSelector"
         $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
@@ -151,6 +163,7 @@ try {
         throw 'global pinset exec Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& $Pinset exec -- go env GOTOOLCHAIN) 'global pinset exec Go toolchain policy'
+    Assert-ExactOutput $GlobalPythonVersion (& $Pinset exec -- python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global pinset exec Python'
     $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
     if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
         throw "global Go reported an unmanaged GOROOT: '$GlobalGoRoot'"
@@ -186,6 +199,8 @@ try {
         throw 'global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'global direct Go toolchain policy'
+    Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python'
+    Assert-ExactOutput $GlobalPythonVersion (& python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'global direct Python3'
     if (-not $SkipFlutterRuntime) {
         $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
         if ($DirectGlobalFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -227,9 +242,13 @@ try {
         throw "project Go selector resolved to unexpected version '$ProjectGoOutput'"
     }
     $ProjectGoVersion = $ProjectGoMatch.Groups[1].Value
+    & $Pinset use "python@$ProjectPythonSelector"
+    $ProjectPythonVersion = ((& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") | Out-String).Trim()
+    if ($ProjectPythonVersion -notmatch "^$([regex]::Escape($ProjectPythonSelector))\.") {
+        throw "project Python selector resolved to unexpected version '$ProjectPythonVersion'"
+    }
     if (-not $SkipFlutterRuntime) {
-        Set-Content -LiteralPath (Join-Path $Project '.fvmrc') -Value "{`"flutter`":`"$ProjectFlutterVersion`"}" -NoNewline
-        & $Pinset import --apply --from fvm --no-install
+        & $Pinset use "flutter@$ProjectFlutterVersion" --no-install
     }
     & $Pinset install --locked
     if (-not $SkipFlutterRuntime) {
@@ -246,6 +265,16 @@ try {
     Assert-ExactOutput $ProjectPnpmVersion (& pnpm --version) 'project direct pnpm'
     Assert-ExactOutput $ProjectBunVersion (& bun --version) 'project direct bun'
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'project direct Go toolchain policy'
+    $ProjectVenv = Join-Path $Project '.venv'
+    Assert-ExactOutput $ProjectVenv (& python -c "import sys; print(sys.prefix)") 'project direct Python environment'
+    Assert-ExactOutput $ProjectVenv (& $Pinset exec -- python3 -c "import os; print(os.environ['VIRTUAL_ENV'])") 'project pinset exec Python environment'
+    $ProjectPipOutput = ((& $Pinset exec -- pip --version) | Out-String).Trim()
+    if ($ProjectPipOutput -notlike "*$ProjectVenv*") {
+        throw "project pip did not run from .venv: '$ProjectPipOutput'"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectVenv '.pinset-venv.toml') -PathType Leaf)) {
+        throw 'project Python environment has no Pinset ownership marker'
+    }
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
     if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
         throw "project Go reported an unmanaged GOROOT: '$ProjectGoRoot'"
@@ -288,6 +317,7 @@ try {
         throw 'restored global direct Go returned an unexpected version'
     }
     Assert-ExactOutput 'local' (& go env GOTOOLCHAIN) 'restored global Go toolchain policy'
+    Assert-ExactOutput $GlobalPythonVersion (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))") 'restored global Python'
     if (-not $SkipFlutterRuntime) {
         $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
         if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -298,10 +328,10 @@ try {
         }
     }
     if ($SkipFlutterRuntime) {
-        Write-Host 'Windows real Node, pnpm, Bun and Go acceptance passed; Flutter runtime download skipped'
+        Write-Host 'Windows real Node, pnpm, Bun, Go and Python acceptance passed; Flutter runtime download skipped'
     }
     else {
-        Write-Host 'Windows real Node, pnpm, Bun, Go and Flutter acceptance passed'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python and Flutter acceptance passed'
     }
 }
 finally {
