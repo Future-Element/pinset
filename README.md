@@ -21,6 +21,8 @@ Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI
 
 `v0.6.0` 新增 Eclipse Temurin JDK Provider，并修复 Python Provider 缺少 `pip`/`pip3` 直接路由的问题；Java 首期仅支持 JDK/HotSpot/GA，锁定精确 build、四平台归档和 SHA-256，并为受管进程设置 `JAVA_HOME`。
 
+`v0.6.1` 修复 macOS 等系统中 Pinset 路由目录虽然已在 PATH、却被更早的 `/usr/bin/java` 等系统命令遮挡时未给出提示的问题。Provider 注册会检查真正生效的命令路径，并按当前 Shell 输出可直接执行的激活命令。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
@@ -46,19 +48,26 @@ curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.
 
 这条命令只安装 `pinset` 和通用路由器 `pinset-shim` 到 `$HOME/.local/bin`，不会自动安装 Node，也不会修改 shell profile。安装脚本会根据平台下载对应 Release 归档，并强制校验同一 Release 中的 `SHA256SUMS`。
 
-将 Pinset 加入当前终端的 PATH：
+将 Pinset 加入当前终端的 PATH，并确保它位于 `/usr/bin`、Homebrew 和其他运行时管理器之前：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 pinset --version
 ```
 
-长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
-
-固定安装 `v0.5.0`：
+也可以只为当前 Shell 激活路由：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.5.0/install.sh | sh
+eval "$(pinset activate zsh)"   # macOS 默认 Zsh
+eval "$(pinset activate bash)"  # Bash / WSL
+```
+
+长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
+
+固定安装 `v0.6.1`：
+
+```bash
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.6.1/install.sh | sh
 ```
 
 自定义安装目录：

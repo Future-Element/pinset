@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.6.0`
-产品阶段：`Eclipse Temurin JDK Provider development`
+文档版本：`v0.6.1`
+产品阶段：`Java command routing precedence patch`
 更新时间：`2026-08-14`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
-`v0.6.0` 在已发布的 Node.js、pnpm、Bun、Go、Flutter 和 CPython Provider 基础上新增 Eclipse Temurin JDK Provider。首期仅管理 JDK/HotSpot/GA 正式版本，Rust 暂不纳入本版本。
+`v0.6.0` 在已发布的 Node.js、pnpm、Bun、Go、Flutter 和 CPython Provider 基础上新增 Eclipse Temurin JDK Provider。`v0.6.1` 修复路由目录已在 PATH 但被更早系统命令遮挡时的生效状态误判与 Shell 激活提示。Rust 暂不纳入本补丁版本。
 
 ### 1.1 目标
 

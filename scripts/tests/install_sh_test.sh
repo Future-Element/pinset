@@ -48,9 +48,13 @@ else
 fi
 printf '%s  %s\n' "$HASH" "$ARCHIVE" > "$RELEASE_DIR/SHA256SUMS"
 
-PINSET_INSTALL_TEST_MODE=1 \
-PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+INSTALL_OUTPUT=$(
+    PINSET_INSTALL_TEST_MODE=1 \
+    PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
+    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+)
+printf '%s\n' "$INSTALL_OUTPUT" | grep -F 'Add Pinset to the current shell:'
+printf '%s\n' "$INSTALL_OUTPUT" | grep -F "export PATH=\"$INSTALL_DIR:\$PATH\""
 
 [ -x "$INSTALL_DIR/pinset" ]
 [ -x "$INSTALL_DIR/pinset-shim" ]
@@ -60,6 +64,26 @@ INSTALLED_ENTRIES=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print | wc -l |
 for runtime_command in node npm npx corepack pnpm bun bunx go gofmt flutter dart python java; do
     [ ! -e "$INSTALL_DIR/$runtime_command" ]
 done
+
+FRONT_OUTPUT=$(
+    PATH="$INSTALL_DIR:/usr/bin:/bin" \
+    PINSET_INSTALL_TEST_MODE=1 \
+    PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
+    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+)
+if printf '%s\n' "$FRONT_OUTPUT" | grep -F 'for the current shell:' >/dev/null; then
+    printf 'installer unexpectedly requested PATH activation when already first\n' >&2
+    exit 1
+fi
+
+SHADOWED_OUTPUT=$(
+    PATH="/usr/bin:$INSTALL_DIR:/bin" \
+    PINSET_INSTALL_TEST_MODE=1 \
+    PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
+    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+)
+printf '%s\n' "$SHADOWED_OUTPUT" | grep -F 'Pinset is on PATH but may be shadowed by earlier system commands.'
+printf '%s\n' "$SHADOWED_OUTPUT" | grep -F 'Move Pinset to the front for the current shell:'
 
 BAD_RELEASE_DIR="$TEST_ROOT/bad-release"
 BAD_INSTALL_DIR="$TEST_ROOT/bad-install"

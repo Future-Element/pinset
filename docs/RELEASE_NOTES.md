@@ -1,5 +1,15 @@
 # Pinset Release Notes
 
+## v0.6.1
+
+- 发布日期：`2026-08-14`
+- GitHub Release：[v0.6.1](https://github.com/Future-Element/pinset/releases/tag/v0.6.1)
+- 阶段：Provider 命令路由优先级补丁；
+- 修复路由目录已存在于 PATH、但 `java` 等命令被更早的系统路径遮挡时仍显示为已生效的问题；
+- Provider 注册后检查每个受管命令真正命中的首个 PATH 文件，并明确列出 `java=/usr/bin/java` 一类遮挡来源；
+- 根据当前 zsh、bash、fish 或 PowerShell 输出可直接执行的 `pinset activate` 命令；
+- 安装脚本在安装目录已位于 PATH 但不是首项时提示将其前置，仍不自动修改 shell profile。
+
 ## v0.6.0
 
 - 发布日期：`2026-08-14`
