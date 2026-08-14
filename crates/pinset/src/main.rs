@@ -2718,13 +2718,7 @@ fn register_provider_commands(
     let routing = (!active).then_some((shadowed.as_slice(), activation_command));
     println!(
         "{}",
-        catalog.provider_commands_registered(
-            tool,
-            &directory,
-            &installed,
-            &preserved,
-            routing,
-        )
+        catalog.provider_commands_registered(tool, &directory, &installed, &preserved, routing,)
     );
     Ok(())
 }
