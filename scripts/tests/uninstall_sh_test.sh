@@ -49,6 +49,7 @@ ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/go"
 ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/flutter"
 ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/dart"
 ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/rustc"
+ln -s "$INSTALL_DIR/pinset-shim" "$SHIM_DIR/dotnet"
 ln "$INSTALL_DIR/pinset-shim" "$INSTALL_DIR/cargo"
 cp "$INSTALL_DIR/pinset-shim" "$PATH_DIR/npx"
 printf 'foreign command\n' > "$PATH_DIR/python"
@@ -119,6 +120,7 @@ HOME="$TEST_HOME" PATH="$PATH_DIR:$PATH" sh "$ROOT/uninstall.sh" --yes \
 [ ! -e "$SHIM_DIR/flutter" ]
 [ ! -e "$SHIM_DIR/dart" ]
 [ ! -e "$SHIM_DIR/rustc" ]
+[ ! -e "$SHIM_DIR/dotnet" ]
 [ ! -e "$INSTALL_DIR/cargo" ]
 [ ! -e "$PATH_DIR/npx" ]
 [ ! -e "$PINSET_DATA_HOME" ]

@@ -1,16 +1,28 @@
 # Pinset Release Notes
 
+## v0.8.0
+
+- 发布日期：`2026-08-14`；
+- 阶段：Microsoft .NET SDK Provider；
+- 新增 `pinset list dotnet --available`、`global`、`use`、`install`、`current`、`which`、`exec`、shim 和卸载生命周期；
+- 支持 `latest`/`current`、`lts`、主版本、`major.minor` 通道和精确 `x.y.zzz` SDK 版本选择器；
+- 使用 Microsoft 官方 release index 和通道 metadata，只接受仍处于 active/maintenance 阶段的 GA LTS/STS SDK，排除 preview、RC、go-live 和 EOL；
+- 锁定 Windows x64、Linux x64、macOS x64/arm64 的官方 SDK 归档与 SHA-512，并验证 URL、RID、格式和四平台完整性；
+- 路由 `dotnet`，为受管进程设置匹配 SDK 的 `DOTNET_ROOT`，保留 `DOTNET_CLI_HOME`、`NUGET_PACKAGES`、NuGet 与遥测配置；
+- 除编译 Pinset 必需的 Rust 构建工具链外，GitHub Actions 不再通过 Pinset 下载或执行任何 Provider 真实运行时；普通 CI 只保留三平台构建与打包，Release 保留 Quality、SBOM 和构建来源证明，完整真实验收脚本供发布后在隔离虚拟机执行。
+
 ## v0.7.0
 
-- 发布日期：未发布；
-- 阶段：Rust stable Provider 开发候选；
+- 发布日期：`2026-08-14`；
+- GitHub Release：[v0.7.0](https://github.com/Future-Element/pinset/releases/tag/v0.7.0)
+- 阶段：Rust stable Provider；
 - 新增 `pinset list rust --available`、`global`、`use`、`install`、`current`、`which`、`exec`、shim 和卸载生命周期；
 - 支持 `stable`/`latest`/`current`、主版本、主次版本和精确 stable 版本选择器；
 - 使用 Rust 官方 `manifests.txt` 和经过 SHA-256 校验的 v2 release manifest，锁定 Windows x64、Linux x64、macOS x64/arm64 的组合工具链归档与 SHA-256；
 - 安装官方 `default` profile，路由 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver` 和 `cargo-clippy`；
 - 保持锁文件 schema 2，记录 stable channel、manifest date、manifest SHA-256、profile 和组件边界；
 - 不接管外部 Rust 管理器或其目录，不修改 shell profile，并保留用户的 `CARGO_HOME`、`RUSTUP_HOME` 与 `RUSTFLAGS`；
-- Quality 使用官方 manifest 夹具和假归档；Linux、Windows、macOS 的真实 Rust 下载、编译和命令路由只在 GitHub Actions 隔离虚拟机验证。Flutter SDK 仍不进入 Actions 真实下载。
+- Quality 使用官方 manifest 夹具和假归档；发布时完成 Linux、Windows、macOS 的真实 Rust 下载、编译和命令路由验证。自 v0.8.0 起，真实运行时验收移出 GitHub Actions，改由发布后隔离虚拟机执行。
 
 ## v0.6.1
 

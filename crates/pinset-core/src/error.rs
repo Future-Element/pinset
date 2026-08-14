@@ -257,7 +257,11 @@ pub enum Error {
         usage: &'static str,
     },
 
-    #[cfg(any(feature = "sources", feature = "rust-metadata"))]
+    #[cfg(any(
+        feature = "sources",
+        feature = "rust-metadata",
+        feature = "dotnet-metadata"
+    ))]
     #[error("invalid base URL \"{url}\": {reason}")]
     InvalidSourceBaseUrl { url: String, reason: String },
 
@@ -510,6 +514,52 @@ pub enum Error {
     #[cfg(feature = "rust-metadata")]
     #[error("invalid official Rust metadata: {reason}")]
     InvalidRustIndex { reason: String },
+
+    #[cfg(feature = "dotnet-provider")]
+    #[error("invalid exact .NET SDK version \"{version}\"; expected x.y.zzz")]
+    InvalidDotnetVersion { version: String },
+
+    #[cfg(feature = "dotnet-provider")]
+    #[error("unsupported .NET SDK target \"{target}\"")]
+    UnsupportedDotnetTarget { target: String },
+
+    #[cfg(feature = "dotnet-provider")]
+    #[error("invalid official .NET SDK artifact identity: {reason}")]
+    InvalidDotnetArtifact { reason: String },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error(
+        "invalid .NET SDK selector \"{selector}\"; expected x.y.zzz, a major/channel prefix, lts, latest or current"
+    )]
+    InvalidDotnetSelector { selector: String },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error("official .NET metadata contains no supported SDK matching \"{selector}\"")]
+    DotnetSelectorNotFound { selector: String },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error("failed to request official .NET metadata {url}: {source}")]
+    DotnetMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error("failed while reading official .NET metadata {url}: {source}")]
+    DotnetMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error("official .NET metadata exceeds {limit} bytes")]
+    DotnetMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "dotnet-metadata")]
+    #[error("invalid official .NET metadata: {reason}")]
+    InvalidDotnetIndex { reason: String },
 
     #[error("project Python environment {path} is not owned by Pinset")]
     PythonEnvironmentNotOwned { path: PathBuf },
@@ -833,7 +883,8 @@ pub enum Error {
         feature = "go-metadata",
         feature = "node-metadata",
         feature = "npm-metadata",
-        feature = "rust-metadata"
+        feature = "rust-metadata",
+        feature = "dotnet-metadata"
     ))]
     #[error("failed to build the HTTP client: {source}")]
     HttpClient {

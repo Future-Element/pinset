@@ -3,7 +3,7 @@
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
 [![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
 
-Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI。它只读取自己的项目配置与锁文件，用一致的命令管理 Node.js、pnpm、Bun、Go、Python、Flutter、Java 和 Rust 等运行时。
+Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI。它只读取自己的项目配置与锁文件，用一致的命令管理 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 和 .NET SDK 等运行时。
 
 `v0.2.0` 在已验证的 Node.js 管理基础上新增独立的 pnpm 与 Bun Provider。
 
@@ -25,6 +25,8 @@ Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI
 
 `v0.7.0` 新增 Rust stable Provider，使用 Rust 官方 v2 release manifest 锁定 default profile 工具链、四平台归档和 SHA-256，不依赖或接管其他 Rust 工具链管理器。
 
+`v0.8.0` 新增 Microsoft .NET SDK Provider，只列出仍受支持的 GA LTS/STS 通道，使用官方 release metadata 锁定四平台 SDK 归档和 SHA-512，并为受管进程设置 `DOTNET_ROOT`。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
@@ -33,13 +35,14 @@ Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI
 - Flutter stable 的精确、主版本、主次版本、`latest`/`current` 选择器，以及对应的内置 Dart 版本；
 - Eclipse Temurin JDK 的 `latest`/`current`、`lts`、Feature、Update 和精确 `+build` 选择器；
 - Rust stable 的精确、主版本、主次版本和 `stable`/`latest`/`current` 选择器；
+- .NET SDK 的精确、主版本、通道和 `lts`/`latest`/`current` 选择器；
 - Windows x64、Linux x64、macOS Apple Silicon 的 Pinset Release；
-- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx`、`go`、`gofmt`、`python`、`python3`、`pip`、`pip3`、`flutter`、`dart`、`java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`、`rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy` 统一路由；
+- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx`、`go`、`gofmt`、`python`、`python3`、`pip`、`pip3`、`flutter`、`dart`、`java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`、`rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy`、`dotnet` 统一路由；
 - 可提交的 `pinset.toml` 和 `pinset.lock`；
 - Node SHA-256、npm SHA-512 SRI 与 registry ECDSA 签名校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
 - 国内或企业镜像、有序回退、可选的可信元数据镜像和离线缓存导入；
 - 中英文提示、诊断、安全卸载，以及明确拒绝接管非 Pinset 所有的目录和命令；
-- 三平台自动构建、真实 Node/pnpm/Bun/Go/Python/Java/Rust 验收、Flutter/Dart 元数据与安装逻辑测试、CycloneDX SBOM 和 GitHub 构建来源证明。
+- 三平台自动构建、Provider 元数据/锁文件/安装逻辑测试、CycloneDX SBOM 和 GitHub 构建来源证明；真实运行时下载与验收统一由发布后的隔离虚拟机执行。
 
 ## 快速安装
 
@@ -67,10 +70,10 @@ eval "$(pinset activate bash)"  # Bash / WSL
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-`v0.7.0` 发布后可固定安装该版本：
+`v0.8.0` 发布后可固定安装该版本：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.7.0/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.8.0/install.sh | sh
 ```
 
 自定义安装目录：
@@ -165,9 +168,10 @@ flutter = "3.47.0"
 python = "3.14.7+20260807"
 java = "21.0.8+9"
 rust = "1.97.1"
+dotnet = "10.0.400"
 ```
 
-`pinset.lock` 保存解析后的精确版本、平台归档、完整性值和来源信息。Node、Go、Flutter、Python、Java 和 Rust 使用上游元数据提供的 SHA-256；pnpm/Bun 使用 npm 包的 SHA-512 SRI，并在生成锁文件前验证 registry ECDSA 签名。Java 还记录 Temurin 分发属性、OpenJDK release identity 和逐平台签名链接；Rust 记录官方 manifest 日期、manifest SHA-256、profile 和组件边界。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
+`pinset.lock` 保存解析后的精确版本、平台归档、完整性值和来源信息。Node、Go、Flutter、Python、Java 和 Rust 使用上游元数据提供的 SHA-256；pnpm/Bun 与 .NET SDK 使用 SHA-512，其中 pnpm/Bun 还会在生成锁文件前验证 registry ECDSA 签名。Java 记录 Temurin 分发属性、OpenJDK release identity 和逐平台签名链接；Rust 记录官方 manifest 日期、manifest SHA-256、profile 和组件边界；.NET 记录通道、支持阶段与 runtime release identity。建议把 `pinset.toml` 与 `pinset.lock` 一起提交。
 
 在项目目录中，项目版本优先于全局版本；离开项目目录后自动恢复全局版本。如果项目或全局声明了版本但安装缺失，Pinset 会明确报错，不会静默换成系统运行时。
 
@@ -331,6 +335,24 @@ Pinset 从 Rust 官方 `manifests.txt` 发现 stable 版本，先校验精确版
 首期固定安装官方 `default` profile，包含 `rustc`、`cargo`、`rust-std`、`rust-docs`、`rustfmt` 和 `clippy`，并路由 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy`。Pinset 保留用户已有的 `CARGO_HOME`、`RUSTUP_HOME` 和 `RUSTFLAGS`。
 
 Pinset 不管理 Cargo 依赖、crate 发布、C/C++ 链接器、系统 SDK 或交叉编译环境；首期不支持 beta/nightly、自定义 channel、额外 target、组件增删，也不读取、导入或修改其他 Rust 工具链管理器的状态。
+
+## Microsoft .NET SDK
+
+.NET Provider 首期只管理 Microsoft 官方 GA SDK：
+
+```shell
+pinset list dotnet --available
+pinset global dotnet@lts
+pinset use dotnet@10
+pinset current dotnet
+dotnet --version
+```
+
+支持 `latest`/`current`、`lts`、主版本、`major.minor` 通道和精确 `x.y.zzz` SDK 版本。available 列表只包含仍处于 `active` 或 `maintenance` 阶段、且四个支持目标归档完整的 LTS/STS 通道；preview、RC、go-live 和 EOL 不会进入解析结果。
+
+Pinset 使用 Microsoft 官方 `releases-index.json` 和通道 `releases.json` 锁定 Windows x64、Linux x64、macOS x64/arm64 归档及 SHA-512。受管子进程获得与所选 SDK 一致的 `DOTNET_ROOT`；用户已有的 `DOTNET_CLI_HOME`、`NUGET_PACKAGES`、NuGet 配置和遥测选项保持不变。
+
+首期不管理 runtime-only、ASP.NET Core Runtime、Desktop Runtime、workloads、templates、Visual Studio 或 NuGet 依赖，也不会自动修改 `global.json`、项目文件、shell profile 或系统 SDK。
 
 ## Flutter 与内置 Dart
 
@@ -612,7 +634,7 @@ gh attestation verify pinset-linux-x86_64.tar.gz \
 
 ## 开发验证
 
-项目要求 Rust 1.85 或更高版本。Pull Request 的 Quality 工作流在 GitHub Actions Ubuntu 虚拟机执行：
+项目要求 Rust 1.85 或更高版本。普通 push/Pull Request 的 CI 只执行 Linux、Windows、macOS release 构建与打包。发布工作流在 GitHub Actions Ubuntu 虚拟机执行以下质量门禁：
 
 ```shell
 cargo fmt --all -- --check
@@ -621,7 +643,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-GitHub Actions 会在 Linux、Windows、macOS 隔离 Runner 中安装 Node、pnpm、Bun、Go、Python、一个 Temurin JDK 和一个 Rust stable 工具链，验证 available、全局/项目组合、跨 Provider PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`、项目 `.venv`、全局及项目 `pip`/`pip3`、Java 编译/运行、`java.home` 与 `JAVA_HOME`，以及 Rust 编译、default profile 命令和已安装工具链复用。单元测试覆盖 Flutter/Dart 元数据、锁文件、安装安全、路由和原地升级拦截。Flutter SDK 单个归档可超过 1.8 GiB，因此 Actions 默认设置 `PINSET_SKIP_FLUTTER_RUNTIME=1`，不下载真实 SDK；完整验收脚本保留默认模式，供发布后在隔离虚拟机验证 Flutter/Dart 同源、`FLUTTER_ROOT`、SDK 重用和全局/项目覆盖。
+普通 CI 只在 Linux、Windows、macOS 隔离 Runner 中构建并打包 Pinset 自身；发布工作流额外执行格式、Clippy、单元测试、小型脚本测试、SBOM 和来源证明。除编译 Pinset 必需的 Rust 构建工具链外，任何 GitHub Actions 工作流都不再通过 Pinset 下载或执行待验证的 Node、Flutter、JDK、Rust 工具链、.NET SDK 等 Provider 工件。单元测试使用元数据夹具和小型假归档覆盖选择器、锁文件、安装安全、路由和环境变量；完整真实验收脚本保留给发布后的隔离虚拟机，用于验证各 Provider 的 available、全局/项目覆盖、SDK 编译运行和已安装版本复用。
 
 Linux/WSL 构建产物：
 
@@ -634,7 +656,7 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## Beta 限制
 
-- 当前版本支持 Node.js、pnpm、Bun、Go、CPython、Flutter stable SDK（含内置 Dart）、Eclipse Temurin JDK 和 Rust stable；其他 Java 分发及 Rust beta/nightly 尚未开放。
+- 当前版本支持 Node.js、pnpm、Bun、Go、CPython、Flutter stable SDK（含内置 Dart）、Eclipse Temurin JDK、Rust stable 和 Microsoft .NET SDK；其他 Java 分发、Rust beta/nightly 及 .NET preview/RC 尚未开放。
 - Pinset Release 暂无 Linux arm64、macOS Intel 安装包。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
 - Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 和 Go 官方下载索引中的 SHA-256，但 Beta 尚未验证 Node 清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。

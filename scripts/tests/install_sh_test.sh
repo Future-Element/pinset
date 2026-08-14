@@ -63,7 +63,7 @@ INSTALLED_ENTRIES=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print | wc -l |
 [ "$INSTALLED_ENTRIES" = "2" ]
 for runtime_command in node npm npx corepack pnpm bun bunx go gofmt flutter dart \
   python python3 pip pip3 java javac jar javadoc javap keytool jshell \
-  rustc cargo rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy; do
+  rustc cargo rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy dotnet; do
     [ ! -e "$INSTALL_DIR/$runtime_command" ]
 done
 

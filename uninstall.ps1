@@ -112,7 +112,7 @@ $routeCommands = @(
     'node', 'npm', 'npx', 'corepack', 'pnpm', 'bun', 'bunx', 'go', 'gofmt',
     'flutter', 'dart', 'python', 'python3', 'pip', 'pip3', 'java', 'javac', 'jar',
     'javadoc', 'javap', 'keytool', 'jshell', 'rustc', 'cargo', 'rustdoc', 'rustfmt',
-    'cargo-fmt', 'clippy-driver', 'cargo-clippy'
+    'cargo-fmt', 'clippy-driver', 'cargo-clippy', 'dotnet'
 )
 
 function Test-ManagedRoute([string]$Path) {

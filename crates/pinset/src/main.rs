@@ -16,16 +16,17 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig,
-    GoMetadataClient, InstallLimits, Installer, JavaMetadataClient, LockedTool, Lockfile,
-    NodeMetadataClient, NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind,
+    ArtifactIntegrity, DotnetMetadataClient, DownloadProgressEvent, Error, FlutterMetadataClient,
+    GlobalConfig, GoMetadataClient, InstallLimits, Installer, JavaMetadataClient, LockedTool,
+    Lockfile, NodeMetadataClient, NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind,
     RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
     SourceView, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment, current_target_for_tool, ensure_shims,
     find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
-    import_download_cache, import_download_cache_with_integrity, install_locked_flutter,
-    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
-    install_locked_python, install_locked_rust, is_managed_command_shim, list_download_cache,
+    import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
+    install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
+    install_locked_npm_tool, install_locked_python, install_locked_rust, is_managed_command_shim,
+    list_download_cache,
     list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
     load_optional_lockfile, load_project_config, load_project_python_environment,
     load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
@@ -34,7 +35,8 @@ use pinset_core::{
     runtime_command_directory, runtime_environment_for_install, runtime_provider,
     save_global_config, save_global_state, save_lockfile, save_project_config, save_source_config,
     save_user_settings, selected_runtime_environment, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_flutter_version,
+    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
+    validate_exact_flutter_version,
     validate_exact_go_version, validate_exact_java_version, validate_exact_node_version,
     validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
     validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
@@ -65,7 +67,7 @@ enum Commands {
     Init,
     /// Show or set a default runtime version used outside projects.
     Global {
-        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25, python@3.14, flutter@3.47 or java@21.
+        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25, python@3.14, java@21, rust@stable or dotnet@lts.
         selection: Option<String>,
         /// Update the global selection and lock without downloading the runtime.
         #[arg(long, requires = "selection")]
@@ -73,7 +75,7 @@ enum Commands {
     },
     /// Select and lock a runtime version for the current project or globally.
     Use {
-        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25, python@3.14, flutter@3.47 or java@lts.
+        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25, python@3.14, java@lts, rust@1.97 or dotnet@10.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -84,7 +86,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm, bun, go, python, flutter or java.
+        /// Tool to clear: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -122,7 +124,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm, bun, go, python, flutter or java.
+        /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
         tool: String,
         /// Query the official provider index instead of local installations.
         #[arg(long)]
@@ -489,6 +491,17 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                             println!("rust@{} stable ({})", release.version, release.date);
                         }
                     }
+                    RuntimeMetadataKind::Dotnet => {
+                        for release in DotnetMetadataClient::official()?.available_releases()? {
+                            println!(
+                                "dotnet@{} {} {} ({})",
+                                release.version,
+                                release.release_type,
+                                release.support_phase,
+                                release.date
+                            );
+                        }
+                    }
                 }
             } else {
                 let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
@@ -698,6 +711,9 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Rust => {
             validate_exact_rust_version(version)?;
         }
+        RuntimeMetadataKind::Dotnet => {
+            validate_exact_dotnet_version(version)?;
+        }
     }
     Ok(())
 }
@@ -730,6 +746,9 @@ fn resolve_locked_tool(
         }
         RuntimeMetadataKind::Java => Ok(JavaMetadataClient::official()?.resolve_tool(selector)?),
         RuntimeMetadataKind::Rust => Ok(RustMetadataClient::official()?.resolve_tool(selector)?),
+        RuntimeMetadataKind::Dotnet => {
+            Ok(DotnetMetadataClient::official()?.resolve_tool(selector)?)
+        }
     }
 }
 
@@ -1142,6 +1161,9 @@ fn install_tool_from_lock(
         }
         RuntimeInstallKind::Java => install_locked_java(&installer, home, locked_tool, &target)?,
         RuntimeInstallKind::Rust => install_locked_rust(&installer, home, locked_tool, &target)?,
+        RuntimeInstallKind::Dotnet => {
+            install_locked_dotnet(&installer, home, locked_tool, &target)?
+        }
     };
     if outcome.reused_existing {
         if tool == "node" {
@@ -2499,6 +2521,7 @@ fn run_source_command(
                 Some(
                     RuntimeMetadataKind::Java
                     | RuntimeMetadataKind::Rust
+                    | RuntimeMetadataKind::Dotnet
                     | RuntimeMetadataKind::Npm,
                 )
                 | None => {

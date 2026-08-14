@@ -86,7 +86,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     );
     assert_success_contains(
         &install_help,
-        "pinset install <node|pnpm|bun|go|python|flutter>@<版本选择器>",
+        "pinset install <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<版本选择器>",
     );
 
     let venv_help = pinset(

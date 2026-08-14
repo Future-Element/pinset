@@ -26,6 +26,7 @@ pub enum RuntimeMetadataKind {
     Java,
     Python,
     Rust,
+    Dotnet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,7 @@ pub enum RuntimeInstallKind {
     Java,
     Python,
     Rust,
+    Dotnet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,7 @@ pub enum RuntimeEnvironmentKind {
     Flutter,
     Java,
     Python,
+    Dotnet,
 }
 
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
@@ -123,6 +126,14 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
     installer: RuntimeInstallKind::Rust,
     environment: RuntimeEnvironmentKind::None,
 };
+const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "dotnet",
+    commands: &["dotnet"],
+    command_layout: RuntimeCommandLayout::Root,
+    metadata: RuntimeMetadataKind::Dotnet,
+    installer: RuntimeInstallKind::Dotnet,
+    environment: RuntimeEnvironmentKind::Dotnet,
+};
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
     PNPM_PROVIDER,
@@ -132,6 +143,7 @@ const PROVIDERS: &[RuntimeProvider] = &[
     PYTHON_PROVIDER,
     JAVA_PROVIDER,
     RUST_PROVIDER,
+    DOTNET_PROVIDER,
 ];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
@@ -234,6 +246,14 @@ mod tests {
         assert_eq!(
             runtime_provider_for_command("cargo-clippy").map(|provider| provider.tool),
             Some("rust")
+        );
+        assert_eq!(
+            runtime_provider("dotnet").map(|provider| provider.commands),
+            Some(&["dotnet"][..])
+        );
+        assert_eq!(
+            runtime_provider_for_command("dotnet").map(|provider| provider.tool),
+            Some("dotnet")
         );
     }
 

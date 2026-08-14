@@ -1,4 +1,14 @@
 mod config;
+#[cfg(feature = "dotnet-metadata")]
+mod dotnet_metadata;
+#[cfg(feature = "dotnet-provider")]
+mod dotnet_provider;
+#[cfg(all(
+    feature = "installer",
+    feature = "dotnet-provider",
+    feature = "lockfile"
+))]
+mod dotnet_runtime;
 #[cfg(feature = "installer")]
 mod download_cache;
 mod error;
@@ -73,6 +83,19 @@ pub use config::{
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectConfig, find_optional_project_config,
     find_project_config, load_project_config,
 };
+#[cfg(feature = "dotnet-metadata")]
+pub use dotnet_metadata::{DotnetMetadataClient, DotnetRelease};
+#[cfg(feature = "dotnet-provider")]
+pub use dotnet_provider::{
+    DOTNET_TARGETS, DotnetArchiveFormat, DotnetArtifactPlan, DotnetVersion, dotnet_rid,
+    plan_dotnet_artifact, validate_exact_dotnet_version,
+};
+#[cfg(all(
+    feature = "installer",
+    feature = "dotnet-provider",
+    feature = "lockfile"
+))]
+pub use dotnet_runtime::install_locked_dotnet;
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
 #[cfg(feature = "installer")]
