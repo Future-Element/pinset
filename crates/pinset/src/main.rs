@@ -2730,17 +2730,14 @@ fn register_provider_commands(
     Ok(())
 }
 
-fn provider_command_routing_status(
-    shim_binary: &Path,
-    commands: &[String],
-) -> (bool, Vec<String>) {
+fn provider_command_routing_status(shim_binary: &Path, commands: &[String]) -> (bool, Vec<String>) {
     let mut active = true;
     let mut shadowed = Vec::new();
     for command in commands {
         let effective = path_command_candidates(command).into_iter().next();
         match effective {
-            Some(path)
-                if is_managed_command_shim(shim_binary, &path, command).unwrap_or(false) => {}
+            Some(path) if is_managed_command_shim(shim_binary, &path, command).unwrap_or(false) => {
+            }
             Some(path) => {
                 active = false;
                 shadowed.push(format!("{command}={}", path.display()));
