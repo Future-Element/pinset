@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ArtifactIntegrity, Error, FLUTTER_TARGETS, FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat,
     JAVA_TARGETS, JavaArchiveFormat, JavaVersion, NodeArchiveFormat, PYTHON_TARGETS,
-    PYTHON_VARIANT, Result, SourceConfig, parse_python_distribution, plan_flutter_artifact,
-    plan_go_artifact, plan_java_artifact, plan_node_artifact, plan_python_artifact,
+    PYTHON_VARIANT, RUST_COMPONENTS, RUST_PROFILE, RUST_TARGETS, Result, RustArchiveFormat,
+    SourceConfig, parse_python_distribution, plan_flutter_artifact, plan_go_artifact,
+    plan_java_artifact, plan_node_artifact, plan_python_artifact, plan_rust_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -306,6 +307,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             | ("go", "go-official")
             | ("flutter", "flutter-official")
             | ("java", "adoptium-temurin")
+            | ("rust", "rust-official")
             | ("python", "python-build-standalone")
     );
     if !provider_supported {
@@ -327,6 +329,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     if tool.name != "flutter"
         && tool.name != "java"
         && tool.name != "python"
+        && tool.name != "rust"
         && !tool.metadata.is_empty()
     {
         return Err(Error::InvalidLockfile {
@@ -345,6 +348,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             "go" => validate_locked_go_artifact(&tool.version, artifact)?,
             "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
             "java" => validate_locked_java_artifact(tool, artifact)?,
+            "rust" => validate_locked_rust_artifact(tool, artifact)?,
             "python" => validate_locked_python_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
@@ -411,6 +415,20 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         if targets.len() != JAVA_TARGETS.len() {
             return Err(Error::InvalidLockfile {
                 reason: "Java lock contains an unsupported artifact target".to_owned(),
+            });
+        }
+    } else if tool.name == "rust" {
+        validate_rust_metadata(tool)?;
+        for target in RUST_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Rust artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != RUST_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: "Rust lock contains an unsupported artifact target".to_owned(),
             });
         }
     } else {
@@ -516,6 +534,53 @@ fn validate_java_metadata(tool: &LockedTool) -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
+    let date = tool
+        .metadata
+        .get("manifest_date")
+        .filter(|value| valid_release_date(value))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Rust lock metadata has no valid manifest date".to_owned(),
+        })?;
+    let manifest_sha256 = tool
+        .metadata
+        .get("manifest_sha256")
+        .filter(|value| {
+            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Rust lock metadata has no valid manifest SHA-256".to_owned(),
+        })?;
+    let expected = BTreeMap::from([
+        ("channel".to_owned(), "stable".to_owned()),
+        ("components".to_owned(), RUST_COMPONENTS.to_owned()),
+        ("manifest_date".to_owned(), date.clone()),
+        (
+            "manifest_sha256".to_owned(),
+            manifest_sha256.to_ascii_lowercase(),
+        ),
+        ("profile".to_owned(), RUST_PROFILE.to_owned()),
+    ]);
+    if tool.metadata != expected {
+        return Err(Error::InvalidLockfile {
+            reason: "Rust lock metadata must identify one stable default-profile v2 manifest"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn valid_release_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
 }
 
 fn is_exact_numeric_triplet(value: &str) -> bool {
@@ -737,6 +802,52 @@ fn validate_locked_java_artifact(tool: &LockedTool, artifact: &LockedArtifact) -
     if !artifact.overlays.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("Java artifact {} cannot contain overlays", artifact.target),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_rust_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
+    let manifest_date = tool
+        .metadata
+        .get("manifest_date")
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Rust lock metadata has no manifest_date".to_owned(),
+        })?;
+    let plan = plan_rust_artifact(
+        &tool.version,
+        manifest_date,
+        &artifact.target,
+        &artifact.canonical_url,
+    )?;
+    let expected_format = match plan.format {
+        RustArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
+    };
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != expected_format
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Rust provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid Rust SHA-256 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "rust-v2-manifest-sha256" {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported Rust verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!("Rust artifact {} cannot contain overlays", artifact.target),
         });
     }
     Ok(())
@@ -1135,6 +1246,45 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_official_rust_manifest_identity_and_required_targets() {
+        let version = "1.97.1";
+        let date = "2026-07-16";
+        let artifacts = RUST_TARGETS
+            .into_iter()
+            .map(|target| locked_rust_artifact(version, date, target))
+            .collect::<Vec<_>>();
+        let tool = LockedTool {
+            name: "rust".to_owned(),
+            requested: version.to_owned(),
+            version: version.to_owned(),
+            provider: "rust-official".to_owned(),
+            metadata: BTreeMap::from([
+                ("channel".to_owned(), "stable".to_owned()),
+                ("components".to_owned(), RUST_COMPONENTS.to_owned()),
+                ("manifest_date".to_owned(), date.to_owned()),
+                ("manifest_sha256".to_owned(), "ab".repeat(32)),
+                ("profile".to_owned(), RUST_PROFILE.to_owned()),
+            ]),
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect("Rust lock");
+
+        let mut invalid = tool.clone();
+        invalid.artifacts[0].canonical_url = "https://example.invalid/rust.tar.xz".to_owned();
+        assert!(matches!(
+            validate_locked_tool(&invalid),
+            Err(Error::InvalidRustArtifact { .. }) | Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut incomplete = tool;
+        incomplete.artifacts = artifacts.into_iter().skip(1).collect();
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -1245,6 +1395,24 @@ mod tests {
             },
             archive_root: plan.archive_root,
             verification: "adoptium-api-sha256".to_owned(),
+            overlays: Vec::new(),
+        }
+    }
+
+    fn locked_rust_artifact(version: &str, date: &str, target: &str) -> LockedArtifact {
+        let triple = crate::rust_target_triple(target).expect("Rust triple");
+        let canonical_url =
+            format!("https://static.rust-lang.org/dist/{date}/rust-{version}-{triple}.tar.xz");
+        let plan = plan_rust_artifact(version, date, target, &canonical_url).expect("Rust plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: "ab".repeat(32),
+            integrity: None,
+            format: LockedArtifactFormat::TarXz,
+            archive_root: plan.archive_root,
+            verification: "rust-v2-manifest-sha256".to_owned(),
             overlays: Vec::new(),
         }
     }

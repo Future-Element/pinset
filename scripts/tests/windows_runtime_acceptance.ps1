@@ -17,6 +17,7 @@ $ProjectGoSelector = if ($env:PINSET_PROJECT_GO_SELECTOR) { $env:PINSET_PROJECT_
 $GlobalPythonSelector = if ($env:PINSET_GLOBAL_PYTHON_SELECTOR) { $env:PINSET_GLOBAL_PYTHON_SELECTOR } else { 'latest' }
 $ProjectPythonSelector = if ($env:PINSET_PROJECT_PYTHON_SELECTOR) { $env:PINSET_PROJECT_PYTHON_SELECTOR } else { '3.13' }
 $GlobalJavaSelector = if ($env:PINSET_GLOBAL_JAVA_SELECTOR) { $env:PINSET_GLOBAL_JAVA_SELECTOR } else { 'lts' }
+$GlobalRustSelector = if ($env:PINSET_GLOBAL_RUST_SELECTOR) { $env:PINSET_GLOBAL_RUST_SELECTOR } else { 'latest' }
 $GlobalFlutterSelector = if ($env:PINSET_GLOBAL_FLUTTER_SELECTOR) { $env:PINSET_GLOBAL_FLUTTER_SELECTOR } else { 'latest' }
 $ProjectFlutterSelector = if ($env:PINSET_PROJECT_FLUTTER_SELECTOR) { $env:PINSET_PROJECT_FLUTTER_SELECTOR } else { '3.44' }
 $SkipFlutterRuntimeValue = if ($env:PINSET_SKIP_FLUTTER_RUNTIME) { $env:PINSET_SKIP_FLUTTER_RUNTIME } else { '0' }
@@ -161,6 +162,9 @@ try {
     if (-not ((& $Pinset list java --available) -match '^java@\d+\.\d+\.\d+(\.\d+)?\+\d+ temurin (lts|ga) ')) {
         throw 'no supported Eclipse Temurin JDK release was listed as available'
     }
+    if (-not ((& $Pinset list rust --available) -match '^rust@\d+\.\d+\.\d+ stable \(\d{4}-\d{2}-\d{2}\)$')) {
+        throw 'no supported stable Rust release was listed as available'
+    }
     $FlutterReleases = @(& $Pinset list flutter --available)
     if (-not ($FlutterReleases -match '^flutter@\d+\.\d+\.\d+ dart@\d+\.\d+\.\d+ stable$')) {
         throw 'no supported Flutter release was listed as available'
@@ -218,6 +222,18 @@ public class PinsetJavaProbe {
     if (-not ($GlobalJavaProbe -match "^JAVA_HOME=$([regex]::Escape($ExpectedJavaRoot))")) {
         throw "global Java probe reported an unmanaged JAVA_HOME: '$($GlobalJavaProbe -join ' | ')'"
     }
+    & $Pinset global "rust@$GlobalRustSelector"
+    $GlobalRustOutput = ((& $Pinset exec -- rustc --version) | Out-String).Trim()
+    $GlobalRustMatch = [regex]::Match($GlobalRustOutput, '^rustc (\d+\.\d+\.\d+)')
+    if (-not $GlobalRustMatch.Success) {
+        throw "global Rust returned an invalid version: '$GlobalRustOutput'"
+    }
+    $GlobalRustVersion = $GlobalRustMatch.Groups[1].Value
+    $RustProbePath = Join-Path $TestRoot 'PinsetRustProbe.rs'
+    Set-Content -LiteralPath $RustProbePath -Value 'fn main() { println!("pinset-rust-ok"); }' -NoNewline
+    $RustProbeExe = Join-Path $TestRoot 'pinset-rust-probe.exe'
+    & $Pinset exec -- rustc $RustProbePath -o $RustProbeExe
+    Assert-ExactOutput 'pinset-rust-ok' (& $RustProbeExe) 'global Rust compile and run'
     if (-not $SkipFlutterRuntime) {
         & $Pinset global "flutter@$GlobalFlutterSelector"
         $GlobalFlutterInfo = ConvertFrom-FlutterMachineOutput @(& $Pinset exec -- flutter --version --machine) 'global Flutter'
@@ -245,6 +261,15 @@ public class PinsetJavaProbe {
     Assert-PinsetPipRoutesToPython 'global pinset exec'
     if (((& $Pinset exec -- javac -version 2>&1) | Out-String).Trim() -notmatch '^javac ') {
         throw 'global pinset exec javac returned an invalid version'
+    }
+    if (((& $Pinset exec -- rustc --version) | Out-String).Trim() -notmatch "^rustc $([regex]::Escape($GlobalRustVersion))") {
+        throw 'global pinset exec rustc returned an unexpected version'
+    }
+    if (((& $Pinset exec -- cargo --version) | Out-String).Trim() -notmatch '^cargo ') {
+        throw 'global pinset exec cargo returned an invalid version'
+    }
+    if (((& $Pinset exec -- rustfmt --version) | Out-String).Trim() -notmatch '^rustfmt ') {
+        throw 'global pinset exec rustfmt returned an invalid version'
     }
     $GlobalGoRoot = ((& $Pinset exec -- go env GOROOT) | Out-String).Trim()
     if ($GlobalGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$GlobalGoVersion")*") {
@@ -286,6 +311,12 @@ public class PinsetJavaProbe {
     Assert-DirectPipRoutesToPython 'global direct'
     if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
         throw 'global direct Java probe did not run'
+    }
+    if (((& rustc --version) | Out-String).Trim() -notmatch "^rustc $([regex]::Escape($GlobalRustVersion))") {
+        throw 'global direct rustc returned an unexpected version'
+    }
+    if (((& cargo --version) | Out-String).Trim() -notmatch '^cargo ') {
+        throw 'global direct cargo returned an invalid version'
     }
     if (-not $SkipFlutterRuntime) {
         $DirectGlobalFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'global direct Flutter'
@@ -334,6 +365,7 @@ public class PinsetJavaProbe {
         throw "project Python selector resolved to unexpected version '$ProjectPythonVersion'"
     }
     & $Pinset use "java@$GlobalJavaVersion" --no-install
+    & $Pinset use "rust@$GlobalRustVersion" --no-install
     if (-not $SkipFlutterRuntime) {
         & $Pinset use "flutter@$ProjectFlutterVersion" --no-install
     }
@@ -369,6 +401,12 @@ public class PinsetJavaProbe {
     if (((& $Pinset --lang en current java) | Out-String).Trim() -notmatch "^java $([regex]::Escape($GlobalJavaVersion)) installed") {
         throw 'project Java selection was not reported as installed'
     }
+    if (((& $Pinset --lang en current rustc) | Out-String).Trim() -notmatch "^rust $([regex]::Escape($GlobalRustVersion)) installed") {
+        throw 'project Rust selection was not reported as installed'
+    }
+    $ProjectRustProbeExe = Join-Path $Project 'pinset-rust-probe.exe'
+    & rustc $RustProbePath -o $ProjectRustProbeExe
+    Assert-ExactOutput 'pinset-rust-ok' (& $ProjectRustProbeExe) 'project Rust compile and run'
     $ProjectGoRoot = ((& go env GOROOT) | Out-String).Trim()
     if ($ProjectGoRoot -notlike "$(Join-Path $env:PINSET_HOME "installs\go\$ProjectGoVersion")*") {
         throw "project Go reported an unmanaged GOROOT: '$ProjectGoRoot'"
@@ -389,6 +427,9 @@ public class PinsetJavaProbe {
     $LockedReuse = ((& $Pinset install --locked) | Out-String)
     if ($LockedReuse -notmatch "java@$([regex]::Escape($GlobalJavaVersion)) is already installed") {
         throw 'locked Java install did not reuse the completed JDK'
+    }
+    if ($LockedReuse -notmatch "rust@$([regex]::Escape($GlobalRustVersion)) is already installed") {
+        throw 'locked Rust install did not reuse the completed toolchain'
     }
     if (-not $SkipFlutterRuntime -and $LockedReuse -notmatch "flutter@$([regex]::Escape($ProjectFlutterVersion)) is already installed") {
         throw 'locked Flutter install did not reuse the completed SDK'
@@ -419,6 +460,12 @@ public class PinsetJavaProbe {
     if (((& java -cp $TestRoot PinsetJavaProbe) | Out-String) -notmatch 'pinset-java-ok') {
         throw 'restored global Java probe did not run'
     }
+    if (((& rustc --version) | Out-String).Trim() -notmatch "^rustc $([regex]::Escape($GlobalRustVersion))") {
+        throw 'restored global rustc returned an unexpected version'
+    }
+    if (((& cargo --version) | Out-String).Trim() -notmatch '^cargo ') {
+        throw 'restored global cargo returned an invalid version'
+    }
     if (-not $SkipFlutterRuntime) {
         $RestoredFlutter = ConvertFrom-FlutterMachineOutput @(& flutter --version --machine) 'restored global Flutter'
         if ($RestoredFlutter.frameworkVersion -ne $GlobalFlutterVersion) {
@@ -429,10 +476,10 @@ public class PinsetJavaProbe {
         }
     }
     if ($SkipFlutterRuntime) {
-        Write-Host 'Windows real Node, pnpm, Bun, Go, Python and Java acceptance passed; Flutter runtime download skipped'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java and Rust acceptance passed; Flutter runtime download skipped'
     }
     else {
-        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java and Flutter acceptance passed'
+        Write-Host 'Windows real Node, pnpm, Bun, Go, Python, Java, Rust and Flutter acceptance passed'
     }
 }
 finally {

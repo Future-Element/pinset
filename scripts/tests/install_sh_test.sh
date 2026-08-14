@@ -61,7 +61,9 @@ printf '%s\n' "$INSTALL_OUTPUT" | grep -F "export PATH=\"$INSTALL_DIR:\$PATH\""
 [ "$("$INSTALL_DIR/pinset" --version)" = "pinset 9.8.7-test" ]
 INSTALLED_ENTRIES=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | awk '{ print $1 }')
 [ "$INSTALLED_ENTRIES" = "2" ]
-for runtime_command in node npm npx corepack pnpm bun bunx go gofmt flutter dart python java; do
+for runtime_command in node npm npx corepack pnpm bun bunx go gofmt flutter dart \
+  python python3 pip pip3 java javac jar javadoc javap keytool jshell \
+  rustc cargo rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy; do
     [ ! -e "$INSTALL_DIR/$runtime_command" ]
 done
 

@@ -14,6 +14,7 @@ PROJECT_GO_SELECTOR="${PINSET_PROJECT_GO_SELECTOR:-1.24}"
 GLOBAL_PYTHON_SELECTOR="${PINSET_GLOBAL_PYTHON_SELECTOR:-latest}"
 PROJECT_PYTHON_SELECTOR="${PINSET_PROJECT_PYTHON_SELECTOR:-3.13}"
 GLOBAL_JAVA_SELECTOR="${PINSET_GLOBAL_JAVA_SELECTOR:-lts}"
+GLOBAL_RUST_SELECTOR="${PINSET_GLOBAL_RUST_SELECTOR:-latest}"
 GLOBAL_FLUTTER_SELECTOR="${PINSET_GLOBAL_FLUTTER_SELECTOR:-latest}"
 PROJECT_FLUTTER_SELECTOR="${PINSET_PROJECT_FLUTTER_SELECTOR:-3.44}"
 SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-0}"
@@ -85,6 +86,7 @@ grep -F 'language = "zh-CN"' "$PINSET_HOME/settings.toml"
 "$PINSET_BIN" list go --available | grep -E '^go@[0-9]+\.[0-9]+\.[0-9]+$'
 "$PINSET_BIN" list python --available | grep -E '^python@[0-9]+\.[0-9]+\.[0-9]+\+[0-9]{8} '
 "$PINSET_BIN" list java --available | grep -E '^java@[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+ temurin (lts|ga) '
+"$PINSET_BIN" list rust --available | grep -E '^rust@[0-9]+\.[0-9]+\.[0-9]+ stable \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
 FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
 printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
 PROJECT_FLUTTER_VERSION="$(
@@ -106,6 +108,9 @@ printf '%s\n' "$GLOBAL_PYTHON_VERSION" | grep -E "$VERSION_PATTERN"
 "$PINSET_BIN" global "java@$GLOBAL_JAVA_SELECTOR"
 GLOBAL_JAVA_VERSION="$("$PINSET_BIN" --lang en current java | sed -n 's/^java \([^ ]*\) installed.*/\1/p')"
 printf '%s\n' "$GLOBAL_JAVA_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+$'
+"$PINSET_BIN" global "rust@$GLOBAL_RUST_SELECTOR"
+GLOBAL_RUST_VERSION="$("$PINSET_BIN" exec -- rustc --version | sed -n 's/^rustc \([^ ]*\).*/\1/p')"
+printf '%s\n' "$GLOBAL_RUST_VERSION" | grep -E "$VERSION_PATTERN"
 cat > PinsetJavaProbe.java <<'JAVA'
 public class PinsetJavaProbe {
     public static void main(String[] args) {
@@ -128,6 +133,13 @@ case "$GLOBAL_JAVA_HOME" in
     ;;
 esac
 test "$(CDPATH= cd -- "$GLOBAL_JAVA_HOME" && pwd -P)" = "$(CDPATH= cd -- "$GLOBAL_JAVA_RUNTIME_HOME" && pwd -P)"
+cat > PinsetRustProbe.rs <<'RUST'
+fn main() {
+    println!("pinset-rust-ok");
+}
+RUST
+"$PINSET_BIN" exec -- rustc PinsetRustProbe.rs -o pinset-rust-probe
+./pinset-rust-probe | grep -Fx 'pinset-rust-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" global "flutter@$GLOBAL_FLUTTER_SELECTOR"
   GLOBAL_FLUTTER_JSON="$("$PINSET_BIN" exec -- flutter --version --machine)"
@@ -158,6 +170,9 @@ grep -F '来源=全局' global-current.txt
 assert_pinset_pip_routes_to_python 'global pinset exec'
 "$PINSET_BIN" exec -- javac -version 2>&1 | grep -F 'javac '
 "$PINSET_BIN" exec -- java -version 2>&1 | grep -F 'Temurin'
+"$PINSET_BIN" exec -- rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
+"$PINSET_BIN" exec -- cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
+"$PINSET_BIN" exec -- rustfmt --version | grep -E '^rustfmt [0-9]+\.[0-9]+\.[0-9]+'
 "$PINSET_BIN" exec -- go env GOROOT | grep -F "$PINSET_HOME/installs/go/$GLOBAL_GO_VERSION/"
 printf 'package p\nfunc f( ){ }\n' | "$PINSET_BIN" exec -- gofmt | grep -F 'func f() {}'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
@@ -186,6 +201,8 @@ python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep 
 assert_direct_pip_routes_to_python 'global direct'
 javac -version 2>&1 | grep -F 'javac '
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
+rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
+cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
@@ -218,6 +235,7 @@ printf '%s\n' "$PROJECT_GO_VERSION" | grep -E "^${PROJECT_GO_SELECTOR//./\.}\."
 PROJECT_PYTHON_VERSION="$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
 printf '%s\n' "$PROJECT_PYTHON_VERSION" | grep -E "^${PROJECT_PYTHON_SELECTOR//./\.}\."
 "$PINSET_BIN" use "java@$GLOBAL_JAVA_VERSION" --no-install
+"$PINSET_BIN" use "rust@$GLOBAL_RUST_VERSION" --no-install
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" use "flutter@$PROJECT_FLUTTER_VERSION" --no-install
 fi
@@ -264,6 +282,9 @@ java -cp "$TEST_ROOT" PinsetJavaProbe | tee project-java.txt
 grep -Fx 'pinset-java-ok' project-java.txt
 grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" project-java.txt
 "$PINSET_BIN" --lang en current java | grep -F "java $GLOBAL_JAVA_VERSION installed"
+"$PINSET_BIN" --lang en current rustc | grep -F "rust $GLOBAL_RUST_VERSION installed"
+rustc "$TEST_ROOT/PinsetRustProbe.rs" -o project-rust-probe
+./project-rust-probe | grep -Fx 'pinset-rust-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
   PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"
@@ -275,6 +296,7 @@ fi
 "$PINSET_BIN" cache clean
 "$PINSET_BIN" install --locked | tee locked-reuse.txt
 grep -F "java@$GLOBAL_JAVA_VERSION is already installed" locked-reuse.txt
+grep -F "rust@$GLOBAL_RUST_VERSION is already installed" locked-reuse.txt
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   grep -F "flutter@$PROJECT_FLUTTER_VERSION is already installed" locked-reuse.txt
 fi
@@ -300,13 +322,15 @@ go env GOTOOLCHAIN | grep -Fx 'local'
 python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
 assert_direct_pip_routes_to_python 'restored global direct'
 java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
+rustc --version | grep -F "rustc $GLOBAL_RUST_VERSION"
+cargo --version | grep -E '^cargo [0-9]+\.[0-9]+\.[0-9]+'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
 fi
 
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
-  echo "Unix real Node, pnpm, Bun, Go, Python, Java and Flutter acceptance passed"
+  echo "Unix real Node, pnpm, Bun, Go, Python, Java, Rust and Flutter acceptance passed"
 else
-  echo "Unix real Node, pnpm, Bun, Go, Python and Java acceptance passed; Flutter runtime download skipped"
+  echo "Unix real Node, pnpm, Bun, Go, Python, Java and Rust acceptance passed; Flutter runtime download skipped"
 fi

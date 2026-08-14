@@ -2,7 +2,7 @@
 
 当前规划版本：`v0.7.0`
 
-当前发布候选：无
+当前发布候选：`v0.7.0`
 
 最新已发布版本：`v0.6.1`
 
@@ -18,7 +18,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 2. `v0.4.0`：Flutter SDK，同时管理其内置 Dart。
 3. `v0.5.0`：CPython。
 4. `v0.6.0`：Java，首期仅支持 Eclipse Temurin JDK。
-5. `v0.7.0`：Rust 原生 Provider，具体分发来源另行评估。
+5. `v0.7.0`：Rust 原生 Provider，使用 Rust 官方 stable v2 manifests 与 default profile 工具链。
 
 各版本暂不承诺日期。GitHub Actions 负责三平台构建、质量检查和体积适合自动化的真实运行时验收；Flutter SDK 等超大工件保留完整验收脚本，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
 
@@ -42,7 +42,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.5.0` | 已发布 | CPython Provider、项目 `.venv` 与无激活路由 |
 | `v0.6.0` | 已发布 | Eclipse Temurin JDK Provider、Python pip/pip3 路由修复 |
 | `v0.6.1` | 已发布 | 检测 PATH 中被系统命令遮挡的 Provider 路由并给出当前 Shell 激活命令 |
-| `v0.7.0` | 规划中 | 原生 Rust Provider |
+| `v0.7.0` | 开发中 | Rust stable Provider、官方 v2 manifest 锁定、default profile 工具链与命令路由 |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
 
@@ -180,19 +180,35 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 
 ## v0.7.0 — 原生 Rust Provider
 
+实现状态：官方分发边界已冻结，核心 Provider、元数据解析、锁文件、安装、命令路由和三平台验收脚本开发中。
+
 ### 目标
 
 - 保持 Pinset 独立边界，由 Pinset 自己完成项目声明、版本锁定、下载、校验、安装、路由和诊断。
-- 具体官方分发、组件粒度与 target 支持在进入开发前单独立项，不预先承诺兼容外部管理器状态。
+- 支持 `pinset list rust --available`、精确版本、主版本、主次版本和 `stable`/`latest`/`current` 选择器；配置接受浮动选择器，锁文件只保存精确 stable 版本。
+- 路由 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver` 和 `cargo-clippy`。
+
+### 技术范围
+
+- 版本发现只读取 Rust 官方 `https://static.rust-lang.org/manifests.txt` 中的 stable 精确版本，不纳入 beta 或 nightly。
+- 每个精确版本读取并 SHA-256 校验官方 v2 `channel-rust-x.y.z.toml`，从清单锁定四平台 `rust` 组合归档的规范 URL 与 SHA-256。
+- 安装官方 `default` profile 对应组件：`rustc`、`cargo`、`rust-std`、`rust-docs`、`rustfmt` 和 `clippy`；四个发布目标为 Windows x64、Linux x64、macOS x64 和 macOS arm64。
+- 锁文件 schema 保持为 2，Provider metadata 记录 stable channel、manifest date、manifest SHA-256、profile 和组件边界。
+- 受管进程只组合所选工具链的 PATH；保留用户的 `CARGO_HOME`、`RUSTUP_HOME` 与 `RUSTFLAGS`，不修改 shell profile 或外部管理器状态。
 
 ### 不包含
 
+- beta、nightly、自定义 channel、额外 target 和按组件增删能力。
 - 导入、复用或修改其他 Rust 工具链管理器的配置与安装目录。
 - Cargo 包依赖、crate 发布或项目构建管理。
+- C/C++ 编译器、原生链接器、系统 SDK 和交叉编译环境。
 
 ### 验收条件
 
-- 三平台虚拟机中可由 Pinset 独立安装、锁定并路由项目工具链。
+- `list rust --available` 能从官方清单列出 stable 版本；选中的版本若缺少任一支持目标则明确失败。
+- 三平台虚拟机中可由 Pinset 独立安装、锁定并路由项目工具链，且能用 `rustc` 编译并运行最小程序。
+- `rustc`、`cargo`、`rustfmt` 的全局选择、项目覆盖、离开项目后的全局恢复和已安装工具链复用均通过真实验收。
+- manifest 与归档 SHA-256、官方 URL、target、profile 或组件身份不一致时锁文件验证失败。
 - Rust 接入不会改变其他 Native Provider 的下载和安装语义。
 
 ## Provider 架构约束

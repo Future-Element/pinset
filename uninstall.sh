@@ -9,7 +9,7 @@ SHIM_BINARY="${PINSET_SHIM_BINARY:-}"
 ASSUME_YES=0
 DRY_RUN=0
 ALLOW_NONSTANDARD_HOME=0
-ROUTE_COMMANDS="node npm npx corepack pnpm bun bunx go gofmt flutter dart"
+ROUTE_COMMANDS="node npm npx corepack pnpm bun bunx go gofmt flutter dart python python3 pip pip3 java javac jar javadoc javap keytool jshell rustc cargo rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy"
 
 usage() {
     cat <<'EOF'
