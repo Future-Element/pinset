@@ -2715,6 +2715,7 @@ fn register_provider_commands(
         .collect::<Vec<_>>();
     let (active, shadowed) = provider_command_routing_status(&shim_binary, &commands);
     let activation_command = current_shell_activation_command();
+    let routing = (!active).then_some((shadowed.as_slice(), activation_command));
     println!(
         "{}",
         catalog.provider_commands_registered(
@@ -2722,9 +2723,7 @@ fn register_provider_commands(
             &directory,
             &installed,
             &preserved,
-            active,
-            &shadowed,
-            activation_command,
+            routing,
         )
     );
     Ok(())

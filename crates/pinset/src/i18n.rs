@@ -890,10 +890,12 @@ impl Catalog {
         directory: &Path,
         installed: &[&str],
         preserved: &[&str],
-        active: bool,
-        shadowed: &[String],
-        activation_command: &str,
+        routing: Option<(&[String], &str)>,
     ) -> String {
+        let (active, shadowed, activation_command) = match routing {
+            Some((shadowed, activation_command)) => (false, shadowed, activation_command),
+            None => (true, &[] as &[String], ""),
+        };
         let installed = if installed.is_empty() {
             "-".to_owned()
         } else {
