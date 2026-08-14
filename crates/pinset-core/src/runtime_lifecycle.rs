@@ -280,12 +280,19 @@ fn valid_version_segment(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
 }
 
-fn version_key(version: &str) -> (u64, u64, u64) {
-    let mut parts = version.split('+').next().unwrap_or(version).split('.');
+fn version_key(version: &str) -> (u64, u64, u64, u64, u64) {
+    let (release, build) = version
+        .split_once('+')
+        .map_or((version, 0), |(release, build)| {
+            (release, build.parse().unwrap_or(0))
+        });
+    let mut parts = release.split('.');
     (
         parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
         parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
         parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        build,
     )
 }
 
@@ -324,5 +331,30 @@ mod tests {
         let versions = list_installed_tool_versions(home.path(), "python").expect("versions");
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].version, "3.14.7+20260807");
+    }
+
+    #[test]
+    fn orders_java_builds_as_distinct_release_identities() {
+        let home = tempfile::tempdir().expect("home");
+        for version in ["21.0.8+8", "21.0.8+9"] {
+            let directory = home
+                .path()
+                .join("installs")
+                .join("java")
+                .join(version)
+                .join("linux-x86_64");
+            fs::create_dir_all(&directory).expect("directory");
+            fs::write(
+                directory.join(".pinset-install.toml"),
+                format!(
+                    "schema = 2\ncomplete = true\ntool = \"java\"\nversion = \"{version}\"\ntarget = \"linux-x86_64\"\n"
+                ),
+            )
+            .expect("receipt");
+        }
+        let versions = list_installed_tool_versions(home.path(), "java").expect("versions");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, "21.0.8+9");
+        assert_eq!(versions[1].version, "21.0.8+8");
     }
 }

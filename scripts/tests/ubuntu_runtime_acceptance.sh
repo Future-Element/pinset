@@ -13,6 +13,7 @@ GLOBAL_GO_SELECTOR="${PINSET_GLOBAL_GO_SELECTOR:-latest}"
 PROJECT_GO_SELECTOR="${PINSET_PROJECT_GO_SELECTOR:-1.24}"
 GLOBAL_PYTHON_SELECTOR="${PINSET_GLOBAL_PYTHON_SELECTOR:-latest}"
 PROJECT_PYTHON_SELECTOR="${PINSET_PROJECT_PYTHON_SELECTOR:-3.13}"
+GLOBAL_JAVA_SELECTOR="${PINSET_GLOBAL_JAVA_SELECTOR:-lts}"
 GLOBAL_FLUTTER_SELECTOR="${PINSET_GLOBAL_FLUTTER_SELECTOR:-latest}"
 PROJECT_FLUTTER_SELECTOR="${PINSET_PROJECT_FLUTTER_SELECTOR:-3.44}"
 SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-0}"
@@ -42,6 +43,11 @@ unset VIRTUAL_ENV
 unset PYTHONHOME
 unset FLUTTER_ROOT
 unset FLUTTER_SUPPRESS_ANALYTICS
+unset JAVA_HOME
+unset CLASSPATH
+unset JAVA_TOOL_OPTIONS
+unset JDK_JAVA_OPTIONS
+unset _JAVA_OPTIONS
 
 cd "$TEST_ROOT"
 
@@ -54,6 +60,7 @@ grep -F 'language = "zh-CN"' "$PINSET_HOME/settings.toml"
 "$PINSET_BIN" list bun --available | grep -F "bun@$BUN_VERSION"
 "$PINSET_BIN" list go --available | grep -E '^go@[0-9]+\.[0-9]+\.[0-9]+$'
 "$PINSET_BIN" list python --available | grep -E '^python@[0-9]+\.[0-9]+\.[0-9]+\+[0-9]{8} '
+"$PINSET_BIN" list java --available | grep -E '^java@[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+ temurin (lts|ga) '
 FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
 printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
 PROJECT_FLUTTER_VERSION="$(
@@ -72,6 +79,23 @@ printf '%s\n' "$GLOBAL_GO_VERSION" | grep -E "$VERSION_PATTERN"
 "$PINSET_BIN" global "python@$GLOBAL_PYTHON_SELECTOR"
 GLOBAL_PYTHON_VERSION="$("$PINSET_BIN" exec -- python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
 printf '%s\n' "$GLOBAL_PYTHON_VERSION" | grep -E "$VERSION_PATTERN"
+"$PINSET_BIN" global "java@$GLOBAL_JAVA_SELECTOR"
+GLOBAL_JAVA_VERSION="$("$PINSET_BIN" current java | sed -n 's/^java \([^ ]*\) installed.*/\1/p')"
+printf '%s\n' "$GLOBAL_JAVA_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+$'
+cat > PinsetJavaProbe.java <<'JAVA'
+public class PinsetJavaProbe {
+    public static void main(String[] args) {
+        System.out.println("pinset-java-ok");
+        System.out.println("java.home=" + System.getProperty("java.home"));
+        System.out.println("JAVA_HOME=" + System.getenv("JAVA_HOME"));
+    }
+}
+JAVA
+"$PINSET_BIN" exec -- javac PinsetJavaProbe.java
+"$PINSET_BIN" exec -- java -cp "$TEST_ROOT" PinsetJavaProbe | tee global-java.txt
+grep -Fx 'pinset-java-ok' global-java.txt
+grep -F "java.home=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" global-java.txt
+grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" global-java.txt
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" global "flutter@$GLOBAL_FLUTTER_SELECTOR"
   GLOBAL_FLUTTER_JSON="$("$PINSET_BIN" exec -- flutter --version --machine)"
@@ -99,6 +123,10 @@ grep -F '来源=全局' global-current.txt
 "$PINSET_BIN" exec -- go version | grep -F "go version go$GLOBAL_GO_VERSION"
 "$PINSET_BIN" exec -- go env GOTOOLCHAIN | grep -Fx 'local'
 "$PINSET_BIN" exec -- python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
+"$PINSET_BIN" exec -- pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+"$PINSET_BIN" exec -- pip3 --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+"$PINSET_BIN" exec -- javac -version 2>&1 | grep -F 'javac '
+"$PINSET_BIN" exec -- java -version 2>&1 | grep -F 'Temurin'
 "$PINSET_BIN" exec -- go env GOROOT | grep -F "$PINSET_HOME/installs/go/$GLOBAL_GO_VERSION/"
 printf 'package p\nfunc f( ){ }\n' | "$PINSET_BIN" exec -- gofmt | grep -F 'func f() {}'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
@@ -124,6 +152,10 @@ go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
 python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
 python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
+pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+pip3 --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+javac -version 2>&1 | grep -F 'javac '
+java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
@@ -155,6 +187,7 @@ printf '%s\n' "$PROJECT_GO_VERSION" | grep -E "^${PROJECT_GO_SELECTOR//./\.}\."
 "$PINSET_BIN" use "python@$PROJECT_PYTHON_SELECTOR"
 PROJECT_PYTHON_VERSION="$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
 printf '%s\n' "$PROJECT_PYTHON_VERSION" | grep -E "^${PROJECT_PYTHON_SELECTOR//./\.}\."
+"$PINSET_BIN" use "java@$GLOBAL_JAVA_VERSION" --no-install
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" use "flutter@$PROJECT_FLUTTER_VERSION" --no-install
 fi
@@ -194,7 +227,15 @@ PROJECT_VENV="$(CDPATH= cd -- .venv && pwd -P)"
 python -c 'import os,sys; print(os.path.realpath(sys.prefix))' | grep -Fx "$PROJECT_VENV"
 "$PINSET_BIN" exec -- python3 -c 'import os; print(os.environ["VIRTUAL_ENV"])' | grep -F '/.venv'
 "$PINSET_BIN" exec -- pip --version | grep -F "$PROJECT_VENV"
+"$PINSET_BIN" exec -- pip3 --version | grep -F "$PROJECT_VENV"
+pip --version | grep -F "$PROJECT_VENV"
+pip3 --version | grep -F "$PROJECT_VENV"
 test -f .venv/.pinset-venv.toml
+javac "$TEST_ROOT/PinsetJavaProbe.java"
+java -cp "$TEST_ROOT" PinsetJavaProbe | tee project-java.txt
+grep -Fx 'pinset-java-ok' project-java.txt
+grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" project-java.txt
+"$PINSET_BIN" current java | grep -F "java $GLOBAL_JAVA_VERSION installed"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   PROJECT_FLUTTER_PATH="$("$PINSET_BIN" which flutter)"
   PROJECT_DART_PATH="$("$PINSET_BIN" which dart)"
@@ -205,6 +246,7 @@ if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
 fi
 "$PINSET_BIN" cache clean
 "$PINSET_BIN" install --locked | tee locked-reuse.txt
+grep -F "java@$GLOBAL_JAVA_VERSION is already installed" locked-reuse.txt
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   grep -F "flutter@$PROJECT_FLUTTER_VERSION is already installed" locked-reuse.txt
 fi
@@ -228,13 +270,15 @@ bun --version | grep -Fx "$BUN_VERSION"
 go version | grep -F "go version go$GLOBAL_GO_VERSION"
 go env GOTOOLCHAIN | grep -Fx 'local'
 python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' | grep -Fx "$GLOBAL_PYTHON_VERSION"
+pip --version | grep -F "$PINSET_HOME/installs/python/$GLOBAL_PYTHON_VERSION/"
+java -cp "$TEST_ROOT" PinsetJavaProbe | grep -Fx 'pinset-java-ok'
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["frameworkVersion"])' | grep -Fx "$GLOBAL_FLUTTER_VERSION"
   dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
 fi
 
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
-  echo "Unix real Node, pnpm, Bun, Go, Python and Flutter acceptance passed"
+  echo "Unix real Node, pnpm, Bun, Go, Python, Java and Flutter acceptance passed"
 else
-  echo "Unix real Node, pnpm, Bun, Go and Python acceptance passed; Flutter runtime download skipped"
+  echo "Unix real Node, pnpm, Bun, Go, Python and Java acceptance passed; Flutter runtime download skipped"
 fi

@@ -9,8 +9,8 @@ use std::{
 use std::ffi::OsStr;
 
 use pinset_core::{
-    CommandResolution, path_with_selected_tools, pinset_home_from_env, resolve_command_with_path,
-    selected_runtime_environment, validate_managed_runtime_invocation,
+    CommandResolution, managed_runtime_arguments, path_with_selected_tools, pinset_home_from_env,
+    resolve_command_with_path, selected_runtime_environment, validate_managed_runtime_invocation,
 };
 
 const SHIM_DEPTH_ENV: &str = "PINSET_SHIM_DEPTH";
@@ -51,9 +51,18 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             &invocation.arguments,
         )?;
     }
+    let runtime_arguments = if resolution.source == pinset_core::SelectionSource::System {
+        invocation.arguments.clone()
+    } else {
+        managed_runtime_arguments(
+            &resolution.tool,
+            &invocation.command,
+            &invocation.arguments,
+        )
+    };
 
     let runtime_path = path_with_selected_tools(&resolution.executable, &invocation.cwd, &home)?;
-    let mut child = command_for_runtime(&resolution.executable, &invocation.arguments);
+    let mut child = command_for_runtime(&resolution.executable, &runtime_arguments);
     child
         .env("PATH", runtime_path)
         .env(SHIM_DEPTH_ENV, "1")
