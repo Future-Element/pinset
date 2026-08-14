@@ -126,6 +126,14 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
+      - name: Verify macOS release dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: >-
+          sh scripts/tests/macos_release_dependencies.sh
+          target/release/pinset
+          target/release/pinset-shim
+
       - name: Run real Node, pnpm, Bun and Go acceptance on Linux and macOS
         if: runner.os != 'Windows'
         shell: bash

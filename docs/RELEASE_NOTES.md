@@ -1,5 +1,14 @@
 # Pinset Release Notes
 
+## v0.4.1
+
+- 发布日期：`2026-08-14`
+- 阶段：macOS 发布包可移植性修复
+- GitHub Release：[v0.4.1](https://github.com/Future-Element/pinset/releases/tag/v0.4.1)
+- 修复 macOS Apple Silicon 发布二进制动态依赖构建机 Homebrew `liblzma`、导致未安装 `xz` 的用户无法启动 Pinset 的问题；
+- 将 `xz2/lzma-sys` 静态链接进 Pinset，用户无需安装 Homebrew 或系统级 `xz`；
+- 在 CI 和 Release 的 macOS 构建后使用 `otool -L` 检查动态依赖，只允许 macOS 系统库与系统 Framework，阻止构建机包管理器路径进入发布归档。
+
 ## v0.4.0
 
 - 发布日期：`2026-08-13`
