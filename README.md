@@ -15,6 +15,8 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 
 `v0.4.1` 将 XZ 解压依赖静态链接进 macOS 发布二进制，不要求用户安装 Homebrew `xz`。
 
+`v0.4.2` 为中断的大型运行时下载增加同源自动重试和断点续传；短暂网络中断时会在同一条命令内继续下载 Flutter SDK。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
@@ -47,10 +49,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-固定安装最新已发布的 `v0.4.1`：
+固定安装 `v0.4.2`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.4.1/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.4.2/install.sh | sh
 ```
 
 自定义安装目录：

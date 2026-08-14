@@ -24,6 +24,9 @@ use crate::download_cache::{
 };
 use crate::{ArtifactIntegrity, Error, Result};
 
+const DOWNLOAD_ATTEMPTS_PER_SOURCE: usize = 3;
+const DOWNLOAD_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
     Zip,
@@ -484,11 +487,24 @@ impl Installer {
         expected_integrity: &ArtifactIntegrity,
         destination: &Path,
     ) -> Result<(u64, String)> {
-        let result = self.download_verified_inner(url, expected_integrity, destination);
-        if result.is_err() {
-            self.report_progress(DownloadProgressEvent::Failed);
+        for attempt in 1..=DOWNLOAD_ATTEMPTS_PER_SOURCE {
+            match self.download_verified_inner(url, expected_integrity, destination) {
+                Ok(result) => return Ok(result),
+                Err(error)
+                    if attempt < DOWNLOAD_ATTEMPTS_PER_SOURCE
+                        && is_retryable_source_error(&error) =>
+                {
+                    std::thread::sleep(
+                        DOWNLOAD_RETRY_BASE_DELAY.saturating_mul(attempt as u32),
+                    );
+                }
+                Err(error) => {
+                    self.report_progress(DownloadProgressEvent::Failed);
+                    return Err(error);
+                }
+            }
         }
-        result
+        unreachable!("the bounded download attempt loop always returns")
     }
 
     fn download_verified_inner(
@@ -1719,6 +1735,33 @@ mod tests {
     }
 
     #[test]
+    fn retries_an_interrupted_download_and_resumes_with_an_http_range_request() {
+        let root = tempdir().expect("temp root");
+        let archive = zip_bytes(&[(
+            "bin/node.exe",
+            b"fake node with enough bytes for an interrupted transfer",
+        )]);
+        let split = archive.len() / 2;
+        let hash = sha256_hex(&archive);
+        let (url, server) = serve_interrupted_then_range(archive.clone(), split);
+        let request = request(root.path(), url, hash.clone());
+
+        let outcome = test_installer()
+            .install(&request)
+            .expect("retried install");
+        server.join().expect("interrupted range server");
+
+        assert_eq!(outcome.bytes_downloaded, archive.len() as u64);
+        assert!(outcome.install_dir.join("bin/node.exe").is_file());
+        assert!(download_cache_path(root.path(), &hash)
+            .expect("download cache path")
+            .is_file());
+        assert!(!download_partial_path(root.path(), &hash)
+            .expect("partial path")
+            .exists());
+    }
+
+    #[test]
     fn installs_tar_xz_with_stripped_root_and_executable_permissions() {
         let archive = tar_xz_bytes(&[
             ("node-v24.0.0-linux-x64/bin/node", b"fake node", 0o755),
@@ -2361,6 +2404,61 @@ mod tests {
             .expect("range response headers");
             stream.write_all(&body).expect("range response body");
             stream.flush().expect("flush range response");
+        });
+        (format!("http://{address}/artifact.zip"), handle)
+    }
+
+    fn serve_interrupted_then_range(
+        body: Vec<u8>,
+        split: usize,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind interrupted server");
+        let address = listener.local_addr().expect("interrupted server address");
+        let handle = thread::spawn(move || {
+            {
+                let (mut stream, _) = listener.accept().expect("accept initial request");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("initial read timeout");
+                let mut request = [0_u8; 4096];
+                let length = stream.read(&mut request).expect("read initial request");
+                let request = String::from_utf8_lossy(&request[..length]).to_ascii_lowercase();
+                assert!(!request.contains("range:"), "unexpected Range header");
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("initial response headers");
+                stream
+                    .write_all(&body[..split])
+                    .expect("interrupted response body");
+                stream.flush().expect("flush interrupted response");
+            }
+
+            let (mut stream, _) = listener.accept().expect("accept resumed request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("resumed read timeout");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("read resumed request");
+            let request = String::from_utf8_lossy(&request[..length]).to_ascii_lowercase();
+            assert!(
+                request.contains(&format!("range: bytes={split}-")),
+                "missing expected Range header in {request:?}"
+            );
+            write!(
+                stream,
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {split}-{}/{}\r\nConnection: close\r\n\r\n",
+                body.len() - split,
+                body.len() - 1,
+                body.len()
+            )
+            .expect("resumed response headers");
+            stream
+                .write_all(&body[split..])
+                .expect("resumed response body");
+            stream.flush().expect("flush resumed response");
         });
         (format!("http://{address}/artifact.zip"), handle)
     }
