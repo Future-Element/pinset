@@ -2701,7 +2701,8 @@ fn register_provider_commands(
         .map(|command| (*command).to_owned())
         .collect::<Vec<_>>();
     let directory = command_routing_directory(home)?;
-    let results = ensure_shims(&default_shim_binary()?, &directory, &commands)?;
+    let shim_binary = default_shim_binary()?;
+    let results = ensure_shims(&shim_binary, &directory, &commands)?;
     let installed = results
         .iter()
         .filter(|result| result.method != ShimInstallMethod::Existing)
@@ -2712,12 +2713,64 @@ fn register_provider_commands(
         .filter(|result| result.method == ShimInstallMethod::Existing)
         .map(|result| result.command.as_str())
         .collect::<Vec<_>>();
-    let active = directory_on_path(&directory);
+    let (active, shadowed) = provider_command_routing_status(&shim_binary, &commands);
+    let activation_command = current_shell_activation_command();
     println!(
         "{}",
-        catalog.provider_commands_registered(tool, &directory, &installed, &preserved, active)
+        catalog.provider_commands_registered(
+            tool,
+            &directory,
+            &installed,
+            &preserved,
+            active,
+            &shadowed,
+            activation_command,
+        )
     );
     Ok(())
+}
+
+fn provider_command_routing_status(
+    shim_binary: &Path,
+    commands: &[String],
+) -> (bool, Vec<String>) {
+    let mut active = true;
+    let mut shadowed = Vec::new();
+    for command in commands {
+        let effective = path_command_candidates(command).into_iter().next();
+        match effective {
+            Some(path)
+                if is_managed_command_shim(shim_binary, &path, command).unwrap_or(false) => {}
+            Some(path) => {
+                active = false;
+                shadowed.push(format!("{command}={}", path.display()));
+            }
+            None => active = false,
+        }
+    }
+    (active, shadowed)
+}
+
+fn current_shell_activation_command() -> &'static str {
+    activation_command_for_shell(env::var_os("SHELL").as_deref())
+}
+
+fn activation_command_for_shell(shell: Option<&std::ffi::OsStr>) -> &'static str {
+    let name = shell
+        .map(Path::new)
+        .and_then(Path::file_stem)
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_ascii_lowercase);
+    match name.as_deref() {
+        Some("zsh") => "eval \"$(pinset activate zsh)\"",
+        Some("fish") => "pinset activate fish | source",
+        Some("powershell" | "pwsh") => {
+            "pinset activate powershell | Out-String | Invoke-Expression"
+        }
+        Some("bash") => "eval \"$(pinset activate bash)\"",
+        _ if cfg!(windows) => "pinset activate powershell | Out-String | Invoke-Expression",
+        _ => "eval \"$(pinset activate bash)\"",
+    }
 }
 
 fn migrate_provider_shims(
@@ -2919,6 +2972,22 @@ mod tests {
         assert!(powershell.contains("$env:PATH"));
         assert!(powershell.contains("PathSeparator"));
         assert!(!powershell.contains("node"));
+    }
+
+    #[test]
+    fn recommends_activation_for_the_current_shell() {
+        assert_eq!(
+            activation_command_for_shell(Some(std::ffi::OsStr::new("/bin/zsh"))),
+            "eval \"$(pinset activate zsh)\""
+        );
+        assert_eq!(
+            activation_command_for_shell(Some(std::ffi::OsStr::new("/usr/bin/fish"))),
+            "pinset activate fish | source"
+        );
+        assert_eq!(
+            activation_command_for_shell(Some(std::ffi::OsStr::new("pwsh.exe"))),
+            "pinset activate powershell | Out-String | Invoke-Expression"
+        );
     }
 
     #[test]

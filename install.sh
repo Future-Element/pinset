@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="0.6.0"
+DEFAULT_VERSION="0.6.1"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
@@ -18,7 +18,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 0.6.0.
+  --version VERSION       Install an exact release, for example 0.6.1.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
   -h, --help              Show this help.
@@ -221,10 +221,18 @@ printf 'Installed %s\n' "$INSTALL_DIR/pinset"
 printf 'Installed %s\n' "$INSTALL_DIR/pinset-shim"
 "$INSTALL_DIR/pinset" --version
 
-case ":${PATH:-}:" in
-    *":$INSTALL_DIR:"*) ;;
+case "${PATH:-}" in
+    "$INSTALL_DIR"|"$INSTALL_DIR:"*) ;;
     *)
-        printf '\nAdd Pinset to the current shell:\n'
+        case ":${PATH:-}:" in
+            *":$INSTALL_DIR:"*)
+                printf '\nPinset is on PATH but may be shadowed by earlier system commands.\n'
+                printf 'Move Pinset to the front for the current shell:\n'
+                ;;
+            *)
+                printf '\nAdd Pinset to the current shell:\n'
+                ;;
+        esac
         printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
         ;;
 esac

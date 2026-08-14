@@ -891,6 +891,8 @@ impl Catalog {
         installed: &[&str],
         preserved: &[&str],
         active: bool,
+        shadowed: &[String],
+        activation_command: &str,
     ) -> String {
         let installed = if installed.is_empty() {
             "-".to_owned()
@@ -905,9 +907,14 @@ impl Catalog {
         match self.language {
             Language::English => {
                 let activation = if active {
-                    ""
+                    String::new()
+                } else if shadowed.is_empty() {
+                    format!("; run `{activation_command}` in the current shell")
                 } else {
-                    "; run `eval \"$(pinset activate bash)\"` for the current Bash shell"
+                    format!(
+                        "; warning: earlier PATH entries shadow {}; run `{activation_command}` in the current shell",
+                        shadowed.join(",")
+                    )
                 };
                 format!(
                     "{provider} command routing ready: {} (created={installed}; managed-existing={preserved}){activation}",
@@ -916,9 +923,14 @@ impl Catalog {
             }
             Language::SimplifiedChinese => {
                 let activation = if active {
-                    ""
+                    String::new()
+                } else if shadowed.is_empty() {
+                    format!("；当前 Shell 请执行 `{activation_command}`")
                 } else {
-                    "；当前 Bash 请执行 `eval \"$(pinset activate bash)\"`"
+                    format!(
+                        "；警告：更早的 PATH 命令遮挡了 {}；当前 Shell 请执行 `{activation_command}`",
+                        shadowed.join(",")
+                    )
                 };
                 format!(
                     "{provider} 命令路由已就绪：{}（已创建={installed}；已有受管命令={preserved}）{activation}",

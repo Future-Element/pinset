@@ -354,6 +354,25 @@ fn locked_install_registers_provider_commands_without_downloading_a_runtime() {
         &["install", "--locked"],
     );
     assert_success_contains(&repeated, "managed-existing=node,npm,npx,corepack");
+
+    let system_bin = root.path().join("system-bin");
+    fs::create_dir(&system_bin).expect("system bin");
+    let system_node = system_bin.join(if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    });
+    fs::write(&system_node, b"system node").expect("system node");
+    let shadowed = pinset_with_router_and_path(
+        &project,
+        &home,
+        &fake_shim,
+        &routing,
+        &[&system_bin, &routing],
+        &["install", "--locked"],
+    );
+    assert_success_contains(&shadowed, "earlier PATH entries shadow node=");
+    assert_success_contains(&shadowed, "pinset activate");
 }
 
 #[test]

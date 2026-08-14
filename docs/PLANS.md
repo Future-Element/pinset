@@ -4,7 +4,7 @@
 
 当前发布候选：无
 
-最新已发布版本：`v0.6.0`
+最新已发布版本：`v0.6.1`
 
 更新时间：`2026-08-14`
 
@@ -41,6 +41,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.4.2` | 已发布 | 大型运行时下载自动重试与断点续传 |
 | `v0.5.0` | 已发布 | CPython Provider、项目 `.venv` 与无激活路由 |
 | `v0.6.0` | 已发布 | Eclipse Temurin JDK Provider、Python pip/pip3 路由修复 |
+| `v0.6.1` | 已发布 | 检测 PATH 中被系统命令遮挡的 Provider 路由并给出当前 Shell 激活命令 |
 | `v0.7.0` | 规划中 | 原生 Rust Provider |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
