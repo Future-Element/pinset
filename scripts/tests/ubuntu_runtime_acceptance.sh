@@ -118,8 +118,16 @@ JAVA
 "$PINSET_BIN" exec -- javac PinsetJavaProbe.java
 "$PINSET_BIN" exec -- java -cp "$TEST_ROOT" PinsetJavaProbe | tee global-java.txt
 grep -Fx 'pinset-java-ok' global-java.txt
-grep -F "java.home=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" global-java.txt
-grep -F "JAVA_HOME=$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/" global-java.txt
+GLOBAL_JAVA_HOME="$(sed -n 's/^JAVA_HOME=//p' global-java.txt)"
+GLOBAL_JAVA_RUNTIME_HOME="$(sed -n 's/^java\.home=//p' global-java.txt)"
+case "$GLOBAL_JAVA_HOME" in
+  "$PINSET_HOME/installs/java/$GLOBAL_JAVA_VERSION/"*) ;;
+  *)
+    echo "global Java reported an unmanaged JAVA_HOME: $GLOBAL_JAVA_HOME" >&2
+    exit 1
+    ;;
+esac
+test "$(CDPATH= cd -- "$GLOBAL_JAVA_HOME" && pwd -P)" = "$(CDPATH= cd -- "$GLOBAL_JAVA_RUNTIME_HOME" && pwd -P)"
 if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" global "flutter@$GLOBAL_FLUTTER_SELECTOR"
   GLOBAL_FLUTTER_JSON="$("$PINSET_BIN" exec -- flutter --version --machine)"

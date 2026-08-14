@@ -91,7 +91,15 @@ function Assert-PinsetPipRoutesToPython {
     }
     Write-Host "${Label} python -m pip: $Expected"
     foreach ($PipCommand in @('pip', 'pip3')) {
-        Assert-ExactOutput $Expected @(& $Pinset exec -- $PipCommand --version) "$Label $PipCommand"
+        $ActualLines = @(& $Pinset exec -- $PipCommand --version 2>&1)
+        $Status = $LASTEXITCODE
+        $Actual = (($ActualLines | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+        if ($Status -ne 0) {
+            throw "$Label $PipCommand failed with exit code ${Status}: '$Actual'"
+        }
+        if ($Actual -ne $Expected) {
+            throw "$Label $PipCommand expected '$Expected', got '$Actual'"
+        }
     }
 }
 
@@ -104,7 +112,15 @@ function Assert-DirectPipRoutesToPython {
     }
     Write-Host "${Label} python -m pip: $Expected"
     foreach ($PipCommand in @('pip', 'pip3')) {
-        Assert-ExactOutput $Expected @(& $PipCommand --version) "$Label $PipCommand"
+        $ActualLines = @(& $PipCommand --version 2>&1)
+        $Status = $LASTEXITCODE
+        $Actual = (($ActualLines | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+        if ($Status -ne 0) {
+            throw "$Label $PipCommand failed with exit code ${Status}: '$Actual'"
+        }
+        if ($Actual -ne $Expected) {
+            throw "$Label $PipCommand expected '$Expected', got '$Actual'"
+        }
     }
 }
 
