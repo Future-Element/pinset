@@ -1288,14 +1288,12 @@ fn strip_entry_path(
     entry_name: &str,
 ) -> Result<Option<PathBuf>> {
     let components = path.components().collect::<Vec<_>>();
-    if components.len() < strip_components
-        || (components.len() == strip_components && !is_directory)
-    {
+    if components.len() <= strip_components && !is_directory {
         return Err(Error::UnsafeArchiveEntry {
             entry: entry_name.to_owned(),
         });
     }
-    if components.len() == strip_components {
+    if components.len() <= strip_components {
         return Ok(None);
     }
     Ok(Some(
@@ -2334,7 +2332,10 @@ mod tests {
         let encoder = XzEncoder::new(Vec::new(), 6);
         let mut builder = tar::Builder::new(encoder);
         for directory in [
+            "rust-1.97.1-x86_64-unknown-linux-gnu",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/rustc",
             "rust-1.97.1-x86_64-unknown-linux-gnu/rustc/bin",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/cargo",
             "rust-1.97.1-x86_64-unknown-linux-gnu/cargo/bin",
         ] {
             let mut header = tar::Header::new_gnu();
