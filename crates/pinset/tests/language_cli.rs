@@ -51,11 +51,11 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     let help = pinset(&first_project, &home, &["--lang", "zh-CN", "use", "--help"]);
     assert_success_contains(
         &help,
-        "选择并锁定 Node.js、pnpm、Bun、Go、Python 或 Flutter 版本",
+        "选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本",
     );
     assert_success_contains(
         &help,
-        "node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47",
+        "node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@21|rust@1.97|dotnet@10",
     );
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("Usage:"),
