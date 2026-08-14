@@ -31,10 +31,7 @@ fn routes_a_managed_rust_toolchain_without_taking_over_cargo_or_rustup_state() {
     write_cargo_command(&bin);
     write_receipt(&install_dir);
 
-    assert_success_contains(
-        &pinset(&project, &home, &["list", "rust"]),
-        "rust@1.97.1",
-    );
+    assert_success_contains(&pinset(&project, &home, &["list", "rust"]), "rust@1.97.1");
     assert_success_contains(
         &pinset(&project, &home, &["current", "rustc"]),
         "rust 1.97.1 installed",

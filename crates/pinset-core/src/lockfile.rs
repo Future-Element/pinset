@@ -547,9 +547,7 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
     let manifest_sha256 = tool
         .metadata
         .get("manifest_sha256")
-        .filter(|value| {
-            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .ok_or_else(|| Error::InvalidLockfile {
             reason: "Rust lock metadata has no valid manifest SHA-256".to_owned(),
         })?;
@@ -808,12 +806,12 @@ fn validate_locked_java_artifact(tool: &LockedTool, artifact: &LockedArtifact) -
 }
 
 fn validate_locked_rust_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
-    let manifest_date = tool
-        .metadata
-        .get("manifest_date")
-        .ok_or_else(|| Error::InvalidLockfile {
-            reason: "Rust lock metadata has no manifest_date".to_owned(),
-        })?;
+    let manifest_date =
+        tool.metadata
+            .get("manifest_date")
+            .ok_or_else(|| Error::InvalidLockfile {
+                reason: "Rust lock metadata has no manifest_date".to_owned(),
+            })?;
     let plan = plan_rust_artifact(
         &tool.version,
         manifest_date,

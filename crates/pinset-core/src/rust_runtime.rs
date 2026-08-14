@@ -26,12 +26,13 @@ pub fn install_locked_rust(
             tool: "rust".to_owned(),
             target: target.to_owned(),
         })?;
-    let manifest_date = locked_rust
-        .metadata
-        .get("manifest_date")
-        .ok_or_else(|| Error::InvalidLockfile {
-            reason: "Rust lock has no manifest_date metadata".to_owned(),
-        })?;
+    let manifest_date =
+        locked_rust
+            .metadata
+            .get("manifest_date")
+            .ok_or_else(|| Error::InvalidLockfile {
+                reason: "Rust lock has no manifest_date metadata".to_owned(),
+            })?;
     let plan = plan_rust_artifact(
         &locked_rust.version,
         manifest_date,

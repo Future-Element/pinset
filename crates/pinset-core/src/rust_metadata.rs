@@ -116,9 +116,10 @@ impl RustMetadataClient {
                 ),
             });
         }
-        let manifest_text = std::str::from_utf8(&manifest).map_err(|_| Error::InvalidRustIndex {
-            reason: "release manifest is not UTF-8".to_owned(),
-        })?;
+        let manifest_text =
+            std::str::from_utf8(&manifest).map_err(|_| Error::InvalidRustIndex {
+                reason: "release manifest is not UTF-8".to_owned(),
+            })?;
         let manifest: ChannelManifest =
             toml::from_str(manifest_text).map_err(|source| Error::InvalidRustIndex {
                 reason: format!("release manifest: {source}"),
@@ -265,16 +266,20 @@ fn resolve_manifest_tool(
             reason: "release manifest must use schema 2 and an exact date".to_owned(),
         });
     }
-    let package = manifest.pkg.get("rust").ok_or_else(|| Error::InvalidRustIndex {
-        reason: "release manifest has no rust package".to_owned(),
-    })?;
-    let manifest_version = package
-        .version
-        .split_whitespace()
-        .next()
+    let package = manifest
+        .pkg
+        .get("rust")
         .ok_or_else(|| Error::InvalidRustIndex {
-            reason: "rust package has no version".to_owned(),
+            reason: "release manifest has no rust package".to_owned(),
         })?;
+    let manifest_version =
+        package
+            .version
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| Error::InvalidRustIndex {
+                reason: "rust package has no version".to_owned(),
+            })?;
     if manifest_version != requested_version {
         return Err(Error::InvalidRustIndex {
             reason: format!(
@@ -302,14 +307,19 @@ fn resolve_manifest_tool(
                 .ok_or_else(|| Error::InvalidRustIndex {
                     reason: format!("Rust {requested_version} has no {triple} toolchain"),
                 })?;
-            let url = artifact.xz_url.as_deref().ok_or_else(|| Error::InvalidRustIndex {
-                reason: format!("Rust {requested_version} {triple} has no tar.xz URL"),
-            })?;
-            let hash = artifact.xz_hash.as_deref().filter(|hash| valid_sha256(hash)).ok_or_else(
-                || Error::InvalidRustIndex {
+            let url = artifact
+                .xz_url
+                .as_deref()
+                .ok_or_else(|| Error::InvalidRustIndex {
+                    reason: format!("Rust {requested_version} {triple} has no tar.xz URL"),
+                })?;
+            let hash = artifact
+                .xz_hash
+                .as_deref()
+                .filter(|hash| valid_sha256(hash))
+                .ok_or_else(|| Error::InvalidRustIndex {
                     reason: format!("Rust {requested_version} {triple} has no valid SHA-256"),
-                },
-            )?;
+                })?;
             let plan = plan_rust_artifact(requested_version, &manifest.date, target, url)?;
             Ok(LockedArtifact {
                 target: target.to_owned(),
@@ -350,7 +360,9 @@ fn validate_default_profile(profiles: &BTreeMap<String, Vec<String>>) -> Result<
         })?;
     let components = profile.iter().map(String::as_str).collect::<BTreeSet<_>>();
     let required = ["rustc", "cargo", "rust-std", "rust-docs"];
-    if required.iter().any(|component| !components.contains(component))
+    if required
+        .iter()
+        .any(|component| !components.contains(component))
         || !(components.contains("rustfmt") || components.contains("rustfmt-preview"))
         || !(components.contains("clippy") || components.contains("clippy-preview"))
     {
@@ -445,9 +457,7 @@ mod tests {
             "1.96.1"
         );
         assert_eq!(
-            select_release(releases, "1.97.1")
-                .expect("exact")
-                .version,
+            select_release(releases, "1.97.1").expect("exact").version,
             "1.97.1"
         );
     }
@@ -455,13 +465,8 @@ mod tests {
     #[test]
     fn resolves_a_complete_default_profile_manifest() {
         let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).expect("manifest");
-        let tool = resolve_manifest_tool(
-            "1.97.1",
-            "2026-07-16",
-            manifest,
-            &"ab".repeat(32),
-        )
-        .expect("tool");
+        let tool = resolve_manifest_tool("1.97.1", "2026-07-16", manifest, &"ab".repeat(32))
+            .expect("tool");
         assert_eq!(tool.provider, "rust-official");
         assert_eq!(tool.artifacts.len(), RUST_TARGETS.len());
         assert_eq!(
@@ -474,12 +479,7 @@ mod tests {
     fn rejects_a_manifest_that_does_not_match_the_indexed_release_date() {
         let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).expect("manifest");
         assert!(matches!(
-            resolve_manifest_tool(
-                "1.97.1",
-                "2026-07-15",
-                manifest,
-                &"ab".repeat(32),
-            ),
+            resolve_manifest_tool("1.97.1", "2026-07-15", manifest, &"ab".repeat(32),),
             Err(Error::InvalidRustIndex { .. })
         ));
     }
