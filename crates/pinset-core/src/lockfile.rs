@@ -915,10 +915,7 @@ fn validate_locked_rust_artifact(tool: &LockedTool, artifact: &LockedArtifact) -
     Ok(())
 }
 
-fn validate_locked_dotnet_artifact(
-    tool: &LockedTool,
-    artifact: &LockedArtifact,
-) -> Result<()> {
+fn validate_locked_dotnet_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
     let plan = plan_dotnet_artifact(&tool.version, &artifact.target, &artifact.canonical_url)?;
     let expected_format = match plan.format {
         DotnetArchiveFormat::Zip => LockedArtifactFormat::Zip,
@@ -1572,8 +1569,7 @@ mod tests {
         let canonical_url = format!(
             "https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/dotnet-sdk-{version}-{rid}.{extension}"
         );
-        let plan =
-            plan_dotnet_artifact(version, target, &canonical_url).expect(".NET SDK plan");
+        let plan = plan_dotnet_artifact(version, target, &canonical_url).expect(".NET SDK plan");
         LockedArtifact {
             target: target.to_owned(),
             canonical_url: plan.canonical_url,

@@ -194,11 +194,12 @@ impl DotnetMetadataClient {
             .base_url
             .join(RELEASES_INDEX_PATH)
             .expect("known .NET releases index path");
-        let index: ReleasesIndex = serde_json::from_str(&self.download(&index_url)?).map_err(
-            |source| Error::InvalidDotnetIndex {
-                reason: format!("releases index: {source}"),
-            },
-        )?;
+        let index: ReleasesIndex =
+            serde_json::from_str(&self.download(&index_url)?).map_err(|source| {
+                Error::InvalidDotnetIndex {
+                    reason: format!("releases index: {source}"),
+                }
+            })?;
         let channels = supported_channels(index.channels)?;
         let mut releases = BTreeMap::<DotnetVersion, SupportedDotnetRelease>::new();
         for channel in channels {
@@ -285,11 +286,17 @@ fn validate_releases_url(channel: &ChannelIndex) -> Result<Url> {
         channel.channel
     );
     let url = Url::parse(&channel.releases_url).map_err(|source| Error::InvalidDotnetIndex {
-        reason: format!("invalid releases URL for channel {}: {source}", channel.channel),
+        reason: format!(
+            "invalid releases URL for channel {}: {source}",
+            channel.channel
+        ),
     })?;
     if url.as_str() != expected {
         return Err(Error::InvalidDotnetIndex {
-            reason: format!("releases URL for channel {} must be {expected}", channel.channel),
+            reason: format!(
+                "releases URL for channel {} must be {expected}",
+                channel.channel
+            ),
         });
     }
     Ok(url)
