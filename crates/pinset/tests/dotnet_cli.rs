@@ -43,10 +43,7 @@ fn routes_the_managed_dotnet_sdk_and_preserves_user_cli_state() {
     );
     let executed = pinset(&project, &home, &["exec", "--", "dotnet", "--info"]);
     assert_success_contains(&executed, "fake-dotnet --info");
-    assert_success_contains(
-        &executed,
-        &format!("DOTNET_ROOT={}", install_dir.display()),
-    );
+    assert_success_contains(&executed, &format!("DOTNET_ROOT={}", install_dir.display()));
     assert_success_contains(&executed, "DOTNET_CLI_HOME=fixture-dotnet-home");
     assert_success_contains(&executed, "NUGET_PACKAGES=fixture-nuget-packages");
 }

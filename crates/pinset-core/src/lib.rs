@@ -83,6 +83,8 @@ pub use config::{
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectConfig, find_optional_project_config,
     find_project_config, load_project_config,
 };
+#[cfg(feature = "project-write")]
+pub use config::{create_project_config, save_project_config};
 #[cfg(feature = "dotnet-metadata")]
 pub use dotnet_metadata::{DotnetMetadataClient, DotnetRelease};
 #[cfg(feature = "dotnet-provider")]
@@ -96,8 +98,6 @@ pub use dotnet_provider::{
     feature = "lockfile"
 ))]
 pub use dotnet_runtime::install_locked_dotnet;
-#[cfg(feature = "project-write")]
-pub use config::{create_project_config, save_project_config};
 #[cfg(feature = "installer")]
 pub use download_cache::{
     DownloadCacheCleanOutcome, DownloadCacheEntry, clean_download_cache, download_cache_path,
