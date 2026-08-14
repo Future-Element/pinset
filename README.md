@@ -3,7 +3,7 @@
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
 [![Release](https://github.com/Future-Element/pinset/actions/workflows/release.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/release.yml)
 
-Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用一致的命令管理 Node.js、Go、Python、Flutter 等运行时，减少在 fnm、nvm、Go 工具链、uv、FVM 之间切换的学习和维护成本。
+Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI。它只读取自己的项目配置与锁文件，用一致的命令管理 Node.js、pnpm、Bun、Go、Python 和 Flutter 等运行时。
 
 `v0.2.0` 在已验证的 Node.js 管理基础上新增独立的 pnpm 与 Bun Provider。
 
@@ -17,18 +17,21 @@ Pinset 是一个本地优先的多语言运行时版本管理 CLI。目标是用
 
 `v0.4.2` 为中断的大型运行时下载增加同源自动重试和断点续传；短暂网络中断时会在同一条命令内继续下载 Flutter SDK。
 
+`v0.5.0` 新增 CPython Provider，并为项目创建 Pinset 自有的 `.venv`；`python`、`python3` 和 `pinset exec -- <环境命令>` 会自动路由到项目环境，无需手动激活虚拟环境。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
 - Go 的精确、主版本、主次版本、`latest`/`current` 选择器；
+- CPython 的精确、主版本、主次版本、`latest`/`current` 选择器，以及构建 ID 精确锁定；
 - Flutter stable 的精确、主版本、主次版本、`latest`/`current` 选择器，以及对应的内置 Dart 版本；
 - Windows x64、Linux x64、macOS Apple Silicon 的 Pinset Release；
-- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx`、`go`、`gofmt`、`flutter`、`dart` 统一路由；
+- `node`、`npm`、`npx`、`corepack`、`pnpm`、`bun`、`bunx`、`go`、`gofmt`、`python`、`python3`、`flutter`、`dart` 统一路由；
 - 可提交的 `pinset.toml` 和 `pinset.lock`；
 - Node SHA-256、npm SHA-512 SRI 与 registry ECDSA 签名校验、安全解压、事务安装、并发安装锁、断点续传和内容寻址缓存；
 - 国内或企业镜像、有序回退、可选的可信元数据镜像和离线缓存导入；
-- 中英文提示、旧 Node 管理器与 `.fvmrc` 配置导入、诊断、安全卸载；
-- 三平台自动构建、真实 Node/pnpm/Bun/Go 验收、Flutter/Dart 元数据与安装逻辑测试、CycloneDX SBOM 和 GitHub 构建来源证明。
+- 中英文提示、诊断、安全卸载，以及明确拒绝接管非 Pinset 所有的目录和命令；
+- 三平台自动构建、真实 Node/pnpm/Bun/Go/Python 验收、Flutter/Dart 元数据与安装逻辑测试、CycloneDX SBOM 和 GitHub 构建来源证明。
 
 ## 快速安装
 
@@ -49,10 +52,10 @@ pinset --version
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-固定安装 `v0.4.2`：
+固定安装 `v0.5.0`：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.4.2/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.5.0/install.sh | sh
 ```
 
 自定义安装目录：
@@ -234,6 +237,40 @@ Pinset 从 Go 官方下载 JSON 索引读取稳定版本和 Windows x64、Linux 
 
 Pinset 不修改 `go.mod`/`go.work`，也不管理 Go module 依赖、`GOPATH`、`GOMODCACHE` 或 `GOCACHE`。
 
+## Python 与项目 `.venv`
+
+Python 使用与其他 Provider 相同的选择、锁定、安装和缓存流程：
+
+```shell
+pinset list python --available
+pinset global python@3.14
+pinset use python@3.14
+pinset current python
+pinset which python
+```
+
+Pinset 从官方版本注册表选择稳定 CPython 的 `install_only` 发行包，并把 CPython 精确版本、上游构建 ID、发行变体、四个平台工件和 SHA-256 写入锁文件。项目配置中的版本形如 `3.14.7+20260807`，因此同一个 CPython 版本的不同上游构建不会互相覆盖。
+
+项目执行 `pinset use python@...` 或 `pinset install --locked` 后，Pinset 使用锁定解释器的标准库 `venv` 创建项目根目录 `.venv`。只要 Pinset 的 shim 目录已一次性加入 PATH，直接运行 `python` 或 `python3` 就会进入最近项目的 `.venv`，不需要执行 `activate`：
+
+```shell
+python -c "import sys; print(sys.prefix)"
+pinset exec -- python -m pip --version
+pinset exec -- pytest
+```
+
+`pinset exec -- <命令>` 还会查找 `.venv/bin` 或 `.venv/Scripts` 中的项目脚本，设置进程级 `VIRTUAL_ENV`，并清除可能把解释器引向别处的 `PYTHONHOME`。
+
+虚拟环境必须包含 Pinset 所有权标记，且与项目锁定的 Python 发行版和当前目标一致。Pinset 不会采用、覆盖或删除未标记的 `.venv`。显式生命周期命令为：
+
+```shell
+pinset venv status
+pinset venv create
+pinset venv recreate
+```
+
+`create` 只创建缺失环境或验证现有环境；`recreate` 才会在验证 Pinset 所有权后删除并重建 `.venv`。Pinset 不解析 Python 包依赖、不决定包安装策略，也不读取或导入其他运行时管理器的项目声明。
+
 ## Flutter 与内置 Dart
 
 Flutter 使用与其他 Provider 相同的项目、全局、available、安装、卸载和路由流程：
@@ -251,7 +288,7 @@ dart --version
 
 Flutter SDK 归档明显大于其他 Provider。Pinset 仅为已通过内置工件身份校验的 Flutter 锁使用专用下载和解压安全上限；已安装 SDK 可直接重用，下载归档可通过 `pinset cache clean` 清理。
 
-Flutter 与 Dart 始终从同一套 SDK 的 `bin` 路由。受管命令获得对应的 `FLUTTER_ROOT`；未显式设置时，Pinset 还会使用 `FLUTTER_SUPPRESS_ANALYTICS=true`，用户已有值保持不变。`.fvmrc` 可通过 `pinset import --dry-run` 预览，并通过 `pinset import --apply --from fvm` 显式导入，原文件与 FVM 缓存不会被修改。
+Flutter 与 Dart 始终从同一套 SDK 的 `bin` 路由。受管命令获得对应的 `FLUTTER_ROOT`；未显式设置时，Pinset 还会使用 `FLUTTER_SUPPRESS_ANALYTICS=true`，用户已有值保持不变。
 
 为保持锁文件可复现，受管 SDK 不允许原地执行 `flutter upgrade`、`flutter downgrade` 或 `flutter channel`。请选择新版本，例如 `pinset use flutter@3.47`，由 Pinset 解析并安装另一套 SDK。
 
@@ -284,6 +321,8 @@ pinset which npm
 pinset exec -- node --version
 pinset exec -- npm ci
 pinset exec -- go version
+pinset exec -- python -m pip --version
+pinset exec -- pytest
 pinset exec go@1.25 -- go version
 pinset exec -- flutter --version
 pinset exec -- dart --version
@@ -304,7 +343,7 @@ pinset install node@20
 
 ### 直接运行 Provider 命令
 
-正常执行 `global`、`use` 或 `install` 后，各 Provider 会注册自己的通用路由：Node 注册四个命令，pnpm 注册 `pnpm`，Bun 注册 `bun` 和 `bunx`，Go 注册 `go` 和 `gofmt`，Flutter 注册 `flutter` 和 `dart`。curl 安装器本身仍然保持运行时中立，只安装 Pinset 和通用调度器。
+正常执行 `global`、`use` 或 `install` 后，各 Provider 会注册自己的通用路由：Node 注册四个命令，pnpm 注册 `pnpm`，Bun 注册 `bun` 和 `bunx`，Go 注册 `go` 和 `gofmt`，Python 注册 `python` 和 `python3`，Flutter 注册 `flutter` 和 `dart`。curl 安装器本身仍然保持运行时中立，只安装 Pinset 和通用调度器。
 
 如果使用源码构建、定制安装目录，或当前终端还没有路由目录，可以临时激活：
 
@@ -327,11 +366,12 @@ pinset shim install --provider node
 pinset shim install --provider pnpm
 pinset shim install --provider bun
 pinset shim install --provider go
+pinset shim install --provider python
 pinset shim install --provider flutter
 pinset shim migrate --provider node
 ```
 
-这些命令不会覆盖同名的用户文件、fnm/nvm/Volta 入口或系统命令。`doctor` 会报告 PATH 中的遮挡、旧 shim 和外部管理器。
+这些命令不会覆盖同名的用户文件或系统命令。`doctor` 会报告 PATH 中的遮挡、旧版 Pinset shim 和路由所有权问题。
 
 ## 下载、镜像与国内网络
 
@@ -427,22 +467,9 @@ pinset doctor
 pinset doctor --json
 ```
 
-### 从旧管理器迁移
+### 独立配置边界
 
-只读扫描 `.nvmrc`、`.node-version`、Volta、asdf 和 mise：
-
-```shell
-pinset import --dry-run
-```
-
-确认后导入项目或全局选择，原文件始终保留：
-
-```shell
-pinset import --apply --from nvm
-pinset import --apply --from volta --global --no-install
-```
-
-多个旧配置给出不同版本时，需要通过 `--from` 选择来源。
+Pinset 只把 `pinset.toml`、`pinset.lock` 和 `PINSET_HOME` 内的状态视为配置来源，不扫描、不解释也不导入其他运行时管理器的声明。迁移项目时请显式执行 `pinset init` 和 `pinset use <tool>@<selector>`，让 Pinset 重新解析并生成自己的可复现锁文件。
 
 ### 卸载一个 Node 版本
 
@@ -475,7 +502,7 @@ Windows 从 Release 下载 `uninstall.ps1`：
 ./uninstall.ps1 -Yes
 ```
 
-完整卸载不会搜索或删除项目中的 `pinset.toml`、`pinset.lock`，不会删除系统 Node、nvm/fnm/Volta 文件，也不会修改 shell profile。手动添加的 PATH 行和 `PINSET_*` 环境变量需要自行移除。
+完整卸载不会搜索或删除项目中的 `pinset.toml`、`pinset.lock` 或 `.venv`，不会删除系统运行时或用户文件，也不会修改 shell profile。手动添加的 PATH 行和 `PINSET_*` 环境变量需要自行移除。
 
 ## 命令速查
 
@@ -494,7 +521,7 @@ Windows 从 Release 下载 `uninstall.ps1`：
 | `pinset cache list/clean/import` | 管理下载缓存和离线归档 |
 | `pinset source ...` | 管理镜像、回退与连通性测试 |
 | `pinset doctor [--json]` | 只读诊断配置、安装和 PATH |
-| `pinset import --dry-run/--apply` | 检测或导入旧 Node 管理器配置与 `.fvmrc` |
+| `pinset venv create/status/recreate` | 管理 Pinset 自有的项目 Python `.venv` |
 | `pinset activate <shell>` | 输出当前 shell 的临时 PATH 激活代码 |
 | `pinset shim ...` | 查看、修复或迁移命令路由 |
 
@@ -531,7 +558,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-GitHub Actions 会在 Linux、Windows、macOS 隔离 Runner 中安装 Node、pnpm、Bun 和 Go，验证 available、全局/项目组合、项目覆盖、跨 Provider 子进程 PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`，并通过单元测试覆盖 Flutter/Dart 元数据、锁文件、安装安全、路由、`.fvmrc` 导入和原地升级拦截。Flutter SDK 单个归档可超过 1.8 GiB，因此 Actions 默认设置 `PINSET_SKIP_FLUTTER_RUNTIME=1`，不下载真实 SDK；完整验收脚本保留默认模式，供发布后在隔离虚拟机验证 Flutter/Dart 同源、`FLUTTER_ROOT`、SDK 重用和全局/项目覆盖。
+GitHub Actions 会在 Linux、Windows、macOS 隔离 Runner 中安装 Node、pnpm、Bun、Go 和 Python，验证 available、全局/项目组合、项目覆盖、跨 Provider 子进程 PATH、`GOROOT`、默认 `GOTOOLCHAIN=local`、项目 `.venv` 和无激活路由，并通过单元测试覆盖 Flutter/Dart 元数据、锁文件、安装安全、路由和原地升级拦截。Flutter SDK 单个归档可超过 1.8 GiB，因此 Actions 默认设置 `PINSET_SKIP_FLUTTER_RUNTIME=1`，不下载真实 SDK；完整验收脚本保留默认模式，供发布后在隔离虚拟机验证 Flutter/Dart 同源、`FLUTTER_ROOT`、SDK 重用和全局/项目覆盖。
 
 Linux/WSL 构建产物：
 
@@ -544,7 +571,7 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 
 ## Beta 限制
 
-- 当前版本支持 Node.js、pnpm、Bun、Go 和 Flutter stable SDK（含内置 Dart）；Python、Java、Rust 和其他 Provider 尚未开放。
+- 当前版本支持 Node.js、pnpm、Bun、Go、CPython 和 Flutter stable SDK（含内置 Dart）；Java、Rust 和其他 Provider 尚未开放。
 - Pinset Release 暂无 Linux arm64、macOS Intel 安装包。
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
 - Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 和 Go 官方下载索引中的 SHA-256，但 Beta 尚未验证 Node 清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。

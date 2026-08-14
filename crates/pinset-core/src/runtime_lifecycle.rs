@@ -257,7 +257,7 @@ fn has_matching_complete_receipt(
 
 fn validate_tool_and_version(tool: &str, version: &str) -> Result<()> {
     if runtime_provider(tool).is_none() {
-        return Err(Error::UnsupportedSourceProvider {
+        return Err(Error::UnsupportedRuntimeProvider {
             provider: tool.to_owned(),
         });
     }
@@ -277,11 +277,11 @@ fn valid_version_segment(value: &str) -> bool {
         && !value.contains(['/', '\\', ':'])
         && value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
 }
 
 fn version_key(version: &str) -> (u64, u64, u64) {
-    let mut parts = version.split('.');
+    let mut parts = version.split('+').next().unwrap_or(version).split('.');
     (
         parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
         parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
@@ -306,5 +306,23 @@ mod tests {
         let installed = list_installed_tool_versions(home.path(), "bun").expect("installed");
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].version, "1.3.14");
+    }
+
+    #[test]
+    fn lists_exact_python_distribution_versions_with_build_ids() {
+        let home = tempfile::tempdir().expect("home");
+        let directory = home
+            .path()
+            .join("installs/python/3.14.7+20260807/windows-x86_64");
+        fs::create_dir_all(&directory).expect("directory");
+        fs::write(
+            directory.join(".pinset-install.toml"),
+            "schema = 2\ncomplete = true\ntool = \"python\"\nversion = \"3.14.7+20260807\"\ntarget = \"windows-x86_64\"\n",
+        )
+        .expect("receipt");
+
+        let versions = list_installed_tool_versions(home.path(), "python").expect("versions");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, "3.14.7+20260807");
     }
 }

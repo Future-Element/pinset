@@ -19,7 +19,9 @@ fn resolves_lists_and_executes_a_managed_go_sdk() {
     .expect("config");
 
     let install_dir = home
-        .join("installs/go/1.25.1")
+        .join("installs")
+        .join("go")
+        .join("1.25.1")
         .join(pinset_core::current_target_for_tool("go"));
     let bin_dir = install_dir.join("bin");
     fs::create_dir_all(&bin_dir).expect("Go bin");

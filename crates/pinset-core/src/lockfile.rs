@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ArtifactIntegrity, Error, FLUTTER_TARGETS, FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat,
-    NodeArchiveFormat, Result, SourceConfig, plan_flutter_artifact, plan_go_artifact,
-    plan_node_artifact,
+    NodeArchiveFormat, PYTHON_TARGETS, PYTHON_VARIANT, Result, SourceConfig,
+    parse_python_distribution, plan_flutter_artifact, plan_go_artifact, plan_node_artifact,
+    plan_python_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -304,6 +305,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             | ("bun", "bun-npm")
             | ("go", "go-official")
             | ("flutter", "flutter-official")
+            | ("python", "python-build-standalone")
     );
     if !provider_supported {
         return Err(Error::InvalidLockfile {
@@ -321,7 +323,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             ),
         });
     }
-    if tool.name != "flutter" && !tool.metadata.is_empty() {
+    if tool.name != "flutter" && tool.name != "python" && !tool.metadata.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("{} lock cannot contain provider metadata", tool.name),
         });
@@ -337,6 +339,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             "node" => validate_locked_node_artifact(&tool.version, artifact)?,
             "go" => validate_locked_go_artifact(&tool.version, artifact)?,
             "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
+            "python" => validate_locked_python_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
         }
@@ -376,6 +379,20 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
                 reason: "Flutter lock contains an unsupported artifact target".to_owned(),
             });
         }
+    } else if tool.name == "python" {
+        validate_python_metadata(tool)?;
+        for target in PYTHON_TARGETS {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing Python artifact for {target}"),
+                });
+            }
+        }
+        if targets.len() != PYTHON_TARGETS.len() {
+            return Err(Error::InvalidLockfile {
+                reason: "Python lock contains an unsupported artifact target".to_owned(),
+            });
+        }
     } else {
         for (target, _) in npm_tool_targets(&tool.name) {
             if !targets.contains(target) {
@@ -413,6 +430,26 @@ fn validate_flutter_metadata(tool: &LockedTool) -> Result<()> {
     {
         return Err(Error::InvalidLockfile {
             reason: "Flutter lock metadata must contain stable channel, bundled Dart version and release hash"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_python_metadata(tool: &LockedTool) -> Result<()> {
+    let (python_version, build_id) = parse_python_distribution(&tool.version)?;
+    let expected = BTreeMap::from([
+        ("build_id".to_owned(), build_id.to_owned()),
+        (
+            "distribution".to_owned(),
+            "astral-sh/python-build-standalone".to_owned(),
+        ),
+        ("python_version".to_owned(), python_version.to_owned()),
+        ("variant".to_owned(), PYTHON_VARIANT.to_owned()),
+    ]);
+    if tool.metadata != expected {
+        return Err(Error::InvalidLockfile {
+            reason: "Python lock metadata must identify the exact CPython version, standalone build and install_only variant"
                 .to_owned(),
         });
     }
@@ -547,6 +584,41 @@ fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Re
     if !artifact.overlays.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("Node artifact {} cannot contain overlays", artifact.target),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_python_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
+    let plan = plan_python_artifact(&SourceConfig::default(), version, &artifact.target)?;
+    if artifact.canonical_url != plan.canonical_url
+        || artifact.artifact_path != plan.artifact_path
+        || artifact.archive_root != plan.archive_root
+        || artifact.format != LockedArtifactFormat::TarGz
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "artifact identity for {} does not match the built-in Python provider",
+                artifact.target
+            ),
+        });
+    }
+    if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
+        return Err(Error::InvalidLockfile {
+            reason: format!("invalid Python SHA-256 for {}", artifact.target),
+        });
+    }
+    if artifact.verification != "python-build-standalone-versions-sha256" {
+        return Err(Error::InvalidLockfile {
+            reason: format!("unsupported Python verification for {}", artifact.target),
+        });
+    }
+    if !artifact.overlays.is_empty() {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "Python artifact {} cannot contain overlays",
+                artifact.target
+            ),
         });
     }
     Ok(())
@@ -849,6 +921,49 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_python_distribution_metadata_and_required_targets() {
+        let distribution = "3.14.7+20260807";
+        let artifacts = PYTHON_TARGETS
+            .into_iter()
+            .map(|target| locked_python_artifact(distribution, target))
+            .collect::<Vec<_>>();
+        let metadata = BTreeMap::from([
+            ("build_id".to_owned(), "20260807".to_owned()),
+            (
+                "distribution".to_owned(),
+                "astral-sh/python-build-standalone".to_owned(),
+            ),
+            ("python_version".to_owned(), "3.14.7".to_owned()),
+            ("variant".to_owned(), "install_only".to_owned()),
+        ]);
+        let tool = LockedTool {
+            name: "python".to_owned(),
+            requested: distribution.to_owned(),
+            version: distribution.to_owned(),
+            provider: "python-build-standalone".to_owned(),
+            metadata,
+            artifacts: artifacts.clone(),
+        };
+        validate_locked_tool(&tool).expect("Python lock");
+
+        let mut invalid_metadata = tool.clone();
+        invalid_metadata
+            .metadata
+            .insert("build_id".to_owned(), "20260808".to_owned());
+        assert!(matches!(
+            validate_locked_tool(&invalid_metadata),
+            Err(Error::InvalidLockfile { .. })
+        ));
+
+        let mut incomplete = tool;
+        incomplete.artifacts = artifacts.into_iter().skip(1).collect();
+        assert!(matches!(
+            validate_locked_tool(&incomplete),
+            Err(Error::InvalidLockfile { .. })
+        ));
+    }
+
     fn locked_artifact(target: &str) -> LockedArtifact {
         let plan = plan_node_artifact(&SourceConfig::default(), "24.0.0", target).expect("plan");
         LockedArtifact {
@@ -911,6 +1026,22 @@ mod tests {
             },
             archive_root: plan.archive_root,
             verification: "flutter-release-json-sha256".to_owned(),
+            overlays: Vec::new(),
+        }
+    }
+
+    fn locked_python_artifact(distribution: &str, target: &str) -> LockedArtifact {
+        let plan = plan_python_artifact(&SourceConfig::default(), distribution, target)
+            .expect("Python plan");
+        LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: "ab".repeat(32),
+            integrity: None,
+            format: LockedArtifactFormat::TarGz,
+            archive_root: plan.archive_root,
+            verification: "python-build-standalone-versions-sha256".to_owned(),
             overlays: Vec::new(),
         }
     }

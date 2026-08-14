@@ -10,8 +10,9 @@ use crate::current_target;
 use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
     find_optional_project_config, global_config_path, is_managed_command_shim,
-    load_optional_global_config, load_project_config, runtime_provider,
-    runtime_provider_for_command, runtime_providers,
+    load_optional_global_config, load_project_config, load_project_python_environment,
+    project_python_command_candidates, runtime_provider, runtime_provider_for_command,
+    runtime_providers,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,13 +143,41 @@ pub fn resolve_command_with_path(
     };
     let version = selection.version.clone();
 
+    if tool == "python" && selection.source == SelectionSource::Project {
+        let target = current_target_for_tool(tool);
+        let environment =
+            load_project_python_environment(&selection.config_path, &version, &target)?;
+        let candidates = project_python_command_candidates(&environment, command);
+        let executable = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .cloned()
+            .ok_or_else(|| Error::RuntimeCommandNotFound {
+                tool: tool.to_owned(),
+                version: version.clone(),
+                command: command.to_owned(),
+                searched: candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            })?;
+        return Ok(CommandResolution {
+            command: command.to_owned(),
+            tool: tool.to_owned(),
+            version,
+            source: selection.source,
+            selection_path: Some(selection.config_path),
+            executable,
+        });
+    }
+
     let install_dir = pinset_home
         .join("installs")
         .join(tool)
         .join(&version)
         .join(current_target_for_tool(tool));
-    let bin_dir = runtime_command_directory(tool, &install_dir);
-    let candidates = executable_candidates(&bin_dir, command);
+    let candidates = runtime_command_candidates(tool, command, &install_dir);
     let executable = candidates
         .iter()
         .find(|candidate| candidate.is_file())
@@ -169,6 +198,45 @@ pub fn resolve_command_with_path(
         tool: tool.to_owned(),
         version,
         source: selection.source,
+        selection_path: Some(selection.config_path),
+        executable,
+    })
+}
+
+pub fn resolve_project_python_command(
+    command: &str,
+    cwd: &Path,
+    pinset_home: &Path,
+) -> Result<CommandResolution> {
+    let selection = resolve_tool_selection("python", cwd, pinset_home)?;
+    if selection.source != SelectionSource::Project {
+        return Err(Error::PythonEnvironmentSelectionMissing {
+            path: cwd.to_path_buf(),
+        });
+    }
+    let target = current_target_for_tool("python");
+    let environment =
+        load_project_python_environment(&selection.config_path, &selection.version, &target)?;
+    let candidates = project_python_command_candidates(&environment, command);
+    let executable = candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .ok_or_else(|| Error::RuntimeCommandNotFound {
+            tool: "python".to_owned(),
+            version: selection.version.clone(),
+            command: command.to_owned(),
+            searched: candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        })?;
+    Ok(CommandResolution {
+        command: command.to_owned(),
+        tool: "python".to_owned(),
+        version: selection.version,
+        source: SelectionSource::Project,
         selection_path: Some(selection.config_path),
         executable,
     })
@@ -327,9 +395,19 @@ pub fn path_with_selected_tools(
         let install_dir = pinset_home
             .join("installs")
             .join(provider.tool)
-            .join(selection.version)
+            .join(&selection.version)
             .join(current_target_for_tool(provider.tool));
-        let command_dir = runtime_command_directory(provider.tool, &install_dir);
+        let command_dir =
+            if provider.tool == "python" && selection.source == SelectionSource::Project {
+                load_project_python_environment(
+                    &selection.config_path,
+                    &selection.version,
+                    &current_target_for_tool("python"),
+                )?
+                .command_directory
+            } else {
+                runtime_command_directory(provider.tool, &install_dir)
+            };
         if command_dir.is_dir()
             && !paths_equal(&command_dir, &selected_dir)
             && !entries.iter().any(|entry| paths_equal(entry, &command_dir))
@@ -364,12 +442,24 @@ pub fn selected_runtime_environment(
         let install_dir = pinset_home
             .join("installs")
             .join(provider.tool)
-            .join(selection.version)
+            .join(&selection.version)
             .join(current_target_for_tool(provider.tool));
-        if !install_dir.is_dir() {
-            continue;
+        if provider.environment == RuntimeEnvironmentKind::Python {
+            if selection.source == SelectionSource::Project {
+                if let Ok(environment) = load_project_python_environment(
+                    &selection.config_path,
+                    &selection.version,
+                    &current_target_for_tool("python"),
+                ) {
+                    variables.push(RuntimeEnvironmentVariable {
+                        name: "VIRTUAL_ENV",
+                        value: environment.root.into_os_string(),
+                    });
+                }
+            }
+        } else if install_dir.is_dir() {
+            variables.extend(runtime_environment_for_install(provider.tool, &install_dir));
         }
-        variables.extend(runtime_environment_for_install(provider.tool, &install_dir));
     }
     variables
 }
@@ -405,7 +495,7 @@ pub fn runtime_environment_for_install(
             }
             variables
         }
-        Some(RuntimeEnvironmentKind::None) | None => Vec::new(),
+        Some(RuntimeEnvironmentKind::Python | RuntimeEnvironmentKind::None) | None => Vec::new(),
     }
 }
 
@@ -438,8 +528,26 @@ pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
         Some(RuntimeCommandLayout::NodeNative | RuntimeCommandLayout::Bin) => {
             install_dir.join("bin")
         }
+        Some(RuntimeCommandLayout::Python) if cfg!(windows) => install_dir.to_path_buf(),
+        Some(RuntimeCommandLayout::Python) => install_dir.join("bin"),
         Some(RuntimeCommandLayout::Root) | None => install_dir.to_path_buf(),
     }
+}
+
+pub fn runtime_command_candidates(tool: &str, command: &str, install_dir: &Path) -> Vec<PathBuf> {
+    let directory = runtime_command_directory(tool, install_dir);
+    if tool != "python" {
+        return executable_candidates(&directory, command);
+    }
+    if cfg!(windows) {
+        return executable_candidates(&directory, "python");
+    }
+    let names = if command == "python3" {
+        ["python3", "python"]
+    } else {
+        ["python", "python3"]
+    };
+    names.into_iter().map(|name| directory.join(name)).collect()
 }
 
 #[cfg(test)]

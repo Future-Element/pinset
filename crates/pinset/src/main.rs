@@ -18,21 +18,25 @@ use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
     ArtifactIntegrity, DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig,
     GoMetadataClient, InstallLimits, Installer, LockedTool, Lockfile, NodeMetadataClient,
-    NpmMetadataClient, RuntimeInstallKind, RuntimeMetadataKind, SUPPORTED_SOURCE_PROVIDERS,
-    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
-    current_target_for_tool, ensure_shims, find_optional_project_config, find_project_config,
-    global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_flutter, install_locked_go,
-    install_locked_node, install_locked_npm_tool, is_managed_command_shim, list_download_cache,
+    NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind, RuntimeMetadataKind,
+    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView, clean_download_cache, command_tool,
+    create_project_config, create_project_python_environment, current_target_for_tool,
+    ensure_shims, find_optional_project_config, find_project_config, global_config_path,
+    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
+    install_locked_flutter, install_locked_go, install_locked_node, install_locked_npm_tool,
+    install_locked_python, is_managed_command_shim, list_download_cache,
     list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
-    load_optional_lockfile, load_project_config, load_source_config, load_user_settings,
-    lockfile_path, path_with_selected_tools, pinset_home, resolve_command, resolve_tool_selection,
-    runtime_command_directory, runtime_environment_for_install, runtime_provider,
-    save_global_config, save_global_state, save_lockfile, save_project_config, save_source_config,
-    save_user_settings, selected_runtime_environment, source_config_path, uninstall_node_version,
+    load_optional_lockfile, load_project_config, load_project_python_environment,
+    load_source_config, load_user_settings, lockfile_path, path_with_selected_tools, pinset_home,
+    project_python_environment_path, resolve_command, resolve_project_python_command,
+    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
+    runtime_environment_for_install, runtime_provider, save_global_config, save_global_state,
+    save_lockfile, save_project_config, save_source_config, save_user_settings,
+    selected_runtime_environment, source_config_path, uninstall_node_version,
     uninstall_tool_version, user_settings_path, validate_exact_flutter_version,
-    validate_exact_go_version, validate_exact_node_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
+    validate_exact_go_version, validate_exact_node_version, validate_exact_python_version,
+    validate_lock_matches_selection, validate_lock_matches_tool, validate_lock_matches_tools,
+    validate_managed_runtime_invocation,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -60,7 +64,7 @@ enum Commands {
     Init,
     /// Show or set a default runtime version used outside projects.
     Global {
-        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25 or flutter@3.47.
+        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25, python@3.14 or flutter@3.47.
         selection: Option<String>,
         /// Update the global selection and lock without downloading the runtime.
         #[arg(long, requires = "selection")]
@@ -68,7 +72,7 @@ enum Commands {
     },
     /// Select and lock a runtime version for the current project or globally.
     Use {
-        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25 or flutter@3.47.
+        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25, python@3.14 or flutter@3.47.
         selection: String,
         /// Update the selection and lock without downloading the runtime.
         #[arg(long)]
@@ -79,7 +83,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm, bun, go or flutter.
+        /// Tool to clear: node, pnpm, bun, go, python or flutter.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -117,7 +121,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm, bun, go or flutter.
+        /// Tool to list: node, pnpm, bun, go, python or flutter.
         tool: String,
         /// Query the official provider index instead of local installations.
         #[arg(long)]
@@ -154,30 +158,10 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Preview or explicitly import supported legacy runtime version files.
-    #[command(group(
-        clap::ArgGroup::new("import_mode")
-            .required(true)
-            .args(["dry_run", "apply"])
-    ))]
-    Import {
-        /// Preview detected values; no files are modified.
-        #[arg(long)]
-        dry_run: bool,
-        /// Import one detected value into Pinset without changing the legacy file.
-        #[arg(long)]
-        apply: bool,
-        /// Select a legacy source when detected files disagree (for example nvm, volta or fvm).
-        #[arg(long = "from", requires = "apply")]
-        source: Option<String>,
-        /// Import as the global default instead of the current project selection.
-        #[arg(long, requires = "apply")]
-        global: bool,
-        /// Write the Pinset selection and lock without installing the runtime.
-        #[arg(long, requires = "apply")]
-        no_install: bool,
-        #[arg(long)]
-        cwd: Option<PathBuf>,
+    /// Manage the Pinset-owned project Python environment without shell activation.
+    Venv {
+        #[command(subcommand)]
+        command: VenvCommands,
     },
     /// Inspect or repair Provider command routing in a user-owned directory.
     Shim {
@@ -193,6 +177,25 @@ enum Commands {
     Source {
         #[command(subcommand)]
         command: SourceCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum VenvCommands {
+    /// Install the selected CPython runtime and create or validate .venv.
+    Create {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Show the selected CPython distribution and managed .venv path.
+    Status {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Delete and recreate .venv after verifying Pinset ownership.
+    Recreate {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
     },
 }
 
@@ -462,6 +465,14 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                             );
                         }
                     }
+                    RuntimeMetadataKind::Python => {
+                        for release in PythonMetadataClient::official()?.available_releases()? {
+                            println!(
+                                "python@{}+{} ({})",
+                                release.version, release.build_id, release.date
+                            );
+                        }
+                    }
                 }
             } else {
                 let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
@@ -564,46 +575,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 run_doctor(&cwd, catalog)?;
             }
         }
-        Commands::Import {
-            dry_run,
-            apply: _,
-            source,
-            global,
-            no_install,
-            cwd,
-        } => {
-            let cwd = effective_cwd(cwd)?;
-            let mut candidates = detect_legacy_node_configs(&cwd)?;
-            if let Some(candidate) = detect_fvm_config(&cwd)? {
-                candidates.push(candidate);
-            }
-            if candidates.is_empty() {
-                println!("{}", catalog.import_none(&cwd));
-            } else if dry_run {
-                print_import_candidates(&candidates, catalog);
-            } else {
-                let candidate = select_legacy_candidate(&candidates, source.as_deref(), catalog)?;
-                let selector = normalize_legacy_selector(&candidate.tool, &candidate.version)?;
-                select_tool(
-                    &format!("{}@{selector}", candidate.tool),
-                    global,
-                    no_install,
-                    true,
-                    &cwd,
-                    catalog,
-                )?;
-                println!(
-                    "{}",
-                    catalog.import_applied(
-                        &candidate.kind,
-                        &candidate.tool,
-                        &candidate.version,
-                        &candidate.path,
-                        if global { "global" } else { "project" },
-                    )
-                );
-            }
-        }
+        Commands::Venv { command } => run_venv_command(command, catalog)?,
         Commands::Shim { command } => match command {
             ShimCommands::Path => {
                 println!("{}", command_routing_directory(&pinset_home()?)?.display())
@@ -701,6 +673,9 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Flutter => {
             validate_exact_flutter_version(version)?;
         }
+        RuntimeMetadataKind::Python => {
+            validate_exact_python_version(version)?;
+        }
     }
     Ok(())
 }
@@ -727,6 +702,9 @@ fn resolve_locked_tool(
         RuntimeMetadataKind::Go => Ok(go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?),
         RuntimeMetadataKind::Flutter => {
             Ok(flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?)
+        }
+        RuntimeMetadataKind::Python => {
+            Ok(PythonMetadataClient::official()?.resolve_tool(selector)?)
         }
     }
 }
@@ -836,11 +814,17 @@ fn unset_tool(
         let home = pinset_home()?;
         let config_path = global_config_path(&home);
         let Some(mut config) = load_optional_global_config(&config_path)? else {
-            println!("{}", catalog.selection_unset("global", &config_path, false));
+            println!(
+                "{}",
+                catalog.selection_unset("global", tool, &config_path, false)
+            );
             return Ok(());
         };
         if config.tools.remove(tool).is_none() {
-            println!("{}", catalog.selection_unset("global", &config_path, false));
+            println!(
+                "{}",
+                catalog.selection_unset("global", tool, &config_path, false)
+            );
             return Ok(());
         }
         let lock_path = global_lockfile_path(&home);
@@ -849,7 +833,10 @@ fn unset_tool(
         }
         save_global_config(&config_path, &config)?;
         remove_tool_from_lock(&lock_path, tool)?;
-        println!("{}", catalog.selection_unset("global", &config_path, true));
+        println!(
+            "{}",
+            catalog.selection_unset("global", tool, &config_path, true)
+        );
         return Ok(());
     }
 
@@ -858,7 +845,7 @@ fn unset_tool(
     if config.tools.remove(tool).is_none() {
         println!(
             "{}",
-            catalog.selection_unset("project", &config_path, false)
+            catalog.selection_unset("project", tool, &config_path, false)
         );
         return Ok(());
     }
@@ -868,7 +855,10 @@ fn unset_tool(
     }
     save_project_config(&config_path, &config)?;
     remove_tool_from_lock(&lock_path, tool)?;
-    println!("{}", catalog.selection_unset("project", &config_path, true));
+    println!(
+        "{}",
+        catalog.selection_unset("project", tool, &config_path, true)
+    );
     Ok(())
 }
 
@@ -945,7 +935,7 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "list",
         "uninstall",
         "cache",
-        "import",
+        "venv",
     ];
     arguments
         .iter()
@@ -973,11 +963,95 @@ fn resolve_language(requested: Option<Language>) -> Result<Language, Box<dyn std
 }
 
 fn install_project(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
+    install_project_with_venv(cwd, false, catalog)
+}
+
+fn install_project_with_venv(
+    cwd: &Path,
+    recreate_venv: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
     let project = load_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
-    install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)
+    install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
+    if let Some(distribution) = project.tools.get("python") {
+        ensure_project_python_environment(&home, &config_path, distribution, recreate_venv)?;
+    }
+    Ok(())
+}
+
+fn run_venv_command(
+    command: VenvCommands,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (cwd, action) = match command {
+        VenvCommands::Create { cwd } => (effective_cwd(cwd)?, "create"),
+        VenvCommands::Status { cwd } => (effective_cwd(cwd)?, "status"),
+        VenvCommands::Recreate { cwd } => (effective_cwd(cwd)?, "recreate"),
+    };
+    let config_path = find_project_config(&cwd)?;
+    let project = load_project_config(&config_path)?;
+    let distribution =
+        project
+            .tools
+            .get("python")
+            .ok_or_else(|| Error::PythonEnvironmentSelectionMissing {
+                path: config_path.clone(),
+            })?;
+    if action == "status" {
+        let target = current_target_for_tool("python");
+        let environment = load_project_python_environment(&config_path, distribution, &target)?;
+        println!(
+            "python@{} project environment {}",
+            environment.distribution,
+            environment.root.display()
+        );
+        return Ok(());
+    }
+    install_project_with_venv(&cwd, action == "recreate", catalog)
+}
+
+fn ensure_project_python_environment(
+    home: &Path,
+    config_path: &Path,
+    distribution: &str,
+    recreate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let target = current_target_for_tool("python");
+    let install_dir = home
+        .join("installs")
+        .join("python")
+        .join(distribution)
+        .join(&target);
+    let candidates = runtime_command_candidates("python", "python", &install_dir);
+    let base_python = candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| Error::RuntimeCommandNotFound {
+            tool: "python".to_owned(),
+            version: distribution.to_owned(),
+            command: "python".to_owned(),
+            searched: candidates
+                .iter()
+                .map(|candidate| candidate.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        })?;
+    let environment = create_project_python_environment(
+        config_path,
+        base_python,
+        distribution,
+        &target,
+        recreate,
+    )?;
+    println!(
+        "python@{} project environment ready at {}",
+        environment.distribution,
+        environment.root.display()
+    );
+    Ok(())
 }
 
 fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
@@ -1037,6 +1111,10 @@ fn install_tool_from_lock(
         RuntimeInstallKind::Flutter => {
             let sources = load_source_config(&source_config_path(home))?;
             install_locked_flutter(&installer, home, &sources, locked_tool, &target)?
+        }
+        RuntimeInstallKind::Python => {
+            let sources = load_source_config(&source_config_path(home))?;
+            install_locked_python(&installer, home, &sources, locked_tool, &target)?
         }
     };
     if outcome.reused_existing {
@@ -1495,21 +1573,29 @@ fn execute_selected(
                 .join(&tool)
                 .join(&version)
                 .join(current_target_for_tool(&tool));
-            let command_dir = runtime_command_directory(&tool, &install_dir);
-            let executable = runtime_command_path(&command_dir, command_name);
-            if !executable.is_file() {
-                return Err(Error::RuntimeCommandNotFound {
+            let candidates = runtime_command_candidates(&tool, command_name, &install_dir);
+            let executable = candidates
+                .iter()
+                .find(|candidate| candidate.is_file())
+                .cloned()
+                .ok_or_else(|| Error::RuntimeCommandNotFound {
                     tool: tool.clone(),
                     version: version.clone(),
                     command: command_name.to_owned(),
-                    searched: executable.display().to_string(),
-                }
-                .into());
-            }
+                    searched: candidates
+                        .iter()
+                        .map(|candidate| candidate.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                })?;
             let environment = runtime_environment_for_install(&tool, &install_dir);
             (executable, tool, version, "ephemeral", None, environment)
         } else {
-            let resolution = resolve_command(command_name, cwd, &home)?;
+            let resolution = if command_tool(command_name).is_some() {
+                resolve_command(command_name, cwd, &home)?
+            } else {
+                resolve_project_python_command(command_name, cwd, &home)?
+            };
             (
                 resolution.executable,
                 resolution.tool,
@@ -1536,6 +1622,12 @@ fn execute_selected(
     }
     for variable in ephemeral_environment {
         child.env(variable.name, variable.value);
+    }
+    if tool == "python" {
+        child.env_remove("PYTHONHOME");
+        if source != "project" {
+            child.env_remove("VIRTUAL_ENV");
+        }
     }
     if let Some(path) = &config_path {
         child.env("PINSET_CONFIG_PATH", path);
@@ -1590,11 +1682,11 @@ struct DoctorReport {
     selection: Option<DoctorSelection>,
     lockfile: DoctorItem,
     runtime: DoctorItem,
+    python_environment: DoctorItem,
     shim_path: DoctorItem,
     legacy_shim_path: DoctorItem,
     path_candidates: Vec<DoctorPathCandidate>,
     routing_issues: Vec<DoctorRoutingIssue>,
-    legacy_node_configs: Vec<LegacyNodeConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1628,14 +1720,6 @@ struct DoctorRoutingIssue {
     command: Option<String>,
     path: Option<String>,
     action: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct LegacyNodeConfig {
-    tool: String,
-    kind: String,
-    version: String,
-    path: PathBuf,
 }
 
 fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>> {
@@ -1716,6 +1800,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         },
         Err(error) => return Err(error.into()),
     };
+    let python_environment = doctor_python_environment(cwd, &home)?;
     let shims = command_routing_directory(&home)?;
     let shim_on_path = directory_on_path(&shims);
     let shim_binary = default_shim_binary()?;
@@ -1745,7 +1830,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         routing_issues.push(issue);
     }
     Ok(DoctorReport {
-        schema: 1,
+        schema: 2,
         cwd: cwd.display().to_string(),
         pinset_home: home.display().to_string(),
         project_config,
@@ -1753,6 +1838,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         selection,
         lockfile,
         runtime,
+        python_environment,
         shim_path: DoctorItem {
             status: if shim_on_path {
                 "active"
@@ -1775,8 +1861,58 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         },
         path_candidates,
         routing_issues,
-        legacy_node_configs: detect_legacy_node_configs(cwd)?,
     })
+}
+
+fn doctor_python_environment(
+    cwd: &Path,
+    home: &Path,
+) -> Result<DoctorItem, Box<dyn std::error::Error>> {
+    let selection = match resolve_tool_selection("python", cwd, home) {
+        Ok(selection) => selection,
+        Err(Error::ToolSelectionNotFound { .. }) => {
+            return Ok(DoctorItem {
+                status: "not-applicable",
+                path: None,
+                detail: None,
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if selection.source != pinset_core::SelectionSource::Project {
+        return Ok(DoctorItem {
+            status: "not-applicable",
+            path: None,
+            detail: Some(format!("python@{} source=global", selection.version)),
+        });
+    }
+    let path = project_python_environment_path(&selection.config_path);
+    match load_project_python_environment(
+        &selection.config_path,
+        &selection.version,
+        &current_target_for_tool("python"),
+    ) {
+        Ok(environment) => Ok(DoctorItem {
+            status: "ok",
+            path: Some(environment.root.display().to_string()),
+            detail: Some(format!("python@{}", environment.distribution)),
+        }),
+        Err(error @ Error::PythonEnvironmentMissing { .. }) => Ok(DoctorItem {
+            status: "missing",
+            path: Some(path.display().to_string()),
+            detail: Some(error.to_string()),
+        }),
+        Err(
+            error @ (Error::PythonEnvironmentNotOwned { .. }
+            | Error::PythonEnvironmentMismatch { .. }
+            | Error::InvalidPythonEnvironmentMarker { .. }),
+        ) => Ok(DoctorItem {
+            status: "invalid",
+            path: Some(path.display().to_string()),
+            detail: Some(error.to_string()),
+        }),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn collect_routing_issues(
@@ -1867,197 +2003,6 @@ fn go_toolchain_routing_issue(cwd: &Path, home: &Path) -> Option<DoctorRoutingIs
         path: None,
         action: "unset GOTOOLCHAIN or set it to local to enforce the Pinset lock",
     })
-}
-
-fn detect_legacy_node_configs(
-    cwd: &Path,
-) -> Result<Vec<LegacyNodeConfig>, Box<dyn std::error::Error>> {
-    let mut candidates = Vec::new();
-    for (name, kind) in [(".nvmrc", "nvm"), (".node-version", "node-version")] {
-        let path = cwd.join(name);
-        if path.is_file() {
-            let version = fs::read_to_string(&path)?.trim().to_owned();
-            if !version.is_empty() {
-                candidates.push(LegacyNodeConfig {
-                    tool: "node".to_owned(),
-                    kind: kind.to_owned(),
-                    version,
-                    path,
-                });
-            }
-        }
-    }
-
-    let path = cwd.join("package.json");
-    if path.is_file() {
-        let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?;
-        if let Some(version) = value
-            .get("volta")
-            .and_then(|volta| volta.get("node"))
-            .and_then(serde_json::Value::as_str)
-        {
-            candidates.push(LegacyNodeConfig {
-                tool: "node".to_owned(),
-                kind: "volta".to_owned(),
-                version: version.to_owned(),
-                path,
-            });
-        }
-    }
-
-    let path = cwd.join(".tool-versions");
-    if path.is_file() {
-        let content = fs::read_to_string(&path)?;
-        if let Some(version) = content.lines().find_map(|line| {
-            let mut parts = line.split_whitespace();
-            matches!(parts.next(), Some("node") | Some("nodejs"))
-                .then(|| parts.next())
-                .flatten()
-        }) {
-            candidates.push(LegacyNodeConfig {
-                tool: "node".to_owned(),
-                kind: "asdf".to_owned(),
-                version: version.to_owned(),
-                path,
-            });
-        }
-    }
-
-    for name in ["mise.toml", ".mise.toml"] {
-        let path = cwd.join(name);
-        if path.is_file() {
-            let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path)?)?;
-            if let Some(version) = value.get("tools").and_then(|tools| {
-                tools
-                    .get("node")
-                    .or_else(|| tools.get("nodejs"))
-                    .and_then(toml::Value::as_str)
-            }) {
-                candidates.push(LegacyNodeConfig {
-                    tool: "node".to_owned(),
-                    kind: "mise".to_owned(),
-                    version: version.to_owned(),
-                    path,
-                });
-            }
-        }
-    }
-    Ok(candidates)
-}
-
-fn detect_fvm_config(cwd: &Path) -> Result<Option<LegacyNodeConfig>, Box<dyn std::error::Error>> {
-    let path = cwd.join(".fvmrc");
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let value = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?;
-    let Some(version) = value.get("flutter").and_then(serde_json::Value::as_str) else {
-        return Err(format!(
-            "{} does not contain a string flutter version",
-            path.display()
-        )
-        .into());
-    };
-    validate_exact_flutter_version(version)?;
-    Ok(Some(LegacyNodeConfig {
-        tool: "flutter".to_owned(),
-        kind: "fvm".to_owned(),
-        version: version.to_owned(),
-        path,
-    }))
-}
-
-fn print_import_candidates(candidates: &[LegacyNodeConfig], catalog: Catalog) {
-    let distinct = candidates
-        .iter()
-        .map(|candidate| (candidate.tool.as_str(), candidate.version.as_str()))
-        .collect::<std::collections::BTreeSet<_>>();
-    for candidate in candidates {
-        println!(
-            "{}",
-            catalog.import_candidate(
-                &candidate.kind,
-                &candidate.tool,
-                &candidate.version,
-                &candidate.path,
-            )
-        );
-    }
-    if distinct.len() > 1 {
-        println!("{}", catalog.import_conflict(distinct.len()));
-    }
-}
-
-fn select_legacy_candidate<'a>(
-    candidates: &'a [LegacyNodeConfig],
-    source: Option<&str>,
-    catalog: Catalog,
-) -> Result<&'a LegacyNodeConfig, Box<dyn std::error::Error>> {
-    if let Some(source) = source {
-        return candidates
-            .iter()
-            .find(|candidate| candidate.kind.eq_ignore_ascii_case(source))
-            .ok_or_else(|| {
-                let available = candidates
-                    .iter()
-                    .map(|candidate| candidate.kind.as_str())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .join(",");
-                catalog.import_source_not_found(source, &available).into()
-            });
-    }
-
-    let normalized = candidates
-        .iter()
-        .map(|candidate| {
-            normalize_legacy_selector(&candidate.tool, &candidate.version)
-                .map(|version| (candidate.tool.clone(), version))
-        })
-        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-    if normalized.len() > 1 {
-        return Err(catalog.import_apply_conflict(normalized.len()).into());
-    }
-    Ok(&candidates[0])
-}
-
-fn normalize_legacy_selector(
-    tool: &str,
-    value: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    if tool == "flutter" {
-        validate_exact_flutter_version(value)?;
-        return Ok(value.to_owned());
-    }
-    normalize_legacy_node_selector(value)
-}
-
-fn normalize_legacy_node_selector(value: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let trimmed = value.trim();
-    let normalized = trimmed.to_ascii_lowercase();
-    if normalized == "lts" || normalized.starts_with("lts/") {
-        return Ok("lts".to_owned());
-    }
-    if matches!(
-        normalized.as_str(),
-        "node" | "stable" | "current" | "latest"
-    ) {
-        return Ok("current".to_owned());
-    }
-    let numeric = trimmed
-        .strip_prefix('v')
-        .filter(|value| value.as_bytes().first().is_some_and(u8::is_ascii_digit))
-        .unwrap_or(trimmed);
-    let parts = numeric.split('.').collect::<Vec<_>>();
-    if (1..=3).contains(&parts.len())
-        && parts
-            .iter()
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return Ok(numeric.to_owned());
-    }
-    Err(format!("unsupported legacy Node.js selector {value:?}").into())
 }
 
 fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
@@ -2193,6 +2138,20 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
                     format!("{}@{version}", provider.tool),
                     "missing",
                 )
+            ),
+            Err(error @ Error::PythonEnvironmentMissing { .. }) if provider.tool == "python" => {
+                println!(
+                    "{}",
+                    catalog.doctor_line("python_environment", error, "missing")
+                )
+            }
+            Err(
+                error @ (Error::PythonEnvironmentNotOwned { .. }
+                | Error::PythonEnvironmentMismatch { .. }
+                | Error::InvalidPythonEnvironmentMarker { .. }),
+            ) if provider.tool == "python" => println!(
+                "{}",
+                catalog.doctor_line("python_environment", error, "invalid")
             ),
             Err(Error::CommandSelectionNotFound { .. }) if provider.tool == "node" => {
                 println!("{}", catalog.no_selection())
@@ -2348,21 +2307,6 @@ fn path_owner(path: &Path, pinset_home: &Path, managed: bool) -> String {
     if path.starts_with(pinset_home.join("shims")) {
         return "foreign-in-pinset-directory".to_owned();
     }
-    let normalized = path
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .replace('\\', "/");
-    for (pattern, owner) in [
-        ("/.nvm/", "nvm"),
-        ("/.fnm/", "fnm"),
-        ("/.asdf/", "asdf"),
-        ("/mise/", "mise"),
-        ("/.volta/", "volta"),
-    ] {
-        if normalized.contains(pattern) {
-            return owner.to_owned();
-        }
-    }
     "other".to_owned()
 }
 
@@ -2461,6 +2405,25 @@ fn run_source_command(
                         .into());
                     }
                     releases.len()
+                }
+                Some(RuntimeMetadataKind::Python)
+                    if source.kind == pinset_core::SourceKind::Official =>
+                {
+                    let releases = PythonMetadataClient::official()?.available_releases()?;
+                    if releases.is_empty() {
+                        return Err(Error::InvalidPythonIndex {
+                            reason: "official index contains no supported stable releases"
+                                .to_owned(),
+                        }
+                        .into());
+                    }
+                    releases.len()
+                }
+                Some(RuntimeMetadataKind::Python) => {
+                    return Err(
+                        "custom Python sources mirror locked archives; metadata remains Pinset's official registry"
+                            .into(),
+                    );
                 }
                 Some(RuntimeMetadataKind::Npm) | None => {
                     return Err(format!(
@@ -2908,13 +2871,5 @@ mod tests {
                 ..
             }) if selection == "node@24"
         ));
-    }
-
-    #[test]
-    fn normalizes_common_legacy_node_selectors() {
-        assert_eq!(normalize_legacy_node_selector("v24.1.0").unwrap(), "24.1.0");
-        assert_eq!(normalize_legacy_node_selector("lts/*").unwrap(), "lts");
-        assert_eq!(normalize_legacy_node_selector("stable").unwrap(), "current");
-        assert!(normalize_legacy_node_selector("nightly/latest").is_err());
     }
 }

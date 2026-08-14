@@ -63,6 +63,12 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     for variable in selected_runtime_environment(&invocation.cwd, &home) {
         child.env(variable.name, variable.value);
     }
+    if resolution.tool == "python" {
+        child.env_remove("PYTHONHOME");
+        if resolution.source != pinset_core::SelectionSource::Project {
+            child.env_remove("VIRTUAL_ENV");
+        }
+    }
     if let Some(path) = &resolution.selection_path {
         child.env(CONFIG_PATH_ENV, path);
     } else {

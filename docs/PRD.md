@@ -1,21 +1,22 @@
 # Pinset PRD
 
-文档版本：`v0.4.0`
-产品阶段：`Flutter Provider release`
-更新时间：`2026-08-13`
+文档版本：`v0.5.0`
+产品阶段：`CPython Provider development`
+更新时间：`2026-08-14`
 
 ## 1. 产品简介
 
-Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断，减少在 nvm/fnm、uv、FVM 等工具之间切换的成本。
+Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
-`v0.4.0` 在 Node.js、pnpm、Bun 和 Go 基础上新增 Flutter SDK Provider，并将 SDK 内置 Dart 作为同一个不可拆分的运行时单元。Python、Java 和 Rust 暂不纳入本版本。
+`v0.5.0` 在 Node.js、pnpm、Bun、Go 和 Flutter 基础上新增 CPython Provider，并将项目级 `.venv` 纳入 Pinset 自有生命周期。Java 和 Rust 暂不纳入本版本。
 
 ### 1.1 目标
 
 - 一套一致命令管理全局和项目运行时；
 - 项目配置与精确锁文件可提交、可复现、可解释；
 - 下载、安装、缓存和卸载有可靠的安全检查；
-- 不接管 shell profile，不覆盖外部管理器，不隐藏回退；
+- 不接管 shell profile，不覆盖用户命令，不隐藏回退；
+- 不扫描或导入其他运行时管理器的配置和状态；
 - 架构对 Provider 开放，安装器本身保持运行时中立。
 
 ### 1.2 目标用户
@@ -28,13 +29,13 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 1.3 本版本不做
 
-- 不接入 Python、Java、Rust 等其他 Provider；
+- 不接入 Java、Rust 等其他 Provider；
 - 不管理 Android SDK/NDK、JDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
 - 不自动修改 shell profile、系统 PATH、IDE 配置或系统注册表；
 - 不维护第三方 Homebrew Tap、Scoop Bucket 或其他外部包仓库；
-- 不删除 nvm、fnm、Volta、系统 Node 或用户文件；
+- 不删除系统运行时、用户文件或非 Pinset 所有的 `.venv`；
 - 不提供后台服务、GUI、账号同步或云端状态。
 
 ## 2. 设计约定
@@ -62,7 +63,7 @@ Pinset 是一个本地优先、跨平台的运行时版本管理 CLI。它用一
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Flutter Provider 注册 `flutter`、`dart`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`，Flutter Provider 注册 `flutter`、`dart`。
 
 ## 3. 支持矩阵
 
@@ -98,6 +99,17 @@ WSL 使用 Linux 归档，不能运行 Windows `.exe`，也不能复用 Windows 
 
 Go available 列表只显示稳定、具有全部上述工件且每个工件都带有效 SHA-256 的版本。
 
+### 3.4 CPython 发行目标
+
+| 目标 | 上游平台 | 状态 |
+| --- | --- | --- |
+| `windows-x86_64` | `x86_64-pc-windows-msvc` | 支持 TAR.GZ |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` | 支持 TAR.GZ |
+| `macos-x86_64` | `x86_64-apple-darwin` | Provider 支持 TAR.GZ |
+| `macos-aarch64` | `aarch64-apple-darwin` | Provider 支持 TAR.GZ |
+
+Python available 列表只显示稳定、同时具备四个 `install_only` 工件且每个工件带有效 SHA-256 的 CPython 发行版。
+
 ## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
@@ -112,6 +124,7 @@ node = "24.0.0"
 pnpm = "11.21.0"
 bun = "1.3.14"
 go = "1.25.1"
+python = "3.14.7+20260807"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -140,7 +153,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护。
 
 ### 4.5 通用命令路由
 
@@ -238,7 +251,7 @@ pinset exec node@20.19.0 -- node --version
 - Windows 使用内容和所有权可验证的 `.cmd` wrapper；
 - 一组入口写入前先验证全部目标；
 - 任一同名文件非 Pinset 所有时整组停止；
-- 不覆盖外部管理器或用户命令；
+- 不覆盖用户命令；
 - `activate` 只输出当前 shell 的 PATH 调整，不写 profile；
 - `shim install` 用于修复路由，日常使用不需要先运行它。
 
@@ -313,22 +326,22 @@ pinset cache import <archive> --sha256 <hash>
 - 支持 dry-run；
 - 删除 Pinset CLI、通用路由、受管 Provider 入口和整个标准 `PINSET_HOME`；
 - 自定义 `PINSET_HOME` 需要额外授权；
-- 不扫描项目，不改 profile，不删外部管理器或系统运行时。
+- 不扫描项目，不改 profile，不删系统运行时或用户文件。
 
-### 5.14 迁移
+### 5.14 独立配置边界
 
-检测 `.nvmrc`、`.node-version`、Volta、asdf 和 mise。`--dry-run` 只查看结果；`--apply` 写入 Pinset 并保留旧文件。存在冲突时由 `--from` 选择来源。
+Pinset 只读取 `pinset.toml`、`pinset.lock` 和 `PINSET_HOME` 内的自有状态，不扫描、不解释、不导入其他运行时管理器的项目声明。用户必须通过 `pinset init` 和 `pinset use` 显式建立 Pinset 状态。
 
 ### 5.15 诊断
 
-`doctor` 和 schema 1 的 `doctor --json` 报告：
+`doctor` 和 schema 2 的 `doctor --json` 报告：
 
 - `PINSET_HOME`；
 - 项目和全局配置/锁文件；
 - 生效来源和安装状态；
 - 所有已开放 Provider 命令的 PATH 候选和遮挡；
 - Pinset 路由所有权；
-- 旧 shim 和已知旧管理器；
+- 旧版 Pinset shim 和路由所有权问题；
 - 可执行的修复建议。
 
 诊断命令只读，不修改状态。
@@ -382,9 +395,22 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 - Windows/macOS 使用 ZIP，Linux 使用 TAR.XZ，均 strip 顶层 `flutter/` 后验证 `bin/flutter`、`bin/dart` 和内置 Dart SDK；
 - Flutter 官方归档使用独立的 3 GiB 下载、12 GiB 解压和 250,000 条目安全上限，其他 Provider 继续使用较低默认限额；
 - `flutter` 与 `dart` 必须解析到同一安装目录，受管进程获得对应 `FLUTTER_ROOT`；用户未显式设置时注入 `FLUTTER_SUPPRESS_ANALYTICS=true`；
-- 支持只读识别和显式导入 `.fvmrc`，保留原文件，不接管 FVM 缓存；
 - `flutter upgrade`、`flutter downgrade`、`flutter channel` 在受管 SDK 启动前被拒绝，版本变化必须重新通过 Pinset 选择和安装；
 - 不管理 Flutter/Dart 项目依赖、pub 缓存、移动端/桌面端平台 SDK、模拟器或设备。
+
+## 6.4 CPython Provider 与项目虚拟环境
+
+CPython Provider 支持精确版本、主版本、主次版本、`latest` 和 `current` 选择器，并通过 `pinset list python --available` 显示稳定发行版及上游构建 ID。
+
+- 官方元数据来自 Astral 维护的 `python-build-standalone` 版本注册表；
+- 只接受四个支持目标都存在的 `install_only` TAR.GZ 工件；
+- 锁文件精确记录 `x.y.z+YYYYMMDD` 发行身份、CPython 版本、构建 ID、variant、归档 URL 和 SHA-256；
+- 全局选择路由基础解释器；项目选择通过锁定解释器的标准库 `venv` 创建项目根目录 `.venv`；
+- 项目中的 `python`、`python3` 自动解析为 `.venv` 解释器，`pinset exec -- <命令>` 还可运行 `.venv/bin` 或 `.venv/Scripts` 下的项目脚本；
+- 受管 Python 进程设置 `VIRTUAL_ENV` 并移除 `PYTHONHOME`，不要求执行虚拟环境激活脚本；
+- `.venv/.pinset-venv.toml` 记录 schema、精确发行版和目标；无标记、标记不匹配、符号链接或损坏环境都拒绝接管；
+- `pinset venv create` 只创建或验证，`status` 只读，`recreate` 才能在所有权验证后删除并重建；
+- 不解析 Python 包依赖、不决定包安装策略、不管理全局包，也不读取其他管理器的声明。
 
 ## 7. 安全和供应链
 
@@ -397,6 +423,7 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 - pnpm/Bun 使用 npm 平台包的 SHA-512 SRI，并在锁定阶段验证 npm registry ECDSA 签名；安装阶段重新计算 SHA-512。
 - Go 使用官方下载 JSON 中逐工件提供的 SHA-256；锁文件中的规范 URL、目标和归档格式必须与内置 Go Provider 一致。
 - Flutter 使用官方 release JSON 中逐工件提供的 SHA-256；三个平台索引必须对 Flutter 版本、Dart 版本和 release hash 达成一致。
+- Python 使用官方版本注册表中的逐工件 SHA-256，并校验平台、variant、归档格式和规范 GitHub Release 身份。
 
 ### 7.2 Pinset Release
 
@@ -445,7 +472,7 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 - shim 轻依赖检查；
 - `git diff --check`。
 
-开发机只执行格式化和 `git diff --check` 等静态操作。Clippy、编译、测试和脚本执行全部由 GitHub Actions 临时虚拟机完成，不在开发机或 WSL 运行。
+开发机运行测试时必须使用临时 `PINSET_HOME`、临时项目和临时 shim 目录，不得写入真实用户状态。单平台本地通过不能替代 GitHub Actions 三平台结果。
 
 ### 9.2 Release 检查
 
@@ -453,12 +480,13 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、pnpm、Bun 和 Go；
+- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go 和 Python；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3，以及项目环境脚本；
 - 验证 PATH 直接调用的全部 Provider 命令；
 - 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
-- 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由、`.fvmrc` 导入和原地变更拦截；
+- 验证 Python 项目 `.venv` 自动创建、无激活路由、所有权拒绝和显式重建；
+- 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由和原地变更拦截；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
 
@@ -470,9 +498,9 @@ Flutter Provider 首期只接收官方 stable 渠道，支持精确版本、主�
 
 - 验证 Node 上游 SHASUMS OpenPGP 签名，并定义密钥轮换策略；
 - 冻结 schema 1 读取兼容、schema 2 写入承诺和迁移策略；
-- 完成 Beta 用户在代理、镜像、离线和旧管理器迁移场景的反馈修复；
+- 完成 Beta 用户在代理、镜像和离线场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；
 - 完成 Flutter/Dart 的发布后隔离虚拟机真实运行时验收。
 
-后续按 CPython、Java、Rustup 的顺序扩展。实现时复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+后续按 Java、Rust 的顺序扩展。新 Provider 必须保持 Pinset 独立安装与状态边界，复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

@@ -49,8 +49,14 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     assert!(stderr.contains("版本选择必须使用"), "stderr: {stderr}");
 
     let help = pinset(&first_project, &home, &["--lang", "zh-CN", "use", "--help"]);
-    assert_success_contains(&help, "选择并锁定 Node.js、pnpm、Bun、Go 或 Flutter 版本");
-    assert_success_contains(&help, "node@24|pnpm@11|bun@1.3|go@1.25|flutter@3.47");
+    assert_success_contains(
+        &help,
+        "选择并锁定 Node.js、pnpm、Bun、Go、Python 或 Flutter 版本",
+    );
+    assert_success_contains(
+        &help,
+        "node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47",
+    );
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("Usage:"),
         "help should be localized: {}",
@@ -80,15 +86,15 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     );
     assert_success_contains(
         &install_help,
-        "pinset install <node|pnpm|bun|go|flutter>@<版本选择器>",
+        "pinset install <node|pnpm|bun|go|python|flutter>@<版本选择器>",
     );
 
-    let import_help = pinset(
+    let venv_help = pinset(
         &first_project,
         &home,
-        &["--lang", "zh-CN", "import", "--help"],
+        &["--lang", "zh-CN", "venv", "--help"],
     );
-    assert_success_contains(&import_help, "pinset import --apply");
+    assert_success_contains(&venv_help, "pinset venv <create|status|recreate>");
 
     let shim_help = pinset(
         &first_project,

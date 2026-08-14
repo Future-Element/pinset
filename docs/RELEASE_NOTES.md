@@ -1,5 +1,19 @@
 # Pinset Release Notes
 
+## v0.5.0
+
+- 发布日期：`2026-08-14`
+- GitHub Release：[v0.5.0](https://github.com/Future-Element/pinset/releases/tag/v0.5.0)
+- 阶段：CPython Provider / 独立项目虚拟环境；
+- 新增 CPython Provider，支持精确版本、主版本、主次版本、`latest`/`current` 和 `pinset list python --available`；
+- 使用官方 `python-build-standalone` 版本注册表和 `install_only` 工件，锁文件记录 CPython 版本、构建 ID、发行变体、四平台归档身份和 SHA-256；
+- 项目选择 Python 后自动创建 Pinset 自有的 `.venv`，`python`、`python3` 和 `pinset exec -- <环境命令>` 自动路由到项目环境，无需手动激活；
+- 新增 `pinset venv create/status/recreate`；未标记、版本不匹配、符号链接或损坏的 `.venv` 不会被接管，只有显式 `recreate` 可在所有权验证后重建；
+- 受管 Python 项目进程设置 `VIRTUAL_ENV` 并移除 `PYTHONHOME`；全局 Python 仍路由独立安装的基础解释器；
+- 移除其他运行时管理器的配置检测和迁移命令；Pinset 只读取自己的配置、锁文件和状态；
+- `doctor --json` schema 更新为 2，不再输出其他管理器配置检测结果；
+- Windows x64 已使用真实 `3.14.7+20260807` 工件验证下载、安装、`.venv` 创建、shim 无激活路由、pip、环境重用和显式重建；Release 工作流要求 Linux、Windows 与 macOS 构建和真实 Python 验收全部通过后才创建 GitHub Release。
+
 ## v0.4.2
 
 - 发布日期：`2026-08-14`

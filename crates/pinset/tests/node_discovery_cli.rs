@@ -41,9 +41,8 @@ fn local_node_listing_and_help_are_localized() {
     let help = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "--help"]);
     assert_success_contains(&help, "列出本机已安装或官方可用的运行时版本");
 
-    let unsupported = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "python"]);
-    assert!(!unsupported.status.success());
-    assert!(stderr(&unsupported).contains("python"));
+    let python = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "python"]);
+    assert_success_contains(&python, "no Pinset-managed python versions are installed");
 }
 
 fn create_install_receipt(home: &Path, version: &str, target: &str) {
