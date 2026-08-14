@@ -1,14 +1,14 @@
 # Pinset PRD
 
-文档版本：`v0.6.1`
-产品阶段：`Java command routing precedence patch`
+文档版本：`v0.7.0`
+产品阶段：`Rust stable Provider development`
 更新时间：`2026-08-14`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
-`v0.6.0` 在已发布的 Node.js、pnpm、Bun、Go、Flutter 和 CPython Provider 基础上新增 Eclipse Temurin JDK Provider。`v0.6.1` 修复路由目录已在 PATH 但被更早系统命令遮挡时的生效状态误判与 Shell 激活提示。Rust 暂不纳入本补丁版本。
+`v0.7.0` 在 Node.js、pnpm、Bun、Go、Flutter、CPython 和 Eclipse Temurin JDK Provider 基础上新增 Rust stable Provider。Pinset 直接使用 Rust 官方 release manifests 锁定并安装 default profile 工具链，不依赖或接管其他 Rust 工具链管理器。
 
 ### 1.1 目标
 
@@ -29,7 +29,7 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 1.3 本版本不做
 
-- 不接入 Rust 等其他 Provider，也不扩展到其他 JDK 厂商、JRE、OpenJ9、EA、nightly、JavaFX 或 GraalVM；
+- 不接入 Rust beta/nightly、自定义 channel、额外 target、组件增删能力或其他新 Provider，也不扩展到其他 JDK 厂商、JRE、OpenJ9、EA、JavaFX 或 GraalVM；
 - 不管理 Android SDK/NDK、Xcode、CocoaPods、模拟器、设备、pub 依赖或 pub 缓存；
 - 不管理 npm、pnpm、Bun 中的项目依赖或全局包；
 - 不管理项目依赖包或全局 npm 包；
@@ -63,7 +63,7 @@ Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 
 
 ### 2.5 运行时中立
 
-curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`、`pip`、`pip3`，Flutter Provider 注册 `flutter`、`dart`，Java Provider 注册 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`。
+curl 安装器只安装 `pinset` 与 `pinset-shim`。Node Provider 注册 `node`、`npm`、`npx`、`corepack`，pnpm Provider 注册 `pnpm`，Bun Provider 注册 `bun`、`bunx`，Go Provider 注册 `go`、`gofmt`，Python Provider 注册 `python`、`python3`、`pip`、`pip3`，Flutter Provider 注册 `flutter`、`dart`，Java Provider 注册 `java`、`javac`、`jar`、`javadoc`、`javap`、`keytool`、`jshell`，Rust Provider 注册 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver`、`cargo-clippy`。
 
 ## 3. 支持矩阵
 
@@ -121,6 +121,17 @@ Python available 列表只显示稳定、同时具备四个 `install_only` 工�
 
 Java available 列表只显示 Eclipse vendor、JDK image、HotSpot、normal heap、GA release type 且同时具备四个目标、有效 SHA-256 与签名链接的 Temurin 发布。
 
+### 3.6 Rust stable 发行目标
+
+| 目标 | Rust target triple | 状态 |
+| --- | --- | --- |
+| `windows-x86_64` | `x86_64-pc-windows-msvc` | 支持 TAR.XZ |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` | 支持 TAR.XZ |
+| `macos-x86_64` | `x86_64-apple-darwin` | Provider 支持 TAR.XZ |
+| `macos-aarch64` | `aarch64-apple-darwin` | Provider 支持 TAR.XZ |
+
+Rust available 列表来自官方 stable manifests；生成可安装锁时，所选版本必须在同一 v2 release manifest 中具备四个目标的组合工具链归档、有效 SHA-256 和完整 default profile 组件。
+
 ## 4. 配置和数据
 
 ### 4.1 项目配置 `pinset.toml`
@@ -137,6 +148,7 @@ bun = "1.3.14"
 go = "1.25.1"
 python = "3.14.7+20260807"
 java = "21.0.8+9"
+rust = "1.97.1"
 ```
 
 ### 4.2 项目锁文件 `pinset.lock`
@@ -165,7 +177,7 @@ Provider 声明：
 - 运行时命令集合；
 - 安装、验证和命令路由规则。
 
-Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、`pip`、`pip3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护；Java Provider 声明 JDK 命令、平台 `JAVA_HOME` 和环境诊断策略。
+Node Provider 声明 `node`、`npm`、`npx`、`corepack`；pnpm Provider 声明 `pnpm`；Bun Provider 声明 `bun`、`bunx`；Go Provider 声明 `go`、`gofmt`、`GOROOT` 和工具链切换策略；Python Provider 声明 `python`、`python3`、`pip`、`pip3`、项目 `.venv` 和受管环境策略；Flutter Provider 声明 `flutter`、`dart`、`FLUTTER_ROOT` 和受管 SDK 原地变更保护；Java Provider 声明 JDK 命令、平台 `JAVA_HOME` 和环境诊断策略；Rust Provider 声明 stable v2 manifest、default profile、工具链命令和用户环境保留策略。
 
 ### 4.5 通用命令路由
 
@@ -438,6 +450,18 @@ Java Provider 支持 `latest`/`current`、`lts`、Feature 主版本、主次前�
 - `CLASSPATH`、`JAVA_TOOL_OPTIONS`、`JDK_JAVA_OPTIONS`、`_JAVA_OPTIONS` 保留用户值，`doctor` 在选择 Java 时报告其潜在影响；
 - 不修改 shell profile、系统环境、Gradle/Maven toolchain 或 `cacerts`，不接管系统 JDK 和外部管理器状态。
 
+## 6.6 Rust stable Provider
+
+Rust Provider 支持 `stable`/`latest`/`current`、主版本、主次版本和精确 stable 版本，并通过 `pinset list rust --available` 显示官方清单中的版本与发布日期。
+
+- 版本发现来自 `https://static.rust-lang.org/manifests.txt`，精确发布元数据来自经过官方 `.sha256` 校验的 v2 `channel-rust-x.y.z.toml`；
+- 只接受 stable channel 和同时具备四个支持目标的官方 `rust` 组合归档；
+- 安装官方 `default` profile，组件边界固定为 `rustc`、`cargo`、`rust-std`、`rust-docs`、`rustfmt` 与 `clippy`；
+- 锁文件记录 manifest date、manifest SHA-256、profile、组件、规范归档 URL 与每个目标的 SHA-256；
+- 路由 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver` 和 `cargo-clippy`；
+- 保留用户的 `CARGO_HOME`、`RUSTUP_HOME` 与 `RUSTFLAGS`，不创建或修改外部管理器配置，不修改 shell profile；
+- 不管理 Cargo 依赖、crate 发布、原生链接器、系统 SDK、交叉编译环境，也不提供 beta/nightly、额外 target 或组件增删。
+
 ## 7. 安全和供应链
 
 ### 7.1 Provider 归档
@@ -451,6 +475,7 @@ Java Provider 支持 `latest`/`current`、`lts`、Feature 主版本、主次前�
 - Flutter 使用官方 release JSON 中逐工件提供的 SHA-256；三个平台索引必须对 Flutter 版本、Dart 版本和 release hash 达成一致。
 - Python 使用官方版本注册表中的逐工件 SHA-256，并校验平台、variant、归档格式和规范 GitHub Release 身份。
 - Java 使用 Adoptium API 逐工件 SHA-256，严格校验 Temurin GitHub Release 仓库、Feature、目标平台、包名和签名链接身份。
+- Rust 先验证官方 v2 release manifest 的 SHA-256，再使用其中的逐目标 SHA-256 校验组合工具链归档；清单日期、渠道、profile、组件、URL 和 target identity 都必须与内置 Provider 一致。
 
 ### 7.2 Pinset Release
 
@@ -507,13 +532,14 @@ Java Provider 支持 `latest`/`current`、`lts`、Feature 主版本、主次前�
 
 - 构建 locked release 二进制；
 - 设置中文并验证持久化；
-- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go、Python 和一个 Temurin JDK；
+- 安装一个全局 Node、一个项目 Node、pnpm、Bun、Go、Python、一个 Temurin JDK 和一个 Rust stable 工具链；
 - 验证项目覆盖与离开项目后的全局恢复；
-- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3/pip/pip3/java/javac，以及项目环境脚本；
+- 验证 `pinset exec` 下的 node/npm/npx/corepack/pnpm/bun/bunx/go/gofmt/python/python3/pip/pip3/java/javac/rustc/cargo/rustfmt，以及项目环境脚本；
 - 验证 PATH 直接调用的全部 Provider 命令；
 - 验证项目 Node 覆盖与 pnpm 子进程组合 PATH；
 - 验证 Python 项目 `.venv` 自动创建、无激活路由、所有权拒绝和显式重建；
 - 编译并运行最小 Java 程序，验证 `java.home`、`JAVA_HOME`、项目选择来源和已安装 JDK 重用；
+- 使用 `rustc` 编译并运行最小 Rust 程序，验证项目选择、命令路由、锁文件和已安装工具链重用；
 - 通过自动化测试验证 Flutter 元数据、锁文件、安装安全、路由和原地变更拦截；
 - 运行安装器/卸载器隔离测试；
 - 生成并发布归档、校验、SBOM 和来源证明。
@@ -531,4 +557,4 @@ Java Provider 支持 `latest`/`current`、`lts`、Feature 主版本、主次前�
 - 完成发布回滚、撤回和安全公告流程；
 - 完成 Flutter/Dart 的发布后隔离虚拟机真实运行时验收。
 
-后续按 Rust 的顺序扩展。新 Provider 必须保持 Pinset 独立安装与状态边界，复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。
+后续 Provider 继续保持 Pinset 独立安装与状态边界，复用现有 Provider、来源、缓存、路由和安全机制，不在 CLI 中增加语言专用的零散逻辑。

@@ -25,6 +25,7 @@ pub enum RuntimeMetadataKind {
     Flutter,
     Java,
     Python,
+    Rust,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,7 @@ pub enum RuntimeInstallKind {
     Flutter,
     Java,
     Python,
+    Rust,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +107,22 @@ const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     installer: RuntimeInstallKind::Java,
     environment: RuntimeEnvironmentKind::Java,
 };
+const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "rust",
+    commands: &[
+        "rustc",
+        "cargo",
+        "rustdoc",
+        "rustfmt",
+        "cargo-fmt",
+        "clippy-driver",
+        "cargo-clippy",
+    ],
+    command_layout: RuntimeCommandLayout::Bin,
+    metadata: RuntimeMetadataKind::Rust,
+    installer: RuntimeInstallKind::Rust,
+    environment: RuntimeEnvironmentKind::None,
+};
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
     PNPM_PROVIDER,
@@ -113,6 +131,7 @@ const PROVIDERS: &[RuntimeProvider] = &[
     FLUTTER_PROVIDER,
     PYTHON_PROVIDER,
     JAVA_PROVIDER,
+    RUST_PROVIDER,
 ];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
@@ -197,6 +216,24 @@ mod tests {
         assert_eq!(
             runtime_provider_for_command("javac").map(|provider| provider.tool),
             Some("java")
+        );
+        assert_eq!(
+            runtime_provider("rust").map(|provider| provider.commands),
+            Some(
+                &[
+                    "rustc",
+                    "cargo",
+                    "rustdoc",
+                    "rustfmt",
+                    "cargo-fmt",
+                    "clippy-driver",
+                    "cargo-clippy",
+                ][..]
+            )
+        );
+        assert_eq!(
+            runtime_provider_for_command("cargo-clippy").map(|provider| provider.tool),
+            Some("rust")
         );
     }
 

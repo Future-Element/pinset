@@ -257,7 +257,7 @@ pub enum Error {
         usage: &'static str,
     },
 
-    #[cfg(feature = "sources")]
+    #[cfg(any(feature = "sources", feature = "rust-metadata"))]
     #[error("invalid base URL \"{url}\": {reason}")]
     InvalidSourceBaseUrl { url: String, reason: String },
 
@@ -464,6 +464,52 @@ pub enum Error {
     #[cfg(feature = "java-metadata")]
     #[error("invalid Adoptium metadata: {reason}")]
     InvalidJavaIndex { reason: String },
+
+    #[cfg(feature = "rust-provider")]
+    #[error("invalid exact Rust version \"{version}\"; expected x.y.z")]
+    InvalidRustVersion { version: String },
+
+    #[cfg(feature = "rust-provider")]
+    #[error("unsupported Rust target \"{target}\"")]
+    UnsupportedRustTarget { target: String },
+
+    #[cfg(feature = "rust-provider")]
+    #[error("invalid official Rust artifact identity: {reason}")]
+    InvalidRustArtifact { reason: String },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error(
+        "invalid Rust selector \"{selector}\"; expected x.y.z, a major/minor prefix, stable, latest or current"
+    )]
+    InvalidRustSelector { selector: String },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error("official Rust manifests contain no stable release matching \"{selector}\"")]
+    RustSelectorNotFound { selector: String },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error("failed to request official Rust metadata {url}: {source}")]
+    RustMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error("failed while reading official Rust metadata {url}: {source}")]
+    RustMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error("official Rust metadata exceeds {limit} bytes")]
+    RustMetadataTooLarge { limit: u64 },
+
+    #[cfg(feature = "rust-metadata")]
+    #[error("invalid official Rust metadata: {reason}")]
+    InvalidRustIndex { reason: String },
 
     #[error("project Python environment {path} is not owned by Pinset")]
     PythonEnvironmentNotOwned { path: PathBuf },
@@ -786,7 +832,8 @@ pub enum Error {
         feature = "installer",
         feature = "go-metadata",
         feature = "node-metadata",
-        feature = "npm-metadata"
+        feature = "npm-metadata",
+        feature = "rust-metadata"
     ))]
     #[error("failed to build the HTTP client: {source}")]
     HttpClient {

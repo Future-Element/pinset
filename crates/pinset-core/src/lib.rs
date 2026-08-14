@@ -57,6 +57,12 @@ mod python_venv;
 mod resolver;
 mod runtime_lifecycle;
 mod runtime_provider;
+#[cfg(feature = "rust-metadata")]
+mod rust_metadata;
+#[cfg(feature = "rust-provider")]
+mod rust_provider;
+#[cfg(all(feature = "installer", feature = "rust-provider", feature = "lockfile"))]
+mod rust_runtime;
 mod shim_install;
 #[cfg(feature = "sources")]
 mod source_config;
@@ -182,6 +188,15 @@ pub use runtime_provider::{
     RuntimeCommandLayout, RuntimeEnvironmentKind, RuntimeInstallKind, RuntimeMetadataKind,
     RuntimeProvider, runtime_provider, runtime_provider_for_command, runtime_providers,
 };
+#[cfg(feature = "rust-metadata")]
+pub use rust_metadata::{RustMetadataClient, RustRelease};
+#[cfg(feature = "rust-provider")]
+pub use rust_provider::{
+    RUST_COMPONENTS, RUST_PROFILE, RUST_TARGETS, RustArchiveFormat, RustArtifactPlan, RustVersion,
+    plan_rust_artifact, rust_target_triple, validate_exact_rust_version,
+};
+#[cfg(all(feature = "installer", feature = "rust-provider", feature = "lockfile"))]
+pub use rust_runtime::install_locked_rust;
 pub use shim_install::{
     ShimInstallMethod, ShimInstallResult, ensure_shims, install_shims, is_managed_command_shim,
     is_managed_shim,

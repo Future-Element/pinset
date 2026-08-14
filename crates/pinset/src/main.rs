@@ -19,25 +19,25 @@ use pinset_core::{
     ArtifactIntegrity, DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig,
     GoMetadataClient, InstallLimits, Installer, JavaMetadataClient, LockedTool, Lockfile,
     NodeMetadataClient, NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind,
-    RuntimeMetadataKind, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceView,
-    clean_download_cache, command_tool, create_project_config, create_project_python_environment,
-    current_target_for_tool, ensure_shims, find_optional_project_config, find_project_config,
-    global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_flutter, install_locked_go,
-    install_locked_java, install_locked_node, install_locked_npm_tool, install_locked_python,
-    is_managed_command_shim, list_download_cache, list_installed_tool_versions, load_global_config,
-    load_lockfile, load_optional_global_config, load_optional_lockfile, load_project_config,
-    load_project_python_environment, load_source_config, load_user_settings, lockfile_path,
-    managed_runtime_arguments, path_with_selected_tools, pinset_home,
-    project_python_environment_path, resolve_command, resolve_project_python_command,
-    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
-    runtime_environment_for_install, runtime_provider, save_global_config, save_global_state,
-    save_lockfile, save_project_config, save_source_config, save_user_settings,
-    selected_runtime_environment, source_config_path, uninstall_node_version,
+    RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
+    SourceView, clean_download_cache, command_tool, create_project_config,
+    create_project_python_environment, current_target_for_tool, ensure_shims,
+    find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
+    import_download_cache, import_download_cache_with_integrity, install_locked_flutter,
+    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
+    install_locked_python, install_locked_rust, is_managed_command_shim, list_download_cache,
+    list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
+    load_optional_lockfile, load_project_config, load_project_python_environment,
+    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
+    path_with_selected_tools, pinset_home, project_python_environment_path, resolve_command,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state, save_lockfile, save_project_config, save_source_config,
+    save_user_settings, selected_runtime_environment, source_config_path, uninstall_node_version,
     uninstall_tool_version, user_settings_path, validate_exact_flutter_version,
     validate_exact_go_version, validate_exact_java_version, validate_exact_node_version,
-    validate_exact_python_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools, validate_managed_runtime_invocation,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -484,6 +484,11 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                             );
                         }
                     }
+                    RuntimeMetadataKind::Rust => {
+                        for release in RustMetadataClient::official()?.available_releases()? {
+                            println!("rust@{} stable ({})", release.version, release.date);
+                        }
+                    }
                 }
             } else {
                 let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
@@ -690,6 +695,9 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Java => {
             validate_exact_java_version(version)?;
         }
+        RuntimeMetadataKind::Rust => {
+            validate_exact_rust_version(version)?;
+        }
     }
     Ok(())
 }
@@ -721,6 +729,7 @@ fn resolve_locked_tool(
             Ok(PythonMetadataClient::official()?.resolve_tool(selector)?)
         }
         RuntimeMetadataKind::Java => Ok(JavaMetadataClient::official()?.resolve_tool(selector)?),
+        RuntimeMetadataKind::Rust => Ok(RustMetadataClient::official()?.resolve_tool(selector)?),
     }
 }
 
@@ -1132,6 +1141,7 @@ fn install_tool_from_lock(
             install_locked_python(&installer, home, &sources, locked_tool, &target)?
         }
         RuntimeInstallKind::Java => install_locked_java(&installer, home, locked_tool, &target)?,
+        RuntimeInstallKind::Rust => install_locked_rust(&installer, home, locked_tool, &target)?,
     };
     if outcome.reused_existing {
         if tool == "node" {
@@ -2486,7 +2496,12 @@ fn run_source_command(
                             .into(),
                     );
                 }
-                Some(RuntimeMetadataKind::Java | RuntimeMetadataKind::Npm) | None => {
+                Some(
+                    RuntimeMetadataKind::Java
+                    | RuntimeMetadataKind::Rust
+                    | RuntimeMetadataKind::Npm,
+                )
+                | None => {
                     return Err(format!(
                         "source testing is not available for provider {provider:?}"
                     )

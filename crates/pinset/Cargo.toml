@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-pinset-core = { path = "../pinset-core", features = ["flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-write", "python-metadata", "sources", "state-write"] }
+pinset-core = { path = "../pinset-core", features = ["flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-write", "python-metadata", "rust-metadata", "sources", "state-write"] }
 serde.workspace = true
 serde_json.workspace = true
 terminal_size.workspace = true

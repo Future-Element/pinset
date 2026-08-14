@@ -1,5 +1,17 @@
 # Pinset Release Notes
 
+## v0.7.0
+
+- 发布日期：未发布；
+- 阶段：Rust stable Provider 开发候选；
+- 新增 `pinset list rust --available`、`global`、`use`、`install`、`current`、`which`、`exec`、shim 和卸载生命周期；
+- 支持 `stable`/`latest`/`current`、主版本、主次版本和精确 stable 版本选择器；
+- 使用 Rust 官方 `manifests.txt` 和经过 SHA-256 校验的 v2 release manifest，锁定 Windows x64、Linux x64、macOS x64/arm64 的组合工具链归档与 SHA-256；
+- 安装官方 `default` profile，路由 `rustc`、`cargo`、`rustdoc`、`rustfmt`、`cargo-fmt`、`clippy-driver` 和 `cargo-clippy`；
+- 保持锁文件 schema 2，记录 stable channel、manifest date、manifest SHA-256、profile 和组件边界；
+- 不接管外部 Rust 管理器或其目录，不修改 shell profile，并保留用户的 `CARGO_HOME`、`RUSTUP_HOME` 与 `RUSTFLAGS`；
+- Quality 使用官方 manifest 夹具和假归档；Linux、Windows、macOS 的真实 Rust 下载、编译和命令路由只在 GitHub Actions 隔离虚拟机验证。Flutter SDK 仍不进入 Actions 真实下载。
+
 ## v0.6.1
 
 - 发布日期：`2026-08-14`

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
@@ -775,13 +775,7 @@ impl Installer {
             {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
-            let Some(relative) = strip_entry_path(
-                &archived_path,
-                strip_components,
-                entry.is_dir(),
-                &entry_name,
-            )?
-            else {
+            let Some(relative) = strip_entry_path(&archived_path, strip_components) else {
                 continue;
             };
             let collision_key = archive_collision_key(&relative);
@@ -922,7 +916,7 @@ impl Installer {
             path: archive_path.to_path_buf(),
             source,
         })?;
-        let mut seen = HashSet::new();
+        let mut seen = HashMap::new();
         let mut pending_symlinks = Vec::new();
         let mut total_unpacked = 0_u64;
         let mut entry_count = 0_usize;
@@ -952,9 +946,7 @@ impl Installer {
             {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
-            let Some(relative) =
-                strip_entry_path(&archived_path, strip_components, is_directory, &entry_name)?
-            else {
+            let Some(relative) = strip_entry_path(&archived_path, strip_components) else {
                 continue;
             };
             if !include_prefixes.is_empty()
@@ -964,8 +956,12 @@ impl Installer {
             {
                 continue;
             }
-            if !seen.insert(archive_collision_key(&relative)) {
-                return Err(Error::DuplicateArchiveEntry { entry: entry_name });
+            if let Some(previous_is_directory) =
+                seen.insert(archive_collision_key(&relative), is_directory)
+            {
+                if !is_directory || !previous_is_directory {
+                    return Err(Error::DuplicateArchiveEntry { entry: entry_name });
+                }
             }
             let output_path = destination.join(&relative);
             if is_directory {
@@ -1277,29 +1273,17 @@ fn validate_artifact_request(artifact: &ArtifactSpec, strip_components: usize) -
     Ok(())
 }
 
-fn strip_entry_path(
-    path: &Path,
-    strip_components: usize,
-    is_directory: bool,
-    entry_name: &str,
-) -> Result<Option<PathBuf>> {
+fn strip_entry_path(path: &Path, strip_components: usize) -> Option<PathBuf> {
     let components = path.components().collect::<Vec<_>>();
-    if components.len() < strip_components
-        || (components.len() == strip_components && !is_directory)
-    {
-        return Err(Error::UnsafeArchiveEntry {
-            entry: entry_name.to_owned(),
-        });
+    if components.len() <= strip_components {
+        return None;
     }
-    if components.len() == strip_components {
-        return Ok(None);
-    }
-    Ok(Some(
+    Some(
         components
             .into_iter()
             .skip(strip_components)
             .collect::<PathBuf>(),
-    ))
+    )
 }
 
 fn resolve_archive_symlink(link_path: &Path, target: &Path) -> Option<PathBuf> {
@@ -1799,6 +1783,35 @@ mod tests {
     }
 
     #[test]
+    fn installs_combined_rust_tar_xz_with_repeated_component_directories() {
+        let archive = rust_combined_tar_xz_bytes();
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.tool = "rust".to_owned();
+        request.version = "1.97.1".to_owned();
+        request.target = "linux-x86_64".to_owned();
+        request.artifact.format = ArtifactFormat::TarXz;
+        request.strip_components = 2;
+        request.include_prefixes = vec![PathBuf::from("bin")];
+        request.required_paths = vec![PathBuf::from("bin/rustc"), PathBuf::from("bin/cargo")];
+        request.executable_paths = request.required_paths.clone();
+
+        let outcome = test_installer().install(&request).expect("install Rust");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read(outcome.install_dir.join("bin/rustc")).expect("rustc"),
+            b"fake rustc"
+        );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("bin/cargo")).expect("cargo"),
+            b"fake cargo"
+        );
+        assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
     fn installs_tar_gz_with_npm_sha512_integrity() {
         let archive = tar_gz_bytes(&[("package/pnpm.exe", b"fake pnpm", 0o755)]);
         let integrity = format!(
@@ -2292,6 +2305,59 @@ mod tests {
             builder
                 .append(&header, Cursor::new(*content))
                 .expect("tar entry");
+        }
+        let encoder = builder.into_inner().expect("tar finish");
+        encoder.finish().expect("xz finish")
+    }
+
+    fn rust_combined_tar_xz_bytes() -> Vec<u8> {
+        let encoder = XzEncoder::new(Vec::new(), 6);
+        let mut builder = tar::Builder::new(encoder);
+        for directory in [
+            "rust-1.97.1-x86_64-unknown-linux-gnu",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/rustc",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/rustc/bin",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/cargo",
+            "rust-1.97.1-x86_64-unknown-linux-gnu/cargo/bin",
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(directory).expect("directory path");
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append(&header, io::empty())
+                .expect("directory entry");
+        }
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path("rust-1.97.1-x86_64-unknown-linux-gnu/LICENSE-APACHE")
+            .expect("license path");
+        header.set_size(b"fake license".len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(b"fake license"))
+            .expect("license entry");
+        for (path, content) in [
+            (
+                "rust-1.97.1-x86_64-unknown-linux-gnu/rustc/bin/rustc",
+                b"fake rustc".as_slice(),
+            ),
+            (
+                "rust-1.97.1-x86_64-unknown-linux-gnu/cargo/bin/cargo",
+                b"fake cargo".as_slice(),
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(path).expect("file path");
+            header.set_size(content.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append(&header, Cursor::new(content))
+                .expect("file entry");
         }
         let encoder = builder.into_inner().expect("tar finish");
         encoder.finish().expect("xz finish")
