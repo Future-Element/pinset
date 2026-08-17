@@ -81,11 +81,7 @@ pub fn install_locked_rust(
 fn required_rust_paths(target: &str) -> Result<Vec<PathBuf>> {
     if !matches!(
         target,
-        "windows-x86_64"
-            | "linux-x86_64"
-            | "linux-aarch64"
-            | "macos-x86_64"
-            | "macos-aarch64"
+        "windows-x86_64" | "linux-x86_64" | "linux-aarch64" | "macos-x86_64" | "macos-aarch64"
     ) {
         return Err(Error::UnsupportedRustTarget {
             target: target.to_owned(),

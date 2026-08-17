@@ -499,8 +499,7 @@ fn validate_node_metadata(tool: &LockedTool) -> Result<()> {
     let fingerprint = tool.metadata.get("signature_primary_fingerprint");
     if tool.metadata.len() != expected.len()
         || expected.iter().any(|key| !tool.metadata.contains_key(*key))
-        || tool.metadata.get("signed_manifest").map(String::as_str)
-            != Some("SHASUMS256.txt.asc")
+        || tool.metadata.get("signed_manifest").map(String::as_str) != Some("SHASUMS256.txt.asc")
         || tool
             .metadata
             .get("manifest_source")
@@ -1236,8 +1235,7 @@ mod tests {
             "official".to_owned(),
             artifacts,
         );
-        https_checksums_only.tools[0].artifacts[0].verification =
-            "nodejs-shasums-https".to_owned();
+        https_checksums_only.tools[0].artifacts[0].verification = "nodejs-shasums-https".to_owned();
         let error = validate_lockfile(&https_checksums_only).expect_err("legacy verification");
         assert!(error.to_string().contains("pinset use node@<selector>"));
     }

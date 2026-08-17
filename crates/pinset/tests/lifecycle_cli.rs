@@ -21,7 +21,13 @@ fn lists_all_installed_versions_and_current_rust_as_json() {
     let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("installed JSON");
     assert_eq!(listed["schema"], 1);
     assert_eq!(listed["command"], "list");
-    assert_eq!(listed["data"]["versions"].as_array().expect("installed array").len(), 2);
+    assert_eq!(
+        listed["data"]["versions"]
+            .as_array()
+            .expect("installed array")
+            .len(),
+        2
+    );
 
     let current = pinset(&project, &home, &["current", "rust", "--json"]);
     assert_success(&current);

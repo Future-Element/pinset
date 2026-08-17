@@ -121,11 +121,12 @@ pub(crate) fn verify_node_manifest(armored: &str) -> Result<VerifiedNodeManifest
 }
 
 fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
-    let (keys, _) = SignedPublicKey::from_reader_many(NODE_RELEASE_KEYS.as_bytes()).map_err(
-        |source| Error::NodeTrustStoreInvalid {
-            reason: format!("cannot parse {NODE_RELEASE_KEYS_SOURCE}: {source}"),
-        },
-    )?;
+    let (keys, _) =
+        SignedPublicKey::from_reader_many(NODE_RELEASE_KEYS.as_bytes()).map_err(|source| {
+            Error::NodeTrustStoreInvalid {
+                reason: format!("cannot parse {NODE_RELEASE_KEYS_SOURCE}: {source}"),
+            }
+        })?;
     let allowlist = TRUSTED_PRIMARY_FINGERPRINTS
         .iter()
         .copied()

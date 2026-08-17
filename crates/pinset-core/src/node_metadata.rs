@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{
     Error, LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS, NodeArchiveFormat,
-    Result, SourceConfig, plan_node_artifact, node_trust::verify_node_manifest,
+    Result, SourceConfig, node_trust::verify_node_manifest, plan_node_artifact,
 };
 
 const OFFICIAL_NODE_DIST_URL: &str = "https://nodejs.org/dist/";
@@ -538,9 +538,11 @@ mod tests {
             node.metadata.get("manifest_source").map(String::as_str),
             Some("mirror")
         );
-        assert!(node.artifacts.iter().all(|artifact| {
-            artifact.verification == "nodejs-openpgp-sha256-source:mirror"
-        }));
+        assert!(
+            node.artifacts
+                .iter()
+                .all(|artifact| { artifact.verification == "nodejs-openpgp-sha256-source:mirror" })
+        );
     }
 
     #[test]
