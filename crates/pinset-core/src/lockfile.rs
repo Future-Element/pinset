@@ -1608,6 +1608,7 @@ mod tests {
         let (os, arch, extension) = match target {
             "windows-x86_64" => ("windows", "x64", "zip"),
             "linux-x86_64" => ("linux", "x64", "tar.gz"),
+            "linux-aarch64" => ("linux", "aarch64", "tar.gz"),
             "macos-x86_64" => ("mac", "x64", "tar.gz"),
             "macos-aarch64" => ("mac", "aarch64", "tar.gz"),
             _ => unreachable!("known Java target"),
@@ -1658,6 +1659,7 @@ mod tests {
         let (rid, extension) = match target {
             "windows-x86_64" => ("win-x64", "zip"),
             "linux-x86_64" => ("linux-x64", "tar.gz"),
+            "linux-aarch64" => ("linux-arm64", "tar.gz"),
             "macos-x86_64" => ("osx-x64", "tar.gz"),
             "macos-aarch64" => ("osx-arm64", "tar.gz"),
             _ => unreachable!("known .NET SDK target"),

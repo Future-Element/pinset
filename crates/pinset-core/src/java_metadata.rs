@@ -378,6 +378,7 @@ fn binary_matches_target(binary: &ApiBinary, target: &str) -> bool {
     let (os, architecture) = match target {
         "windows-x86_64" => ("windows", "x64"),
         "linux-x86_64" => ("linux", "x64"),
+        "linux-aarch64" => ("linux", "aarch64"),
         "macos-x86_64" => ("mac", "x64"),
         "macos-aarch64" => ("mac", "aarch64"),
         _ => return false,
@@ -530,6 +531,7 @@ mod tests {
             let (os, arch, extension) = match *target {
                 "windows-x86_64" => ("windows", "x64", "zip"),
                 "linux-x86_64" => ("linux", "x64", "tar.gz"),
+                "linux-aarch64" => ("linux", "aarch64", "tar.gz"),
                 "macos-x86_64" => ("mac", "x64", "tar.gz"),
                 "macos-aarch64" => ("mac", "aarch64", "tar.gz"),
                 _ => unreachable!("known Java target"),
