@@ -1,34 +1,57 @@
 use std::{
     cmp::Reverse,
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Result, find_optional_project_config, global_config_path, load_optional_global_config,
-    load_project_config, runtime_provider,
+    load_project_config, runtime_provider, runtime_providers,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InstalledToolVersion {
     pub tool: String,
     pub version: String,
     pub targets: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolVersionReference {
     pub scope: &'static str,
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UninstallToolOutcome {
     pub tool: String,
     pub version: String,
     pub targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PruneToolCandidate {
+    pub tool: String,
+    pub version: String,
+    pub targets: Vec<String>,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PruneToolPlan {
+    pub candidates: Vec<PruneToolCandidate>,
+    pub protected: Vec<ProtectedToolVersion>,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProtectedToolVersion {
+    pub tool: String,
+    pub version: String,
+    pub references: Vec<ToolVersionReference>,
 }
 
 pub fn list_installed_tool_versions(
@@ -92,6 +115,14 @@ pub fn list_installed_tool_versions(
     Ok(versions)
 }
 
+pub fn list_all_installed_tool_versions(pinset_home: &Path) -> Result<Vec<InstalledToolVersion>> {
+    let mut installed = Vec::new();
+    for provider in runtime_providers() {
+        installed.extend(list_installed_tool_versions(pinset_home, provider.tool)?);
+    }
+    Ok(installed)
+}
+
 pub fn find_tool_version_references(
     pinset_home: &Path,
     cwd: &Path,
@@ -128,7 +159,94 @@ pub fn find_tool_version_references(
     Ok(references)
 }
 
-pub fn uninstall_tool_version(
+pub fn find_tool_version_references_in_projects(
+    pinset_home: &Path,
+    project_roots: &[PathBuf],
+    tool: &str,
+    version: &str,
+) -> Result<Vec<ToolVersionReference>> {
+    validate_tool_and_version(tool, version)?;
+    let mut references = Vec::new();
+    let mut seen_paths = BTreeSet::new();
+    for root in project_roots {
+        let Some(path) = find_optional_project_config(root)? else {
+            continue;
+        };
+        if !seen_paths.insert(path.clone()) {
+            continue;
+        }
+        let config = load_project_config(&path)?;
+        if config
+            .tools
+            .get(tool)
+            .is_some_and(|selected| selected == version)
+        {
+            references.push(ToolVersionReference {
+                scope: "project",
+                path,
+            });
+        }
+    }
+    let path = global_config_path(pinset_home);
+    if let Some(config) = load_optional_global_config(&path)?
+        && config
+            .tools
+            .get(tool)
+            .is_some_and(|selected| selected == version)
+    {
+        references.push(ToolVersionReference {
+            scope: "global",
+            path,
+        });
+    }
+    Ok(references)
+}
+
+pub fn plan_prune_tool_versions(
+    pinset_home: &Path,
+    project_roots: &[PathBuf],
+) -> Result<PruneToolPlan> {
+    let mut candidates = Vec::new();
+    let mut protected = Vec::new();
+    let mut bytes = 0_u64;
+    for installed in list_all_installed_tool_versions(pinset_home)? {
+        let references = find_tool_version_references_in_projects(
+            pinset_home,
+            project_roots,
+            &installed.tool,
+            &installed.version,
+        )?;
+        if references.is_empty() {
+            let (version_root, targets) = validate_owned_tool_install_layout(
+                pinset_home,
+                &installed.tool,
+                &installed.version,
+            )?;
+            let candidate_bytes =
+                directory_size_without_following_links(&version_root, &installed.tool)?;
+            bytes = bytes.saturating_add(candidate_bytes);
+            candidates.push(PruneToolCandidate {
+                tool: installed.tool,
+                version: installed.version,
+                targets,
+                bytes: candidate_bytes,
+            });
+        } else {
+            protected.push(ProtectedToolVersion {
+                tool: installed.tool,
+                version: installed.version,
+                references,
+            });
+        }
+    }
+    Ok(PruneToolPlan {
+        candidates,
+        protected,
+        bytes,
+    })
+}
+
+pub fn plan_uninstall_tool_version(
     pinset_home: &Path,
     cwd: &Path,
     tool: &str,
@@ -148,6 +266,19 @@ pub fn uninstall_tool_version(
                 .join(", "),
         });
     }
+    let (_, targets) = validate_owned_tool_install_layout(pinset_home, tool, version)?;
+    Ok(UninstallToolOutcome {
+        tool: tool.to_owned(),
+        version: version.to_owned(),
+        targets,
+    })
+}
+
+fn validate_owned_tool_install_layout(
+    pinset_home: &Path,
+    tool: &str,
+    version: &str,
+) -> Result<(PathBuf, Vec<String>)> {
     let version_root = pinset_home.join("installs").join(tool).join(version);
     let metadata = match fs::symlink_metadata(&version_root) {
         Ok(metadata) => metadata,
@@ -199,7 +330,7 @@ pub fn uninstall_tool_version(
                 path: entry.path(),
             });
         }
-        targets.push((target, entry.path()));
+        targets.push(target);
     }
     if targets.is_empty() {
         return Err(Error::ToolVersionNotInstalled {
@@ -207,11 +338,24 @@ pub fn uninstall_tool_version(
             version: version.to_owned(),
         });
     }
-    targets.sort_by(|left, right| left.0.cmp(&right.0));
-    for (_, path) in &targets {
-        fs::remove_dir_all(path).map_err(|source| Error::RemoveToolInstall {
+    targets.sort();
+    Ok((version_root, targets))
+}
+
+pub fn uninstall_tool_version(
+    pinset_home: &Path,
+    cwd: &Path,
+    tool: &str,
+    version: &str,
+    force: bool,
+) -> Result<UninstallToolOutcome> {
+    let outcome = plan_uninstall_tool_version(pinset_home, cwd, tool, version, force)?;
+    let version_root = pinset_home.join("installs").join(tool).join(version);
+    for target in &outcome.targets {
+        let path = version_root.join(target);
+        fs::remove_dir_all(&path).map_err(|source| Error::RemoveToolInstall {
             tool: tool.to_owned(),
-            path: path.clone(),
+            path,
             source,
         })?;
     }
@@ -220,11 +364,7 @@ pub fn uninstall_tool_version(
         path: version_root,
         source,
     })?;
-    Ok(UninstallToolOutcome {
-        tool: tool.to_owned(),
-        version: version.to_owned(),
-        targets: targets.into_iter().map(|(target, _)| target).collect(),
-    })
+    Ok(outcome)
 }
 
 #[derive(Debug, Deserialize)]
@@ -278,6 +418,42 @@ fn valid_version_segment(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+}
+
+fn directory_size_without_following_links(path: &Path, tool: &str) -> Result<u64> {
+    let mut size = 0_u64;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let entries =
+            fs::read_dir(&directory).map_err(|source| Error::ReadToolInstallDirectory {
+                tool: tool.to_owned(),
+                path: directory.clone(),
+                source,
+            })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| Error::ReadToolInstallDirectory {
+                tool: tool.to_owned(),
+                path: directory.clone(),
+                source,
+            })?;
+            let metadata = fs::symlink_metadata(entry.path()).map_err(|source| {
+                Error::ReadToolInstallDirectory {
+                    tool: tool.to_owned(),
+                    path: entry.path(),
+                    source,
+                }
+            })?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else if metadata.is_file() {
+                size = size.saturating_add(metadata.len());
+            }
+        }
+    }
+    Ok(size)
 }
 
 fn version_key(version: &str) -> (u64, u64, u64, u64, u64) {
@@ -356,5 +532,45 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, "21.0.8+9");
         assert_eq!(versions[1].version, "21.0.8+8");
+    }
+
+    #[test]
+    fn prune_plan_protects_global_and_supplied_project_selections() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        fs::write(
+            project.path().join("pinset.toml"),
+            "schema = 2\n[tools]\npnpm = \"11.21.0\"\n",
+        )
+        .expect("project config");
+        let global_path = global_config_path(home.path());
+        fs::create_dir_all(global_path.parent().expect("state directory")).expect("state");
+        fs::write(&global_path, "schema = 2\n[tools]\nbun = \"1.3.14\"\n").expect("global config");
+        for (tool, version) in [("pnpm", "11.21.0"), ("pnpm", "10.0.0"), ("bun", "1.3.14")] {
+            let target = "linux-x86_64";
+            let directory = home
+                .path()
+                .join("installs")
+                .join(tool)
+                .join(version)
+                .join(target);
+            fs::create_dir_all(&directory).expect("install directory");
+            fs::write(
+                directory.join(".pinset-install.toml"),
+                format!(
+                    "schema = 2\ncomplete = true\ntool = \"{tool}\"\nversion = \"{version}\"\ntarget = \"{target}\"\n"
+                ),
+            )
+            .expect("receipt");
+        }
+
+        let plan = plan_prune_tool_versions(home.path(), &[project.path().to_path_buf()])
+            .expect("prune plan");
+
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].tool, "pnpm");
+        assert_eq!(plan.candidates[0].version, "10.0.0");
+        assert_eq!(plan.protected.len(), 2);
+        assert!(plan.bytes > 0);
     }
 }

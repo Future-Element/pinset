@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Serialize;
 use tempfile::Builder;
 
 use crate::{ArtifactIntegrity, Error, IntegrityAlgorithm, Result};
@@ -14,16 +15,41 @@ const PARTIAL_DIRECTORY: &str = "partial";
 const ARCHIVE_SUFFIX: &str = ".archive";
 const MAX_CACHE_IMPORT_BYTES: u64 = 1_073_741_824;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DownloadCacheEntry {
     pub integrity: String,
     pub size: u64,
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DownloadCacheCleanOutcome {
     pub entries: usize,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DownloadCacheInfo {
+    pub archives: usize,
+    pub archive_bytes: u64,
+    pub partial_downloads: usize,
+    pub partial_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DownloadCacheVerificationEntry {
+    pub integrity: String,
+    pub actual: String,
+    pub size: u64,
+    pub path: PathBuf,
+    pub valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DownloadCacheVerification {
+    pub entries: Vec<DownloadCacheVerificationEntry>,
+    pub valid: usize,
+    pub corrupt: usize,
     pub bytes: u64,
 }
 
@@ -56,6 +82,77 @@ pub fn list_download_cache(pinset_home: &Path) -> Result<Vec<DownloadCacheEntry>
     }
     cached.sort_by_key(|entry| Reverse(entry.integrity.clone()));
     Ok(cached)
+}
+
+pub fn download_cache_info(pinset_home: &Path) -> Result<DownloadCacheInfo> {
+    let archives = list_download_cache(pinset_home)?;
+    let mut partials = Vec::new();
+    let partial_root = pinset_home.join(CACHE_DIRECTORY).join(PARTIAL_DIRECTORY);
+    for algorithm in [IntegrityAlgorithm::Sha256, IntegrityAlgorithm::Sha512] {
+        partials.extend(list_partial_downloads(
+            &partial_root.join(algorithm.as_str()),
+            algorithm,
+        )?);
+    }
+    Ok(DownloadCacheInfo {
+        archives: archives.len(),
+        archive_bytes: archives.iter().map(|entry| entry.size).sum(),
+        partial_downloads: partials.len(),
+        partial_bytes: partials.iter().map(|entry| entry.size).sum(),
+    })
+}
+
+pub fn verify_download_cache(pinset_home: &Path) -> Result<DownloadCacheVerification> {
+    let mut verification = DownloadCacheVerification {
+        entries: Vec::new(),
+        valid: 0,
+        corrupt: 0,
+        bytes: 0,
+    };
+    for entry in list_download_cache(pinset_home)? {
+        let integrity = ArtifactIntegrity::parse(&entry.integrity)?;
+        let (actual, size) = hash_file(&entry.path, &integrity)?;
+        let valid = actual == entry.integrity;
+        if valid {
+            verification.valid += 1;
+        } else {
+            verification.corrupt += 1;
+        }
+        verification.bytes = verification.bytes.saturating_add(size);
+        verification.entries.push(DownloadCacheVerificationEntry {
+            integrity: entry.integrity,
+            actual,
+            size,
+            path: entry.path,
+            valid,
+        });
+    }
+    Ok(verification)
+}
+
+pub fn repair_download_cache(pinset_home: &Path) -> Result<DownloadCacheCleanOutcome> {
+    let verification = verify_download_cache(pinset_home)?;
+    let mut outcome = DownloadCacheCleanOutcome {
+        entries: 0,
+        bytes: 0,
+    };
+    for entry in verification
+        .entries
+        .into_iter()
+        .filter(|entry| !entry.valid)
+    {
+        fs::remove_file(&entry.path).map_err(|source| Error::RemoveDownloadCacheEntry {
+            path: entry.path,
+            source,
+        })?;
+        outcome.entries += 1;
+        outcome.bytes = outcome.bytes.saturating_add(entry.size);
+    }
+    for algorithm in [IntegrityAlgorithm::Sha256, IntegrityAlgorithm::Sha512] {
+        remove_if_empty(&pinset_home.join(CACHE_DIRECTORY).join(algorithm.as_str()))?;
+    }
+    remove_if_empty(&pinset_home.join(CACHE_DIRECTORY))?;
+    Ok(outcome)
 }
 
 fn list_download_cache_algorithm(
@@ -471,5 +568,39 @@ mod tests {
             import_download_cache(home.path(), &source, &"0".repeat(64)),
             Err(Error::ChecksumMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn reports_cache_usage_and_repairs_only_corrupt_archives() {
+        let home = tempfile::tempdir().expect("home");
+        let valid_content = b"valid archive";
+        let valid_hash = hex::encode(Sha256::digest(valid_content));
+        let corrupt_hash = "0".repeat(64);
+        let root = home.path().join("downloads/sha256");
+        fs::create_dir_all(&root).expect("cache root");
+        fs::write(root.join(format!("{valid_hash}.archive")), valid_content)
+            .expect("valid archive");
+        fs::write(root.join(format!("{corrupt_hash}.archive")), b"corrupt")
+            .expect("corrupt archive");
+        let partial = home
+            .path()
+            .join("downloads/partial/sha256")
+            .join(format!("{}.part", "a".repeat(64)));
+        fs::create_dir_all(partial.parent().expect("partial root")).expect("partial root");
+        fs::write(&partial, b"partial").expect("partial");
+
+        let info = download_cache_info(home.path()).expect("cache info");
+        assert_eq!(info.archives, 2);
+        assert_eq!(info.partial_downloads, 1);
+
+        let verification = verify_download_cache(home.path()).expect("cache verification");
+        assert_eq!(verification.valid, 1);
+        assert_eq!(verification.corrupt, 1);
+
+        let repaired = repair_download_cache(home.path()).expect("cache repair");
+        assert_eq!(repaired.entries, 1);
+        assert!(root.join(format!("{valid_hash}.archive")).is_file());
+        assert!(!root.join(format!("{corrupt_hash}.archive")).exists());
+        assert!(partial.is_file());
     }
 }

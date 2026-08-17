@@ -27,6 +27,8 @@ Pinset 是一个本地优先、完全独立的多语言运行时版本管理 CLI
 
 `v0.8.0` 新增 Microsoft .NET SDK Provider，只列出仍受支持的 GA LTS/STS 通道，使用官方 release metadata 锁定四平台 SDK 归档和 SHA-512，并为受管进程设置 `DOTNET_ROOT`。
 
+`v0.9.0` 不新增语言，重点补齐所有 Provider 的安装生命周期：跨 Provider 已安装列表、更新检查、卸载与清理预览、缓存空间统计、内容校验、受损缓存修复和 JSON 输出。
+
 - 全局 Node 默认版本、项目级 Node 覆盖，以及离开项目后恢复全局版本；
 - `node@24.0.0`、`node@24`、`node@24.12`、`node@lts`、`node@current`；
 - pnpm 10/11 与 Bun 1.x 的精确、主版本、主次版本、`latest`/`current` 选择器；
@@ -516,10 +518,13 @@ pinset source add node lan \
 
 ```shell
 pinset cache list
-pinset cache clean
+pinset cache info
+pinset cache verify
+pinset cache repair --dry-run
+pinset cache clean --dry-run
 ```
 
-`cache clean` 会删除 Pinset 识别的完整归档和断点文件，但保留缓存目录中的未知文件。
+`cache verify` 会重新计算完整归档摘要，发现受损项时返回非零状态；`cache repair` 只删除受损完整归档。`cache clean` 会删除 Pinset 识别的完整归档和断点文件，但保留缓存目录中的未知文件。`repair` 和 `clean` 都可先用 `--dry-run` 预览。
 
 从联网机器复制 Node 官方归档和已审阅的 SHA-256 后，可在离线机器导入：
 
@@ -539,15 +544,18 @@ pinset cache import ./platform-package.tgz \
 pinset install --locked
 ```
 
-## 查询、诊断、迁移和卸载
+## 查询、诊断、配置和卸载
 
 ### 常用查询
 
 ```shell
+pinset list
 pinset list node
 pinset list node --available
-pinset current
-pinset which node
+pinset list --json
+pinset outdated
+pinset current rust --json
+pinset which node --json
 pinset doctor
 pinset doctor --json
 ```
@@ -556,13 +564,17 @@ pinset doctor --json
 
 Pinset 只把 `pinset.toml`、`pinset.lock` 和 `PINSET_HOME` 内的状态视为配置来源，不扫描、不解释也不导入其他运行时管理器的声明。迁移项目时请显式执行 `pinset init` 和 `pinset use <tool>@<selector>`，让 Pinset 重新解析并生成自己的可复现锁文件。
 
-### 卸载一个 Node 版本
+### 卸载与清理运行时版本
 
 ```shell
-pinset uninstall node@20.19.0
+pinset uninstall node@20.19.0 --dry-run
+pinset prune --dry-run
+pinset prune --project ../another-project --dry-run
 ```
 
-只能卸载精确版本。当前项目或全局仍引用该版本时默认拒绝；`--force` 只跳过引用保护，不会扩大到 Pinset 数据目录外，也不会删除没有有效 Pinset 安装收据的目录。
+`uninstall` 只能接受精确版本。当前项目或全局仍引用该版本时默认拒绝；`--force` 只跳过引用保护，不会扩大到 Pinset 数据目录外，也不会删除没有有效 Pinset 安装收据的目录。
+
+`prune` 默认保护全局和当前项目选择，只清理未引用且收据完整的版本。Pinset 不扫描整台磁盘寻找项目；需要保护其他项目时显式传入一个或多个 `--project <目录>`，目录不存在或无法找到 `pinset.toml` 时会停止清理。两个命令都支持 `--dry-run` 和 `--json`。
 
 ### 完整卸载 Pinset
 
@@ -598,16 +610,19 @@ Windows 从 Release 下载 `uninstall.ps1`：
 | `pinset use <tool>@选择器 [--global]` | 选择、锁定并默认安装运行时 |
 | `pinset unset <tool> [--global]` | 清除选择，不卸载运行时 |
 | `pinset install [<tool>@选择器]` | 安装锁定版本或独立预装一个版本 |
-| `pinset current [<tool>]` | 显示当前解析结果、来源和路径 |
-| `pinset which <命令>` | 显示某个命令最终使用的可执行文件 |
+| `pinset current [<tool>] [--json]` | 显示当前解析结果、来源和路径 |
+| `pinset which <命令> [--json]` | 显示某个命令最终使用的可执行文件 |
 | `pinset exec [<tool>@精确版本] -- <命令>` | 通过所选运行时执行命令 |
-| `pinset list <tool> [--available]` | 查看本地或官方可用版本 |
-| `pinset uninstall <tool>@精确版本` | 安全卸载一个 Pinset 管理的运行时 |
-| `pinset cache list/clean/import` | 管理下载缓存和离线归档 |
+| `pinset list [<tool>] [--available] [--json]` | 查看全部/指定本地版本或官方可用版本 |
+| `pinset outdated [<tool>] [--json]` | 检查项目和全局选择的稳定版更新 |
+| `pinset uninstall <tool>@精确版本 [--dry-run]` | 安全卸载一个 Pinset 管理的运行时 |
+| `pinset prune [--project <目录>] [--dry-run]` | 清理未引用的受管运行时版本 |
+| `pinset cache list/info/verify/repair/clean/import` | 管理、校验和修复下载缓存 |
 | `pinset source ...` | 管理镜像、回退与连通性测试 |
 | `pinset doctor [--json]` | 只读诊断配置、安装和 PATH |
 | `pinset venv create/status/recreate` | 管理 Pinset 自有的项目 Python `.venv` |
 | `pinset activate <shell>` | 输出当前 shell 的临时 PATH 激活代码 |
+| `pinset completions <shell>` | 生成命令、Provider、嵌套子命令和常用参数补全脚本 |
 | `pinset shim ...` | 查看、修复或迁移命令路由 |
 
 所有命令的准确参数以 `pinset <命令> --help` 为准。
@@ -643,7 +658,7 @@ cargo test --workspace --all-features
 cargo build --release --locked -p pinset-cli -p pinset-shim
 ```
 
-普通 CI 只在 Linux、Windows、macOS 隔离 Runner 中构建并打包 Pinset 自身；发布工作流额外执行格式、Clippy、单元测试、小型脚本测试、SBOM 和来源证明。除编译 Pinset 必需的 Rust 构建工具链外，任何 GitHub Actions 工作流都不再通过 Pinset 下载或执行待验证的 Node、Flutter、JDK、Rust 工具链、.NET SDK 等 Provider 工件。单元测试使用元数据夹具和小型假归档覆盖选择器、锁文件、安装安全、路由和环境变量；完整真实验收脚本保留给发布后的隔离虚拟机，用于验证各 Provider 的 available、全局/项目覆盖、SDK 编译运行和已安装版本复用。
+普通 CI 只在 Linux、Windows、macOS 隔离 Runner 中构建并打包 Pinset 自身；发布工作流额外执行格式、Clippy、单元测试、小型脚本测试、SBOM 和来源证明。除编译 Pinset 必需的 Rust 构建工具链外，任何 GitHub Actions 工作流都不再通过 Pinset 下载或执行待验证的 Node、Flutter、JDK、Rust 工具链、.NET SDK 等 Provider 工件。单元测试使用元数据夹具、小型假归档和安装收据覆盖选择器、锁文件、安装安全、跨 Provider 生命周期、路由和环境变量；完整真实验收脚本保留给发布后的隔离虚拟机，用于验证各 Provider 的 available、全局/项目覆盖、SDK 编译运行、生命周期查询和已安装版本复用。
 
 Linux/WSL 构建产物：
 
@@ -661,7 +676,7 @@ Windows 构建产物是 `.exe`，不能直接作为 WSL/Linux 程序使用；需
 - 项目不维护第三方 Homebrew Tap 或 Scoop Bucket；使用 curl、Release 归档或源码构建。
 - Pinset 会校验 Node 官方 HTTPS `SHASUMS256.txt` 和 Go 官方下载索引中的 SHA-256，但 Beta 尚未验证 Node 清单的上游 OpenPGP 签名；pnpm/Bun 则校验 npm SHA-512 SRI 和 registry ECDSA 签名。
 - Pinset 不自动修改 shell profile、系统 PATH 或 IDE 配置。
-- 这是预发布版本，配置 schema 仍可能在稳定版前调整；任何迁移都会在 Release Notes 中说明。
+- 这是预发布版本，配置 schema 仍可能在 1.0 前直接调整；1.0 之前不提供迁移框架或兼容承诺。
 
 ## 文档
 

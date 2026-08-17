@@ -209,6 +209,44 @@ if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
   "$PINSET_BIN" exec -- dart --version 2>&1 | grep -F "Dart SDK version: $GLOBAL_DART_VERSION"
 fi
 
+LIFECYCLE_LIST_JSON="$("$PINSET_BIN" list --json)"
+printf '%s' "$LIFECYCLE_LIST_JSON" | "$PINSET_BIN" exec -- python -c '
+import json, sys
+installed = json.load(sys.stdin)
+expected = {"node", "pnpm", "bun", "go", "python", "java", "rust", "dotnet"}
+actual = {entry["tool"] for entry in installed}
+missing = expected - actual
+assert not missing, f"missing installed providers: {sorted(missing)}"
+'
+"$PINSET_BIN" current rust --json | "$PINSET_BIN" exec -- python -c '
+import json, sys
+current = json.load(sys.stdin)
+assert current["tool"] == "rust" and current["source"] == "global" and current["installed"]
+'
+"$PINSET_BIN" uninstall "node@$GLOBAL_VERSION" --force --dry-run --json | "$PINSET_BIN" exec -- python -c '
+import json, sys
+preview = json.load(sys.stdin)
+assert preview["dry_run"] and preview["tool"] == "node" and preview["targets"]
+'
+"$PINSET_BIN" prune --dry-run --json | "$PINSET_BIN" exec -- python -c '
+import json, sys
+preview = json.load(sys.stdin)
+assert preview["dry_run"] and not preview["candidates"] and preview["removed"] == 0
+'
+"$PINSET_BIN" cache info --json | "$PINSET_BIN" exec -- python -c '
+import json, sys
+info = json.load(sys.stdin)
+assert info["archives"] >= 1 and info["archive_bytes"] > 0
+'
+"$PINSET_BIN" outdated node --global --json | "$PINSET_BIN" exec -- python -c '
+import json, sys
+reports = json.load(sys.stdin)
+assert len(reports) == 1 and reports[0]["tool"] == "node" and reports[0]["scope"] == "global"
+'
+for shell in bash zsh fish powershell; do
+  "$PINSET_BIN" completions "$shell" | grep -F 'node@'
+done
+
 SHIM_DIR="$("$PINSET_BIN" shim path)"
 export PATH="$SHIM_DIR:$PATH"
 node --version | grep -Fx "v$GLOBAL_VERSION"

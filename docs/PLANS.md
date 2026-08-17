@@ -1,12 +1,12 @@
 # Pinset Plans
 
-当前规划版本：`v0.8.0`
+当前规划版本：`v0.9.0`
 
-当前发布候选：`v0.8.0`
+当前发布候选：`v0.9.0`
 
 最新已发布版本：`v0.8.0`
 
-更新时间：`2026-08-14`
+更新时间：`2026-08-17`
 
 ## 路线原则
 
@@ -20,6 +20,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 4. `v0.6.0`：Java，首期仅支持 Eclipse Temurin JDK。
 5. `v0.7.0`：Rust 原生 Provider，使用 Rust 官方 stable v2 manifests 与 default profile 工具链。
 6. `v0.8.0`：Microsoft .NET SDK Provider，使用官方 release metadata 与逐平台 SHA-512。
+7. `v0.9.0`：补齐运行时安装、更新检查、卸载、清理和下载缓存的完整生命周期。
 
 各版本暂不承诺日期。普通 CI 只负责三平台构建和打包；Release 工作流保留质量门禁与发布供应链产物。除编译 Pinset 必需的 Rust 构建工具链外，Actions 不再通过 Pinset 下载 Node、Flutter、JDK、Rust 工具链、.NET SDK 等 Provider 工件。完整验收脚本继续保留，发布后由隔离虚拟机执行，避免持续占用托管 Runner。
 
@@ -45,6 +46,7 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 | `v0.6.1` | 已发布 | 检测 PATH 中被系统命令遮挡的 Provider 路由并给出当前 Shell 激活命令 |
 | `v0.7.0` | 已发布 | Rust stable Provider、官方 v2 manifest 锁定、default profile 工具链与命令路由 |
 | `v0.8.0` | 已发布 | Microsoft .NET SDK Provider、受支持 GA 通道、官方 SHA-512 锁定与 `dotnet` 路由 |
+| `v0.9.0` | 开发中 | 跨 Provider 已安装列表、更新检查、安全卸载/清理、缓存统计/校验/修复与 JSON 输出 |
 
 ## v0.3.0 — Go Provider 与 Native Provider 通用化
 
@@ -246,6 +248,45 @@ Pinset 将继续保持“一个工具统一选择、安装、锁定和路由开�
 - 可用所选 SDK 编译并运行最小 Console 项目，验证全局选择、项目选择、离开项目后的全局恢复和已安装 SDK 复用。
 - GitHub Actions 仅编译、测试 Pinset 自身并打包，不下载或执行真实 .NET SDK；真实验收由发布后的虚拟机脚本完成。
 
+## v0.9.0 — 运行时生命周期管理
+
+实现状态：开发中。v0.8.0 已有单 Provider 的已安装列表、精确卸载和基础缓存清理；本版本在不改变既有命令语义的前提下补齐跨 Provider 生命周期。
+
+### 目标
+
+- `pinset list` 一次列出所有 Provider 的已安装版本；`pinset list <tool>` 和 `--available` 保持兼容。
+- `pinset outdated` 分别检查当前项目和全局选择，并可限制 Provider、作用域或输出 JSON。
+- `pinset uninstall` 增加 `--dry-run` 与 `--json`，实际删除前继续验证精确版本、引用与 Pinset 安装收据。
+- `pinset prune` 清理未被全局、当前项目或 `--project` 显式附加项目引用的已安装版本。
+- `pinset cache info|verify|repair|clean` 覆盖空间统计、内容寻址校验、受损归档移除与安全预览。
+- `which`、`current`、`list`、`outdated`、`uninstall`、`prune` 和缓存查询提供稳定 JSON 输出。
+- 提供 Bash、Zsh、Fish 和 PowerShell 的顶层命令、Provider、嵌套子命令和常用参数补全输出。
+
+### 安全边界
+
+- `prune` 不扫描整台机器；默认只保护全局与当前项目，其他项目必须显式传入 `--project <目录>`。
+- `--project` 必须指向存在且可找到 `pinset.toml` 的项目目录，路径拼写错误时停止清理。
+- 清理只处理带匹配 `.pinset-install.toml` 收据的版本目录；未知、不完整、符号链接或外部目录不接管、不删除。
+- `cache verify` 重新计算完整归档摘要；`cache repair` 仅删除与内容寻址身份不符的完整归档，保留有效归档和可续传部分文件。
+- `--dry-run` 不写配置、不删除安装或缓存，JSON 中显式记录 `dry_run`。
+- 精确版本卸载只依赖本地版本语法、支持窗口和安装收据，不请求 Provider 元数据。
+- `outdated` 只读取 Provider 官方元数据，不安装或下载运行时归档。
+
+### 不包含
+
+- 新语言或新 Provider、系统运行时卸载、依赖包管理以及外部运行时管理器导入。
+- 自动扫描用户磁盘寻找所有 `pinset.toml`，或在后台维护项目索引。
+- 1.0 之前的配置/锁文件迁移框架和兼容承诺；1.0 发布时再冻结公开协议。
+- 在 GitHub Actions 下载 Flutter、JDK、Rust、.NET SDK 等真实大型运行时。
+
+### 验收条件
+
+- 所有 Provider 的收据和命令夹具均通过同一套 `list/current/which` 生命周期契约，JSON 字段稳定且不受界面语言影响。
+- 当前项目、全局和额外项目引用会阻止 `prune` 删除相应版本，未引用版本可预览后安全删除。
+- 受损缓存被 `verify` 以非零状态报告，`repair --dry-run` 不改文件，实际修复只删除受损归档。
+- `current rust --json` 等工具名与命令名不同的 Provider 查询可用。
+- 普通 CI 仅做三平台构建；Release Quality 使用小型收据、命令和缓存夹具覆盖生命周期命令，真实运行时及其轻量生命周期查询继续由发布后隔离虚拟机验收。
+
 ## Provider 架构约束
 
 从 `v0.3.0` 开始，新 Provider 必须复用同一套核心生命周期：
@@ -283,7 +324,7 @@ Pinset 的运行时安装会写入用户目录、下载缓存并改变命令解�
 ## 跨版本加固项
 
 - 继续加强 Node.js 上游签名验证和供应链证据。
-- 为配置与锁文件 schema 建立明确的兼容、迁移和拒绝策略。
+- 1.0 发布时冻结配置、锁文件和 CLI 协议；1.0 之前不开发迁移框架，也不承诺跨预发布版本迁移。
 - 完善代理、镜像、断点续传、离线缓存和受损缓存恢复体验。
 - 增加 Provider 契约测试，确保 available、resolve、install、activate、doctor 的行为一致。
 - 将平台扩展与新 Provider 分开规划，避免在同一个小版本中同时扩大运行时和目标平台范围。

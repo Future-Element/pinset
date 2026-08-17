@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsString,
     fs,
@@ -21,25 +22,26 @@ use pinset_core::{
     Lockfile, NodeMetadataClient, NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind,
     RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
     SourceView, clean_download_cache, command_tool, create_project_config,
-    create_project_python_environment, current_target_for_tool, ensure_shims,
+    create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
     find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
     import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
     install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
     install_locked_npm_tool, install_locked_python, install_locked_rust, is_managed_command_shim,
-    list_download_cache, list_installed_tool_versions, load_global_config, load_lockfile,
-    load_optional_global_config, load_optional_lockfile, load_project_config,
-    load_project_python_environment, load_source_config, load_user_settings, lockfile_path,
-    managed_runtime_arguments, path_with_selected_tools, pinset_home,
-    project_python_environment_path, resolve_command, resolve_project_python_command,
-    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
-    runtime_environment_for_install, runtime_provider, save_global_config, save_global_state,
-    save_lockfile, save_project_config, save_source_config, save_user_settings,
-    selected_runtime_environment, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
-    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
-    validate_exact_node_version, validate_exact_python_version, validate_exact_rust_version,
-    validate_lock_matches_selection, validate_lock_matches_tool, validate_lock_matches_tools,
-    validate_managed_runtime_invocation,
+    list_all_installed_tool_versions, list_download_cache, list_installed_tool_versions,
+    load_global_config, load_lockfile, load_optional_global_config, load_optional_lockfile,
+    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
+    lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
+    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
+    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
+    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
+    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
+    save_source_config, save_user_settings, selected_runtime_environment, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
+    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
+    verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -114,6 +116,9 @@ enum Commands {
         command: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
     },
     /// Print the effective project, global or system selection and executable path.
     Current {
@@ -121,14 +126,34 @@ enum Commands {
         tool: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
     },
     /// List installed or officially available runtime versions.
     List {
         /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
-        tool: String,
+        tool: Option<String>,
         /// Query the official provider index instead of local installations.
-        #[arg(long)]
+        #[arg(long, requires = "tool")]
         available: bool,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check selected project and global runtimes against the latest stable releases.
+    Outdated {
+        /// Limit the check to one runtime provider.
+        tool: Option<String>,
+        /// Check only the global selections.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        /// Project directory whose nearest Pinset configuration is checked.
+        #[arg(long, conflicts_with = "global")]
+        cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
     },
     /// Uninstall an exact runtime version owned by Pinset.
     Uninstall {
@@ -140,6 +165,27 @@ enum Commands {
         /// Project directory used for reference protection.
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Show what would be removed without changing the installation.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove installed runtime versions not selected globally or by the supplied projects.
+    Prune {
+        /// Project directory whose nearest Pinset configuration is protected.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Protect additional project selections. May be supplied more than once.
+        #[arg(long, value_name = "PATH")]
+        project: Vec<PathBuf>,
+        /// Show what would be removed without changing installations.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
     },
     /// Inspect or clean verified runtime download archives.
     Cache {
@@ -173,6 +219,11 @@ enum Commands {
     },
     /// Print shell code that enables provider command routing through Pinset.
     Activate {
+        #[arg(value_enum)]
+        shell: ActivationShell,
+    },
+    /// Generate lightweight command completion for a supported shell.
+    Completions {
         #[arg(value_enum)]
         shell: ActivationShell,
     },
@@ -243,9 +294,34 @@ enum ActivationShell {
 #[derive(Debug, Subcommand)]
 enum CacheCommands {
     /// List content-addressed archives in the Pinset download cache.
-    List,
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show complete and partial download cache usage.
+    Info {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Hash every complete archive and compare it with its cache identity.
+    Verify {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove corrupt complete archives so a later install can download them again.
+    Repair {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove content-addressed archives from the Pinset download cache.
-    Clean,
+    Clean {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Import a verified runtime archive into the content-addressed offline cache.
     Import {
         archive: PathBuf,
@@ -419,179 +495,62 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 install_project(&effective_cwd(cwd)?, catalog)?;
             }
         }
-        Commands::Which { command, cwd } => {
+        Commands::Which { command, cwd, json } => {
             let cwd = effective_cwd(cwd)?;
             let resolution = resolve_command(&command, &cwd, &pinset_home()?)?;
-            println!("{}", resolution.executable.display());
-        }
-        Commands::Current { tool, cwd } => {
-            let cwd = effective_cwd(cwd)?;
-            print_current(&cwd, tool.as_deref().unwrap_or("node"), catalog)?;
-        }
-        Commands::List { tool, available } => {
-            require_provider(&tool)?;
-            if available {
-                let provider = runtime_provider(&tool).expect("required provider exists");
-                match provider.metadata {
-                    RuntimeMetadataKind::Node => {
-                        let releases =
-                            node_metadata_client(&pinset_home()?)?.available_releases()?;
-                        for release in releases {
-                            println!(
-                                "{}",
-                                catalog.available_node(
-                                    &release.version,
-                                    &release.date,
-                                    release.lts.as_deref(),
-                                    release.security,
-                                )
-                            );
-                        }
-                    }
-                    RuntimeMetadataKind::Npm => {
-                        for release in NpmMetadataClient::official()?.available_releases(&tool)? {
-                            println!("{}@{}", tool, release.version);
-                        }
-                    }
-                    RuntimeMetadataKind::Go => {
-                        for release in go_metadata_client(&pinset_home()?)?.available_releases()? {
-                            println!("go@{}", release.version);
-                        }
-                    }
-                    RuntimeMetadataKind::Flutter => {
-                        for release in
-                            flutter_metadata_client(&pinset_home()?)?.available_releases()?
-                        {
-                            println!(
-                                "flutter@{} dart@{} stable",
-                                release.version, release.dart_version
-                            );
-                        }
-                    }
-                    RuntimeMetadataKind::Python => {
-                        for release in PythonMetadataClient::official()?.available_releases()? {
-                            println!(
-                                "python@{}+{} ({})",
-                                release.version, release.build_id, release.date
-                            );
-                        }
-                    }
-                    RuntimeMetadataKind::Java => {
-                        for release in JavaMetadataClient::official()?.available_releases()? {
-                            println!(
-                                "java@{} temurin {} ({})",
-                                release.version,
-                                if release.lts { "lts" } else { "ga" },
-                                release.date
-                            );
-                        }
-                    }
-                    RuntimeMetadataKind::Rust => {
-                        for release in RustMetadataClient::official()?.available_releases()? {
-                            println!("rust@{} stable ({})", release.version, release.date);
-                        }
-                    }
-                    RuntimeMetadataKind::Dotnet => {
-                        for release in DotnetMetadataClient::official()?.available_releases()? {
-                            println!(
-                                "dotnet@{} {} {} ({})",
-                                release.version,
-                                release.release_type,
-                                release.support_phase,
-                                release.date
-                            );
-                        }
-                    }
-                }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&WhichReport {
+                        command,
+                        tool: resolution.tool,
+                        version: resolution.version,
+                        source: resolution.source.as_str(),
+                        executable: resolution.executable,
+                        config: resolution.selection_path,
+                    })?
+                );
             } else {
-                let installed = list_installed_tool_versions(&pinset_home()?, &tool)?;
-                if installed.is_empty() {
-                    if tool == "node" {
-                        println!("{}", catalog.no_installed_node());
-                    } else {
-                        println!("no Pinset-managed {tool} versions are installed");
-                    }
-                } else {
-                    for entry in installed {
-                        if tool == "node" {
-                            println!(
-                                "{}",
-                                catalog.installed_node(&entry.version, &entry.targets.join(","))
-                            );
-                        } else {
-                            println!("{}@{} [{}]", tool, entry.version, entry.targets.join(","));
-                        }
-                    }
-                }
+                println!("{}", resolution.executable.display());
             }
         }
+        Commands::Current { tool, cwd, json } => {
+            let cwd = effective_cwd(cwd)?;
+            let tool = tool.as_deref().unwrap_or("node");
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&current_report(&cwd, tool)?)?
+                );
+            } else {
+                print_current(&cwd, tool, catalog)?;
+            }
+        }
+        Commands::List {
+            tool,
+            available,
+            json,
+        } => run_list(tool.as_deref(), available, json, catalog)?,
+        Commands::Outdated {
+            tool,
+            global,
+            cwd,
+            json,
+        } => run_outdated(tool.as_deref(), global, cwd, json)?,
         Commands::Uninstall {
             selection,
             force,
             cwd,
-        } => {
-            let (tool, version) = parse_tool_selection(&selection, catalog)?;
-            validate_exact_tool_version(&tool, &version)?;
-            if tool == "node" {
-                let outcome =
-                    uninstall_node_version(&pinset_home()?, &effective_cwd(cwd)?, &version, force)?;
-                println!(
-                    "{}",
-                    catalog.uninstalled_node(&outcome.version, &outcome.targets.join(","))
-                );
-            } else {
-                let outcome = uninstall_tool_version(
-                    &pinset_home()?,
-                    &effective_cwd(cwd)?,
-                    &tool,
-                    &version,
-                    force,
-                )?;
-                println!(
-                    "uninstalled {tool}@{} [{}]",
-                    outcome.version,
-                    outcome.targets.join(",")
-                );
-            }
-        }
-        Commands::Cache { command } => match command {
-            CacheCommands::List => {
-                let entries = list_download_cache(&pinset_home()?)?;
-                if entries.is_empty() {
-                    println!("{}", catalog.cache_empty());
-                } else {
-                    for entry in entries {
-                        println!(
-                            "{}",
-                            catalog.cache_entry(&entry.integrity, entry.size, &entry.path)
-                        );
-                    }
-                }
-            }
-            CacheCommands::Clean => {
-                let outcome = clean_download_cache(&pinset_home()?)?;
-                println!("{}", catalog.cache_cleaned(outcome.entries, outcome.bytes));
-            }
-            CacheCommands::Import {
-                archive,
-                sha256,
-                integrity,
-            } => {
-                let archive = absolutize(&archive)?;
-                let entry = if let Some(sha256) = sha256 {
-                    import_download_cache(&pinset_home()?, &archive, &sha256)?
-                } else if let Some(integrity) = integrity {
-                    let integrity = ArtifactIntegrity::parse(&integrity)?;
-                    import_download_cache_with_integrity(&pinset_home()?, &archive, &integrity)?
-                } else {
-                    return Err("cache import requires --sha256 or --integrity".into());
-                };
-                println!(
-                    "{}",
-                    catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
-                );
-            }
-        },
+            dry_run,
+            json,
+        } => run_uninstall(&selection, force, cwd, dry_run, json, catalog)?,
+        Commands::Prune {
+            cwd,
+            project,
+            dry_run,
+            json,
+        } => run_prune(cwd, &project, dry_run, json)?,
+        Commands::Cache { command } => run_cache(command, catalog)?,
         Commands::Exec { cwd, command } => {
             let cwd = effective_cwd(cwd)?;
             return execute_selected(&cwd, &command, catalog);
@@ -656,10 +615,856 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
                 activation_script(shell, &command_routing_directory(&pinset_home()?)?)
             );
         }
+        Commands::Completions { shell } => print_completions(shell),
         Commands::Source { command } => run_source_command(command, catalog)?,
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Debug, Serialize)]
+struct WhichReport {
+    command: String,
+    tool: String,
+    version: String,
+    source: &'static str,
+    executable: PathBuf,
+    config: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct CurrentReport {
+    command: String,
+    tool: String,
+    version: String,
+    source: &'static str,
+    installed: bool,
+    executable: Option<PathBuf>,
+    expected_directory: Option<PathBuf>,
+    config: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct AvailableVersionReport {
+    tool: String,
+    version: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    details: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+struct OutdatedReport {
+    scope: &'static str,
+    config: PathBuf,
+    tool: String,
+    current: String,
+    latest: String,
+    outdated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectedRuntime {
+    scope: &'static str,
+    config: PathBuf,
+    tool: String,
+    version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UninstallReport {
+    dry_run: bool,
+    tool: String,
+    version: String,
+    targets: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PruneExecutionReport {
+    dry_run: bool,
+    candidates: Vec<pinset_core::PruneToolCandidate>,
+    protected: Vec<pinset_core::ProtectedToolVersion>,
+    bytes: u64,
+    removed: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct CacheMutationReport {
+    dry_run: bool,
+    entries: usize,
+    bytes: u64,
+}
+
+fn current_report(
+    cwd: &Path,
+    requested: &str,
+) -> Result<CurrentReport, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let provider = runtime_provider(requested)
+        .or_else(|| command_tool(requested).and_then(runtime_provider))
+        .ok_or_else(|| Error::UnsupportedCommand {
+            command: requested.to_owned(),
+        })?;
+    let command = if provider.commands.contains(&requested) {
+        requested
+    } else {
+        provider
+            .commands
+            .first()
+            .copied()
+            .ok_or_else(|| Error::UnsupportedCommand {
+                command: requested.to_owned(),
+            })?
+    };
+    match resolve_command(command, cwd, &home) {
+        Ok(resolution) => Ok(CurrentReport {
+            command: command.to_owned(),
+            tool: resolution.tool,
+            version: resolution.version,
+            source: resolution.source.as_str(),
+            installed: true,
+            executable: Some(resolution.executable),
+            expected_directory: None,
+            config: resolution.selection_path,
+        }),
+        Err(Error::RuntimeCommandNotFound { .. }) => {
+            let selection = resolve_tool_selection(provider.tool, cwd, &home)?;
+            let install_dir = home
+                .join("installs")
+                .join(provider.tool)
+                .join(&selection.version)
+                .join(current_target_for_tool(provider.tool));
+            Ok(CurrentReport {
+                command: command.to_owned(),
+                tool: provider.tool.to_owned(),
+                version: selection.version,
+                source: selection.source.as_str(),
+                installed: false,
+                executable: None,
+                expected_directory: Some(runtime_command_directory(provider.tool, &install_dir)),
+                config: Some(selection.config_path),
+            })
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn run_list(
+    tool: Option<&str>,
+    available: bool,
+    json: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if available {
+        let tool = tool.ok_or("list --available requires a runtime provider")?;
+        require_provider(tool)?;
+        let releases = available_version_reports(tool)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&releases)?);
+        } else {
+            for release in releases {
+                if release.tool == "node" {
+                    println!(
+                        "{}",
+                        catalog.available_node(
+                            &release.version,
+                            release.details.get("date").map_or("-", String::as_str),
+                            release.details.get("lts").map(String::as_str),
+                            release
+                                .details
+                                .get("security")
+                                .is_some_and(|value| value == "true"),
+                        )
+                    );
+                    continue;
+                }
+                let details = release
+                    .details
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if details.is_empty() {
+                    println!("{}@{}", release.tool, release.version);
+                } else {
+                    println!("{}@{} {details}", release.tool, release.version);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let installed = if let Some(tool) = tool {
+        require_provider(tool)?;
+        list_installed_tool_versions(&pinset_home()?, tool)?
+    } else {
+        list_all_installed_tool_versions(&pinset_home()?)?
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&installed)?);
+    } else if installed.is_empty() {
+        if tool == Some("node") {
+            println!("{}", catalog.no_installed_node());
+        } else if let Some(tool) = tool {
+            println!("no Pinset-managed {tool} versions are installed");
+        } else {
+            println!("no Pinset-managed runtime versions are installed");
+        }
+    } else {
+        for entry in installed {
+            if entry.tool == "node" && tool == Some("node") {
+                println!(
+                    "{}",
+                    catalog.installed_node(&entry.version, &entry.targets.join(","))
+                );
+            } else {
+                println!(
+                    "{}@{} [{}]",
+                    entry.tool,
+                    entry.version,
+                    entry.targets.join(",")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn available_version_reports(
+    tool: &str,
+) -> Result<Vec<AvailableVersionReport>, Box<dyn std::error::Error>> {
+    let provider = runtime_provider(tool).expect("required provider exists");
+    let mut reports = Vec::new();
+    match provider.metadata {
+        RuntimeMetadataKind::Node => {
+            for release in node_metadata_client(&pinset_home()?)?.available_releases()? {
+                let mut details = BTreeMap::new();
+                details.insert("date".to_owned(), release.date);
+                details.insert("security".to_owned(), release.security.to_string());
+                if let Some(lts) = release.lts {
+                    details.insert("lts".to_owned(), lts);
+                }
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details,
+                });
+            }
+        }
+        RuntimeMetadataKind::Npm => {
+            for release in NpmMetadataClient::official()?.available_releases(tool)? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::new(),
+                });
+            }
+        }
+        RuntimeMetadataKind::Go => {
+            for release in go_metadata_client(&pinset_home()?)?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::new(),
+                });
+            }
+        }
+        RuntimeMetadataKind::Flutter => {
+            for release in flutter_metadata_client(&pinset_home()?)?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::from([
+                        ("channel".to_owned(), "stable".to_owned()),
+                        ("dart".to_owned(), release.dart_version),
+                    ]),
+                });
+            }
+        }
+        RuntimeMetadataKind::Python => {
+            for release in PythonMetadataClient::official()?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: format!("{}+{}", release.version, release.build_id),
+                    details: BTreeMap::from([
+                        ("date".to_owned(), release.date),
+                        ("distribution".to_owned(), release.distribution),
+                    ]),
+                });
+            }
+        }
+        RuntimeMetadataKind::Java => {
+            for release in JavaMetadataClient::official()?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::from([
+                        ("date".to_owned(), release.date),
+                        ("distribution".to_owned(), "temurin".to_owned()),
+                        (
+                            "release".to_owned(),
+                            (if release.lts { "lts" } else { "ga" }).to_owned(),
+                        ),
+                    ]),
+                });
+            }
+        }
+        RuntimeMetadataKind::Rust => {
+            for release in RustMetadataClient::official()?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::from([
+                        ("channel".to_owned(), "stable".to_owned()),
+                        ("date".to_owned(), release.date),
+                    ]),
+                });
+            }
+        }
+        RuntimeMetadataKind::Dotnet => {
+            for release in DotnetMetadataClient::official()?.available_releases()? {
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details: BTreeMap::from([
+                        ("channel".to_owned(), release.channel),
+                        ("date".to_owned(), release.date),
+                        ("release".to_owned(), release.release_type),
+                        ("support".to_owned(), release.support_phase),
+                    ]),
+                });
+            }
+        }
+    }
+    Ok(reports)
+}
+
+fn run_outdated(
+    tool: Option<&str>,
+    global_only: bool,
+    cwd: Option<PathBuf>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(tool) = tool {
+        require_provider(tool)?;
+    }
+    let home = pinset_home()?;
+    let cwd = effective_cwd(cwd)?;
+    let selected = selected_runtimes_for_outdated(&home, &cwd, tool, global_only)?;
+    let mut reports = Vec::new();
+    let mut latest_versions = BTreeMap::new();
+    for selection in selected {
+        let latest = if let Some(latest) = latest_versions.get(&selection.tool) {
+            latest.clone()
+        } else {
+            let latest =
+                resolve_locked_tool(&selection.tool, latest_stable_selector(&selection.tool))?
+                    .version;
+            latest_versions.insert(selection.tool.clone(), latest.clone());
+            latest
+        };
+        reports.push(OutdatedReport {
+            scope: selection.scope,
+            config: selection.config,
+            tool: selection.tool,
+            outdated: selection.version != latest,
+            current: selection.version,
+            latest,
+        });
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+    } else {
+        let mut count = 0;
+        for report in reports.iter().filter(|report| report.outdated) {
+            count += 1;
+            println!(
+                "{}@{} -> {}@{} scope={} config={}",
+                report.tool,
+                report.current,
+                report.tool,
+                report.latest,
+                report.scope,
+                report.config.display()
+            );
+        }
+        if count == 0 {
+            println!("all selected runtimes are current");
+        }
+    }
+    Ok(())
+}
+
+fn selected_runtimes_for_outdated(
+    home: &Path,
+    cwd: &Path,
+    tool: Option<&str>,
+    global_only: bool,
+) -> Result<Vec<SelectedRuntime>, Box<dyn std::error::Error>> {
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    if !global_only && let Some(path) = find_optional_project_config(&cwd)? {
+        for (selected_tool, version) in load_project_config(&path)?.tools {
+            if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
+                continue;
+            }
+            require_provider(&selected_tool)?;
+            if seen.insert(("project", selected_tool.clone(), path.clone())) {
+                selected.push(SelectedRuntime {
+                    scope: "project",
+                    config: path.clone(),
+                    tool: selected_tool,
+                    version,
+                });
+            }
+        }
+    }
+    let global_path = global_config_path(&home);
+    if let Some(global) = load_optional_global_config(&global_path)? {
+        for (selected_tool, version) in global.tools {
+            if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
+                continue;
+            }
+            require_provider(&selected_tool)?;
+            if seen.insert(("global", selected_tool.clone(), global_path.clone())) {
+                selected.push(SelectedRuntime {
+                    scope: "global",
+                    config: global_path.clone(),
+                    tool: selected_tool,
+                    version,
+                });
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn latest_stable_selector(tool: &str) -> &'static str {
+    match tool {
+        "node" => "current",
+        "rust" => "stable",
+        _ => "latest",
+    }
+}
+
+fn run_uninstall(
+    selection: &str,
+    force: bool,
+    cwd: Option<PathBuf>,
+    dry_run: bool,
+    json: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (tool, version) = parse_tool_selection(selection, catalog)?;
+    validate_exact_tool_version(&tool, &version)?;
+    let home = pinset_home()?;
+    let cwd = effective_cwd(cwd)?;
+    if dry_run {
+        let uninstall = plan_uninstall_tool_version(&home, &cwd, &tool, &version, force)?;
+        let report = UninstallReport {
+            dry_run: true,
+            tool,
+            version,
+            targets: uninstall.targets,
+        };
+        if json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!(
+                "would uninstall {}@{} [{}]",
+                report.tool,
+                report.version,
+                report.targets.join(",")
+            );
+        }
+        return Ok(());
+    }
+
+    let targets = if tool == "node" {
+        uninstall_node_version(&home, &cwd, &version, force)?.targets
+    } else {
+        uninstall_tool_version(&home, &cwd, &tool, &version, force)?.targets
+    };
+    let report = UninstallReport {
+        dry_run: false,
+        tool,
+        version,
+        targets,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if report.tool == "node" {
+        println!(
+            "{}",
+            catalog.uninstalled_node(&report.version, &report.targets.join(","))
+        );
+    } else {
+        println!(
+            "uninstalled {}@{} [{}]",
+            report.tool,
+            report.version,
+            report.targets.join(",")
+        );
+    }
+    Ok(())
+}
+
+fn run_prune(
+    cwd: Option<PathBuf>,
+    additional_projects: &[PathBuf],
+    dry_run: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let cwd = effective_cwd(cwd)?;
+    if !cwd.is_dir() {
+        return Err(format!("prune working directory does not exist: {}", cwd.display()).into());
+    }
+    let mut project_roots = vec![cwd.clone()];
+    for project in additional_projects {
+        let project = absolutize(project)?;
+        if !project.is_dir() {
+            return Err(format!(
+                "prune project path is not an existing directory: {}",
+                project.display()
+            )
+            .into());
+        }
+        if find_optional_project_config(&project)?.is_none() {
+            return Err(format!(
+                "prune project path has no pinset.toml in its ancestors: {}",
+                project.display()
+            )
+            .into());
+        }
+        project_roots.push(project);
+    }
+    let plan = plan_prune_tool_versions(&home, &project_roots)?;
+    let mut removed = 0;
+    if !dry_run {
+        for candidate in &plan.candidates {
+            uninstall_tool_version(&home, &cwd, &candidate.tool, &candidate.version, false)?;
+            removed += 1;
+        }
+    }
+    let report = PruneExecutionReport {
+        dry_run,
+        candidates: plan.candidates,
+        protected: plan.protected,
+        bytes: plan.bytes,
+        removed,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if report.candidates.is_empty() {
+        println!("no unused Pinset-managed runtime versions found");
+    } else {
+        for candidate in &report.candidates {
+            println!(
+                "{} {}@{} [{}] {}",
+                if dry_run { "would remove" } else { "removed" },
+                candidate.tool,
+                candidate.version,
+                candidate.targets.join(","),
+                format_bytes(candidate.bytes)
+            );
+        }
+        println!(
+            "{} {} runtime versions ({})",
+            if dry_run { "would remove" } else { "removed" },
+            report.candidates.len(),
+            format_bytes(report.bytes)
+        );
+    }
+    Ok(())
+}
+
+fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    match command {
+        CacheCommands::List { json } => {
+            let entries = list_download_cache(&home)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("{}", catalog.cache_empty());
+            } else {
+                for entry in entries {
+                    println!(
+                        "{}",
+                        catalog.cache_entry(&entry.integrity, entry.size, &entry.path)
+                    );
+                }
+            }
+        }
+        CacheCommands::Info { json } => {
+            let info = download_cache_info(&home)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!(
+                    "archives={} archive_bytes={} partials={} partial_bytes={}",
+                    info.archives, info.archive_bytes, info.partial_downloads, info.partial_bytes
+                );
+            }
+        }
+        CacheCommands::Verify { json } => {
+            let verification = verify_download_cache(&home)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&verification)?);
+            } else {
+                for entry in &verification.entries {
+                    println!(
+                        "{} integrity={} actual={} bytes={} path={}",
+                        if entry.valid { "valid" } else { "corrupt" },
+                        entry.integrity,
+                        entry.actual,
+                        entry.size,
+                        entry.path.display()
+                    );
+                }
+                println!(
+                    "verified={} corrupt={} bytes={}",
+                    verification.valid, verification.corrupt, verification.bytes
+                );
+            }
+            if verification.corrupt > 0 {
+                return Err(format!(
+                    "{} corrupt cache archive(s) found; run `pinset cache repair`",
+                    verification.corrupt
+                )
+                .into());
+            }
+        }
+        CacheCommands::Repair { dry_run, json } => {
+            let outcome = if dry_run {
+                let verification = verify_download_cache(&home)?;
+                pinset_core::DownloadCacheCleanOutcome {
+                    entries: verification
+                        .entries
+                        .iter()
+                        .filter(|entry| !entry.valid)
+                        .count(),
+                    bytes: verification
+                        .entries
+                        .iter()
+                        .filter(|entry| !entry.valid)
+                        .map(|entry| entry.size)
+                        .sum(),
+                }
+            } else {
+                repair_download_cache(&home)?
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&CacheMutationReport {
+                        dry_run,
+                        entries: outcome.entries,
+                        bytes: outcome.bytes,
+                    })?
+                );
+            } else {
+                println!(
+                    "{} {} corrupt cache archives ({})",
+                    if dry_run { "would remove" } else { "removed" },
+                    outcome.entries,
+                    format_bytes(outcome.bytes)
+                );
+            }
+        }
+        CacheCommands::Clean { dry_run, json } => {
+            let outcome = if dry_run {
+                let info = download_cache_info(&home)?;
+                pinset_core::DownloadCacheCleanOutcome {
+                    entries: info.archives + info.partial_downloads,
+                    bytes: info.archive_bytes.saturating_add(info.partial_bytes),
+                }
+            } else {
+                clean_download_cache(&home)?
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&CacheMutationReport {
+                        dry_run,
+                        entries: outcome.entries,
+                        bytes: outcome.bytes,
+                    })?
+                );
+            } else if dry_run {
+                println!(
+                    "would clean {} cached archives ({})",
+                    outcome.entries,
+                    format_bytes(outcome.bytes)
+                );
+            } else {
+                println!("{}", catalog.cache_cleaned(outcome.entries, outcome.bytes));
+            }
+        }
+        CacheCommands::Import {
+            archive,
+            sha256,
+            integrity,
+        } => {
+            let archive = absolutize(&archive)?;
+            let entry = if let Some(sha256) = sha256 {
+                import_download_cache(&home, &archive, &sha256)?
+            } else if let Some(integrity) = integrity {
+                let integrity = ArtifactIntegrity::parse(&integrity)?;
+                import_download_cache_with_integrity(&home, &archive, &integrity)?
+            } else {
+                return Err("cache import requires --sha256 or --integrity".into());
+            };
+            println!(
+                "{}",
+                catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
+            );
+        }
+    }
+    Ok(())
+}
+
+const COMPLETION_COMMANDS: &str = "init global use unset install which current list outdated uninstall prune cache exec doctor venv shim activate completions source";
+const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
+const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
+const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
+const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
+const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
+
+fn print_completions(shell: ActivationShell) {
+    println!("{}", completion_script(shell));
+}
+
+fn completion_script(shell: ActivationShell) -> String {
+    let providers = pinset_core::runtime_providers()
+        .iter()
+        .map(|provider| provider.tool)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let selections = pinset_core::runtime_providers()
+        .iter()
+        .map(|provider| format!("{}@", provider.tool))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let source_providers = SUPPORTED_SOURCE_PROVIDERS.join(" ");
+    let template = match shell {
+        ActivationShell::Bash => {
+            r#"_pinset_completion() {
+    local current command values
+    current="${COMP_WORDS[COMP_CWORD]}"
+    command="${COMP_WORDS[1]}"
+    if (( COMP_CWORD == 1 )); then
+        values="__COMMANDS__ --help --version --lang"
+    else
+        case "$command" in
+            global) values="__SELECTIONS__ --no-install --lang --help" ;;
+            use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --global --cwd --lang --help" ;;
+            uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
+            unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
+            list) values="__PROVIDERS__ --available --json --lang --help" ;;
+            current) values="__PROVIDERS__ --cwd --json --lang --help" ;;
+            outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
+            prune) values="--cwd --project --dry-run --json --lang --help" ;;
+            which) values="--cwd --json --lang --help" ;;
+            doctor) values="--cwd --json --lang --help" ;;
+            cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            venv) values="__VENV_COMMANDS__ --lang --help" ;;
+            shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
+            activate|completions) values="__SHELLS__ --lang --help" ;;
+            source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
+            *) values="--lang --help" ;;
+        esac
+    fi
+    COMPREPLY=( $(compgen -W "$values" -- "$current") )
+}
+complete -o default -F _pinset_completion pinset"#
+        }
+        ActivationShell::Zsh => {
+            r#"#compdef pinset
+_pinset_completion() {
+    local command values
+    command="$words[2]"
+    if (( CURRENT == 2 )); then
+        values="__COMMANDS__ --help --version --lang"
+    else
+        case "$command" in
+            global) values="__SELECTIONS__ --no-install --lang --help" ;;
+            use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --global --cwd --lang --help" ;;
+            uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
+            unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
+            list) values="__PROVIDERS__ --available --json --lang --help" ;;
+            current) values="__PROVIDERS__ --cwd --json --lang --help" ;;
+            outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
+            prune) values="--cwd --project --dry-run --json --lang --help" ;;
+            which) values="--cwd --json --lang --help" ;;
+            doctor) values="--cwd --json --lang --help" ;;
+            cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            venv) values="__VENV_COMMANDS__ --lang --help" ;;
+            shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
+            activate|completions) values="__SHELLS__ --lang --help" ;;
+            source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
+            *) values="--lang --help" ;;
+        esac
+    fi
+    compadd -- ${(z)values}
+}
+compdef _pinset_completion pinset"#
+        }
+        ActivationShell::Fish => {
+            r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated' -a '__PROVIDERS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from which current list outdated uninstall prune doctor cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from uninstall prune cache' -a '--dry-run'
+complete -c pinset -f -a '--help --lang'"#
+        }
+        ActivationShell::Powershell => {
+            r#"Register-ArgumentCompleter -Native -CommandName pinset -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
+    $command = if ($elements.Count -gt 1) { $elements[1] } else { '' }
+    $values = switch ($command) {
+        'global' { '__SELECTIONS__ --no-install --lang --help' -split ' ' }
+        'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
+        'install' { '__SELECTIONS__ --locked --global --cwd --lang --help' -split ' ' }
+        'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
+        'unset' { '__PROVIDERS__ --global --cwd --lang --help' -split ' ' }
+        'list' { '__PROVIDERS__ --available --json --lang --help' -split ' ' }
+        'current' { '__PROVIDERS__ --cwd --json --lang --help' -split ' ' }
+        'outdated' { '__PROVIDERS__ --global --cwd --json --lang --help' -split ' ' }
+        'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
+        'which' { '--cwd --json --lang --help' -split ' ' }
+        'doctor' { '--cwd --json --lang --help' -split ' ' }
+        'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
+        'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
+        'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help' -split ' ' }
+        { $_ -in @('activate', 'completions') } { '__SHELLS__ --lang --help' -split ' ' }
+        'source' { '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help' -split ' ' }
+        default { '__COMMANDS__ --help --version --lang' -split ' ' }
+    }
+    $values |
+        Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+}"#
+        }
+    };
+    template
+        .replace("__COMMANDS__", COMPLETION_COMMANDS)
+        .replace("__PROVIDERS__", &providers)
+        .replace("__SELECTIONS__", &selections)
+        .replace("__SHELLS__", COMPLETION_SHELLS)
+        .replace("__CACHE_COMMANDS__", COMPLETION_CACHE_COMMANDS)
+        .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
+        .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
+        .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
+        .replace("__SOURCE_PROVIDERS__", &source_providers)
 }
 
 fn parse_tool_selection(
@@ -689,13 +1494,7 @@ fn validate_exact_tool_version(
     let provider = runtime_provider(tool).expect("validated provider");
     match provider.metadata {
         RuntimeMetadataKind::Node => validate_exact_node_version(version)?,
-        RuntimeMetadataKind::Npm => {
-            let resolved =
-                NpmMetadataClient::official()?.resolve_version_selector(tool, version)?;
-            if resolved != version {
-                return Err(format!("{tool}@{version} is not an exact stable version").into());
-            }
-        }
+        RuntimeMetadataKind::Npm => validate_exact_npm_tool_version(tool, version)?,
         RuntimeMetadataKind::Go => {
             validate_exact_go_version(version)?;
         }
@@ -962,7 +1761,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 16] = [
+    const COMMANDS: [&str; 19] = [
         "init",
         "global",
         "use",
@@ -970,13 +1769,16 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "install",
         "which",
         "current",
+        "outdated",
         "exec",
         "doctor",
         "shim",
         "activate",
+        "completions",
         "source",
         "list",
         "uninstall",
+        "prune",
         "cache",
         "venv",
     ];
@@ -1547,33 +2349,32 @@ fn print_current(
     tool: &str,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let home = pinset_home()?;
-    let selected_tool = command_tool(tool).ok_or_else(|| Error::UnsupportedCommand {
-        command: tool.to_owned(),
-    })?;
-    match resolve_command(tool, cwd, &home) {
-        Ok(resolution) => println!(
+    let report = current_report(cwd, tool)?;
+    if let Some(executable) = report.executable.as_deref() {
+        println!(
             "{}",
             catalog.current_installed(
-                selected_tool,
-                &resolution.version,
-                resolution.source.as_str(),
-                &resolution.executable,
-                resolution.selection_path.as_deref(),
+                &report.tool,
+                &report.version,
+                report.source,
+                executable,
+                report.config.as_deref(),
             )
-        ),
-        Err(Error::RuntimeCommandNotFound { .. }) => {
-            let selection = resolve_tool_selection(selected_tool, cwd, &home)?;
-            print_declared_tool(
-                &home,
-                selected_tool,
-                &selection.version,
-                selection.source.as_str(),
-                &selection.config_path,
-                catalog,
-            )?;
-        }
-        Err(error) => return Err(error.into()),
+        );
+    } else {
+        println!(
+            "{}",
+            catalog.current_missing(
+                &report.tool,
+                &report.version,
+                report.source,
+                report
+                    .expected_directory
+                    .as_deref()
+                    .expect("missing runtime has an expected directory"),
+                report.config.as_deref(),
+            )
+        );
     }
     Ok(())
 }
@@ -3003,6 +3804,30 @@ mod tests {
     }
 
     #[test]
+    fn completions_cover_providers_nested_commands_and_machine_readable_flags() {
+        for shell in [
+            ActivationShell::Bash,
+            ActivationShell::Zsh,
+            ActivationShell::Fish,
+            ActivationShell::Powershell,
+        ] {
+            let script = completion_script(shell);
+            for expected in ["pinset", "node@", "dotnet", "verify", "recreate", "--json"] {
+                assert!(
+                    script.contains(expected),
+                    "completion for {shell:?} omitted {expected}"
+                );
+            }
+            assert!(!script.contains("__COMMANDS__"));
+            assert!(!script.contains("__PROVIDERS__"));
+            for provider in pinset_core::runtime_providers() {
+                assert!(script.contains(provider.tool));
+                assert!(script.contains(&format!("{}@", provider.tool)));
+            }
+        }
+    }
+
+    #[test]
     fn recommends_activation_for_the_current_shell() {
         assert_eq!(
             activation_command_for_shell(Some(std::ffi::OsStr::new("/bin/zsh"))),
@@ -3029,5 +3854,70 @@ mod tests {
                 ..
             }) if selection == "node@24"
         ));
+    }
+
+    #[test]
+    fn maps_each_provider_to_its_latest_stable_selector() {
+        for provider in pinset_core::runtime_providers() {
+            let expected = match provider.tool {
+                "node" => "current",
+                "rust" => "stable",
+                _ => "latest",
+            };
+            assert_eq!(latest_stable_selector(provider.tool), expected);
+        }
+    }
+
+    #[test]
+    fn collects_project_and_global_outdated_scopes_without_network_access() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir_all(home.join("state")).expect("global state");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 2\n[tools]\nnode = \"22.0.0\"\nrust = \"1.90.0\"\n",
+        )
+        .expect("project config");
+        fs::write(
+            global_config_path(&home),
+            "schema = 2\n[tools]\nbun = \"1.2.0\"\nnode = \"24.0.0\"\n",
+        )
+        .expect("global config");
+
+        let all =
+            selected_runtimes_for_outdated(&home, &project, None, false).expect("all selections");
+        assert_eq!(all.len(), 4);
+        assert_eq!(
+            all.iter()
+                .map(|entry| (entry.scope, entry.tool.as_str(), entry.version.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("project", "node", "22.0.0"),
+                ("project", "rust", "1.90.0"),
+                ("global", "bun", "1.2.0"),
+                ("global", "node", "24.0.0"),
+            ]
+        );
+
+        let nodes = selected_runtimes_for_outdated(&home, &project, Some("node"), false)
+            .expect("node selections");
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().all(|entry| entry.tool == "node"));
+
+        let globals =
+            selected_runtimes_for_outdated(&home, &project, None, true).expect("global selections");
+        assert_eq!(globals.len(), 2);
+        assert!(globals.iter().all(|entry| entry.scope == "global"));
+
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 2\n[tools]\nunknown = \"1.0.0\"\n",
+        )
+        .expect("unknown project config");
+        let error = selected_runtimes_for_outdated(&home, &project, None, false)
+            .expect_err("unknown providers must not panic");
+        assert!(error.to_string().contains("not available"));
     }
 }
