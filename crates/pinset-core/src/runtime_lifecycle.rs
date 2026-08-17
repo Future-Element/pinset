@@ -1,3 +1,9 @@
+//! Ownership-aware inspection, uninstall, and pruning for managed runtimes.
+//!
+//! SAFETY: a matching complete install receipt is the authority to delete a target directory.
+//! Selection references are an additional protection layer; `--force` may bypass references but
+//! never receipt or path ownership checks.
+
 use std::{
     cmp::Reverse,
     collections::BTreeSet,
@@ -388,6 +394,8 @@ fn has_matching_complete_receipt(
     let Ok(receipt) = toml::from_str::<InstallReceiptIdentity>(&content) else {
         return false;
     };
+    // Legacy schema 1 receipts remain readable, but every identity field must still agree with
+    // the directory being inspected before the directory is considered Pinset-owned.
     matches!(receipt.schema, 1 | 2)
         && receipt.complete
         && receipt.tool == tool

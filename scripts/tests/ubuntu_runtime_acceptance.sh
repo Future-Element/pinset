@@ -18,7 +18,21 @@ GLOBAL_RUST_SELECTOR="${PINSET_GLOBAL_RUST_SELECTOR:-latest}"
 GLOBAL_DOTNET_SELECTOR="${PINSET_GLOBAL_DOTNET_SELECTOR:-lts}"
 GLOBAL_FLUTTER_SELECTOR="${PINSET_GLOBAL_FLUTTER_SELECTOR:-latest}"
 PROJECT_FLUTTER_SELECTOR="${PINSET_PROJECT_FLUTTER_SELECTOR:-3.44}"
-SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-0}"
+case "$(uname -m)" in
+  aarch64|arm64)
+    EXPECTED_PINSET_TARGET="linux-aarch64"
+    DEFAULT_SKIP_FLUTTER_RUNTIME=1
+    ;;
+  x86_64|amd64)
+    EXPECTED_PINSET_TARGET="linux-x86_64"
+    DEFAULT_SKIP_FLUTTER_RUNTIME=0
+    ;;
+  *)
+    echo "unsupported acceptance architecture: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
+SKIP_FLUTTER_RUNTIME="${PINSET_SKIP_FLUTTER_RUNTIME:-$DEFAULT_SKIP_FLUTTER_RUNTIME}"
 VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
 
 if [[ ! "$GLOBAL_VERSION" =~ $VERSION_PATTERN ]] || [[ ! "$PROJECT_VERSION" =~ $VERSION_PATTERN ]] ||
@@ -90,14 +104,24 @@ grep -F 'language = "zh-CN"' "$PINSET_HOME/settings.toml"
 "$PINSET_BIN" list java --available | grep -E '^java@[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\+[0-9]+ temurin (lts|ga) '
 "$PINSET_BIN" list rust --available | grep -E '^rust@[0-9]+\.[0-9]+\.[0-9]+ stable \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
 "$PINSET_BIN" list dotnet --available | grep -E '^dotnet@[0-9]+\.[0-9]+\.[0-9]+ (lts|sts) (active|maintenance) \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
-FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
-printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
-PROJECT_FLUTTER_VERSION="$(
-  printf '%s\n' "$FLUTTER_RELEASES" |
-    sed -n "s/^flutter@\(${PROJECT_FLUTTER_SELECTOR//./\.}\.[0-9][0-9]*\) .*/\1/p" |
-    head -n 1
-)"
-test -n "$PROJECT_FLUTTER_VERSION"
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  FLUTTER_RELEASES="$("$PINSET_BIN" list flutter --available)"
+  printf '%s\n' "$FLUTTER_RELEASES" | grep -E '^flutter@[0-9]+\.[0-9]+\.[0-9]+ dart@[0-9]+\.[0-9]+\.[0-9]+ stable$'
+  PROJECT_FLUTTER_VERSION="$(
+    printf '%s\n' "$FLUTTER_RELEASES" |
+      sed -n "s/^flutter@\(${PROJECT_FLUTTER_SELECTOR//./\.}\.[0-9][0-9]*\) .*/\1/p" |
+      head -n 1
+  )"
+  test -n "$PROJECT_FLUTTER_VERSION"
+elif [[ "$EXPECTED_PINSET_TARGET" == "linux-aarch64" ]]; then
+  set +e
+  "$PINSET_BIN" --lang en global "flutter@$GLOBAL_FLUTTER_SELECTOR" --no-install > flutter-unsupported.txt 2>&1
+  FLUTTER_UNSUPPORTED_STATUS=$?
+  set -e
+  test "$FLUTTER_UNSUPPORTED_STATUS" -eq 2
+  grep -F 'Flutter upstream does not publish an official SDK for this target' flutter-unsupported.txt
+  grep -F 'linux-aarch64' flutter-unsupported.txt
+fi
 "$PINSET_BIN" global "pnpm@$GLOBAL_PNPM_SELECTOR"
 GLOBAL_PNPM_VERSION="$("$PINSET_BIN" exec -- pnpm --version)"
 printf '%s\n' "$GLOBAL_PNPM_VERSION" | grep -E '^11\.'
@@ -213,34 +237,47 @@ LIFECYCLE_LIST_JSON="$("$PINSET_BIN" list --json)"
 printf '%s' "$LIFECYCLE_LIST_JSON" | "$PINSET_BIN" exec -- python -c '
 import json, sys
 installed = json.load(sys.stdin)
+assert installed["schema"] == 1 and installed["command"] == "list" and installed["ok"]
+installed = installed["data"]["versions"]
 expected = {"node", "pnpm", "bun", "go", "python", "java", "rust", "dotnet"}
 actual = {entry["tool"] for entry in installed}
 missing = expected - actual
 assert not missing, f"missing installed providers: {sorted(missing)}"
+assert all(entry["target"] == "'"$EXPECTED_PINSET_TARGET"'" for entry in installed)
 '
 "$PINSET_BIN" current rust --json | "$PINSET_BIN" exec -- python -c '
 import json, sys
 current = json.load(sys.stdin)
+assert current["schema"] == 1 and current["command"] == "current" and current["ok"]
+current = current["data"]
 assert current["tool"] == "rust" and current["source"] == "global" and current["installed"]
 '
 "$PINSET_BIN" uninstall "node@$GLOBAL_VERSION" --force --dry-run --json | "$PINSET_BIN" exec -- python -c '
 import json, sys
 preview = json.load(sys.stdin)
+assert preview["schema"] == 1 and preview["command"] == "uninstall" and preview["ok"]
+preview = preview["data"]
 assert preview["dry_run"] and preview["tool"] == "node" and preview["targets"]
 '
 "$PINSET_BIN" prune --dry-run --json | "$PINSET_BIN" exec -- python -c '
 import json, sys
 preview = json.load(sys.stdin)
+assert preview["schema"] == 1 and preview["command"] == "prune" and preview["ok"]
+preview = preview["data"]
 assert preview["dry_run"] and not preview["candidates"] and preview["removed"] == 0
 '
 "$PINSET_BIN" cache info --json | "$PINSET_BIN" exec -- python -c '
 import json, sys
 info = json.load(sys.stdin)
+assert info["schema"] == 1 and info["command"] == "cache.info" and info["ok"]
+info = info["data"]
 assert info["archives"] >= 1 and info["archive_bytes"] > 0
 '
 "$PINSET_BIN" outdated node --global --json | "$PINSET_BIN" exec -- python -c '
 import json, sys
 reports = json.load(sys.stdin)
+assert reports["schema"] == 1 and reports["command"] == "outdated" and reports["ok"]
+reports = reports["data"]["runtimes"]
 assert len(reports) == 1 and reports[0]["tool"] == "node" and reports[0]["scope"] == "global"
 '
 for shell in bash zsh fish powershell; do

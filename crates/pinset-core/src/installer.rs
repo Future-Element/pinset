@@ -1,3 +1,9 @@
+//! Verified download, safe extraction, and atomic runtime installation.
+//!
+//! SAFETY: archives are integrity-checked before extraction, extracted only into a private
+//! staging directory, and renamed into the final install path only after required paths and the
+//! ownership receipt are complete. A failure before the rename must not expose a partial runtime.
+
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -233,6 +239,8 @@ impl Installer {
             source,
         })?;
 
+        // INVARIANT: every layer is validated in staging before the single commit below; overlays
+        // never gain permission to write directly into an existing installation.
         let mut selected_bases = Vec::with_capacity(request.base_artifacts.len());
         for base in &request.base_artifacts {
             let selected = self.select_artifact(&request.pinset_home, &base.artifact)?;
@@ -269,6 +277,8 @@ impl Installer {
         if final_dir.exists() {
             return Err(Error::InstallAlreadyExists { path: final_dir });
         }
+        // SAFETY: final_dir was checked absent while holding the per-install lock. The same-volume
+        // rename is the transaction boundary that makes the completed receipt visible atomically.
         fs::rename(&staging_dir, &final_dir).map_err(|source| Error::CommitInstall {
             staging: staging_dir,
             destination: final_dir.clone(),

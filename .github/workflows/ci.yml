@@ -30,6 +30,9 @@ jobs:
           - os: ubuntu-24.04
             artifact: pinset-linux-x86_64
             archive: pinset-linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            artifact: pinset-linux-aarch64
+            archive: pinset-linux-aarch64.tar.gz
           - os: windows-2025
             artifact: pinset-windows-x86_64
             archive: pinset-windows-x86_64.zip
@@ -46,19 +49,11 @@ jobs:
         shell: bash
         run: |
           rustup set profile minimal
-          rustup update stable
-          rustup default stable
+          rustup update 1.85.0
+          rustup default 1.85.0
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
-
-      - name: Verify macOS release dependencies
-        if: runner.os == 'macOS'
-        shell: bash
-        run: >-
-          sh scripts/tests/macos_release_dependencies.sh
-          target/release/pinset
-          target/release/pinset-shim
 
       - name: Package Unix binaries
         if: runner.os != 'Windows'

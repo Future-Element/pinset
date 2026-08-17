@@ -1,3 +1,9 @@
+//! Local archive-source selection and the metadata trust boundary.
+//!
+//! Archive mirrors may transport bytes whose integrity is already locked. They do not become
+//! authorities for versions or checksums unless an HTTPS custom source is explicitly granted
+//! metadata trust; Provider-specific signature requirements still apply after that grant.
+
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
@@ -164,6 +170,8 @@ impl SourceConfig {
             .map(|sources| sources.fallback.as_slice())
             .unwrap_or_default();
 
+        // INVARIANT: source order changes transport availability only. Artifact identity and
+        // integrity remain the values already authenticated into the lockfile.
         std::iter::once(active)
             .chain(fallback.iter().map(String::as_str))
             .map(|alias| {
@@ -229,6 +237,8 @@ impl SourceConfig {
 
     pub fn metadata_source(&self, provider: &str) -> Result<SourceView> {
         let active = self.source(provider, None)?;
+        // SAFETY: selecting an ordinary mirror must never silently delegate version or checksum
+        // authority to it; without the explicit HTTPS trust bit, metadata stays official.
         if active.kind == SourceKind::Custom && active.trust_metadata {
             return Ok(active);
         }

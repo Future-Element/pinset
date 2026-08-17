@@ -5,14 +5,19 @@ use serde::Deserialize;
 
 use crate::{
     Error, LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS, NodeArchiveFormat,
-    Result, SourceConfig, plan_node_artifact,
+    Result, SourceConfig, plan_node_artifact, node_trust::verify_node_manifest,
 };
 
 const OFFICIAL_NODE_DIST_URL: &str = "https://nodejs.org/dist/";
 const MAX_SHASUMS_BYTES: u64 = 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024;
-const REQUIRED_INDEX_FILES: [&str; 4] =
-    ["win-x64-zip", "linux-x64", "osx-x64-tar", "osx-arm64-tar"];
+const REQUIRED_INDEX_FILES: [&str; 5] = [
+    "win-x64-zip",
+    "linux-x64",
+    "linux-arm64",
+    "osx-x64-tar",
+    "osx-arm64-tar",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRelease {
@@ -39,6 +44,7 @@ pub struct NodeMetadataClient {
     client: Client,
     metadata_base_url: Url,
     verification: String,
+    manifest_source: String,
 }
 
 impl NodeMetadataClient {
@@ -51,7 +57,8 @@ impl NodeMetadataClient {
             client,
             metadata_base_url: Url::parse(OFFICIAL_NODE_DIST_URL)
                 .expect("built-in Node distribution URL is valid"),
-            verification: "nodejs-shasums-https".to_owned(),
+            verification: "nodejs-openpgp-sha256".to_owned(),
+            manifest_source: "official".to_owned(),
         })
     }
 
@@ -72,21 +79,41 @@ impl NodeMetadataClient {
         Ok(Self {
             client,
             metadata_base_url,
-            verification: format!("nodejs-shasums-https-source:{alias}"),
+            verification: format!("nodejs-openpgp-sha256-source:{alias}"),
+            manifest_source: alias.to_owned(),
         })
     }
 
     pub fn resolve_exact_lock(&self, version: &str, generated_by: &str) -> Result<Lockfile> {
+        crate::validate_exact_node_version(version)?;
+        let manifest_url = self
+            .metadata_base_url
+            .join(&format!("v{version}/SHASUMS256.txt.asc"))
+            .expect("validated exact version produces a safe relative URL");
+        let signed_manifest = self.download_shasums(manifest_url)?;
+        // INVARIANT: Never parse attacker-controlled checksums before authenticating the exact
+        // clear-signed bytes supplied by the selected trusted metadata source.
+        let verified = verify_node_manifest(&signed_manifest)?;
+        self.lock_from_verified_manifest(
+            version,
+            generated_by,
+            &verified.text,
+            &verified.signer_fingerprint,
+        )
+    }
+
+    fn lock_from_verified_manifest(
+        &self,
+        version: &str,
+        generated_by: &str,
+        manifest: &str,
+        signer_fingerprint: &str,
+    ) -> Result<Lockfile> {
         let plans = MVP_NODE_TARGETS
             .into_iter()
             .map(|target| plan_node_artifact(&SourceConfig::default(), version, target))
             .collect::<Result<Vec<_>>>()?;
-        let manifest_url = self
-            .metadata_base_url
-            .join(&format!("v{version}/SHASUMS256.txt"))
-            .expect("validated exact version produces a safe relative URL");
-        let manifest = self.download_shasums(manifest_url)?;
-        let checksums = parse_shasums(&manifest)?;
+        let checksums = parse_shasums(manifest)?;
         let artifacts =
             plans
                 .into_iter()
@@ -119,11 +146,14 @@ impl NodeMetadataClient {
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-        Ok(Lockfile::new_node(
+        let lockfile = Lockfile::new_node(
             generated_by.to_owned(),
             version.to_owned(),
+            signer_fingerprint.to_owned(),
+            self.manifest_source.clone(),
             artifacts,
-        ))
+        );
+        Ok(lockfile)
     }
 
     pub fn resolve_lock(&self, selector: &str, generated_by: &str) -> Result<Lockfile> {
@@ -383,7 +413,7 @@ mod tests {
     use super::*;
 
     const REQUIRED_FILES_JSON: &str =
-        r#"["win-x64-zip","linux-x64","osx-x64-tar","osx-arm64-tar"]"#;
+        r#"["win-x64-zip","linux-x64","linux-arm64","osx-x64-tar","osx-arm64-tar"]"#;
 
     #[test]
     fn resolves_floating_selectors_from_supported_stable_releases() {
@@ -465,28 +495,63 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let (base_url, server) = serve_once(manifest);
-        let client = NodeMetadataClient {
-            client: Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .expect("client"),
-            metadata_base_url: Url::parse(&base_url).expect("base URL"),
-            verification: "nodejs-shasums-https-test".to_owned(),
-        };
-
+        let client = test_client("http://127.0.0.1:9/");
         let lockfile = client
-            .resolve_exact_lock("24.0.0", "pinset test")
+            .lock_from_verified_manifest(
+                "24.0.0",
+                "pinset test",
+                &manifest,
+                "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+            )
             .expect("resolve lock");
-        server.join().expect("server");
 
         let node = lockfile.tool("node").expect("node lock");
         assert_eq!(node.artifacts.len(), MVP_NODE_TARGETS.len());
+        assert_eq!(
+            node.metadata.get("signed_manifest").map(String::as_str),
+            Some("SHASUMS256.txt.asc")
+        );
+        assert_eq!(
+            node.metadata.get("manifest_source").map(String::as_str),
+            Some("test")
+        );
         assert!(node.artifacts.iter().all(|artifact| {
             artifact
                 .canonical_url
                 .starts_with("https://nodejs.org/dist/v24.0.0/")
         }));
+    }
+
+    #[test]
+    fn trusted_metadata_mirror_must_serve_a_valid_signed_manifest() {
+        let (base_url, server) = serve_once(
+            include_str!("../tests/fixtures/node-v24.19.0-SHASUMS256.txt.asc").to_owned(),
+        );
+        let client = NodeMetadataClient::for_source(&base_url, "mirror").expect("mirror client");
+        let lockfile = client
+            .resolve_exact_lock("24.19.0", "pinset test")
+            .expect("signed mirror manifest");
+        server.join().expect("server");
+
+        let node = lockfile.tool("node").expect("node lock");
+        assert_eq!(
+            node.metadata.get("manifest_source").map(String::as_str),
+            Some("mirror")
+        );
+        assert!(node.artifacts.iter().all(|artifact| {
+            artifact.verification == "nodejs-openpgp-sha256-source:mirror"
+        }));
+    }
+
+    #[test]
+    fn rejects_a_signed_manifest_response_over_the_fixed_limit() {
+        let (base_url, server) = serve_once("x".repeat(MAX_SHASUMS_BYTES as usize + 1));
+        let client = test_client(&base_url);
+        let error = client
+            .download_shasums(Url::parse(&base_url).expect("manifest URL"))
+            .expect_err("oversized manifest");
+        server.join().expect("server");
+        assert!(matches!(error, Error::NodeMetadataTooLarge { .. }));
     }
 
     #[test]
@@ -500,19 +565,15 @@ mod tests {
             Err(Error::InvalidNodeShasums { .. })
         ));
 
-        let (base_url, server) = serve_once(format!("{}  unrelated.zip", "a".repeat(64)));
-        let client = NodeMetadataClient {
-            client: Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .expect("client"),
-            metadata_base_url: Url::parse(&base_url).expect("base URL"),
-            verification: "nodejs-shasums-https-test".to_owned(),
-        };
+        let client = test_client("http://127.0.0.1:9/");
         let error = client
-            .resolve_exact_lock("24.0.0", "pinset test")
+            .lock_from_verified_manifest(
+                "24.0.0",
+                "pinset test",
+                &format!("{}  unrelated.zip", "a".repeat(64)),
+                "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+            )
             .expect_err("missing target checksum");
-        server.join().expect("server");
         assert!(matches!(error, Error::NodeChecksumMissing { .. }));
     }
 
@@ -567,7 +628,8 @@ mod tests {
                 .build()
                 .expect("client"),
             metadata_base_url: Url::parse(base_url).expect("base URL"),
-            verification: "nodejs-shasums-https-test".to_owned(),
+            verification: "nodejs-openpgp-sha256-source:test".to_owned(),
+            manifest_source: "test".to_owned(),
         }
     }
 }

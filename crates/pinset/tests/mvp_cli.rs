@@ -282,7 +282,7 @@ fn doctor_reports_all_provider_commands_and_path_shadowing() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor JSON output");
-    let commands = report["path_candidates"]
+    let commands = report["data"]["path_candidates"]
         .as_array()
         .expect("path candidates")
         .iter()
@@ -612,10 +612,11 @@ fn doctor_json_is_machine_readable_and_has_no_manager_migration_report() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor JSON output");
-    assert_eq!(report["schema"], 2);
-    assert_eq!(report["selection"]["version"], "24.0.0");
-    assert_eq!(report["runtime"]["status"], "ok");
-    assert!(report.get("legacy_node_configs").is_none());
+    assert_eq!(report["schema"], 1);
+    assert_eq!(report["command"], "doctor");
+    assert_eq!(report["data"]["selection"]["version"], "24.0.0");
+    assert_eq!(report["data"]["runtime"]["status"], "ok");
+    assert!(report["data"].get("legacy_node_configs").is_none());
     assert_eq!(
         fs::read_to_string(project.join("pinset.toml")).expect("project config"),
         "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n"
@@ -637,6 +638,8 @@ fn write_project(project: &Path, configured_version: &str, locked_version: &str)
     let lockfile = Lockfile::new_node(
         "pinset integration test".to_owned(),
         locked_version.to_owned(),
+        "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+        "official".to_owned(),
         artifacts,
     );
     save_lockfile(&project.join("pinset.lock"), &lockfile).expect("lockfile");
@@ -669,6 +672,8 @@ fn test_lockfile(version: &str) -> Lockfile {
     Lockfile::new_node(
         "pinset integration test".to_owned(),
         version.to_owned(),
+        "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+        "official".to_owned(),
         artifacts,
     )
 }
@@ -686,7 +691,7 @@ fn locked_artifact(version: &str, target: &str) -> LockedArtifact {
             NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
         },
         archive_root: plan.archive_root,
-        verification: "nodejs-shasums-https".to_owned(),
+        verification: "nodejs-openpgp-sha256".to_owned(),
         overlays: Vec::new(),
     }
 }

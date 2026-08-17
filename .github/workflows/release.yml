@@ -27,8 +27,18 @@ jobs:
           workspace_version="$(
             python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
           )"
-          if [[ "${GITHUB_REF_NAME}" != "v${workspace_version}" ]]; then
-            echo "release tag ${GITHUB_REF_NAME} does not match workspace version v${workspace_version}" >&2
+          release_version="${GITHUB_REF_NAME#v}"
+          valid_release=0
+          if [[ "${release_version}" == "${workspace_version}" ]]; then
+            valid_release=1
+          elif [[ "${release_version}" == "${workspace_version}-rc."* ]]; then
+            rc_number="${release_version#"${workspace_version}-rc."}"
+            if [[ "${rc_number}" =~ ^[0-9]+$ ]]; then
+              valid_release=1
+            fi
+          fi
+          if [[ "${valid_release}" != "1" ]]; then
+            echo "release tag ${GITHUB_REF_NAME} does not match workspace version v${workspace_version} or an rc tag" >&2
             exit 1
           fi
           installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
@@ -40,8 +50,8 @@ jobs:
       - name: Prepare Rust toolchain
         run: |
           rustup set profile minimal
-          rustup update stable
-          rustup default stable
+          rustup update 1.85.0
+          rustup default 1.85.0
           rustup component add clippy rustfmt
 
       - name: Check formatting
@@ -99,6 +109,9 @@ jobs:
           - os: ubuntu-24.04
             artifact: pinset-linux-x86_64
             archive: pinset-linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            artifact: pinset-linux-aarch64
+            archive: pinset-linux-aarch64.tar.gz
           - os: windows-2025
             artifact: pinset-windows-x86_64
             archive: pinset-windows-x86_64.zip
@@ -120,8 +133,8 @@ jobs:
         shell: bash
         run: |
           rustup set profile minimal
-          rustup update stable
-          rustup default stable
+          rustup update 1.85.0
+          rustup default 1.85.0
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
@@ -193,6 +206,10 @@ jobs:
         shell: bash
         run: |
           cp install.sh dist/install.sh
+          release_version="${GITHUB_REF_NAME#v}"
+          if [[ "${release_version}" == *-* ]]; then
+            sed -i "s/^DEFAULT_VERSION=\"[^\"]*\"$/DEFAULT_VERSION=\"${release_version}\"/" dist/install.sh
+          fi
           cp uninstall.sh dist/uninstall.sh
           cp uninstall.ps1 dist/uninstall.ps1
           chmod 755 dist/install.sh dist/uninstall.sh
@@ -203,6 +220,7 @@ jobs:
               uninstall.sh \
               uninstall.ps1 \
               pinset-linux-x86_64.tar.gz \
+              pinset-linux-aarch64.tar.gz \
               pinset-macos-aarch64.tar.gz \
               pinset-windows-x86_64.zip \
               pinset-cli.cdx.json \
@@ -233,6 +251,7 @@ jobs:
             dist/uninstall.sh
             dist/uninstall.ps1
             dist/pinset-linux-x86_64.tar.gz
+            dist/pinset-linux-aarch64.tar.gz
             dist/pinset-macos-aarch64.tar.gz
             dist/pinset-windows-x86_64.zip
             dist/pinset-cli.cdx.json

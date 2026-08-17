@@ -1,3 +1,9 @@
+//! Runtime-independent command router used by every Provider command.
+//!
+//! INVARIANT: resolution excludes this executable and the managed shim directory, while a depth
+//! marker protects the remaining process boundary. A routed runtime must never resolve back to a
+//! Pinset shim.
+
 use std::{
     env,
     ffi::OsString,

@@ -19,14 +19,16 @@ fn lists_all_installed_versions_and_current_rust_as_json() {
     let listed = pinset(&project, &home, &["list", "--json"]);
     assert_success(&listed);
     let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("installed JSON");
-    assert_eq!(listed.as_array().expect("installed array").len(), 2);
+    assert_eq!(listed["schema"], 1);
+    assert_eq!(listed["command"], "list");
+    assert_eq!(listed["data"]["versions"].as_array().expect("installed array").len(), 2);
 
     let current = pinset(&project, &home, &["current", "rust", "--json"]);
     assert_success(&current);
     let current: serde_json::Value = serde_json::from_slice(&current.stdout).expect("current JSON");
-    assert_eq!(current["tool"], "rust");
-    assert_eq!(current["version"], "1.97.0");
-    assert_eq!(current["installed"].as_bool(), Some(true));
+    assert_eq!(current["data"]["tool"], "rust");
+    assert_eq!(current["data"]["version"], "1.97.0");
+    assert_eq!(current["data"]["installed"].as_bool(), Some(true));
 }
 
 #[test]
@@ -54,8 +56,8 @@ fn uninstall_and_prune_previews_are_safe_before_explicit_pruning() {
     let prune = pinset(&project, &home, &["prune", "--dry-run", "--json"]);
     assert_success(&prune);
     let report: serde_json::Value = serde_json::from_slice(&prune.stdout).expect("prune JSON");
-    assert_eq!(report["candidates"][0]["tool"], "bun");
-    assert_eq!(report["protected"][0]["tool"], "pnpm");
+    assert_eq!(report["data"]["candidates"][0]["tool"], "bun");
+    assert_eq!(report["data"]["protected"][0]["tool"], "pnpm");
     assert!(home.join("installs/bun/1.3.14").is_dir());
     assert!(home.join("installs/pnpm/11.21.0").is_dir());
 
@@ -71,12 +73,17 @@ fn uninstall_and_prune_previews_are_safe_before_explicit_pruning() {
         ],
     );
     assert!(!invalid_project.status.success());
+    let failure: serde_json::Value =
+        serde_json::from_slice(&invalid_project.stdout).expect("prune failure JSON");
+    assert_eq!(failure["schema"], 1);
+    assert_eq!(failure["command"], "prune");
+    assert_eq!(failure["ok"], false);
     assert!(home.join("installs/bun/1.3.14").is_dir());
 
     let pruned = pinset(&project, &home, &["prune", "--json"]);
     assert_success(&pruned);
     let report: serde_json::Value = serde_json::from_slice(&pruned.stdout).expect("prune JSON");
-    assert_eq!(report["removed"], 1);
+    assert_eq!(report["data"]["removed"], 1);
     assert!(!home.join("installs/bun/1.3.14").exists());
     assert!(home.join("installs/pnpm/11.21.0").is_dir());
 }
@@ -100,15 +107,16 @@ fn verifies_and_repairs_corrupt_cache_archives() {
     let verify = pinset(&project, &home, &["cache", "verify", "--json"]);
     assert!(!verify.status.success());
     let report: serde_json::Value = serde_json::from_slice(&verify.stdout).expect("verify JSON");
-    assert_eq!(report["valid"], 1);
-    assert_eq!(report["corrupt"], 1);
+    assert_eq!(report["command"], "cache.verify");
+    assert_eq!(report["error"]["code"], "cache_corrupt");
+    assert_eq!(report["error"]["details"]["entries"], 1);
 
     let clean_preview = pinset(&project, &home, &["cache", "clean", "--dry-run", "--json"]);
     assert_success(&clean_preview);
     let clean_preview: serde_json::Value =
         serde_json::from_slice(&clean_preview.stdout).expect("clean preview JSON");
-    assert_eq!(clean_preview["dry_run"], true);
-    assert_eq!(clean_preview["entries"], 2);
+    assert_eq!(clean_preview["data"]["dry_run"], true);
+    assert_eq!(clean_preview["data"]["entries"], 2);
     assert!(cache.join(format!("{valid_hash}.archive")).is_file());
     assert!(cache.join(format!("{corrupt_hash}.archive")).is_file());
 
@@ -116,18 +124,71 @@ fn verifies_and_repairs_corrupt_cache_archives() {
     assert_success(&preview);
     let preview: serde_json::Value =
         serde_json::from_slice(&preview.stdout).expect("repair preview JSON");
-    assert_eq!(preview["dry_run"], true);
-    assert_eq!(preview["entries"], 1);
+    assert_eq!(preview["data"]["dry_run"], true);
+    assert_eq!(preview["data"]["entries"], 1);
     assert!(cache.join(format!("{corrupt_hash}.archive")).is_file());
 
     let repaired = pinset(&project, &home, &["cache", "repair", "--json"]);
     assert_success(&repaired);
     let repaired: serde_json::Value =
         serde_json::from_slice(&repaired.stdout).expect("repair JSON");
-    assert_eq!(repaired["dry_run"], false);
-    assert_eq!(repaired["entries"], 1);
+    assert_eq!(repaired["data"]["dry_run"], false);
+    assert_eq!(repaired["data"]["entries"], 1);
     assert!(cache.join(format!("{valid_hash}.archive")).is_file());
     assert!(!cache.join(format!("{corrupt_hash}.archive")).exists());
+}
+
+#[test]
+fn every_json_command_uses_the_same_failure_envelope_in_both_languages() {
+    let root = tempdir().expect("temporary root");
+    let home = root.path().join("home");
+    let project = root.path().join("project");
+    fs::create_dir(&project).expect("project");
+    let commands: &[(&str, &[&str])] = &[
+        ("which", &["which", "--json", "--invalid"]),
+        ("current", &["current", "--json", "--invalid"]),
+        ("list", &["list", "--json", "--invalid"]),
+        ("outdated", &["outdated", "--json", "--invalid"]),
+        ("uninstall", &["uninstall", "--json", "--invalid"]),
+        ("prune", &["prune", "--json", "--invalid"]),
+        ("doctor", &["doctor", "--json", "--invalid"]),
+        ("cache.list", &["cache", "list", "--json", "--invalid"]),
+        ("cache.info", &["cache", "info", "--json", "--invalid"]),
+        ("cache.verify", &["cache", "verify", "--json", "--invalid"]),
+        ("cache.repair", &["cache", "repair", "--json", "--invalid"]),
+        ("cache.clean", &["cache", "clean", "--json", "--invalid"]),
+    ];
+
+    for language in ["en", "zh-CN"] {
+        for (command, arguments) in commands {
+            let mut localized = vec!["--lang", language];
+            localized.extend_from_slice(arguments);
+            let output = pinset(&project, &home, &localized);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{language} {command}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let failure: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("JSON failure envelope");
+            assert_eq!(failure["schema"], 1, "{language} {command}");
+            assert_eq!(failure["command"], *command, "{language} {command}");
+            assert_eq!(failure["ok"], false, "{language} {command}");
+            assert_eq!(
+                failure["error"]["code"], "usage_error",
+                "{language} {command}"
+            );
+            assert!(
+                failure["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| !message.is_empty()),
+                "{language} {command}"
+            );
+            assert!(failure["error"]["details"].is_object());
+            assert!(output.stderr.is_empty(), "{language} {command}");
+        }
+    }
 }
 
 #[test]

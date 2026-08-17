@@ -67,7 +67,10 @@ pub fn install_locked_dotnet(
 fn required_dotnet_paths(target: &str) -> Result<Vec<PathBuf>> {
     let command = if target == "windows-x86_64" {
         "dotnet.exe"
-    } else if matches!(target, "linux-x86_64" | "macos-x86_64" | "macos-aarch64") {
+    } else if matches!(
+        target,
+        "linux-x86_64" | "linux-aarch64" | "macos-x86_64" | "macos-aarch64"
+    ) {
         "dotnet"
     } else {
         return Err(Error::UnsupportedDotnetTarget {

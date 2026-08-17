@@ -1,3 +1,9 @@
+//! Pinset-owned project Python environment lifecycle.
+//!
+//! SAFETY: `.venv` is user-adjacent data. Pinset deletes or reuses it only when a strict marker
+//! proves the selected CPython distribution and target; missing, malformed, or symlinked state
+//! fails closed rather than guessing ownership.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -69,6 +75,8 @@ pub fn create_project_python_environment(
             if !recreate {
                 return load_project_python_environment(project_config_path, distribution, target);
             }
+            // The marker is deliberately checked before recursive removal. `recreate` is not
+            // permission to replace an environment created by the user or another tool.
             read_marker(&root)?;
             fs::remove_dir_all(&root).map_err(|source| Error::RemovePythonEnvironment {
                 path: root.clone(),

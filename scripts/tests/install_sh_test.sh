@@ -125,14 +125,23 @@ fi
 [ ! -e "$EXTRA_INSTALL_DIR/pinset" ]
 [ ! -e "$EXTRA_INSTALL_DIR/pinset-shim" ]
 
-if PINSET_INSTALL_TEST_MODE=1 \
-    PINSET_TEST_UNAME_S=Linux \
-    PINSET_TEST_UNAME_M=aarch64 \
-    PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-    sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$TEST_ROOT/unsupported"
-then
-    printf 'unsupported platform unexpectedly succeeded\n' >&2
-    exit 1
+ARM_RELEASE_DIR="$TEST_ROOT/arm-release"
+ARM_INSTALL_DIR="$TEST_ROOT/arm-install"
+ARM_ARCHIVE="pinset-linux-aarch64.tar.gz"
+mkdir -p "$ARM_RELEASE_DIR"
+cp "$RELEASE_DIR/$ARCHIVE" "$ARM_RELEASE_DIR/$ARM_ARCHIVE"
+if command -v sha256sum >/dev/null 2>&1; then
+    ARM_HASH=$(sha256sum "$ARM_RELEASE_DIR/$ARM_ARCHIVE" | awk '{ print $1 }')
+else
+    ARM_HASH=$(shasum -a 256 "$ARM_RELEASE_DIR/$ARM_ARCHIVE" | awk '{ print $1 }')
 fi
+printf '%s  %s\n' "$ARM_HASH" "$ARM_ARCHIVE" > "$ARM_RELEASE_DIR/SHA256SUMS"
+PINSET_INSTALL_TEST_MODE=1 \
+PINSET_TEST_UNAME_S=Linux \
+PINSET_TEST_UNAME_M=aarch64 \
+PINSET_TEST_RELEASE_BASE_URL="file://$ARM_RELEASE_DIR" \
+    sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$ARM_INSTALL_DIR"
+[ -x "$ARM_INSTALL_DIR/pinset" ]
+[ -x "$ARM_INSTALL_DIR/pinset-shim" ]
 
 printf 'install.sh offline tests passed\n'

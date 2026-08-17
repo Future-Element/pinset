@@ -4,11 +4,12 @@ use url::Url;
 
 use crate::{Error, Result};
 
-pub const RUST_TARGETS: [&str; 4] = [
+pub const RUST_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 pub const RUST_PROFILE: &str = "default";
@@ -133,6 +134,7 @@ pub fn rust_target_triple(target: &str) -> Result<&'static str> {
     match target {
         "windows-x86_64" => Ok("x86_64-pc-windows-msvc"),
         "linux-x86_64" => Ok("x86_64-unknown-linux-gnu"),
+        "linux-aarch64" => Ok("aarch64-unknown-linux-gnu"),
         "macos-x86_64" => Ok("x86_64-apple-darwin"),
         "macos-aarch64" => Ok("aarch64-apple-darwin"),
         _ => Err(Error::UnsupportedRustTarget {
@@ -185,6 +187,15 @@ mod tests {
         assert_eq!(plan.triple, "aarch64-apple-darwin");
         assert_eq!(plan.archive_root, "rust-1.97.1-aarch64-apple-darwin");
         assert_eq!(plan.format, RustArchiveFormat::TarXz);
+
+        let linux_arm = plan_rust_artifact(
+            "1.97.1",
+            "2026-07-16",
+            "linux-aarch64",
+            "https://static.rust-lang.org/dist/2026-07-16/rust-1.97.1-aarch64-unknown-linux-gnu.tar.xz",
+        )
+        .expect("Linux ARM64 plan");
+        assert_eq!(linux_arm.triple, "aarch64-unknown-linux-gnu");
     }
 
     #[test]
