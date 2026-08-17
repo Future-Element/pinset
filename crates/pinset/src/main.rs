@@ -489,7 +489,10 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
         return Some(values[index].as_ref().to_owned());
     }
     let subcommand = values[index + 1..].iter().find(|value| {
-        matches!(value.as_ref(), "list" | "info" | "verify" | "repair" | "clean")
+        matches!(
+            value.as_ref(),
+            "list" | "info" | "verify" | "repair" | "clean"
+        )
     });
     Some(match subcommand {
         Some(subcommand) => format!("cache.{subcommand}"),
