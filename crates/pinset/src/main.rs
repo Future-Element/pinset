@@ -1002,7 +1002,7 @@ fn selected_runtimes_for_outdated(
 ) -> Result<Vec<SelectedRuntime>, Box<dyn std::error::Error>> {
     let mut selected = Vec::new();
     let mut seen = BTreeSet::new();
-    if !global_only && let Some(path) = find_optional_project_config(&cwd)? {
+    if !global_only && let Some(path) = find_optional_project_config(cwd)? {
         for (selected_tool, version) in load_project_config(&path)?.tools {
             if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
                 continue;
@@ -1018,7 +1018,7 @@ fn selected_runtimes_for_outdated(
             }
         }
     }
-    let global_path = global_config_path(&home);
+    let global_path = global_config_path(home);
     if let Some(global) = load_optional_global_config(&global_path)? {
         for (selected_tool, version) in global.tools {
             if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
