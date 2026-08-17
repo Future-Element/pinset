@@ -951,7 +951,7 @@ fn run_outdated(
     let cwd = effective_cwd(cwd)?;
     let selected = selected_runtimes_for_outdated(&home, &cwd, tool, global_only)?;
     let mut reports = Vec::new();
-    let mut latest_versions = BTreeMap::new();
+    let mut latest_versions: BTreeMap<String, String> = BTreeMap::new();
     for selection in selected {
         let latest = if let Some(latest) = latest_versions.get(&selection.tool) {
             latest.clone()

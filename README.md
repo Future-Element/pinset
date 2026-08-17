@@ -72,10 +72,10 @@ eval "$(pinset activate bash)"  # Bash / WSL
 
 长期使用可自行把 `export PATH=...` 写入 `~/.bashrc` 或 `~/.zshrc`。Pinset 不会擅自修改这些文件。
 
-`v0.8.0` 发布后可固定安装该版本：
+`v0.9.0` 发布后可固定安装该版本：
 
 ```bash
-curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.8.0/install.sh | sh
+curl -fsSL https://github.com/Future-Element/pinset/releases/download/v0.9.0/install.sh | sh
 ```
 
 自定义安装目录：

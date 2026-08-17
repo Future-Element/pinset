@@ -1,7 +1,9 @@
 # Pinset Release Notes
 
-## v0.9.0（开发中）
+## v0.9.0
 
+- 发布日期：`2026-08-17`；
+- GitHub Release：[v0.9.0](https://github.com/Future-Element/pinset/releases/tag/v0.9.0)
 - 阶段：运行时生命周期管理；
 - `pinset list` 可一次列出全部 Provider 的已安装版本，`list`、`current` 与 `which` 增加稳定 JSON 输出；
 - 新增 `pinset outdated`，分别检查当前项目和全局选择的最新稳定版本；

@@ -1,7 +1,7 @@
 # Pinset PRD
 
 文档版本：`v0.9.0`
-产品阶段：`runtime lifecycle management in development`
+产品阶段：`runtime lifecycle management released`
 更新时间：`2026-08-17`
 
 ## 1. 产品简介
