@@ -486,7 +486,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
         return Some("pinset".to_owned());
     };
     if values[index] != "cache" {
-        return Some(values[index].into_owned());
+        return Some(values[index].as_ref().to_owned());
     }
     let subcommand = values[index + 1..].iter().find(|value| {
         matches!(value.as_ref(), "list" | "info" | "verify" | "repair" | "clean")
@@ -710,7 +710,7 @@ fn main_exit_code() -> i32 {
                     ErrorKind::ArgumentConflict => "conflict",
                     _ => "other",
                 };
-                catalog.argument_error(kind)
+                catalog.argument_error(kind).to_owned()
             } else {
                 error.to_string()
             };
