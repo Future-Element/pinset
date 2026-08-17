@@ -1316,19 +1316,21 @@ fn selected_runtimes_for_outdated(
 ) -> Result<Vec<SelectedRuntime>, Box<dyn std::error::Error>> {
     let mut selected = Vec::new();
     let mut seen = BTreeSet::new();
-    if !global_only && let Some(path) = find_optional_project_config(cwd)? {
-        for (selected_tool, version) in load_project_config(&path)?.tools {
-            if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
-                continue;
-            }
-            require_provider(&selected_tool)?;
-            if seen.insert(("project", selected_tool.clone(), path.clone())) {
-                selected.push(SelectedRuntime {
-                    scope: "project",
-                    config: path.clone(),
-                    tool: selected_tool,
-                    version,
-                });
+    if !global_only {
+        if let Some(path) = find_optional_project_config(cwd)? {
+            for (selected_tool, version) in load_project_config(&path)?.tools {
+                if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
+                    continue;
+                }
+                require_provider(&selected_tool)?;
+                if seen.insert(("project", selected_tool.clone(), path.clone())) {
+                    selected.push(SelectedRuntime {
+                        scope: "project",
+                        config: path.clone(),
+                        tool: selected_tool,
+                        version,
+                    });
+                }
             }
         }
     }

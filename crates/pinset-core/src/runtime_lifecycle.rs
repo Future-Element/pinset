@@ -151,16 +151,17 @@ pub fn find_tool_version_references(
         }
     }
     let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)?
-        && config
+    if let Some(config) = load_optional_global_config(&path)? {
+        if config
             .tools
             .get(tool)
             .is_some_and(|selected| selected == version)
-    {
-        references.push(ToolVersionReference {
-            scope: "global",
-            path,
-        });
+        {
+            references.push(ToolVersionReference {
+                scope: "global",
+                path,
+            });
+        }
     }
     Ok(references)
 }
@@ -194,16 +195,17 @@ pub fn find_tool_version_references_in_projects(
         }
     }
     let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)?
-        && config
+    if let Some(config) = load_optional_global_config(&path)? {
+        if config
             .tools
             .get(tool)
             .is_some_and(|selected| selected == version)
-    {
-        references.push(ToolVersionReference {
-            scope: "global",
-            path,
-        });
+        {
+            references.push(ToolVersionReference {
+                scope: "global",
+                path,
+            });
+        }
     }
     Ok(references)
 }
