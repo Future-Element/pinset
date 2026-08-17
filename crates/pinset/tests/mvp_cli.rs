@@ -326,7 +326,7 @@ fn doctor_reports_all_provider_commands_and_path_shadowing() {
         .collect()
     );
     assert!(
-        report["routing_issues"]
+        report["data"]["routing_issues"]
             .as_array()
             .expect("routing issues")
             .iter()
