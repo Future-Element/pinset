@@ -190,6 +190,20 @@ impl Catalog {
                 "错误：安装目录 {} 缺少匹配收据或不是 Pinset 可安全删除的目录，已停止卸载",
                 path.display()
             ),
+            Error::ToolVersionNotInstalled { tool, version } => {
+                format!("错误：Pinset 未安装 {tool}@{version}")
+            }
+            Error::ToolVersionInUse {
+                tool,
+                version,
+                references,
+            } => format!(
+                "错误：{tool}@{version} 仍被以下配置引用，拒绝卸载：{references}；确认接受配置失效后可使用 --force"
+            ),
+            Error::UnsafeToolInstallEntry { tool, path } => format!(
+                "错误：{tool} 安装目录 {} 缺少匹配收据或不是 Pinset 可安全删除的目录，已停止操作",
+                path.display()
+            ),
             Error::UnsafeDownloadCacheEntry { path } => {
                 format!(
                     "错误：下载缓存项 {} 不是普通文件，已拒绝操作",
@@ -231,7 +245,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init       Create project configuration\n  global     Show or set the global default\n  use        Select and lock a project version\n  unset      Clear a project or global selection\n  install    Install a locked or explicit version\n  uninstall  Safely uninstall an exact version\n  current    Show the effective selection\n  list       List installed or available versions\n  cache      Inspect or clean the download cache\n  which      Show the resolved command path\n  exec       Run with the selected version\n  doctor     Diagnose configuration and PATH\n  venv       Manage the project Python environment\n  shim       Repair or migrate command shims\n  activate   Enable provider command routing in a shell\n  source     Manage download sources\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -258,19 +272,25 @@ impl Catalog {
                 "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
             }
             Some("which") => {
-                "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>]"
+                "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>] [--json]"
             }
             Some("current") => {
-                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--cwd <目录>]"
+                "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--cwd <目录>] [--json]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本。\n\n用法：pinset list <node|pnpm|bun|go|python|flutter|java|rust|dotnet> [--available]"
+                "列出本机已安装或官方可用的运行时版本；不传 Provider 时列出全部受管版本。\n\n用法：pinset list [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--available] [--json]"
+            }
+            Some("outdated") => {
+                "检查当前项目与全局选择是否落后于最新稳定版本。\n\n用法：pinset outdated [工具] [--global|--cwd <目录>] [--json]"
             }
             Some("uninstall") => {
-                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<精确版本> [--cwd <目录>] [--force]"
+                "卸载 Pinset 管理的精确运行时版本。\n\n用法：pinset uninstall <工具>@<精确版本> [--cwd <目录>] [--force] [--dry-run] [--json]"
+            }
+            Some("prune") => {
+                "清理未被全局、当前项目或显式附加项目选择引用的受管版本。\n\n用法：pinset prune [--cwd <目录>] [--project <目录>...] [--dry-run] [--json]"
             }
             Some("cache") => {
-                "查看、清理或离线导入已验证的运行时下载缓存。\n\n用法：pinset cache <list|clean|import>"
+                "统计、验证、修复、清理或离线导入运行时下载缓存。\n\n用法：pinset cache <list|info|verify|repair|clean|import> [参数...]"
             }
             Some("exec") => {
                 "使用当前选择或一次性运行时版本执行命令。\n\n用法：pinset exec [--cwd <目录>] [<工具>@<版本选择器>] -- <命令> [参数...]"
@@ -287,11 +307,14 @@ impl Catalog {
             Some("activate") => {
                 "输出启用 Pinset Provider 命令路由的 Shell 脚本。\n\n用法：pinset activate <bash|zsh|fish|powershell>"
             }
+            Some("completions") => {
+                "生成 Pinset 的 Shell 命令补全脚本。\n\n用法：pinset completions <bash|zsh|fish|powershell>"
+            }
             Some("source") => {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init       创建项目配置\n  global     查看或设置全局默认版本\n  use        选择并锁定项目版本\n  unset      清除项目或全局选择\n  install    安装锁定或指定版本\n  uninstall  安全卸载精确版本\n  current    显示当前生效选择\n  list       列出已安装或可用版本\n  cache      查看或清理下载缓存\n  which      显示实际命令路径\n  exec       使用当前选择执行命令\n  doctor     诊断配置与 PATH\n  venv       管理项目 Python 虚拟环境\n  shim       管理和迁移命令 shim\n  activate   为当前 Shell 启用命令路由\n  source     管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init         创建项目配置\n  global       查看或设置全局默认版本\n  use          选择并锁定项目版本\n  unset        清除项目或全局选择\n  install      安装锁定或指定版本\n  uninstall    安全卸载精确版本\n  prune        清理未引用的受管版本\n  outdated     检查已选版本更新\n  current      显示当前生效选择\n  list         列出已安装或可用版本\n  cache        统计、验证或清理下载缓存\n  which        显示实际命令路径\n  exec         使用当前选择执行命令\n  doctor       诊断配置与 PATH\n  venv         管理项目 Python 虚拟环境\n  shim         管理和迁移命令 shim\n  activate     为当前 Shell 启用命令路由\n  completions  生成 Shell 命令补全\n  source       管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }

@@ -1,5 +1,21 @@
 # Pinset Release Notes
 
+## v0.9.0
+
+- 发布日期：`2026-08-17`；
+- GitHub Release：[v0.9.0](https://github.com/Future-Element/pinset/releases/tag/v0.9.0)
+- 阶段：运行时生命周期管理；
+- `pinset list` 可一次列出全部 Provider 的已安装版本，`list`、`current` 与 `which` 增加稳定 JSON 输出；
+- 新增 `pinset outdated`，分别检查当前项目和全局选择的最新稳定版本；
+- `pinset uninstall` 增加 `--dry-run` 与 `--json`；新增 `pinset prune` 清理未被全局、当前项目或显式附加项目引用的受管版本；
+- pnpm/Bun 精确版本卸载改为本地 SemVer 与支持窗口校验，不再为删除或预览本地安装访问 npm registry；
+- 新增 `pinset cache info|verify|repair`，并为 `cache clean` 和 `cache repair` 增加安全预览；
+- 新增 Bash、Zsh、Fish 与 PowerShell 命令补全输出，覆盖 Provider、嵌套子命令和常用参数；
+- 修复 `current rust` 这类 Provider 名称与首个命令名称不同的查询；
+- Release Quality 使用无网络的安装收据、假命令与缓存夹具统一验证全部 Provider 的生命周期契约；发布后隔离虚拟机脚本增加 JSON 列表、更新检查、卸载/清理预览、缓存统计和补全验收；
+- 继续保持普通 CI 只构建和打包 Pinset，真实大型运行时仅在发布后隔离虚拟机验收；
+- 1.0 之前不开发配置或锁文件迁移框架，也不承诺跨预发布版本迁移。
+
 ## v0.8.0
 
 - 发布日期：`2026-08-14`；

@@ -100,8 +100,10 @@ pub use dotnet_provider::{
 pub use dotnet_runtime::install_locked_dotnet;
 #[cfg(feature = "installer")]
 pub use download_cache::{
-    DownloadCacheCleanOutcome, DownloadCacheEntry, clean_download_cache, download_cache_path,
+    DownloadCacheCleanOutcome, DownloadCacheEntry, DownloadCacheInfo, DownloadCacheVerification,
+    DownloadCacheVerificationEntry, clean_download_cache, download_cache_info, download_cache_path,
     import_download_cache, import_download_cache_with_integrity, list_download_cache,
+    repair_download_cache, verify_download_cache,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "flutter-metadata")]
@@ -173,6 +175,7 @@ pub use node_runtime::{install_locked_node, node_command_directory};
 #[cfg(feature = "npm-metadata")]
 pub use npm_metadata::{
     BUN_TARGETS, NpmMetadataClient, NpmToolRelease, NpmToolTarget, PNPM_TARGETS, tool_targets,
+    validate_exact_npm_tool_version,
 };
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 pub use npm_runtime::install_locked_npm_tool;
@@ -204,8 +207,11 @@ pub use resolver::{
     validate_managed_runtime_invocation,
 };
 pub use runtime_lifecycle::{
-    InstalledToolVersion, ToolVersionReference, UninstallToolOutcome, find_tool_version_references,
-    list_installed_tool_versions, uninstall_tool_version,
+    InstalledToolVersion, ProtectedToolVersion, PruneToolCandidate, PruneToolPlan,
+    ToolVersionReference, UninstallToolOutcome, find_tool_version_references,
+    find_tool_version_references_in_projects, list_all_installed_tool_versions,
+    list_installed_tool_versions, plan_prune_tool_versions, plan_uninstall_tool_version,
+    uninstall_tool_version,
 };
 pub use runtime_provider::{
     RuntimeCommandLayout, RuntimeEnvironmentKind, RuntimeInstallKind, RuntimeMetadataKind,

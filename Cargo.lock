@@ -1181,12 +1181,14 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinset-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "clap",
+ "hex",
  "pinset-core",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "terminal_size",
  "toml",
@@ -1195,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -1220,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-shim"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "pinset-core",
  "tempfile",

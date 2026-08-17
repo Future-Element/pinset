@@ -1,14 +1,16 @@
 # Pinset PRD
 
-文档版本：`v0.8.0`
-产品阶段：`Microsoft .NET SDK Provider released`
-更新时间：`2026-08-14`
+文档版本：`v0.9.0`
+产品阶段：`runtime lifecycle management released`
+更新时间：`2026-08-17`
 
 ## 1. 产品简介
 
 Pinset 是一个本地优先、跨平台、完全独立的运行时版本管理 CLI。它只读取自己的配置和锁文件，用一致的命令完成版本选择、锁定、安装、执行、镜像、缓存和诊断。
 
 `v0.8.0` 在现有 Node.js、pnpm、Bun、Go、Flutter、CPython、Eclipse Temurin JDK 和 Rust stable Provider 基础上新增 Microsoft .NET SDK Provider。Pinset 直接使用官方 release metadata 锁定受支持 GA 通道的四平台 SDK 与 SHA-512，不依赖或接管其他 .NET SDK 管理器。
+
+`v0.9.0` 不新增语言，而是补齐所有 Provider 的安装生命周期：跨 Provider 已安装列表、更新检查、卸载预览、未引用版本清理、缓存空间统计、内容校验、受损缓存修复和机器可读输出。
 
 ### 1.1 目标
 
@@ -294,11 +296,16 @@ pinset exec node@20.19.0 -- node --version
 ### 5.8 版本列表
 
 ```shell
+pinset list
 pinset list node
 pinset list node --available
+pinset list --json
+pinset outdated
 ```
 
-本地列表读取安装收据，可用版本列表读取可信版本索引。损坏或缺少收据的目录不会显示为 Pinset 安装。
+本地列表读取安装收据；不传 Provider 时列出全部受管运行时。可用版本列表读取可信版本索引。损坏或缺少收据的目录不会显示为 Pinset 安装。
+
+`outdated` 分别检查当前项目和全局精确选择是否落后于最新稳定版本，只读取官方元数据，不下载归档或修改配置。可使用 Provider 参数、`--global`、`--cwd` 和 `--json` 限制范围或生成机器可读结果。
 
 ### 5.9 安装事务
 
@@ -340,6 +347,10 @@ ZIP/TAR.XZ/TAR.GZ 必须拒绝路径穿越、绝对路径、特殊文件、逃�
 
 ```shell
 pinset cache import <archive> --sha256 <hash>
+pinset cache info
+pinset cache verify
+pinset cache repair --dry-run
+pinset cache clean --dry-run
 ```
 
 要求：
@@ -350,11 +361,18 @@ pinset cache import <archive> --sha256 <hash>
 - 不匹配时不写缓存；
 - 使用临时文件和 no-clobber 原子提交；
 - 并发提交已存在相同哈希时重新验证；
+- `cache info` 分别统计完整归档和断点文件；
+- `cache verify` 重新计算完整归档摘要，发现受损项时返回非零状态；
+- `cache repair` 只删除内容与缓存身份不匹配的完整归档，不删除有效归档或断点文件；
 - `cache clean` 同时清理识别的完整归档与断点文件，保留未知项。
 
 ### 5.13 卸载
 
-单版本卸载只接受精确版本并验证 Pinset 收据。项目或全局仍引用时默认拒绝；`--force` 只允许引用暂时失效，不能跳过路径和所有权保护。
+单版本卸载只接受精确版本并验证 Pinset 收据。项目或全局仍引用时默认拒绝；`--force` 只允许引用暂时失效，不能跳过路径和所有权保护。`--dry-run` 只输出计划，`--json` 提供稳定结果。
+
+`pinset prune` 只清理未被全局、当前项目或 `--project <目录>` 显式附加项目选择引用的版本，并支持 `--dry-run` 与 `--json`。Pinset 不扫描整台磁盘寻找项目，因此用户需要显式提供其他需要保护的项目目录；附加路径必须存在且能找到 `pinset.toml`，路径错误时停止清理。清理继续执行收据、目录类型和所有权验证，未知或不完整安装保持不变。
+
+`pinset completions bash|zsh|fish|powershell` 输出可直接加载的轻量补全脚本，覆盖顶层命令、全部 Provider、选择表达式前缀、嵌套子命令和常用参数；补全不读取网络或修改 shell profile。
 
 完整卸载脚本：
 
@@ -565,7 +583,7 @@ GitHub Actions 的每个支持平台必须：
 稳定版前计划完成：
 
 - 验证 Node 上游 SHASUMS OpenPGP 签名，并定义密钥轮换策略；
-- 冻结 schema 1 读取兼容、schema 2 写入承诺和迁移策略；
+- 在 1.0 发布时冻结配置、锁文件与 CLI 协议；1.0 之前不开发迁移框架；
 - 完成 Beta 用户在代理、镜像和离线场景的反馈修复；
 - 决定 Linux arm64 与 macOS Intel 正式归档策略；
 - 完成发布回滚、撤回和安全公告流程；

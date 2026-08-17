@@ -422,6 +422,20 @@ pub fn tool_targets(tool: &str) -> Result<&'static [NpmToolTarget]> {
     }
 }
 
+pub fn validate_exact_npm_tool_version(tool: &str, version: &str) -> Result<()> {
+    let parsed = Version::parse(version).map_err(|_| Error::InvalidNpmToolSelector {
+        tool: tool.to_owned(),
+        selector: version.to_owned(),
+    })?;
+    if !parsed.pre.is_empty() || !parsed.build.is_empty() || !supported_version(tool, &parsed) {
+        return Err(Error::InvalidNpmToolSelector {
+            tool: tool.to_owned(),
+            selector: version.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn wrapper_package(tool: &str) -> Result<&'static str> {
     match tool {
         "pnpm" => Ok("@pnpm/exe"),
@@ -534,6 +548,21 @@ mod tests {
         assert!(!supported_version("pnpm", &Version::new(12, 0, 0)));
         assert!(supported_version("bun", &Version::new(1, 3, 0)));
         assert!(!supported_version("bun", &Version::new(2, 0, 0)));
+    }
+
+    #[test]
+    fn validates_exact_supported_versions_without_registry_metadata() {
+        assert!(validate_exact_npm_tool_version("pnpm", "10.34.5").is_ok());
+        assert!(validate_exact_npm_tool_version("pnpm", "11.21.0").is_ok());
+        assert!(validate_exact_npm_tool_version("bun", "1.3.14").is_ok());
+        for (tool, version) in [
+            ("pnpm", "10"),
+            ("pnpm", "12.0.0"),
+            ("bun", "1.3.14-beta.1"),
+            ("bun", "1.3.14+build"),
+        ] {
+            assert!(validate_exact_npm_tool_version(tool, version).is_err());
+        }
     }
 
     #[test]
