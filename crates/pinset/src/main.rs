@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{self, Command},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -371,30 +371,323 @@ enum SourceCommands {
     },
 }
 
-fn main() -> ExitCode {
+impl Cli {
+    fn json_command(&self) -> Option<&'static str> {
+        self.command.as_ref()?.json_command()
+    }
+}
+
+impl Commands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Which { json: true, .. } => Some("which"),
+            Self::Current { json: true, .. } => Some("current"),
+            Self::List { json: true, .. } => Some("list"),
+            Self::Outdated { json: true, .. } => Some("outdated"),
+            Self::Uninstall { json: true, .. } => Some("uninstall"),
+            Self::Prune { json: true, .. } => Some("prune"),
+            Self::Doctor { json: true, .. } => Some("doctor"),
+            Self::Cache { command } => command.json_command(),
+            _ => None,
+        }
+    }
+}
+
+impl CacheCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::List { json: true } => Some("cache.list"),
+            Self::Info { json: true } => Some("cache.info"),
+            Self::Verify { json: true } => Some("cache.verify"),
+            Self::Repair { json: true, .. } => Some("cache.repair"),
+            Self::Clean { json: true, .. } => Some("cache.clean"),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonSuccess<T> {
+    schema: u32,
+    command: &'static str,
+    ok: bool,
+    data: T,
+}
+
+#[derive(Serialize)]
+struct JsonFailure<'a> {
+    schema: u32,
+    command: &'a str,
+    ok: bool,
+    error: JsonErrorBody<'a>,
+}
+
+#[derive(Serialize)]
+struct JsonErrorBody<'a> {
+    code: &'static str,
+    message: &'a str,
+    details: serde_json::Value,
+}
+
+fn print_json_success<T: Serialize>(
+    command: &'static str,
+    data: T,
+) -> Result<(), serde_json::Error> {
+    // INVARIANT: schema, command, ok, and data are the v1 automation boundary. Human messages
+    // remain localized outside this envelope and may evolve independently.
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&JsonSuccess {
+            schema: 1,
+            command,
+            ok: true,
+            data,
+        })?
+    );
+    Ok(())
+}
+
+fn print_json_failure(
+    command: &str,
+    code: &'static str,
+    message: &str,
+    details: serde_json::Value,
+) {
+    let output = serde_json::to_string_pretty(&JsonFailure {
+        schema: 1,
+        command,
+        ok: false,
+        error: JsonErrorBody {
+            code,
+            message,
+            details,
+        },
+    })
+    .expect("the fixed JSON error envelope is serializable");
+    println!("{output}");
+}
+
+fn requested_json_command(arguments: &[OsString]) -> Option<String> {
+    if !arguments.iter().any(|value| value == "--json") {
+        return None;
+    }
+    let values = arguments
+        .iter()
+        .skip(1)
+        .map(|value| value.to_string_lossy())
+        .collect::<Vec<_>>();
+    let top_level = values.iter().position(|value| {
+        matches!(
+            value.as_ref(),
+            "which" | "current" | "list" | "outdated" | "uninstall" | "prune" | "doctor" | "cache"
+        )
+    });
+    let Some(index) = top_level else {
+        return Some("pinset".to_owned());
+    };
+    if values[index] != "cache" {
+        return Some(values[index].as_ref().to_owned());
+    }
+    let subcommand = values[index + 1..].iter().find(|value| {
+        matches!(value.as_ref(), "list" | "info" | "verify" | "repair" | "clean")
+    });
+    Some(match subcommand {
+        Some(subcommand) => format!("cache.{subcommand}"),
+        None => "cache".to_owned(),
+    })
+}
+
+fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde_json::Value) {
+    let Some(error) = error.downcast_ref::<Error>() else {
+        return ("internal_error", serde_json::json!({}));
+    };
+    let code = match error {
+        Error::UnsupportedSourceProvider { .. }
+        | Error::UnsupportedRuntimeProvider { .. }
+        | Error::UnsupportedNodeTarget { .. }
+        | Error::UnsupportedGoTarget { .. }
+        | Error::UnsupportedFlutterTarget { .. }
+        | Error::UnsupportedPythonTarget { .. }
+        | Error::UnsupportedJavaTarget { .. }
+        | Error::UnsupportedRustTarget { .. }
+        | Error::UnsupportedDotnetTarget { .. } => "unsupported_provider",
+        Error::InvalidNodeSelector { .. }
+        | Error::InvalidGoSelector { .. }
+        | Error::InvalidFlutterSelector { .. }
+        | Error::InvalidPythonSelector { .. }
+        | Error::InvalidJavaSelector { .. }
+        | Error::InvalidRustSelector { .. }
+        | Error::InvalidDotnetSelector { .. }
+        | Error::InvalidNpmToolSelector { .. }
+        | Error::InvalidNodeVersion { .. }
+        | Error::InvalidGoVersion { .. }
+        | Error::InvalidFlutterVersion { .. }
+        | Error::InvalidPythonVersion { .. }
+        | Error::InvalidJavaVersion { .. }
+        | Error::InvalidRustVersion { .. }
+        | Error::InvalidDotnetVersion { .. }
+        | Error::InvalidToolVersion { .. } => "invalid_selector",
+        Error::NodeSelectorNotFound { .. }
+        | Error::GoSelectorNotFound { .. }
+        | Error::FlutterSelectorNotFound { .. }
+        | Error::PythonSelectorNotFound { .. }
+        | Error::JavaSelectorNotFound { .. }
+        | Error::RustSelectorNotFound { .. }
+        | Error::DotnetSelectorNotFound { .. }
+        | Error::NpmToolSelectorNotFound { .. }
+        | Error::ToolSelectionNotFound { .. }
+        | Error::CommandSelectionNotFound { .. }
+        | Error::ToolNotConfigured { .. }
+        | Error::LockedToolMissing { .. }
+        | Error::LockedArtifactMissing { .. } => "selection_missing",
+        Error::ReadProjectConfig { .. }
+        | Error::ParseProjectConfig { .. }
+        | Error::UnsupportedSchema { .. }
+        | Error::GlobalConfigNotFound { .. }
+        | Error::ReadGlobalConfig { .. }
+        | Error::ParseGlobalConfig { .. }
+        | Error::UnsupportedGlobalConfigSchema { .. }
+        | Error::ReadSourceConfig { .. }
+        | Error::ParseSourceConfig { .. }
+        | Error::UnsupportedSourceSchema { .. }
+        | Error::ReadUserSettings { .. }
+        | Error::ParseUserSettings { .. }
+        | Error::UnsupportedUserSettingsSchema { .. } => "config_error",
+        Error::ReadLockfile { .. }
+        | Error::ParseLockfile { .. }
+        | Error::UnsupportedLockfileSchema { .. }
+        | Error::InvalidLockfile { .. }
+        | Error::LockfileMismatch { .. } => "lockfile_error",
+        Error::RuntimeCommandNotFound { .. }
+        | Error::RuntimeCommandDirectoryMissing { .. }
+        | Error::NodeVersionNotInstalled { .. }
+        | Error::ToolVersionNotInstalled { .. }
+        | Error::PythonEnvironmentMissing { .. }
+        | Error::PythonEnvironmentSelectionMissing { .. } => "runtime_missing",
+        Error::NodeMetadataRequest { .. }
+        | Error::NodeMetadataRead { .. }
+        | Error::GoMetadataRequest { .. }
+        | Error::GoMetadataRead { .. }
+        | Error::FlutterMetadataRequest { .. }
+        | Error::FlutterMetadataRead { .. }
+        | Error::PythonMetadataRequest { .. }
+        | Error::PythonMetadataRead { .. }
+        | Error::JavaMetadataRequest { .. }
+        | Error::JavaMetadataRead { .. }
+        | Error::RustMetadataRequest { .. }
+        | Error::RustMetadataRead { .. }
+        | Error::DotnetMetadataRequest { .. }
+        | Error::DotnetMetadataRead { .. }
+        | Error::NpmMetadataRequest { .. }
+        | Error::NpmMetadataRead { .. }
+        | Error::HttpClient { .. } => "metadata_request_failed",
+        Error::NodeMetadataTooLarge { .. }
+        | Error::NodeIndexTooLarge { .. }
+        | Error::InvalidNodeIndex { .. }
+        | Error::InvalidNodeShasums { .. }
+        | Error::NodeChecksumMissing { .. }
+        | Error::GoMetadataTooLarge { .. }
+        | Error::InvalidGoIndex { .. }
+        | Error::FlutterMetadataTooLarge { .. }
+        | Error::InvalidFlutterIndex { .. }
+        | Error::PythonMetadataTooLarge { .. }
+        | Error::InvalidPythonIndex { .. }
+        | Error::JavaMetadataTooLarge { .. }
+        | Error::InvalidJavaIndex { .. }
+        | Error::RustMetadataTooLarge { .. }
+        | Error::InvalidRustIndex { .. }
+        | Error::DotnetMetadataTooLarge { .. }
+        | Error::InvalidDotnetIndex { .. }
+        | Error::NpmMetadataTooLarge { .. }
+        | Error::InvalidNpmMetadata { .. } => "metadata_invalid",
+        Error::NodeSignatureInvalid { .. }
+        | Error::NodeTrustStoreInvalid { .. }
+        | Error::NpmSignatureVerification { .. } => "signature_invalid",
+        Error::NodeSignerUntrusted { .. } => "signature_untrusted",
+        Error::InvalidSha256 { .. }
+        | Error::InvalidArtifactIntegrity { .. }
+        | Error::ChecksumMismatch { .. } => "artifact_integrity_failed",
+        Error::NodeVersionInUse { .. }
+        | Error::ToolVersionInUse { .. }
+        | Error::SourceInUse { .. } => "in_use",
+        Error::UnsafeNodeInstallEntry { .. }
+        | Error::UnsafeToolInstallEntry { .. }
+        | Error::UnsafeDownloadCacheEntry { .. }
+        | Error::UnsafeArchiveEntry { .. }
+        | Error::InvalidRequiredPath { .. }
+        | Error::InvalidShimSource { .. }
+        | Error::PythonEnvironmentNotOwned { .. }
+        | Error::InvalidPythonEnvironmentMarker { .. } => "unsafe_path",
+        Error::DownloadCacheCorrupt { .. } => "cache_corrupt",
+        Error::DownloadRequest { .. }
+        | Error::DownloadRead { .. }
+        | Error::DownloadTooLarge { .. }
+        | Error::ArtifactSourcesExhausted { .. }
+        | Error::RequiredPathMissing { .. }
+        | Error::InstallAlreadyExists { .. }
+        | Error::OpenZip { .. }
+        | Error::ReadZipEntry { .. }
+        | Error::ReadTarArchive { .. }
+        | Error::DuplicateArchiveEntry { .. }
+        | Error::TooManyArchiveEntries { .. }
+        | Error::ArchiveTooLarge { .. }
+        | Error::ExtractArchiveEntry { .. }
+        | Error::CommitInstall { .. } => "install_failed",
+        Error::UnsupportedCommand { .. } => "usage_error",
+        _ => "io_error",
+    };
+    let details = match error {
+        Error::UnsupportedRuntimeProvider { provider }
+        | Error::UnsupportedSourceProvider { provider } => {
+            serde_json::json!({ "provider": provider })
+        }
+        Error::NodeSignerUntrusted { signer } => serde_json::json!({ "signer": signer }),
+        Error::DownloadCacheCorrupt { entries } => serde_json::json!({ "entries": entries }),
+        Error::UnsupportedCommand { command } => serde_json::json!({ "command": command }),
+        _ => serde_json::json!({}),
+    };
+    (code, details)
+}
+
+fn main() {
+    process::exit(main_exit_code());
+}
+
+fn main_exit_code() -> i32 {
     let arguments = env::args_os().collect::<Vec<_>>();
+    let raw_json_command = requested_json_command(&arguments);
     let requested_language = match language_from_arguments(&arguments)
         .and_then(|language| language.map_or_else(language_from_env, |language| Ok(Some(language))))
     {
         Ok(language) => language,
         Err(error) => {
-            eprintln!("{}", Catalog::new(Language::default()).error(error));
-            return ExitCode::from(2);
+            let message = Catalog::new(Language::default()).error(error);
+            if let Some(command) = &raw_json_command {
+                print_json_failure(command, "usage_error", &message, serde_json::json!({}));
+            } else {
+                eprintln!("{message}");
+            }
+            return 2;
         }
     };
     let language = match resolve_language(requested_language) {
         Ok(language) => language,
         Err(error) => {
             let catalog = Catalog::new(requested_language.unwrap_or_default());
-            eprintln!("{}", catalog.error(error));
-            return ExitCode::from(2);
+            let message = catalog.error(error);
+            if let Some(command) = &raw_json_command {
+                print_json_failure(command, "usage_error", &message, serde_json::json!({}));
+            } else {
+                eprintln!("{message}");
+            }
+            return 2;
         }
     };
     let catalog = Catalog::new(language);
     let help_command = requested_help_command(&arguments);
     if language == Language::SimplifiedChinese && help_command.is_some() {
         println!("{}", catalog.command_help(help_command.flatten()));
-        return ExitCode::SUCCESS;
+        return 0;
     }
     let cli = match Cli::try_parse_from(&arguments) {
         Ok(cli) => cli,
@@ -405,7 +698,24 @@ fn main() -> ExitCode {
             ) =>
         {
             print!("{error}");
-            return ExitCode::SUCCESS;
+            return 0;
+        }
+        Err(error) if raw_json_command.is_some() => {
+            let command = raw_json_command.as_deref().expect("checked");
+            let message = if language == Language::SimplifiedChinese {
+                let kind = match error.kind() {
+                    ErrorKind::MissingRequiredArgument => "missing",
+                    ErrorKind::UnknownArgument | ErrorKind::InvalidSubcommand => "unknown",
+                    ErrorKind::InvalidValue | ErrorKind::ValueValidation => "invalid",
+                    ErrorKind::ArgumentConflict => "conflict",
+                    _ => "other",
+                };
+                catalog.argument_error(kind).to_owned()
+            } else {
+                error.to_string()
+            };
+            print_json_failure(command, "usage_error", &message, serde_json::json!({}));
+            return 2;
         }
         Err(error) if language == Language::SimplifiedChinese => {
             let kind = match error.kind() {
@@ -420,23 +730,30 @@ fn main() -> ExitCode {
                 "\n{}",
                 catalog.command_help(command_from_arguments(&arguments))
             );
-            return ExitCode::from(2);
+            return 2;
         }
         Err(error) => {
             let _ = error.print();
-            return ExitCode::from(2);
+            return 2;
         }
     };
+    let json_command = cli.json_command();
     match run(cli, catalog) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("{}", catalog.command_error(error.as_ref()));
-            ExitCode::from(2)
+            let message = catalog.command_error(error.as_ref());
+            if let Some(command) = json_command {
+                let (code, details) = json_error(error.as_ref());
+                print_json_failure(command, code, &message, details);
+            } else {
+                eprintln!("{message}");
+            }
+            2
         }
     }
 }
 
-fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error>> {
+fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     let Some(command) = cli.command else {
         if let Some(language) = cli.lang {
             let home = pinset_home()?;
@@ -448,7 +765,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         } else {
             println!("{}", catalog.top_level_help());
         }
-        return Ok(ExitCode::SUCCESS);
+        return Ok(0);
     };
 
     match command {
@@ -499,17 +816,17 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             let cwd = effective_cwd(cwd)?;
             let resolution = resolve_command(&command, &cwd, &pinset_home()?)?;
             if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&WhichReport {
+                print_json_success(
+                    "which",
+                    WhichReport {
                         command,
                         tool: resolution.tool,
                         version: resolution.version,
                         source: resolution.source.as_str(),
                         executable: resolution.executable,
                         config: resolution.selection_path,
-                    })?
-                );
+                    },
+                )?;
             } else {
                 println!("{}", resolution.executable.display());
             }
@@ -518,10 +835,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
             let cwd = effective_cwd(cwd)?;
             let tool = tool.as_deref().unwrap_or("node");
             if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&current_report(&cwd, tool)?)?
-                );
+                print_json_success("current", current_report(&cwd, tool)?)?;
             } else {
                 print_current(&cwd, tool, catalog)?;
             }
@@ -558,7 +872,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         Commands::Doctor { cwd, json } => {
             let cwd = effective_cwd(cwd)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&doctor_report(&cwd)?)?);
+                print_json_success("doctor", doctor_report(&cwd)?)?;
             } else {
                 run_doctor(&cwd, catalog)?;
             }
@@ -619,7 +933,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<ExitCode, Box<dyn std::error::Error
         Commands::Source { command } => run_source_command(command, catalog)?,
     }
 
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
 #[derive(Debug, Serialize)]
@@ -759,7 +1073,7 @@ fn run_list(
         require_provider(tool)?;
         let releases = available_version_reports(tool)?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&releases)?);
+            print_json_success("list", serde_json::json!({ "versions": releases }))?;
         } else {
             for release in releases {
                 if release.tool == "node" {
@@ -800,7 +1114,7 @@ fn run_list(
         list_all_installed_tool_versions(&pinset_home()?)?
     };
     if json {
-        println!("{}", serde_json::to_string_pretty(&installed)?);
+        print_json_success("list", serde_json::json!({ "versions": installed }))?;
     } else if installed.is_empty() {
         if tool == Some("node") {
             println!("{}", catalog.no_installed_node());
@@ -972,7 +1286,7 @@ fn run_outdated(
         });
     }
     if json {
-        println!("{}", serde_json::to_string_pretty(&reports)?);
+        print_json_success("outdated", serde_json::json!({ "runtimes": reports }))?;
     } else {
         let mut count = 0;
         for report in reports.iter().filter(|report| report.outdated) {
@@ -1002,19 +1316,21 @@ fn selected_runtimes_for_outdated(
 ) -> Result<Vec<SelectedRuntime>, Box<dyn std::error::Error>> {
     let mut selected = Vec::new();
     let mut seen = BTreeSet::new();
-    if !global_only && let Some(path) = find_optional_project_config(cwd)? {
-        for (selected_tool, version) in load_project_config(&path)?.tools {
-            if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
-                continue;
-            }
-            require_provider(&selected_tool)?;
-            if seen.insert(("project", selected_tool.clone(), path.clone())) {
-                selected.push(SelectedRuntime {
-                    scope: "project",
-                    config: path.clone(),
-                    tool: selected_tool,
-                    version,
-                });
+    if !global_only {
+        if let Some(path) = find_optional_project_config(cwd)? {
+            for (selected_tool, version) in load_project_config(&path)?.tools {
+                if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
+                    continue;
+                }
+                require_provider(&selected_tool)?;
+                if seen.insert(("project", selected_tool.clone(), path.clone())) {
+                    selected.push(SelectedRuntime {
+                        scope: "project",
+                        config: path.clone(),
+                        tool: selected_tool,
+                        version,
+                    });
+                }
             }
         }
     }
@@ -1067,7 +1383,7 @@ fn run_uninstall(
             targets: uninstall.targets,
         };
         if json {
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            print_json_success("uninstall", report)?;
         } else {
             println!(
                 "would uninstall {}@{} [{}]",
@@ -1091,7 +1407,7 @@ fn run_uninstall(
         targets,
     };
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        print_json_success("uninstall", report)?;
     } else if report.tool == "node" {
         println!(
             "{}",
@@ -1154,7 +1470,7 @@ fn run_prune(
         removed,
     };
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        print_json_success("prune", report)?;
     } else if report.candidates.is_empty() {
         println!("no unused Pinset-managed runtime versions found");
     } else {
@@ -1184,7 +1500,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
         CacheCommands::List { json } => {
             let entries = list_download_cache(&home)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                print_json_success("cache.list", serde_json::json!({ "entries": entries }))?;
             } else if entries.is_empty() {
                 println!("{}", catalog.cache_empty());
             } else {
@@ -1199,7 +1515,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
         CacheCommands::Info { json } => {
             let info = download_cache_info(&home)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&info)?);
+                print_json_success("cache.info", info)?;
             } else {
                 println!(
                     "archives={} archive_bytes={} partials={} partial_bytes={}",
@@ -1210,7 +1526,14 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
         CacheCommands::Verify { json } => {
             let verification = verify_download_cache(&home)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&verification)?);
+                if verification.corrupt > 0 {
+                    return Err(Error::DownloadCacheCorrupt {
+                        entries: verification.corrupt,
+                    }
+                    .into());
+                }
+                print_json_success("cache.verify", verification)?;
+                return Ok(());
             } else {
                 for entry in &verification.entries {
                     println!(
@@ -1228,10 +1551,9 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 );
             }
             if verification.corrupt > 0 {
-                return Err(format!(
-                    "{} corrupt cache archive(s) found; run `pinset cache repair`",
-                    verification.corrupt
-                )
+                return Err(Error::DownloadCacheCorrupt {
+                    entries: verification.corrupt,
+                }
                 .into());
             }
         }
@@ -1255,14 +1577,14 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 repair_download_cache(&home)?
             };
             if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&CacheMutationReport {
+                print_json_success(
+                    "cache.repair",
+                    CacheMutationReport {
                         dry_run,
                         entries: outcome.entries,
                         bytes: outcome.bytes,
-                    })?
-                );
+                    },
+                )?;
             } else {
                 println!(
                     "{} {} corrupt cache archives ({})",
@@ -1283,14 +1605,14 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 clean_download_cache(&home)?
             };
             if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&CacheMutationReport {
+                print_json_success(
+                    "cache.clean",
+                    CacheMutationReport {
                         dry_run,
                         entries: outcome.entries,
                         bytes: outcome.bytes,
-                    })?
-                );
+                    },
+                )?;
             } else if dry_run {
                 println!(
                     "would clean {} cached archives ({})",
@@ -2383,7 +2705,7 @@ fn execute_selected(
     cwd: &Path,
     command: &[OsString],
     catalog: Catalog,
-) -> Result<ExitCode, Box<dyn std::error::Error>> {
+) -> Result<i32, Box<dyn std::error::Error>> {
     let (ephemeral_selection, mut command) = command
         .first()
         .and_then(|value| value.to_str())
@@ -2489,12 +2811,9 @@ fn execute_selected(
         child.env_remove("PINSET_CONFIG_PATH");
     }
     let status = child.status()?;
-    Ok(ExitCode::from(
-        status
-            .code()
-            .and_then(|code| u8::try_from(code).ok())
-            .unwrap_or(1),
-    ))
+    // INVARIANT: exec is transparent after launch. Keep the platform's full i32 exit value
+    // instead of narrowing it to Pinset's own small exit-code range.
+    Ok(status.code().unwrap_or(1))
 }
 
 fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
@@ -2528,7 +2847,6 @@ fn command_for_runtime(executable: &Path) -> Command {
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
-    schema: u32,
     cwd: String,
     pinset_home: String,
     project_config: DoctorItem,
@@ -2685,7 +3003,6 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
     }
     routing_issues.extend(java_environment_issues(cwd, &home));
     Ok(DoctorReport {
-        schema: 2,
         cwd: cwd.display().to_string(),
         pinset_home: home.display().to_string(),
         project_config,

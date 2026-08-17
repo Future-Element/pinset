@@ -1,3 +1,9 @@
+//! Runtime selection and executable resolution.
+//!
+//! INVARIANT: the nearest project selection wins, then the global selection, and the system PATH
+//! is considered only when neither Pinset scope selects the tool. Pinset shim locations and the
+//! currently executing shim are excluded from system fallback to prevent recursive routing.
+
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -117,6 +123,8 @@ pub fn resolve_command_with_path(
     let tool = command_tool(command).ok_or_else(|| Error::UnsupportedCommand {
         command: command.to_owned(),
     })?;
+    // A configured-but-broken project/global runtime is an error, not permission to bypass the
+    // lock through PATH. System fallback is reached only for ToolSelectionNotFound.
     let selection = match resolve_tool_selection(tool, cwd, pinset_home) {
         Ok(selection) => selection,
         Err(Error::ToolSelectionNotFound { .. }) => {

@@ -19,11 +19,12 @@ use crate::{
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
 pub const LOCKFILE_SCHEMA: u32 = 2;
-pub const MVP_NODE_TARGETS: [&str; 4] = [
+pub const MVP_NODE_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,7 +98,13 @@ impl LockedArtifactFormat {
 }
 
 impl Lockfile {
-    pub fn new_node(generated_by: String, version: String, artifacts: Vec<LockedArtifact>) -> Self {
+    pub fn new_node(
+        generated_by: String,
+        version: String,
+        signer_fingerprint: String,
+        manifest_source: String,
+        artifacts: Vec<LockedArtifact>,
+    ) -> Self {
         Self {
             schema: LOCKFILE_SCHEMA,
             generated_by,
@@ -106,7 +113,17 @@ impl Lockfile {
                 requested: version.clone(),
                 version,
                 provider: "nodejs-official".to_owned(),
-                metadata: BTreeMap::new(),
+                metadata: BTreeMap::from([
+                    (
+                        "signature_primary_fingerprint".to_owned(),
+                        signer_fingerprint,
+                    ),
+                    (
+                        "signed_manifest".to_owned(),
+                        "SHASUMS256.txt.asc".to_owned(),
+                    ),
+                    ("manifest_source".to_owned(), manifest_source),
+                ]),
                 artifacts,
             }],
         }
@@ -328,7 +345,8 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             ),
         });
     }
-    if tool.name != "flutter"
+    if tool.name != "node"
+        && tool.name != "flutter"
         && tool.name != "java"
         && tool.name != "python"
         && tool.name != "rust"
@@ -359,6 +377,7 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         }
     }
     if tool.name == "node" {
+        validate_node_metadata(tool)?;
         for target in MVP_NODE_TARGETS {
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
@@ -466,6 +485,36 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
     if tool.artifacts.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!("{} has no artifacts", tool.name),
+        });
+    }
+    Ok(())
+}
+
+fn validate_node_metadata(tool: &LockedTool) -> Result<()> {
+    let expected = [
+        "manifest_source",
+        "signature_primary_fingerprint",
+        "signed_manifest",
+    ];
+    let fingerprint = tool.metadata.get("signature_primary_fingerprint");
+    if tool.metadata.len() != expected.len()
+        || expected.iter().any(|key| !tool.metadata.contains_key(*key))
+        || tool.metadata.get("signed_manifest").map(String::as_str)
+            != Some("SHASUMS256.txt.asc")
+        || tool
+            .metadata
+            .get("manifest_source")
+            .is_none_or(|source| source.trim().is_empty())
+        || fingerprint.is_none_or(|value| {
+            value.len() != 40
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'A'..=b'F'))
+        })
+    {
+        return Err(Error::InvalidLockfile {
+            reason: "Node lock must contain the verified signed manifest and signer fingerprint; regenerate this pre-1.0 lock with `pinset use node@<selector>`"
+                .to_owned(),
         });
     }
     Ok(())
@@ -761,13 +810,16 @@ fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Re
             reason: format!("invalid SHA-256 for {}", artifact.target),
         });
     }
-    if artifact.verification != "nodejs-shasums-https"
+    if artifact.verification != "nodejs-openpgp-sha256"
         && !artifact
             .verification
-            .starts_with("nodejs-shasums-https-source:")
+            .starts_with("nodejs-openpgp-sha256-source:")
     {
         return Err(Error::InvalidLockfile {
-            reason: format!("unsupported verification for {}", artifact.target),
+            reason: format!(
+                "unsupported Node verification for {}; regenerate this pre-1.0 lock with `pinset use node@<selector>`",
+                artifact.target
+            ),
         });
     }
     if !artifact.overlays.is_empty() {
@@ -1051,6 +1103,7 @@ fn npm_tool_targets(tool: &str) -> &'static [(&'static str, &'static str)] {
         "pnpm" => &[
             ("windows-x86_64", "@pnpm/win-x64"),
             ("linux-x86_64", "@pnpm/linux-x64"),
+            ("linux-aarch64", "@pnpm/linux-arm64"),
             ("macos-aarch64", "@pnpm/macos-arm64"),
         ],
         "bun" => &[
@@ -1058,6 +1111,7 @@ fn npm_tool_targets(tool: &str) -> &'static [(&'static str, &'static str)] {
             ("windows-x86_64-baseline", "@oven/bun-windows-x64-baseline"),
             ("linux-x86_64-avx2", "@oven/bun-linux-x64"),
             ("linux-x86_64-baseline", "@oven/bun-linux-x64-baseline"),
+            ("linux-aarch64", "@oven/bun-linux-aarch64"),
             ("macos-aarch64", "@oven/bun-darwin-aarch64"),
         ],
         _ => &[],
@@ -1090,14 +1144,21 @@ mod tests {
         let lockfile = Lockfile::new_node(
             "pinset 0.1.0".to_owned(),
             "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
             artifacts.clone(),
         );
         save_lockfile(&path, &lockfile).expect("save lockfile");
         let first = fs::read(&path).expect("first lockfile");
 
         artifacts.rotate_left(1);
-        let reordered =
-            Lockfile::new_node("pinset 0.1.0".to_owned(), "24.0.0".to_owned(), artifacts);
+        let reordered = Lockfile::new_node(
+            "pinset 0.1.0".to_owned(),
+            "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
+            artifacts,
+        );
         save_lockfile(&path, &reordered).expect("save reordered lockfile");
         let second = fs::read(&path).expect("second lockfile");
 
@@ -1110,6 +1171,7 @@ mod tests {
                 .map(|artifact| artifact.target.as_str())
                 .collect::<Vec<_>>(),
             vec![
+                "linux-aarch64",
                 "linux-x86_64",
                 "macos-aarch64",
                 "macos-x86_64",
@@ -1137,11 +1199,47 @@ mod tests {
             .map(locked_artifact)
             .collect::<Vec<_>>();
         artifacts[0].canonical_url = "https://mirror.example/node.zip".to_owned();
-        let lockfile = Lockfile::new_node("pinset".to_owned(), "24.0.0".to_owned(), artifacts);
+        let lockfile = Lockfile::new_node(
+            "pinset".to_owned(),
+            "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
+            artifacts,
+        );
         assert!(matches!(
             save_lockfile(&path, &lockfile),
             Err(Error::InvalidLockfile { .. })
         ));
+    }
+
+    #[test]
+    fn pre_v1_node_verification_requires_an_explicit_relock() {
+        let artifacts = MVP_NODE_TARGETS
+            .into_iter()
+            .map(locked_artifact)
+            .collect::<Vec<_>>();
+        let mut missing_signature_metadata = Lockfile::new_node(
+            "pinset 0.9.0".to_owned(),
+            "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
+            artifacts.clone(),
+        );
+        missing_signature_metadata.tools[0].metadata.clear();
+        let error = validate_lockfile(&missing_signature_metadata).expect_err("legacy metadata");
+        assert!(error.to_string().contains("pinset use node@<selector>"));
+
+        let mut https_checksums_only = Lockfile::new_node(
+            "pinset 0.9.0".to_owned(),
+            "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
+            artifacts,
+        );
+        https_checksums_only.tools[0].artifacts[0].verification =
+            "nodejs-shasums-https".to_owned();
+        let error = validate_lockfile(&https_checksums_only).expect_err("legacy verification");
+        assert!(error.to_string().contains("pinset use node@<selector>"));
     }
 
     #[test]
@@ -1439,7 +1537,7 @@ mod tests {
                 NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
             },
             archive_root: plan.archive_root,
-            verification: "nodejs-shasums-https".to_owned(),
+            verification: "nodejs-openpgp-sha256".to_owned(),
             overlays: Vec::new(),
         }
     }

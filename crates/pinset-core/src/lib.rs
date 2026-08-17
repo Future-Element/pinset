@@ -45,6 +45,8 @@ mod lockfile;
 mod node_lifecycle;
 #[cfg(feature = "node-metadata")]
 mod node_metadata;
+#[cfg(feature = "node-metadata")]
+mod node_trust;
 #[cfg(feature = "node-provider")]
 mod node_provider;
 #[cfg(all(feature = "installer", feature = "lockfile"))]

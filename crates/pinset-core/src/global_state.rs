@@ -297,7 +297,7 @@ mod tests {
                         crate::NodeArchiveFormat::TarXz => crate::LockedArtifactFormat::TarXz,
                     },
                     archive_root: plan.archive_root,
-                    verification: "nodejs-shasums-https".to_owned(),
+                    verification: "nodejs-openpgp-sha256".to_owned(),
                     overlays: Vec::new(),
                 }
             })
@@ -305,6 +305,8 @@ mod tests {
         Lockfile::new_node(
             "pinset global state test".to_owned(),
             version.to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
             artifacts,
         )
     }

@@ -35,27 +35,27 @@ fn every_provider_supports_the_shared_local_lifecycle_contract() {
         assert_success(&listed);
         let listed: serde_json::Value =
             serde_json::from_slice(&listed.stdout).expect("installed JSON");
-        assert_eq!(listed[0]["tool"], provider.tool);
-        assert_eq!(listed[0]["version"], version);
+        assert_eq!(listed["data"]["versions"][0]["tool"], provider.tool);
+        assert_eq!(listed["data"]["versions"][0]["version"], version);
 
         let current = pinset(&project, &home, &["current", provider.tool, "--json"]);
         assert_success(&current);
         let current: serde_json::Value =
             serde_json::from_slice(&current.stdout).expect("current JSON");
-        assert_eq!(current["tool"], provider.tool);
-        assert_eq!(current["version"], version);
-        assert_eq!(current["source"], "global");
-        assert_eq!(current["installed"].as_bool(), Some(true));
+        assert_eq!(current["data"]["tool"], provider.tool);
+        assert_eq!(current["data"]["version"], version);
+        assert_eq!(current["data"]["source"], "global");
+        assert_eq!(current["data"]["installed"].as_bool(), Some(true));
 
         for command in provider.commands {
             let resolved = pinset(&project, &home, &["which", command, "--json"]);
             assert_success(&resolved);
             let resolved: serde_json::Value =
                 serde_json::from_slice(&resolved.stdout).expect("which JSON");
-            assert_eq!(resolved["command"], *command);
-            assert_eq!(resolved["tool"], provider.tool);
-            assert_eq!(resolved["version"], version);
-            assert_eq!(resolved["source"], "global");
+            assert_eq!(resolved["data"]["command"], *command);
+            assert_eq!(resolved["data"]["tool"], provider.tool);
+            assert_eq!(resolved["data"]["version"], version);
+            assert_eq!(resolved["data"]["source"], "global");
         }
     }
 }

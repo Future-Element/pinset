@@ -4,11 +4,12 @@ use url::Url;
 
 use crate::{Error, Result};
 
-pub const JAVA_TARGETS: [&str; 4] = [
+pub const JAVA_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +208,7 @@ fn java_platform(target: &str) -> Result<(&'static str, &'static str, JavaArchiv
     match target {
         "windows-x86_64" => Ok(("windows", "x64", JavaArchiveFormat::Zip)),
         "linux-x86_64" => Ok(("linux", "x64", JavaArchiveFormat::TarGz)),
+        "linux-aarch64" => Ok(("linux", "aarch64", JavaArchiveFormat::TarGz)),
         "macos-x86_64" => Ok(("mac", "x64", JavaArchiveFormat::TarGz)),
         "macos-aarch64" => Ok(("mac", "aarch64", JavaArchiveFormat::TarGz)),
         _ => Err(Error::UnsupportedJavaTarget {
@@ -290,6 +292,17 @@ mod tests {
         .expect("plan");
         assert_eq!(plan.format, JavaArchiveFormat::TarGz);
         assert_eq!(plan.archive_root, "jdk-21.0.8+9");
+
+        let linux_arm = plan_java_artifact(
+            "21.0.8+9",
+            "jdk-21.0.8+9",
+            "linux-aarch64",
+            "OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.8_9.tar.gz",
+            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.8_9.tar.gz",
+        )
+        .expect("Linux ARM64 plan");
+        assert_eq!(linux_arm.arch, "aarch64");
+        assert_eq!(linux_arm.os, "linux");
     }
 
     #[test]

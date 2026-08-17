@@ -1,10 +1,11 @@
 use crate::{Error, ResolvedArtifactSource, Result, SourceConfig};
 
-pub const PYTHON_TARGETS: [&str; 4] = [
+pub const PYTHON_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 pub const PYTHON_VARIANT: &str = "install_only";
@@ -86,6 +87,7 @@ fn python_platform(target: &str) -> Result<&'static str> {
     match target {
         "windows-x86_64" => Ok("x86_64-pc-windows-msvc"),
         "linux-x86_64" => Ok("x86_64-unknown-linux-gnu"),
+        "linux-aarch64" => Ok("aarch64-unknown-linux-gnu"),
         "macos-x86_64" => Ok("x86_64-apple-darwin"),
         "macos-aarch64" => Ok("aarch64-apple-darwin"),
         _ => Err(Error::UnsupportedPythonTarget {
@@ -130,9 +132,9 @@ mod tests {
                 Err(Error::InvalidPythonVersion { .. })
             ));
         }
-        assert!(matches!(
-            plan_python_artifact(&SourceConfig::default(), "3.14.7+20260807", "linux-aarch64"),
-            Err(Error::UnsupportedPythonTarget { .. })
-        ));
+        let linux_arm =
+            plan_python_artifact(&SourceConfig::default(), "3.14.7+20260807", "linux-aarch64")
+                .expect("Linux ARM64 plan");
+        assert_eq!(linux_arm.platform, "aarch64-unknown-linux-gnu");
     }
 }

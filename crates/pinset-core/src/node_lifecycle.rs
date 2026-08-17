@@ -96,16 +96,17 @@ pub fn find_node_version_references(
         }
     }
     let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)?
-        && config
+    if let Some(config) = load_optional_global_config(&path)? {
+        if config
             .tools
             .get("node")
             .is_some_and(|selected| selected == version)
-    {
-        references.push(NodeVersionReference {
-            scope: "global",
-            path,
-        });
+        {
+            references.push(NodeVersionReference {
+                scope: "global",
+                path,
+            });
+        }
     }
     Ok(references)
 }

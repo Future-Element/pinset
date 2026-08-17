@@ -380,7 +380,9 @@ pub enum Error {
     InvalidFlutterVersion { version: String },
 
     #[cfg(feature = "flutter-provider")]
-    #[error("unsupported Flutter target \"{target}\"")]
+    #[error(
+        "unsupported Flutter target \"{target}\"; Flutter upstream does not publish an official SDK for this target"
+    )]
     UnsupportedFlutterTarget { target: String },
 
     #[cfg(feature = "python-provider")]
@@ -761,6 +763,18 @@ pub enum Error {
     InvalidNodeShasums { reason: String },
 
     #[cfg(feature = "node-metadata")]
+    #[error("Node.js release signature is invalid: {reason}")]
+    NodeSignatureInvalid { reason: String },
+
+    #[cfg(feature = "node-metadata")]
+    #[error("Node.js release signature uses an untrusted signer: {signer}")]
+    NodeSignerUntrusted { signer: String },
+
+    #[cfg(feature = "node-metadata")]
+    #[error("embedded Node.js release trust store is invalid: {reason}")]
+    NodeTrustStoreInvalid { reason: String },
+
+    #[cfg(feature = "node-metadata")]
     #[error("Node.js {version} SHASUMS does not contain {filename}")]
     NodeChecksumMissing { version: String, filename: String },
 
@@ -939,6 +953,10 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+
+    #[cfg(feature = "installer")]
+    #[error("{entries} corrupt cache archive(s) found; run `pinset cache repair`")]
+    DownloadCacheCorrupt { entries: usize },
 
     #[cfg(feature = "installer")]
     #[error("artifact integrity mismatch: expected {expected}, got {actual}")]

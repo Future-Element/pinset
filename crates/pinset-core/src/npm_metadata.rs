@@ -42,6 +42,11 @@ pub const PNPM_TARGETS: &[NpmToolTarget] = &[
         required_path: "pnpm",
     },
     NpmToolTarget {
+        target: "linux-aarch64",
+        package: "@pnpm/linux-arm64",
+        required_path: "pnpm",
+    },
+    NpmToolTarget {
         target: "macos-aarch64",
         package: "@pnpm/macos-arm64",
         required_path: "pnpm",
@@ -67,6 +72,11 @@ pub const BUN_TARGETS: &[NpmToolTarget] = &[
     NpmToolTarget {
         target: "linux-x86_64-baseline",
         package: "@oven/bun-linux-x64-baseline",
+        required_path: "bin/bun",
+    },
+    NpmToolTarget {
+        target: "linux-aarch64",
+        package: "@oven/bun-linux-aarch64",
         required_path: "bin/bun",
     },
     NpmToolTarget {
@@ -499,10 +509,10 @@ fn verify_package_signature(manifest: &PackageVersion, keys: &RegistryKeys) -> R
             .decode(&signature.sig)
             .ok()
             .and_then(|bytes| Signature::from_der(&bytes).ok());
-        if let (Some(public_key), Some(signature)) = (public_key, signature)
-            && public_key.verify(message.as_bytes(), &signature).is_ok()
-        {
-            return Ok(());
+        if let (Some(public_key), Some(signature)) = (public_key, signature) {
+            if public_key.verify(message.as_bytes(), &signature).is_ok() {
+                return Ok(());
+            }
         }
         failures.push(format!("invalid signature for key {}", key.keyid));
     }
@@ -523,7 +533,7 @@ mod tests {
 
     #[test]
     fn target_manifests_cover_current_release_platforms_and_bun_cpu_variants() {
-        assert_eq!(PNPM_TARGETS.len(), 3);
+        assert_eq!(PNPM_TARGETS.len(), 4);
         assert!(
             BUN_TARGETS
                 .iter()
@@ -539,6 +549,12 @@ mod tests {
                 .iter()
                 .all(|target| !target.required_path.is_empty())
         );
+        assert!(PNPM_TARGETS.iter().any(|target| {
+            target.target == "linux-aarch64" && target.package == "@pnpm/linux-arm64"
+        }));
+        assert!(BUN_TARGETS.iter().any(|target| {
+            target.target == "linux-aarch64" && target.package == "@oven/bun-linux-aarch64"
+        }));
     }
 
     #[test]

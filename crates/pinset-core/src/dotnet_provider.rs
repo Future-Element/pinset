@@ -4,11 +4,12 @@ use url::Url;
 
 use crate::{Error, Result};
 
-pub const DOTNET_TARGETS: [&str; 4] = [
+pub const DOTNET_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,7 @@ fn dotnet_platform(target: &str) -> Result<(&'static str, DotnetArchiveFormat, &
     match target {
         "windows-x86_64" => Ok(("win-x64", DotnetArchiveFormat::Zip, "zip")),
         "linux-x86_64" => Ok(("linux-x64", DotnetArchiveFormat::TarGz, "tar.gz")),
+        "linux-aarch64" => Ok(("linux-arm64", DotnetArchiveFormat::TarGz, "tar.gz")),
         "macos-x86_64" => Ok(("osx-x64", DotnetArchiveFormat::TarGz, "tar.gz")),
         "macos-aarch64" => Ok(("osx-arm64", DotnetArchiveFormat::TarGz, "tar.gz")),
         _ => Err(Error::UnsupportedDotnetTarget {
@@ -179,6 +181,14 @@ mod tests {
         assert_eq!(plan.rid, "osx-arm64");
         assert_eq!(plan.archive_root, "");
         assert_eq!(plan.format, DotnetArchiveFormat::TarGz);
+
+        let linux_arm = plan_dotnet_artifact(
+            "10.0.400",
+            "linux-aarch64",
+            "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-linux-arm64.tar.gz",
+        )
+        .expect("Linux ARM64 plan");
+        assert_eq!(linux_arm.rid, "linux-arm64");
     }
 
     #[test]

@@ -324,29 +324,34 @@ Console.WriteLine($"DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT
         }
     }
 
-    $InstalledProviders = @(((& $Pinset list --json) | Out-String | ConvertFrom-Json))
+    $InstalledEnvelope = ((& $Pinset list --json) | Out-String | ConvertFrom-Json)
+    if ($InstalledEnvelope.schema -ne 1 -or $InstalledEnvelope.command -ne 'list' -or -not $InstalledEnvelope.ok) {
+        throw 'list JSON did not use the schema 1 success envelope'
+    }
+    $InstalledProviders = @($InstalledEnvelope.data.versions)
     foreach ($Provider in @('node', 'pnpm', 'bun', 'go', 'python', 'java', 'rust', 'dotnet')) {
         if ($Provider -notin @($InstalledProviders.tool)) {
             throw "cross-provider list omitted $Provider"
         }
     }
-    $RustCurrent = ((& $Pinset current rust --json) | Out-String | ConvertFrom-Json)
+    $RustCurrentEnvelope = ((& $Pinset current rust --json) | Out-String | ConvertFrom-Json)
+    $RustCurrent = $RustCurrentEnvelope.data
     if ($RustCurrent.tool -ne 'rust' -or $RustCurrent.source -ne 'global' -or -not $RustCurrent.installed) {
         throw 'current rust JSON did not report the installed global toolchain'
     }
-    $UninstallPreview = ((& $Pinset uninstall "node@$GlobalVersion" --force --dry-run --json) | Out-String | ConvertFrom-Json)
+    $UninstallPreview = ((& $Pinset uninstall "node@$GlobalVersion" --force --dry-run --json) | Out-String | ConvertFrom-Json).data
     if (-not $UninstallPreview.dry_run -or $UninstallPreview.tool -ne 'node' -or @($UninstallPreview.targets).Count -eq 0) {
         throw 'Node uninstall dry-run returned an invalid plan'
     }
-    $PrunePreview = ((& $Pinset prune --dry-run --json) | Out-String | ConvertFrom-Json)
+    $PrunePreview = ((& $Pinset prune --dry-run --json) | Out-String | ConvertFrom-Json).data
     if (-not $PrunePreview.dry_run -or @($PrunePreview.candidates).Count -ne 0 -or $PrunePreview.removed -ne 0) {
         throw 'prune dry-run did not protect every global runtime'
     }
-    $CacheInfo = ((& $Pinset cache info --json) | Out-String | ConvertFrom-Json)
+    $CacheInfo = ((& $Pinset cache info --json) | Out-String | ConvertFrom-Json).data
     if ($CacheInfo.archives -lt 1 -or $CacheInfo.archive_bytes -le 0) {
         throw 'cache info did not report downloaded archives'
     }
-    $NodeOutdated = @(((& $Pinset outdated node --global --json) | Out-String | ConvertFrom-Json))
+    $NodeOutdated = @(((& $Pinset outdated node --global --json) | Out-String | ConvertFrom-Json).data.runtimes)
     if ($NodeOutdated.Count -ne 1 -or $NodeOutdated[0].tool -ne 'node' -or $NodeOutdated[0].scope -ne 'global') {
         throw 'global Node outdated JSON returned an invalid report'
     }

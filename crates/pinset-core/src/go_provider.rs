@@ -1,10 +1,11 @@
 use crate::{Error, ResolvedArtifactSource, Result, SourceConfig};
 
-pub const GO_TARGETS: [&str; 4] = [
+pub const GO_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
     "macos-x86_64",
     "linux-x86_64",
+    "linux-aarch64",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +123,11 @@ mod tests {
         let macos = plan_go_artifact(&config, "1.25.1", "macos-aarch64").expect("macOS plan");
         assert_eq!(macos.format, GoArchiveFormat::TarGz);
         assert_eq!(macos.artifact_path, "go1.25.1.darwin-arm64.tar.gz");
+
+        let linux_arm =
+            plan_go_artifact(&config, "1.25.1", "linux-aarch64").expect("Linux ARM64 plan");
+        assert_eq!(linux_arm.format, GoArchiveFormat::TarGz);
+        assert_eq!(linux_arm.artifact_path, "go1.25.1.linux-arm64.tar.gz");
     }
 
     #[test]

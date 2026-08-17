@@ -42,9 +42,9 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
     let doctor = pinset(&project, &home, &["doctor", "--json"]);
     assert!(doctor.status.success());
     let report: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor JSON");
-    assert_eq!(report["python_environment"]["status"], "ok");
+    assert_eq!(report["data"]["python_environment"]["status"], "ok");
     assert_eq!(
-        report["python_environment"]["path"],
+        report["data"]["python_environment"]["path"],
         environment.display().to_string()
     );
 }
@@ -73,7 +73,7 @@ fn refuses_to_adopt_an_unmarked_dot_venv() {
     let doctor = pinset(&project, &home, &["doctor", "--json"]);
     assert!(doctor.status.success());
     let report: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor JSON");
-    assert_eq!(report["python_environment"]["status"], "invalid");
+    assert_eq!(report["data"]["python_environment"]["status"], "invalid");
 }
 
 fn create_fake_environment(project: &Path) -> std::path::PathBuf {
