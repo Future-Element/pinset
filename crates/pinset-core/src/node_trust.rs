@@ -12,6 +12,8 @@ use crate::{Error, Result};
 const NODE_RELEASE_KEYS: &str = include_str!("../assets/node-release-keys.asc");
 const NODE_RELEASE_KEYS_SOURCE: &str =
     "nodejs/release-keys@b28073028e6d6855cfb53bf7fa0137599c01f967";
+const PUBLIC_KEY_ARMOR_BEGIN: &str = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
+const PUBLIC_KEY_ARMOR_END: &str = "-----END PGP PUBLIC KEY BLOCK-----";
 
 // INVARIANT: These primary fingerprints are the trust decision. The armored bundle is only
 // accepted when every parsed certificate belongs to this pinned allowlist.
@@ -121,12 +123,17 @@ pub(crate) fn verify_node_manifest(armored: &str) -> Result<VerifiedNodeManifest
 }
 
 fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
-    let (keys, _) =
-        SignedPublicKey::from_reader_many(NODE_RELEASE_KEYS.as_bytes()).map_err(|source| {
-            Error::NodeTrustStoreInvalid {
-                reason: format!("cannot parse {NODE_RELEASE_KEYS_SOURCE}: {source}"),
-            }
-        })?;
+    let keys = armored_public_key_blocks(NODE_RELEASE_KEYS)?
+        .into_iter()
+        .map(|block| {
+            SignedPublicKey::from_reader_single(block.as_bytes())
+                .map(|(key, _)| key)
+                .map_err(|source| Error::NodeTrustStoreInvalid {
+                    reason: format!(
+                        "cannot parse certificate from {NODE_RELEASE_KEYS_SOURCE}: {source}"
+                    ),
+                })
+        });
     let allowlist = TRUSTED_PRIMARY_FINGERPRINTS
         .iter()
         .copied()
@@ -134,9 +141,7 @@ fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
     let mut seen = BTreeSet::new();
     let mut verified = Vec::new();
     for key in keys {
-        let key = key.map_err(|source| Error::NodeTrustStoreInvalid {
-            reason: format!("cannot parse certificate from {NODE_RELEASE_KEYS_SOURCE}: {source}"),
-        })?;
+        let key = key?;
         key.verify()
             .map_err(|source| Error::NodeTrustStoreInvalid {
                 reason: format!("certificate self-signature verification failed: {source}"),
@@ -156,6 +161,41 @@ fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
         });
     }
     Ok(verified)
+}
+
+fn armored_public_key_blocks(input: &str) -> Result<Vec<&str>> {
+    // INVARIANT: nodejs/release-keys stores each certificate in its own armor block, while the
+    // library's multi-key reader expects one armor payload. Preserve and validate every boundary
+    // explicitly so a skipped, nested, or appended certificate cannot weaken the allowlist check.
+    let mut remaining = input.trim();
+    let mut blocks = Vec::new();
+    while !remaining.is_empty() {
+        if !remaining.starts_with(PUBLIC_KEY_ARMOR_BEGIN) {
+            return Err(Error::NodeTrustStoreInvalid {
+                reason: format!("unexpected data in {NODE_RELEASE_KEYS_SOURCE}"),
+            });
+        }
+        let block_end =
+            remaining
+                .find(PUBLIC_KEY_ARMOR_END)
+                .ok_or_else(|| Error::NodeTrustStoreInvalid {
+                    reason: format!("unterminated certificate in {NODE_RELEASE_KEYS_SOURCE}"),
+                })?;
+        let block_end = block_end + PUBLIC_KEY_ARMOR_END.len();
+        if remaining[PUBLIC_KEY_ARMOR_BEGIN.len()..block_end].contains(PUBLIC_KEY_ARMOR_BEGIN) {
+            return Err(Error::NodeTrustStoreInvalid {
+                reason: format!("nested certificate armor in {NODE_RELEASE_KEYS_SOURCE}"),
+            });
+        }
+        blocks.push(&remaining[..block_end]);
+        remaining = remaining[block_end..].trim_start();
+    }
+    if blocks.is_empty() {
+        return Err(Error::NodeTrustStoreInvalid {
+            reason: format!("no certificates in {NODE_RELEASE_KEYS_SOURCE}"),
+        });
+    }
+    Ok(blocks)
 }
 
 fn fingerprint(key: &SignedPublicKey) -> String {
@@ -182,6 +222,23 @@ mod tests {
     const OFFICIAL_MANIFEST: &str =
         include_str!("../tests/fixtures/node-v24.19.0-SHASUMS256.txt.asc");
     const UNTRUSTED_MANIFEST: &str = include_str!("../tests/fixtures/untrusted-cleartext.asc");
+
+    #[test]
+    fn embedded_trust_store_matches_the_complete_fingerprint_allowlist() {
+        let keys = trusted_keys().expect("embedded trust store");
+        let fingerprints = keys.iter().map(fingerprint).collect::<BTreeSet<_>>();
+        let allowlist = TRUSTED_PRIMARY_FINGERPRINTS
+            .iter()
+            .map(|fingerprint| (*fingerprint).to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(fingerprints, allowlist);
+    }
+
+    #[test]
+    fn trust_store_block_parser_rejects_junk_and_truncated_armor() {
+        assert!(armored_public_key_blocks("unexpected").is_err());
+        assert!(armored_public_key_blocks(PUBLIC_KEY_ARMOR_BEGIN).is_err());
+    }
 
     #[test]
     fn verifies_an_official_clear_signed_manifest_before_exposing_checksums() {
