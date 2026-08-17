@@ -1,9 +1,10 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::TcpListener,
     process::Command,
     thread,
+    time::{Duration, Instant},
 };
 
 use tempfile::tempdir;
@@ -138,15 +139,13 @@ fn failed_remove_does_not_rewrite_active_source_config() {
 fn tests_a_node_source_read_only_against_its_version_index() {
     let root = tempdir().expect("temporary PINSET_HOME");
     let home = root.path().join("isolated-home");
-    let index = br#"[{"version":"v24.1.0","date":"2025-05-08","files":["win-x64-zip","linux-x64","osx-x64-tar","osx-arm64-tar"],"lts":"Krypton","security":false}]"#.to_vec();
-    let hash = "ab".repeat(32);
-    let shasums = format!(
-        "{hash}  node-v24.1.0-win-x64.zip\n{hash}  node-v24.1.0-linux-x64.tar.xz\n{hash}  node-v24.1.0-darwin-x64.tar.xz\n{hash}  node-v24.1.0-darwin-arm64.tar.xz\n"
-    )
-    .into_bytes();
+    let index = br#"[{"version":"v24.19.0","date":"2026-04-01","files":["win-x64-zip","linux-x64","linux-arm64","osx-x64-tar","osx-arm64-tar"],"lts":"Krypton","security":false}]"#.to_vec();
+    let signed_manifest =
+        include_bytes!("../../pinset-core/tests/fixtures/node-v24.19.0-SHASUMS256.txt.asc")
+            .to_vec();
     let (base_url, server) = serve_sequence(vec![
         ("GET /index.json", index),
-        ("GET /v24.1.0/SHASUMS256.txt", shasums),
+        ("GET /v24.19.0/SHASUMS256.txt.asc", signed_manifest),
     ]);
 
     pinset(
@@ -287,10 +286,27 @@ fn tests_a_flutter_source_read_only_against_all_platform_indexes() {
 
 fn serve_sequence(responses: Vec<(&'static str, Vec<u8>)>) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+    listener
+        .set_nonblocking(true)
+        .expect("configure nonblocking server");
     let address = listener.local_addr().expect("server address");
     let server = thread::spawn(move || {
         for (expected, body) in responses {
-            let (mut stream, _) = listener.accept().expect("accept request");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error)
+                        if error.kind() == ErrorKind::WouldBlock && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        panic!("timed out waiting for request {expected}");
+                    }
+                    Err(error) => panic!("accept request: {error}"),
+                }
+            };
             let mut request = [0_u8; 2048];
             let count = stream.read(&mut request).expect("read request");
             assert!(String::from_utf8_lossy(&request[..count]).contains(expected));
