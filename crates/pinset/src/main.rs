@@ -2305,25 +2305,23 @@ fn install_tool_from_lock(
                 outcome.install_dir.display()
             );
         }
+    } else if tool == "node" {
+        println!(
+            "{}",
+            catalog.installed(
+                &locked_tool.version,
+                &target,
+                &outcome.source_id,
+                &outcome.install_dir,
+            )
+        );
     } else {
-        if tool == "node" {
-            println!(
-                "{}",
-                catalog.installed(
-                    &locked_tool.version,
-                    &target,
-                    &outcome.source_id,
-                    &outcome.install_dir,
-                )
-            );
-        } else {
-            println!(
-                "installed {tool}@{} for {target} from {} at {}",
-                locked_tool.version,
-                outcome.source_id,
-                outcome.install_dir.display()
-            );
-        }
+        println!(
+            "installed {tool}@{} for {target} from {} at {}",
+            locked_tool.version,
+            outcome.source_id,
+            outcome.install_dir.display()
+        );
     }
     if let Err(error) = register_provider_commands(home, tool, catalog) {
         eprintln!(
