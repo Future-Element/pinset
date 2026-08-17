@@ -142,10 +142,6 @@ fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
     let mut verified = Vec::new();
     for key in keys {
         let key = key?;
-        key.verify()
-            .map_err(|source| Error::NodeTrustStoreInvalid {
-                reason: format!("certificate self-signature verification failed: {source}"),
-            })?;
         let fingerprint = fingerprint(&key);
         if !allowlist.contains(fingerprint.as_str()) || !seen.insert(fingerprint) {
             return Err(Error::NodeTrustStoreInvalid {
@@ -153,6 +149,7 @@ fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
                     .to_owned(),
             });
         }
+        verify_signing_authority(&key)?;
         verified.push(key);
     }
     if seen.len() != allowlist.len() {
@@ -161,6 +158,22 @@ fn trusted_keys() -> Result<Vec<SignedPublicKey>> {
         });
     }
     Ok(verified)
+}
+
+fn verify_signing_authority(key: &SignedPublicKey) -> Result<()> {
+    // SAFETY: The pinned fingerprint authenticates the primary key packet. Historical Node.js
+    // certificates also carry third-party User ID certifications, which are not signing
+    // authority and cannot all be verified as self-signatures. Subkeys do extend signing
+    // authority, so every binding (and every signing back-signature required by the library) must
+    // still verify against the pinned primary key before the certificate is accepted.
+    for subkey in &key.public_subkeys {
+        subkey
+            .verify(&key.primary_key)
+            .map_err(|source| Error::NodeTrustStoreInvalid {
+                reason: format!("signing subkey binding verification failed: {source}"),
+            })?;
+    }
+    Ok(())
 }
 
 fn armored_public_key_blocks(input: &str) -> Result<Vec<&str>> {
