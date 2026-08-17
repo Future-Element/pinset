@@ -150,7 +150,7 @@ fn emits_completion_for_each_supported_shell() {
 
 fn create_install(home: &Path, tool: &str, version: &str, command: &str) {
     let target = pinset_core::current_target_for_tool(tool);
-    let root = home.join("installs").join(tool).join(version).join(target);
+    let root = home.join("installs").join(tool).join(version).join(&target);
     let command_directory = pinset_core::runtime_command_directory(tool, &root);
     fs::create_dir_all(&command_directory).expect("command directory");
     fs::write(
