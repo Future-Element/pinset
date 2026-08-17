@@ -183,6 +183,7 @@ fn tests_a_go_source_read_only_against_its_download_index() {
             {"filename":"go1.25.1.windows-amd64.zip","os":"windows","arch":"amd64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
             {"filename":"go1.25.1.darwin-arm64.tar.gz","os":"darwin","arch":"arm64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
             {"filename":"go1.25.1.darwin-amd64.tar.gz","os":"darwin","arch":"amd64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
+            {"filename":"go1.25.1.linux-arm64.tar.gz","os":"linux","arch":"arm64","version":"go1.25.1","sha256":hash.clone(),"size":1,"kind":"archive"},
             {"filename":"go1.25.1.linux-amd64.tar.gz","os":"linux","arch":"amd64","version":"go1.25.1","sha256":hash,"size":1,"kind":"archive"}
         ]
     }])
