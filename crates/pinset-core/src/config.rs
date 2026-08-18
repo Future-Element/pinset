@@ -6,6 +6,8 @@ use std::{
 
 #[cfg(feature = "project-write")]
 use std::io::Write;
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+use std::sync::Mutex;
 
 #[cfg(feature = "project-write")]
 use atomic_write_file::AtomicWriteFile;
@@ -13,10 +15,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+use crate::{Lockfile, lockfile_path, save_lockfile, validate_lock_matches_tools};
+
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
 pub const PROJECT_CONFIG_SCHEMA: u32 = 2;
 #[cfg(feature = "project-write")]
 const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 2\n\n[tools]\n";
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +141,19 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
             path: path.to_path_buf(),
             source,
         })
+}
+
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+pub fn save_project_state(path: &Path, config: &ProjectConfig, lockfile: &Lockfile) -> Result<()> {
+    validate_lock_matches_tools(lockfile, &config.tools, path)?;
+    let _guard = PROJECT_STATE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    // Commit the lock first. If the second atomic write is interrupted, the previous
+    // selection remains active and lock-dependent operations fail until this is retried.
+    save_lockfile(&lockfile_path(path), lockfile)?;
+    save_project_config(path, config)
 }
 
 #[cfg(test)]
@@ -284,6 +304,30 @@ mod tests {
                 .get("node")
                 .map(String::as_str),
             Some("24.0.0")
+        );
+    }
+
+    #[cfg(all(feature = "project-write", feature = "lockfile"))]
+    #[test]
+    fn saves_a_validated_project_config_and_lock_pair() {
+        let root = tempdir().expect("project");
+        let config_path = root.path().join(PROJECT_CONFIG_FILENAME);
+        let config = ProjectConfig {
+            schema: PROJECT_CONFIG_SCHEMA,
+            tools: BTreeMap::new(),
+        };
+        let lockfile = Lockfile {
+            schema: crate::LOCKFILE_SCHEMA,
+            generated_by: "pinset test".to_owned(),
+            tools: Vec::new(),
+        };
+
+        save_project_state(&config_path, &config, &lockfile).expect("save project state");
+
+        assert_eq!(load_project_config(&config_path).expect("config"), config);
+        assert_eq!(
+            crate::load_lockfile(&lockfile_path(&config_path)).expect("lock"),
+            lockfile
         );
     }
 }

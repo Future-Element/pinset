@@ -55,6 +55,8 @@ mod node_trust;
 mod npm_metadata;
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 mod npm_runtime;
+#[cfg(feature = "project-discovery")]
+mod project_discovery;
 #[cfg(feature = "python-metadata")]
 mod python_metadata;
 #[cfg(feature = "python-provider")]
@@ -81,6 +83,8 @@ mod source_config;
 mod target;
 mod user_settings;
 
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+pub use config::save_project_state;
 pub use config::{
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectConfig, find_optional_project_config,
     find_project_config, load_project_config,
@@ -181,6 +185,10 @@ pub use npm_metadata::{
 };
 #[cfg(all(feature = "installer", feature = "npm-metadata"))]
 pub use npm_runtime::install_locked_npm_tool;
+#[cfg(feature = "project-discovery")]
+pub use project_discovery::{
+    DiscoveryFinding, DiscoveryKind, DiscoveryReport, DiscoveryStatus, scan_project_sources,
+};
 #[cfg(feature = "python-metadata")]
 pub use python_metadata::{PythonMetadataClient, PythonRelease};
 #[cfg(feature = "python-provider")]

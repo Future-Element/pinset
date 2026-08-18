@@ -8,7 +8,7 @@
 
 Pinset is a predictable, project-aware runtime version manager for polyglot development.
 
-It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one configuration and lockfile model, without importing state from other runtime managers.
+It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one configuration and lockfile model. Traditional version files are read only by the explicit `detect` and `import` migration commands, never as an implicit runtime fallback.
 
 ## Highlights
 
@@ -19,6 +19,7 @@ It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart th
 - Provider integrity checks, safe extraction, atomic installs, ownership-aware uninstall, and a content-addressed download cache.
 - First-class English and Simplified Chinese output, JSON schema 1 for automation, and shell completion.
 - Project-owned Python `.venv` support without requiring shell activation.
+- Read-only detection and explicit import of repository-local traditional version files.
 
 ## Install and upgrade
 
@@ -39,7 +40,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.0.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.1.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -127,6 +128,15 @@ pinset exec -- node --version
 ```
 
 Commit `pinset.toml` and `pinset.lock`. Selectors such as `latest`, `lts`, `stable`, or a version prefix are resolved to exact versions in the lockfile.
+
+To migrate an existing repository, inspect traditional files locally first, then import and install their unambiguous selections:
+
+```sh
+pinset detect --json
+pinset import
+```
+
+`detect` never uses the network or writes files. `import --no-install` writes the Pinset config and exact lock without downloading runtimes. Pinset scans from the working directory to the nearest Git repository root and does not modify or delete the source files.
 
 Discover available and installed versions:
 

@@ -58,10 +58,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run Rust tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
       - name: Test curl installer without network or runtime installation
         run: sh scripts/tests/install_sh_test.sh
@@ -72,7 +72,7 @@ jobs:
       - name: Keep the shim dependency graph lightweight
         shell: bash
         run: |
-          cargo tree -p pinset-shim -e normal > shim-dependencies.txt
+          cargo tree -p pinset-shim -e normal --locked > shim-dependencies.txt
           if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile' shim-dependencies.txt; then
             echo "pinset-shim unexpectedly includes download or archive dependencies" >&2
             exit 1

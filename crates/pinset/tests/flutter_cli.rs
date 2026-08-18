@@ -87,20 +87,6 @@ fn resolves_lists_and_executes_a_managed_flutter_sdk_with_its_bundled_dart() {
     );
 }
 
-#[test]
-fn does_not_expose_an_external_manager_import_command() {
-    let root = tempdir().expect("root");
-    let project = root.path().join("project");
-    let home = root.path().join("home");
-    fs::create_dir(&project).expect("project");
-    let output = pinset(&project, &home, &["import", "--dry-run"]);
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand 'import'"));
-    assert!(!project.join("pinset.toml").exists());
-    assert!(!project.join("pinset.lock").exists());
-    assert!(!home.exists());
-}
-
 #[cfg(windows)]
 fn write_flutter_command(directory: &Path) {
     fs::write(

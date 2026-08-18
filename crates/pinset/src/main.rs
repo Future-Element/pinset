@@ -17,11 +17,12 @@ use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DotnetMetadataClient, DownloadProgressEvent, Error, FlutterMetadataClient,
-    GlobalConfig, GoMetadataClient, InstallLimits, Installer, JavaMetadataClient, LockedTool,
-    Lockfile, NodeMetadataClient, NpmMetadataClient, PythonMetadataClient, RuntimeInstallKind,
-    RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
-    SourceView, clean_download_cache, command_tool, create_project_config,
+    ArtifactIntegrity, DiscoveryReport, DiscoveryStatus, DotnetMetadataClient,
+    DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig, GoMetadataClient,
+    InstallLimits, Installer, JavaMetadataClient, LockedTool, Lockfile, NodeMetadataClient,
+    NpmMetadataClient, PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient,
+    RuntimeInstallKind, RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
+    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
     find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
     import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
@@ -35,13 +36,13 @@ use pinset_core::{
     repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
     runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
     runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
-    save_source_config, save_user_settings, selected_runtime_environment, source_config_path,
-    uninstall_node_version, uninstall_tool_version, user_settings_path,
-    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
-    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
-    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
-    verify_download_cache,
+    save_project_state, save_source_config, save_user_settings, scan_project_sources,
+    selected_runtime_environment, source_config_path, uninstall_node_version,
+    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
+    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
+    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
+    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
+    validate_lock_matches_tools, validate_managed_runtime_invocation, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -67,6 +68,27 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
+    /// Detect traditional runtime version files without network or writes.
+    Detect {
+        /// Directory from which repository-bounded discovery starts.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import traditional runtime selections into pinset.toml and pinset.lock.
+    Import {
+        /// Directory from which repository-bounded discovery starts.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Replace conflicting versions already selected by Pinset.
+        #[arg(long)]
+        force: bool,
+        /// Write configuration and lock metadata without installing runtimes.
+        #[arg(long)]
+        no_install: bool,
+    },
     /// Show or set a default runtime version used outside projects.
     Global {
         /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25, python@3.14, java@21, rust@stable or dotnet@lts.
@@ -380,6 +402,7 @@ impl Cli {
 impl Commands {
     fn json_command(&self) -> Option<&'static str> {
         match self {
+            Self::Detect { json: true, .. } => Some("detect"),
             Self::Which { json: true, .. } => Some("which"),
             Self::Current { json: true, .. } => Some("current"),
             Self::List { json: true, .. } => Some("list"),
@@ -479,7 +502,15 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
     let top_level = values.iter().position(|value| {
         matches!(
             value.as_ref(),
-            "which" | "current" | "list" | "outdated" | "uninstall" | "prune" | "doctor" | "cache"
+            "detect"
+                | "which"
+                | "current"
+                | "list"
+                | "outdated"
+                | "uninstall"
+                | "prune"
+                | "doctor"
+                | "cache"
         )
     });
     let Some(index) = top_level else {
@@ -501,6 +532,9 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
 }
 
 fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde_json::Value) {
+    if error.downcast_ref::<std::io::Error>().is_some() {
+        return ("io_error", serde_json::json!({}));
+    }
     let Some(error) = error.downcast_ref::<Error>() else {
         return ("internal_error", serde_json::json!({}));
     };
@@ -776,6 +810,19 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             let path = create_project_config(&env::current_dir()?)?;
             println!("{}", catalog.created(&path));
         }
+        Commands::Detect { cwd, json } => {
+            let report = scan_project_sources(&effective_cwd(cwd)?)?;
+            if json {
+                print_json_success("detect", report)?;
+            } else {
+                print_discovery_report(&report, catalog);
+            }
+        }
+        Commands::Import {
+            cwd,
+            force,
+            no_install,
+        } => run_project_import(&effective_cwd(cwd)?, force, no_install, catalog)?,
         Commands::Global {
             selection,
             no_install,
@@ -1649,7 +1696,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init global use unset install which current list outdated uninstall prune cache exec doctor venv shim activate completions source";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated uninstall prune cache exec doctor venv shim activate completions source";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
@@ -1683,6 +1730,8 @@ fn completion_script(shell: ActivationShell) -> String {
     else
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
+            detect) values="--cwd --json --lang --help" ;;
+            import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --global --cwd --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
@@ -1715,6 +1764,8 @@ _pinset_completion() {
     else
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
+            detect) values="--cwd --json --lang --help" ;;
+            import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --global --cwd --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
@@ -1746,7 +1797,9 @@ complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS_
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from which current list outdated uninstall prune doctor cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated uninstall prune doctor cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect import' -a '--cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
 complete -c pinset -f -n '__fish_seen_subcommand_from uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -a '--help --lang'"#
         }
@@ -1757,6 +1810,8 @@ complete -c pinset -f -a '--help --lang'"#
     $command = if ($elements.Count -gt 1) { $elements[1] } else { '' }
     $values = switch ($command) {
         'global' { '__SELECTIONS__ --no-install --lang --help' -split ' ' }
+        'detect' { '--cwd --json --lang --help' -split ' ' }
+        'import' { '--cwd --force --no-install --lang --help' -split ' ' }
         'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
         'install' { '__SELECTIONS__ --locked --global --cwd --lang --help' -split ' ' }
         'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
@@ -1922,9 +1977,7 @@ fn select_tool(
         lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
         lockfile.upsert_tool(locked_tool.clone());
         project.set_tool(&tool, &version);
-        validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
-        save_lockfile(&lock_path, &lockfile)?;
-        save_project_config(&config_path, &project)?;
+        save_project_state(&config_path, &project, &lockfile)?;
         ("project", lock_path)
     };
     if tool == "node" {
@@ -1952,6 +2005,336 @@ fn select_tool(
         );
     }
     Ok(())
+}
+
+fn print_discovery_report(report: &DiscoveryReport, catalog: Catalog) {
+    match catalog.language() {
+        Language::English => {
+            println!("traditional configuration scan");
+            println!("start: {}", report.start.display());
+            println!("boundary: {}", report.boundary.display());
+            println!("target config: {}", report.target_config.display());
+        }
+        Language::SimplifiedChinese => {
+            println!("传统版本配置扫描");
+            println!("起始目录：{}", report.start.display());
+            println!("扫描边界：{}", report.boundary.display());
+            println!("目标配置：{}", report.target_config.display());
+        }
+    }
+    if report.findings.is_empty() {
+        println!(
+            "{}",
+            match catalog.language() {
+                Language::English => "no traditional runtime configuration found",
+                Language::SimplifiedChinese => "未发现传统运行时配置",
+            }
+        );
+    }
+    for finding in &report.findings {
+        let field = finding
+            .field
+            .as_deref()
+            .map(|field| format!("#{field}"))
+            .unwrap_or_default();
+        let value = finding.normalized.as_deref().unwrap_or(&finding.raw);
+        let status = discovery_status_name(finding.status, catalog.language());
+        print!(
+            "[{status}] {} {} <- {}{}",
+            finding.tool, value, finding.source, field
+        );
+        if let Some(reason) = &finding.reason {
+            print!(
+                " ({})",
+                localized_discovery_reason(reason, catalog.language())
+            );
+        }
+        println!();
+    }
+    println!(
+        "{}: {}",
+        match catalog.language() {
+            Language::English => "importable",
+            Language::SimplifiedChinese => "可导入",
+        },
+        match (catalog.language(), report.can_import) {
+            (Language::English, true) => "yes",
+            (Language::English, false) => "no",
+            (Language::SimplifiedChinese, true) => "是",
+            (Language::SimplifiedChinese, false) => "否",
+        }
+    );
+}
+
+fn localized_discovery_reason(reason: &str, language: Language) -> String {
+    if language == Language::English {
+        return reason.to_owned();
+    }
+    let translated = match reason {
+        "version constraint is reported but not imported" => "版本范围仅报告，不参与导入",
+        "symbolic-link sources are not allowed" => "不允许使用符号链接来源",
+        "source is not a regular file" => "来源不是普通文件",
+        "source is not valid UTF-8" => "来源不是有效的 UTF-8 文本",
+        "source must contain exactly one version selector" => "来源必须只包含一个版本选择器",
+        "version selector must not contain whitespace" => "版本选择器不能包含空白",
+        ".python-version must contain exactly one CPython selector" => {
+            ".python-version 必须只包含一个 CPython 选择器"
+        }
+        "only one CPython selector can be imported" => "只能导入一个 CPython 选择器",
+        "invalid CPython distribution selector" => "CPython 发行版选择器无效",
+        "volta.node must be a string" => "volta.node 必须是字符串",
+        "packageManager must be a string" => "packageManager 必须是字符串",
+        "packageManager must use <name>@<version>" => "packageManager 必须使用 <名称>@<版本>",
+        "package manager is not a Pinset Provider" => "该包管理器不是 Pinset Provider",
+        "FVM flavors cannot be represented by one Pinset selection" => {
+            "FVM flavors 无法表示为一个 Pinset 选择"
+        }
+        "FVM configuration has no string flutter version" => {
+            "FVM 配置中没有字符串类型的 Flutter 版本"
+        }
+        "invalid .sdkmanrc assignment" => ".sdkmanrc 赋值格式无效",
+        "SDKMAN candidate is not imported" => "该 SDKMAN candidate 不参与导入",
+        "missing [toolchain] table" => "缺少 [toolchain] 表",
+        "unknown Rust toolchain fields cannot be imported safely" => {
+            "未知 Rust toolchain 字段无法安全导入"
+        }
+        "path toolchains are not supported" => "不支持 path toolchain",
+        "extra Rust targets are not supported" => "不支持额外 Rust target",
+        "only the default Rust profile is supported" => "仅支持 Rust default profile",
+        "only rustfmt and clippy components are supported" => "仅支持 rustfmt 和 clippy 组件",
+        "Rust channel must be a string" => "Rust channel 必须是字符串",
+        "sdk.version must be a string" => "sdk.version 必须是字符串",
+        "tool is not a Pinset Provider" => "该工具不是 Pinset Provider",
+        "supported tools must have exactly one plain version" => "受支持工具必须只有一个普通版本值",
+        "mise value must be one plain string selector" => "mise 值必须是单个普通字符串选择器",
+        "only Temurin SDKMAN Java versions can be imported" => {
+            "只能导入 SDKMAN 的 Temurin Java 版本"
+        }
+        "Java selector must be stable numeric, lts, current, or Temurin -tem" => {
+            "Java 选择器必须是稳定数字版本、lts、current 或 Temurin -tem"
+        }
+        "only stable Rust channels can be imported" => "只能导入 Rust stable channel",
+        "global.json sdk.version must be one exact stable x.y.z SDK version" => {
+            "global.json sdk.version 必须是精确稳定的 x.y.z SDK 版本"
+        }
+        "selector cannot be mapped safely" => "选择器无法安全映射",
+        "invalid JSON" => "JSON 格式无效",
+        "invalid JSONC" => "JSONC 格式无效",
+        "invalid TOML" => "TOML 格式无效",
+        "invalid YAML" => "YAML 格式无效",
+        _ if reason.starts_with("multiple traditional sources") => "多个传统来源选择了不同版本",
+        _ if reason.starts_with("cannot inspect source:") => "无法检查来源文件",
+        _ if reason.starts_with("source exceeds ") => "来源文件超过 1 MiB 限制",
+        _ if reason.starts_with("unsupported Pinset Provider ") => "Pinset Provider 不受支持",
+        _ => return format!("无法安全导入：{reason}"),
+    };
+    translated.to_owned()
+}
+
+fn discovery_status_name(status: DiscoveryStatus, language: Language) -> &'static str {
+    match (language, status) {
+        (Language::English, DiscoveryStatus::Ready) => "ready",
+        (Language::English, DiscoveryStatus::Informational) => "informational",
+        (Language::English, DiscoveryStatus::Ignored) => "ignored",
+        (Language::English, DiscoveryStatus::Unsupported) => "unsupported",
+        (Language::English, DiscoveryStatus::Conflict) => "conflict",
+        (Language::SimplifiedChinese, DiscoveryStatus::Ready) => "可导入",
+        (Language::SimplifiedChinese, DiscoveryStatus::Informational) => "仅报告",
+        (Language::SimplifiedChinese, DiscoveryStatus::Ignored) => "已忽略",
+        (Language::SimplifiedChinese, DiscoveryStatus::Unsupported) => "不支持",
+        (Language::SimplifiedChinese, DiscoveryStatus::Conflict) => "冲突",
+    }
+}
+
+fn run_project_import(
+    cwd: &Path,
+    force: bool,
+    no_install: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = scan_project_sources(cwd)?;
+    if !report.can_import {
+        print_discovery_report(&report, catalog);
+        return Err(match catalog.language() {
+            Language::English => {
+                "traditional configuration has no safe importable selection or contains blockers"
+                    .into()
+            }
+            Language::SimplifiedChinese => {
+                "传统配置中没有可安全导入的版本选择，或存在阻断项".into()
+            }
+        });
+    }
+
+    let config_path = report.target_config.clone();
+    let config_exists = match fs::symlink_metadata(&config_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "refusing to import into unsafe project configuration path {}",
+                    config_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => {
+                    format!("拒绝导入到不安全的项目配置路径 {}", config_path.display()).into()
+                }
+            });
+        }
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    let mut project = if config_exists {
+        load_project_config(&config_path)?
+    } else {
+        ProjectConfig {
+            schema: PROJECT_CONFIG_SCHEMA,
+            tools: BTreeMap::new(),
+        }
+    };
+    let lock_path = lockfile_path(&config_path);
+    let existing_lockfile = match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "refusing to import with unsafe lock path {}",
+                    lock_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => {
+                    format!("拒绝使用不安全的锁文件路径 {} 导入", lock_path.display()).into()
+                }
+            });
+        }
+        Ok(_) => Some(load_lockfile(&lock_path)?),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    match &existing_lockfile {
+        Some(lockfile) => validate_lock_matches_tools(lockfile, &project.tools, &config_path)?,
+        None if !project.tools.is_empty() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "existing project configuration {} has selections but no pinset.lock",
+                    config_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => format!(
+                    "现有项目配置 {} 包含版本选择，但缺少 pinset.lock",
+                    config_path.display()
+                )
+                .into(),
+            });
+        }
+        None => {}
+    }
+
+    let selections = report
+        .findings
+        .iter()
+        .filter(|finding| finding.status == DiscoveryStatus::Ready)
+        .filter_map(|finding| {
+            finding
+                .normalized
+                .as_ref()
+                .map(|selector| (finding.tool.clone(), selector.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut resolved = Vec::with_capacity(selections.len());
+    for (tool, selector) in selections {
+        let locked_tool = resolve_locked_tool(&tool, &selector)?;
+        resolved.push((tool, selector, locked_tool));
+    }
+
+    if !force {
+        if let Some((tool, existing, imported)) = import_replacement_conflict(&project, &resolved) {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "{} already selects {tool}@{existing}; importing {tool}@{imported} requires --force",
+                    config_path.display(),
+                )
+                .into(),
+                Language::SimplifiedChinese => format!(
+                    "{} 已选择 {tool}@{existing}；导入 {tool}@{imported} 需要 --force",
+                    config_path.display(),
+                )
+                .into(),
+            });
+        }
+    }
+
+    let mut lockfile = existing_lockfile.unwrap_or_else(new_lockfile);
+    lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+    for (tool, selector, locked_tool) in &resolved {
+        if selector != &locked_tool.version {
+            println!(
+                "{tool}@{selector} resolved to {tool}@{}",
+                locked_tool.version
+            );
+        }
+        project.set_tool(tool, &locked_tool.version);
+        lockfile.upsert_tool(locked_tool.clone());
+    }
+    save_project_state(&config_path, &project, &lockfile)?;
+
+    match catalog.language() {
+        Language::English => println!(
+            "imported {} runtime selection(s) into {}; lock {}",
+            resolved.len(),
+            config_path.display(),
+            lock_path.display()
+        ),
+        Language::SimplifiedChinese => println!(
+            "已将 {} 个运行时选择导入 {}；锁文件 {}",
+            resolved.len(),
+            config_path.display(),
+            lock_path.display()
+        ),
+    }
+
+    if no_install {
+        let home = pinset_home()?;
+        for (tool, _, _) in &resolved {
+            if let Err(error) = register_provider_commands(&home, tool, catalog) {
+                eprintln!(
+                    "{}",
+                    catalog.shim_auto_registration_failed(&error.to_string())
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if let Err(error) = install_project(&report.start, catalog) {
+        let localized = catalog.command_error(error.as_ref());
+        let detail = localized
+            .strip_prefix("error: ")
+            .or_else(|| localized.strip_prefix("错误："))
+            .unwrap_or(&localized);
+        return Err(match catalog.language() {
+            Language::English => format!(
+                "{detail}; project state was saved successfully, retry with `pinset install --locked`"
+            )
+            .into(),
+            Language::SimplifiedChinese => format!(
+                "{detail}；项目配置和锁文件已成功保存，请运行 `pinset install --locked` 重试"
+            )
+            .into(),
+        });
+    }
+    Ok(())
+}
+
+fn import_replacement_conflict(
+    project: &ProjectConfig,
+    resolved: &[(String, String, LockedTool)],
+) -> Option<(String, String, String)> {
+    resolved.iter().find_map(|(tool, _, locked_tool)| {
+        project.tools.get(tool).and_then(|existing| {
+            (existing != &locked_tool.version)
+                .then(|| (tool.clone(), existing.clone(), locked_tool.version.clone()))
+        })
+    })
 }
 
 fn install_tool_selection(
@@ -2086,8 +2469,10 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 19] = [
+    const COMMANDS: [&str; 21] = [
         "init",
+        "detect",
+        "import",
         "global",
         "use",
         "unset",
@@ -4130,7 +4515,9 @@ mod tests {
             ActivationShell::Powershell,
         ] {
             let script = completion_script(shell);
-            for expected in ["pinset", "node@", "dotnet", "verify", "recreate", "--json"] {
+            for expected in [
+                "pinset", "detect", "import", "node@", "dotnet", "verify", "recreate", "--json",
+            ] {
                 assert!(
                     script.contains(expected),
                     "completion for {shell:?} omitted {expected}"
@@ -4143,6 +4530,34 @@ mod tests {
                 assert!(script.contains(&format!("{}@", provider.tool)));
             }
         }
+    }
+
+    #[test]
+    fn import_replacement_check_is_limited_to_discovered_tools() {
+        let project = ProjectConfig {
+            schema: PROJECT_CONFIG_SCHEMA,
+            tools: BTreeMap::from([
+                ("go".to_owned(), "1.24.0".to_owned()),
+                ("node".to_owned(), "22.0.0".to_owned()),
+            ]),
+        };
+        let node = LockedTool {
+            name: "node".to_owned(),
+            requested: "24.0.0".to_owned(),
+            version: "24.0.0".to_owned(),
+            provider: "nodejs-official".to_owned(),
+            metadata: BTreeMap::new(),
+            artifacts: Vec::new(),
+        };
+
+        assert_eq!(
+            import_replacement_conflict(
+                &project,
+                &[("node".to_owned(), "24.0.0".to_owned(), node)]
+            ),
+            Some(("node".to_owned(), "22.0.0".to_owned(), "24.0.0".to_owned()))
+        );
+        assert_eq!(project.tools["go"], "1.24.0");
     }
 
     #[test]

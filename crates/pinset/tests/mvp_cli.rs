@@ -8,8 +8,8 @@ use std::{
 use pinset_core::{
     GlobalConfig, LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS,
     NodeArchiveFormat, ProjectConfig, SourceConfig, current_target, global_config_path,
-    global_lockfile_path, plan_node_artifact, save_global_config, save_global_state, save_lockfile,
-    save_project_config,
+    global_lockfile_path, plan_node_artifact, runtime_providers, save_global_config,
+    save_global_state, save_lockfile, save_project_config,
 };
 use tempfile::tempdir;
 
@@ -776,9 +776,11 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             "@echo off\r\nif \"%1\"==\"exit23\" exit /b 23\r\necho system:%*\r\necho source=%PINSET_SELECTION_SOURCE%\r\n",
         )
         .expect("fake system node");
-        for command in [
-            "npm", "npx", "corepack", "pnpm", "bun", "bunx", "go", "gofmt", "flutter", "dart",
-        ] {
+        for command in runtime_providers()
+            .iter()
+            .flat_map(|provider| provider.commands.iter().copied())
+            .filter(|command| *command != "node")
+        {
             fs::write(
                 directory.join(format!("{command}.cmd")),
                 format!("@echo off\r\necho fake {command}\r\n"),
@@ -803,9 +805,11 @@ fn create_fake_system_node(directory: &Path) -> PathBuf {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("fake system node permissions");
-        for command in [
-            "npm", "npx", "corepack", "pnpm", "bun", "bunx", "go", "gofmt", "flutter", "dart",
-        ] {
+        for command in runtime_providers()
+            .iter()
+            .flat_map(|provider| provider.commands.iter().copied())
+            .filter(|command| *command != "node")
+        {
             let command_path = directory.join(command);
             fs::write(
                 &command_path,
