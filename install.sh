@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="1.0.0"
+DEFAULT_VERSION="1.1.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
@@ -18,7 +18,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 1.0.0.
+  --version VERSION       Install an exact release, for example 1.1.0.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
   -h, --help              Show this help.

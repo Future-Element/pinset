@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.0 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.1 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -57,6 +57,34 @@ The tables below repeat exceptional behavior where it matters. Otherwise the com
 | JSON | No. |
 | Exit | `0` success; `2` if the file cannot be safely created. |
 | Key errors | Existing configuration, unsafe path, or filesystem permission failure. |
+
+### `detect`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Read traditional project version files and report selections, constraints, ignored tools, unsupported values, and conflicts. |
+| Syntax and arguments | `pinset detect [--cwd <path>] [--json]`. Discovery stops at the nearest `.git` file/directory; without one it scans only the start directory. |
+| Modifies state | **No.** It does not use the network, create Pinset state, execute third-party tools, or modify source files. |
+| Example | `pinset detect --cwd ./app --json` |
+| JSON | **Yes.** Data contains `start`, `boundary`, `target_config`, `can_import`, and stable Provider-ordered `findings`. |
+| Exit | `0` when the local scan completes, including reports with conflicts or no importable selection; `2` only when discovery itself cannot start. |
+| Key errors | Missing/inaccessible start directory. Unsafe, malformed, or unrepresentable source files are report findings rather than command errors. |
+
+Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, `.go-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `rust-toolchain(.toml)`, `global.json`, `.fvmrc`, legacy FVM project JSON, `.tool-versions`, `mise.toml`, and unambiguous fields in `package.json`, `go.mod`, and `go.work`. Version ranges from package manifests are informational only. Symlinks, non-files, non-UTF-8 sources, and files larger than 1 MiB are rejected in the report.
+
+### `import`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Re-scan and import every safe traditional selection into schema-2 `pinset.toml` and `pinset.lock`. |
+| Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools already selected at another exact version. |
+| Modifies state | **Yes.** Resolves metadata, writes lock then config atomically, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
+| Example | `pinset import --no-install` |
+| JSON | No. |
+| Exit | `0` after a complete import/install; `2` for no selection, blockers, invalid existing Pinset state, resolution/write failure, or installation failure. |
+| Key errors | Conflicting sources, unsupported values, missing/mismatched existing lock, version replacement without `--force`, or unavailable Provider metadata. |
+
+Import never reads installed state from another runtime manager, executes manager tasks/hooks, or deletes legacy files. If installation fails after the state commit, the valid config and lock remain and `pinset install --locked` resumes installation.
 
 ### `global`
 

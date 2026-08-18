@@ -405,6 +405,52 @@ Console.WriteLine($"DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT
             }
         }
     }
+
+    $GlobalPythonCurrent = ((& $Pinset --lang en current python) | Out-String).Trim()
+    $GlobalPythonDistributionMatch = [regex]::Match($GlobalPythonCurrent, '^python ([^ ]+) installed')
+    if (-not $GlobalPythonDistributionMatch.Success) {
+        throw "global Python selection could not be read: '$GlobalPythonCurrent'"
+    }
+    $TraditionalImport = Join-Path $TestRoot 'traditional-import'
+    New-Item -ItemType Directory -Path $TraditionalImport | Out-Null
+    Set-Location $TraditionalImport
+    $ToolVersions = @(
+        "node $GlobalVersion"
+        "pnpm $GlobalPnpmVersion"
+        "bun $BunVersion"
+        "go $GlobalGoVersion"
+        "python $($GlobalPythonDistributionMatch.Groups[1].Value)"
+        "java $GlobalJavaVersion"
+        "rust $GlobalRustVersion"
+        "dotnet $GlobalDotnetVersion"
+    )
+    if (-not $SkipFlutterRuntime) {
+        $ToolVersions += "flutter $GlobalFlutterVersion"
+    }
+    Set-Content -LiteralPath (Join-Path $TraditionalImport '.tool-versions') -Value $ToolVersions
+    Set-Content -LiteralPath (Join-Path $TraditionalImport 'package.json') -Value "{`"engines`":{`"node`":`">=$GlobalVersion`"}}" -NoNewline
+    $DetectReport = ((& $Pinset detect --json) | Out-String) | ConvertFrom-Json
+    if ($DetectReport.schema -ne 1 -or $DetectReport.command -ne 'detect' -or
+        -not $DetectReport.ok -or -not $DetectReport.data.can_import) {
+        throw 'traditional configuration detect report was not importable'
+    }
+    & $Pinset import
+    if (-not (Test-Path -LiteralPath (Join-Path $TraditionalImport 'pinset.toml') -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $TraditionalImport 'pinset.lock') -PathType Leaf)) {
+        throw 'traditional import did not create Pinset project state'
+    }
+    if (((& $Pinset --lang en current node) | Out-String).Trim() -notmatch "Node.js $([regex]::Escape($GlobalVersion))") {
+        throw 'traditional import did not select Node.js'
+    }
+    if (((& $Pinset which node) | Out-String).Trim() -notmatch [regex]::Escape("installs\node\$GlobalVersion")) {
+        throw 'traditional import did not resolve the managed Node.js command'
+    }
+    $TraditionalVenv = Join-Path $TraditionalImport '.venv'
+    if (-not (Test-Path -LiteralPath (Join-Path $TraditionalVenv '.pinset-venv.toml') -PathType Leaf)) {
+        throw 'traditional import did not create the Python environment'
+    }
+    Assert-ExactOutput $TraditionalVenv (& $Pinset exec -- python -c "import os; print(os.environ['VIRTUAL_ENV'])") 'traditional import Python environment'
+    Set-Location $TestRoot
     & $Pinset cache clean
 
     $Project = Join-Path $TestRoot 'project'

@@ -1,6 +1,6 @@
 # Contributing to Pinset
 
-感谢你帮助改进 Pinset。项目当前开发版本支持 Node、pnpm、Bun、Go、Flutter、Python、Java 与 Rust Provider，优先保证跨平台行为、安全边界和可复现安装。
+感谢你帮助改进 Pinset。项目当前开发版本支持 Node、pnpm、Bun、Go、Flutter、Python、Java、Rust 与 .NET Provider，优先保证跨平台行为、安全边界和可复现安装。
 
 ## 开发环境
 

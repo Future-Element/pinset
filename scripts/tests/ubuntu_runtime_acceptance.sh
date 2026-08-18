@@ -314,6 +314,35 @@ if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
     grep -F "refusing to run \`flutter $mutation\` against a Pinset-managed Flutter SDK" flutter-mutation.txt
   done
 fi
+
+GLOBAL_PYTHON_DISTRIBUTION="$("$PINSET_BIN" --lang en current python | sed -n 's/^python \([^ ]*\) installed.*/\1/p')"
+test -n "$GLOBAL_PYTHON_DISTRIBUTION"
+mkdir traditional-import
+cd traditional-import
+cat > .tool-versions <<EOF
+node $GLOBAL_VERSION
+pnpm $GLOBAL_PNPM_VERSION
+bun $BUN_VERSION
+go $GLOBAL_GO_VERSION
+python $GLOBAL_PYTHON_DISTRIBUTION
+java $GLOBAL_JAVA_VERSION
+rust $GLOBAL_RUST_VERSION
+dotnet $GLOBAL_DOTNET_VERSION
+EOF
+if [[ "$SKIP_FLUTTER_RUNTIME" == "0" ]]; then
+  printf 'flutter %s\n' "$GLOBAL_FLUTTER_VERSION" >> .tool-versions
+fi
+printf '{"engines":{"node":">=%s"}}\n' "$GLOBAL_VERSION" > package.json
+"$PINSET_BIN" detect --json | tee detect.json
+python3 -c 'import json; report=json.load(open("detect.json", encoding="utf-8")); assert report["schema"] == 1 and report["command"] == "detect" and report["ok"] and report["data"]["can_import"]'
+"$PINSET_BIN" import
+test -f pinset.toml
+test -f pinset.lock
+"$PINSET_BIN" --lang en current node | grep -F "Node.js $GLOBAL_VERSION"
+"$PINSET_BIN" which node | grep -F "$PINSET_HOME/installs/node/$GLOBAL_VERSION/"
+test -f .venv/.pinset-venv.toml
+"$PINSET_BIN" exec -- python -c 'import os; print(os.environ["VIRTUAL_ENV"])' | grep -F '/traditional-import/.venv'
+cd "$TEST_ROOT"
 "$PINSET_BIN" cache clean
 
 mkdir project

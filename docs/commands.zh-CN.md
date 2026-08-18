@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.0 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.1 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -57,6 +57,34 @@
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；无法安全创建文件为 `2`。 |
 | 关键错误 | 配置已存在、不安全路径或文件系统权限失败。 |
+
+### `detect`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 读取传统项目版本文件，报告版本选择、范围约束、忽略的工具、不支持值和冲突。 |
+| 语法与参数 | `pinset detect [--cwd <目录>] [--json]`。扫描在最近的 `.git` 文件/目录处停止；不存在 Git 标记时只扫描起始目录。 |
+| 修改状态 | **否。** 不联网、不创建 Pinset 状态、不执行第三方工具，也不修改来源文件。 |
+| 示例 | `pinset detect --cwd ./app --json` |
+| JSON | **支持。** `data` 包含 `start`、`boundary`、`target_config`、`can_import` 以及按 Provider 稳定排序的 `findings`。 |
+| 退出码 | 本地扫描完成为 `0`，即使报告含冲突或没有可导入选择；只有无法开始扫描时返回 `2`。 |
+| 关键错误 | 起始目录不存在或不可访问。不安全、畸形、不可表示的来源文件会作为报告项返回，而不是命令错误。 |
+
+可导入来源包括 `.nvmrc`、`.node-version`、`.bun-version`、`.go-version`、`.python-version`、`.java-version`、`.sdkmanrc`、`rust-toolchain(.toml)`、`global.json`、`.fvmrc`、旧版 FVM 项目 JSON、`.tool-versions`、`mise.toml`，以及 `package.json`、`go.mod`、`go.work` 中无歧义的字段。包清单中的版本范围只报告、不导入。符号链接、非普通文件、非 UTF-8 来源和超过 1 MiB 的文件会在报告中被拒绝。
+
+### `import`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 2 的 `pinset.toml` 与 `pinset.lock`。 |
+| 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有精确版本不同的工具。 |
+| 修改状态 | **是。** 解析元数据，按锁文件优先、配置随后顺序原子写入，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
+| 示例 | `pinset import --no-install` |
+| JSON | 不支持。 |
+| 退出码 | 完整导入/安装后为 `0`；没有选择、存在阻断项、现有 Pinset 状态无效、解析/写入失败或安装失败为 `2`。 |
+| 关键错误 | 来源冲突、不支持值、现有锁缺失/不匹配、未带 `--force` 的版本替换，或 Provider 元数据不可用。 |
+
+导入不会读取其他运行时管理器的安装状态，不执行管理器任务或 hook，也不删除传统文件。若状态提交后的安装失败，有效配置与锁会保留，可运行 `pinset install --locked` 继续安装。
 
 ### `global`
 

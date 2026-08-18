@@ -8,7 +8,7 @@
 
 Pinset 是一个行为可预测、理解项目边界的多语言运行时版本管理器。
 
-它通过统一的配置与锁文件模型管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter/Dart，并且不会导入其他运行时管理器的状态。
+它通过统一的配置与锁文件模型管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter/Dart。传统版本文件只会由显式的 `detect` 与 `import` 迁移命令读取，不会成为日常运行时解析的隐式回退来源。
 
 ## 核心特性
 
@@ -19,6 +19,7 @@ Pinset 是一个行为可预测、理解项目边界的多语言运行时版本�
 - Provider 完整性校验、安全解压、原子安装、带所有权检查的卸载，以及内容寻址下载缓存。
 - 原生支持英文和简体中文输出、自动化用 JSON schema 1 与 Shell 补全。
 - 支持项目所有的 Python `.venv`，无需激活 Shell 环境。
+- 支持只读检测和显式导入仓库内的传统版本配置。
 
 ## 安装与升级
 
@@ -39,7 +40,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.0.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.1.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -127,6 +128,15 @@ pinset exec -- node --version
 ```
 
 请提交 `pinset.toml` 和 `pinset.lock`。`latest`、`lts`、`stable` 或版本前缀等选择器会在锁文件中解析为精确版本。
+
+迁移现有仓库时，先在本地检查传统配置，再导入并安装其中无歧义的选择：
+
+```sh
+pinset detect --json
+pinset import
+```
+
+`detect` 不联网、也不写文件。`import --no-install` 会写入 Pinset 配置和精确锁，但不下载运行时。扫描范围从工作目录到最近的 Git 仓库根目录，并且不会修改或删除来源文件。
 
 查看可用版本与已安装版本：
 
