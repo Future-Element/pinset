@@ -175,11 +175,11 @@ fn verify_signing_authority(key: &SignedPublicKey) -> Result<()> {
     // authority, so every binding (and every signing back-signature required by the library) must
     // still verify against the pinned primary key before the certificate is accepted.
     for subkey in &key.public_subkeys {
-        subkey
-            .verify_bindings(&key.primary_key)
-            .map_err(|source| Error::NodeTrustStoreInvalid {
+        subkey.verify_bindings(&key.primary_key).map_err(|source| {
+            Error::NodeTrustStoreInvalid {
                 reason: format!("signing subkey binding verification failed: {source}"),
-            })?;
+            }
+        })?;
     }
     Ok(())
 }
@@ -306,9 +306,7 @@ mod tests {
             .expect("signature armor headers")
             .1
             .lines()
-            .take_while(|line| {
-                !line.starts_with('=') && *line != "-----END PGP SIGNATURE-----"
-            })
+            .take_while(|line| !line.starts_with('=') && *line != "-----END PGP SIGNATURE-----")
             .collect::<String>();
         let packet = STANDARD
             .decode(encoded_signature)
