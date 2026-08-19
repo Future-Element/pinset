@@ -4,7 +4,7 @@
 
 ## 开发环境
 
-- Rust 1.85 或更高版本；
+- Rust 1.88 或更高版本；
 - Windows x64、Linux x64 或 macOS arm64；
 - Linux 构建 TAR.XZ 支持时需要常规 C toolchain、CMake 与 liblzma 开发包。
 
@@ -12,6 +12,8 @@
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+cargo install cargo-audit --version 0.22.2 --locked
+cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 ```
 
 Unix curl 安装器使用完全离线的假 Release 测试：
@@ -27,7 +29,9 @@ Windows 完整卸载脚本使用独立 PowerShell 临时目录测试：
 ./scripts/tests/uninstall_ps1_test.ps1
 ```
 
-这些测试不会在维护者开发机运行。格式化、Clippy、构建、测试和真实运行时验收必须在 GitHub Actions 临时虚拟机中进行，并在 PR 中说明平台与结果；开发机和 WSL 只做编辑及静态差异检查。
+这些检查不会在维护者开发机运行。格式化、Clippy、构建、测试、依赖安全审计和真实运行时验收必须在 GitHub Actions 临时虚拟机中进行，并在 PR 中说明平台与结果；开发机和 WSL 只做编辑及静态差异检查。
+
+`RUSTSEC-2023-0071` 仅影响 RSA 私钥操作的可观察计时；Pinset 的 OpenPGP 路径只解析公开证书并验证公开签名，不持有私钥或执行解密。该无修复版本的中危告警是当前唯一的可达性例外；高危运行时依赖告警不得忽略。
 
 ## Pull Request
 

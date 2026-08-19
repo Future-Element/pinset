@@ -42,7 +42,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.1
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 

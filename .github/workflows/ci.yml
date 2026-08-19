@@ -20,8 +20,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security:
+    name: Audit Rust dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare Rust toolchain
+        shell: bash
+        run: |
+          rustup set profile minimal
+          rustup update 1.88.0
+          rustup default 1.88.0
+
+      - name: Install pinned RustSec audit tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Reject dependency security warnings
+        # RUSTSEC-2023-0071 affects observable timing of RSA private-key operations. Pinset only
+        # parses public Node.js release certificates and verifies signatures; it never decrypts or
+        # stores OpenPGP private keys. The advisory has no patched version as of this release.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+
+  quality:
+    name: Validate Rust workspace
+    needs: security
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare Rust toolchain
+        shell: bash
+        run: |
+          rustup set profile minimal
+          rustup update 1.88.0
+          rustup default 1.88.0
+          rustup component add clippy rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --workspace --all-features --locked
+
   build:
     name: Build ${{ matrix.artifact }}
+    needs:
+      - security
+      - quality
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
@@ -49,8 +103,8 @@ jobs:
         shell: bash
         run: |
           rustup set profile minimal
-          rustup update 1.85.0
-          rustup default 1.85.0
+          rustup update 1.88.0
+          rustup default 1.88.0
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
