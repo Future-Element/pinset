@@ -405,7 +405,7 @@ fn is_safe_manifest_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        io::{Read as _, Write as _},
+        io::{ErrorKind, Read as _, Write as _},
         net::TcpListener,
         thread,
     };
@@ -439,7 +439,7 @@ mod tests {
                 client.resolve_version_selector(selector).expect("selector"),
                 expected
             );
-            server.join().expect("server");
+            server.join().expect("server").expect("response");
         }
     }
 
@@ -464,7 +464,7 @@ mod tests {
         let error = test_client(&base_url)
             .resolve_version_selector("22")
             .expect_err("missing selector");
-        server.join().expect("server");
+        server.join().expect("server").expect("response");
         assert!(matches!(error, Error::NodeSelectorNotFound { .. }));
     }
 
@@ -531,7 +531,7 @@ mod tests {
         let lockfile = client
             .resolve_exact_lock("24.19.0", "pinset test")
             .expect("signed mirror manifest");
-        server.join().expect("server");
+        server.join().expect("server").expect("response");
 
         let node = lockfile.tool("node").expect("node lock");
         assert_eq!(
@@ -552,7 +552,13 @@ mod tests {
         let error = client
             .download_shasums(Url::parse(&base_url).expect("manifest URL"))
             .expect_err("oversized manifest");
-        server.join().expect("server");
+        let response = server.join().expect("server");
+        assert!(
+            response.is_ok()
+                || response.is_err_and(|source| {
+                    matches!(source.kind(), ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                })
+        );
         assert!(matches!(error, Error::NodeMetadataTooLarge { .. }));
     }
 
@@ -605,20 +611,20 @@ mod tests {
         }
     }
 
-    fn serve_once(body: String) -> (String, thread::JoinHandle<()>) {
+    fn serve_once(body: String) -> (String, thread::JoinHandle<std::io::Result<()>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
         let address = listener.local_addr().expect("server address");
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
+        let handle = thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
             let mut request = [0_u8; 4096];
-            let _ = stream.read(&mut request);
+            let _ = stream.read(&mut request)?;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
                 body
-            )
-            .expect("response");
+            )?;
+            Ok(())
         });
         (format!("http://{address}/"), handle)
     }
