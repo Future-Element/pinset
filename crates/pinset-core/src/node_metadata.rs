@@ -556,7 +556,10 @@ mod tests {
         assert!(
             response.is_ok()
                 || response.is_err_and(|source| {
-                    matches!(source.kind(), ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                    matches!(
+                        source.kind(),
+                        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+                    )
                 })
         );
         assert!(matches!(error, Error::NodeMetadataTooLarge { .. }));
