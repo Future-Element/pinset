@@ -25,25 +25,25 @@ use pinset_core::{
     ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
     find_optional_project_config, find_project_config, find_project_context, global_config_path,
-    global_lockfile_path,
-    import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
-    install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
-    install_locked_npm_tool, install_locked_python, install_locked_rust, is_managed_command_shim,
-    list_all_installed_tool_versions, list_download_cache, list_installed_tool_versions,
-    load_global_config, load_lockfile, load_optional_global_config, load_optional_lockfile,
-    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
-    lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
-    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
-    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
-    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
-    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
-    save_project_state, save_source_config, save_user_settings, scan_project_sources,
-    selected_runtime_environment, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
-    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
-    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
-    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools, validate_managed_runtime_invocation, verify_download_cache,
+    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
+    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
+    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
+    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
+    list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
+    load_optional_lockfile, load_project_config, load_project_python_environment,
+    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
+    path_with_selected_tools, pinset_home, plan_prune_tool_versions, plan_uninstall_tool_version,
+    project_python_environment_path, repair_download_cache, resolve_command,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state, save_lockfile, save_project_config, save_project_state,
+    save_source_config, save_user_settings, scan_project_sources, selected_runtime_environment,
+    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
+    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
+    verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -1432,9 +1432,7 @@ fn print_resolution_explanation(explanation: &ResolutionExplanation) {
     println!("resolution boundary={}", explanation.boundary.display());
     println!(
         "resolution policy project-strict={} global-eligible={} system-eligible={}",
-        explanation.project_strict,
-        explanation.global_eligible,
-        explanation.system_eligible
+        explanation.project_strict, explanation.global_eligible, explanation.system_eligible
     );
     for candidate in &explanation.candidates {
         println!(
@@ -1782,9 +1780,11 @@ fn selected_version_from_lock(
     lock_path: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
     if let Some(lockfile) = load_optional_lockfile(lock_path)? {
-        return Ok(validate_lock_matches_tool(&lockfile, tool, requested, config_path)?
-            .version
-            .clone());
+        return Ok(
+            validate_lock_matches_tool(&lockfile, tool, requested, config_path)?
+                .version
+                .clone(),
+        );
     }
     if config_schema < PROJECT_CONFIG_SCHEMA {
         return Ok(requested.to_owned());
@@ -2320,9 +2320,7 @@ fn resolve_locked_tool(
         RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
         RuntimeMetadataKind::Java => JavaMetadataClient::official()?.resolve_tool(selector)?,
         RuntimeMetadataKind::Rust => RustMetadataClient::official()?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Dotnet => {
-            DotnetMetadataClient::official()?.resolve_tool(selector)?
-        }
+        RuntimeMetadataKind::Dotnet => DotnetMetadataClient::official()?.resolve_tool(selector)?,
     };
     locked.requested = selector.to_owned();
     Ok(locked)
@@ -2729,8 +2727,7 @@ fn import_replacement_conflict(
 ) -> Option<(String, String, String)> {
     resolved.iter().find_map(|(tool, selector, _)| {
         project.tools.get(tool).and_then(|existing| {
-            (existing != selector)
-                .then(|| (tool.clone(), existing.clone(), selector.clone()))
+            (existing != selector).then(|| (tool.clone(), existing.clone(), selector.clone()))
         })
     })
 }
@@ -3565,13 +3562,8 @@ fn print_global_current(catalog: Catalog) -> Result<(), Box<dyn std::error::Erro
     }
     let lock_path = global_lockfile_path(&home);
     for (tool, requested) in &config.tools {
-        let version = selected_version_from_lock(
-            tool,
-            requested,
-            config.schema,
-            &config_path,
-            &lock_path,
-        )?;
+        let version =
+            selected_version_from_lock(tool, requested, config.schema, &config_path, &lock_path)?;
         print_declared_tool(
             &home,
             tool,
@@ -5271,14 +5263,8 @@ mod tests {
             })
         ));
 
-        let update = Cli::try_parse_from([
-            "pinset",
-            "update",
-            "node",
-            "--dry-run",
-            "--json",
-        ])
-        .expect("update");
+        let update = Cli::try_parse_from(["pinset", "update", "node", "--dry-run", "--json"])
+            .expect("update");
         assert!(matches!(
             update.command,
             Some(Commands::Update {
@@ -5289,8 +5275,8 @@ mod tests {
             }) if tool == "node"
         ));
 
-        let migrate = Cli::try_parse_from(["pinset", "migrate", "--global", "--dry-run"])
-            .expect("migrate");
+        let migrate =
+            Cli::try_parse_from(["pinset", "migrate", "--global", "--dry-run"]).expect("migrate");
         assert!(matches!(
             migrate.command,
             Some(Commands::Migrate {
