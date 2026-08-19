@@ -2,15 +2,15 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.1 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.5 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。Pinset 会先把选择器解析成精确版本，再写入锁文件。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 3 会在配置中保留这个请求选择器，并在锁文件中记录精确解析版本。
 
-支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。最近项目的 `pinset.toml` 优先于全局状态；之后 Pinset 可以回退到符合条件的系统命令。
+支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
 全局选项 `--lang <en|zh-CN>` 用于选择单次调用的输出语言。不带子命令运行 `pinset --lang <language>` 会保存默认语言。
 
@@ -52,7 +52,7 @@
 | --- | --- |
 | 用途 | 在当前目录创建最小项目配置。 |
 | 语法与参数 | `pinset init`；没有命令专属选项。 |
-| 修改状态 | **是。** 创建 `pinset.toml`，但不选择或安装运行时。 |
+| 修改状态 | **是。** 创建带严格项目策略的 schema 3 `pinset.toml`，但不选择或安装运行时。 |
 | 示例 | `mkdir app && cd app && pinset init` |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；无法安全创建文件为 `2`。 |
@@ -76,9 +76,9 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 2 的 `pinset.toml` 与 `pinset.lock`。 |
-| 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有精确版本不同的工具。 |
-| 修改状态 | **是。** 解析元数据，按锁文件优先、配置随后顺序原子写入，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 3 的 `pinset.toml` 与 `pinset.lock`。 |
+| 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
+| 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
 | JSON | 不支持。 |
 | 退出码 | 完整导入/安装后为 `0`；没有选择、存在阻断项、现有 Pinset 状态无效、解析/写入失败或安装失败为 `2`。 |
@@ -141,10 +141,10 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 输出 Pinset 将为某命令使用的精确可执行文件。 |
-| 语法与参数 | `pinset which <command> [--cwd <path>] [--json]`。 |
+| 语法与参数 | `pinset which <command> [--cwd <path>] [--explain] [--json]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset which node --json` |
-| JSON | **支持**；命令名为 `which`。 |
+| JSON | **支持**；命令名为 `which`。使用 `--explain` 时，`data.explanation` 包含边界、候选链、策略结果和只用于迁移的传统来源。 |
 | 退出码 | 成功解析为 `0`；无法解析可用命令为 `2`。 |
 | 关键错误 | 未知受管命令、所选运行时缺失、锁无效或没有符合条件的系统回退。 |
 
@@ -153,10 +153,10 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 显示当前生效的项目、全局或系统运行时选择和可执行文件。 |
-| 语法与参数 | `pinset current [tool] [--cwd <path>] [--json]`；默认工具为 Node.js。 |
+| 语法与参数 | `pinset current [tool] [--cwd <path>] [--explain] [--json]`；默认工具为 Node.js。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset current python --cwd ./app` |
-| JSON | **支持**；命令名为 `current`。 |
+| JSON | **支持**；命令名为 `current`，同时包含 `requested` 与精确 `version`；`--explain` 增加解析轨迹。 |
 | 退出码 | 成功解析为 `0`；选择或安装不可用为 `2`。 |
 | 关键错误 | 工具不支持、配置/锁无效、运行时缺失或系统回退被阻止。 |
 
@@ -176,13 +176,37 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 将项目和全局所选运行时与当前稳定版本比较。 |
+| 用途 | 将每个精确锁定版本同时与“请求选择器允许的最新版本”和“最新稳定版本”比较。 |
 | 语法与参数 | `pinset outdated [tool] [--global | --cwd <path>] [--json]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset outdated --cwd ./app --json` |
-| JSON | **支持**；命令名为 `outdated`，结果位于 `data.runtimes`。 |
+| JSON | **支持**；命令名为 `outdated`，`data.runtimes` 包含 `requested`、`current`、`latest_compatible`、`latest`、`update_available` 与 `upgrade_available`。 |
 | 退出码 | 完整比较后为 `0`；作用域、锁或元数据验证失败为 `2`。 |
 | 关键错误 | 项目缺失、工具不支持、锁无效或 Provider 元数据失败。 |
+
+### `update`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 重新解析请求选择器并刷新精确锁记录，不改变选择器，也不安装运行时。 |
+| 语法与参数 | `pinset update [tool] [--global | --cwd <path>] [--dry-run] [--json]`。 |
+| 修改状态 | **是**，但 `--dry-run` 时不修改；只更新所选锁文件。 |
+| 示例 | `pinset update node --cwd ./app --dry-run` |
+| JSON | **支持**；命令名为 `update`，包含旧/新精确版本和请求选择器。 |
+| 退出码 | 完成比较/写入为 `0`；作用域、锁或 Provider 元数据失败为 `2`。 |
+| 关键错误 | 项目/选择缺失、锁无效、工具不支持或元数据不可用。 |
+
+### `migrate`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 验证并把现有 schema 1/2 项目或全局配置/锁重写为 schema 3，不重新解析版本。 |
+| 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
+| 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
+| 示例 | `pinset migrate --cwd ./app --dry-run` |
+| JSON | **支持**；命令名为 `migrate`，包含来源与目标 schema。 |
+| 退出码 | 验证/迁移完成为 `0`；无法证明配置与锁一致时为 `2`。 |
+| 关键错误 | 配置/锁缺失、schema 不支持、配置与锁不匹配或写入失败。 |
 
 ### `uninstall`
 
@@ -224,7 +248,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 诊断项目、锁、安装、命令路由、环境变量和 PATH 状态。 |
+| 用途 | 诊断项目边界与严格策略、锁、安装、命令路由、环境变量、PATH 状态和只用于迁移的传统来源。 |
 | 语法与参数 | `pinset doctor [--cwd <path>] [--json]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset doctor --json` |
@@ -536,4 +560,4 @@
 
 ## 稳定协议边界
 
-Pinset v1.0 为项目/全局配置、锁文件、全局状态与安装收据写入 schema 2。同一主版本内允许兼容地增加字段。删除字段或改变字段类型/含义需要新的主版本；未来磁盘格式变更必须保持可读，或提供显式迁移。仅记录 HTTPS 摘要的 v1 前 Node 锁会被拒绝，并提示重新运行 `pinset use`，因为它缺少 v1 OpenPGP 验证证据。
+Pinset v1.5 为项目/全局配置与锁文件写入 schema 3。schema 1/2 仍可读取；`pinset migrate` 会验证并升级现有配置与锁。schema 3 明确区分请求选择器和锁中的精确解析版本，并引入显式项目回退/边界策略；不支持从 schema 3 直接降级。安装收据继续使用自身独立的 schema。仅记录 HTTPS 摘要的 v1 前 Node 锁会被拒绝，并提示重新运行 `pinset use`，因为它缺少 v1 OpenPGP 验证证据。

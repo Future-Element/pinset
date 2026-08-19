@@ -7,7 +7,9 @@ use std::{
 
 use serde::Serialize;
 
-use crate::{PROJECT_CONFIG_FILENAME, runtime_provider};
+use crate::{
+    PROJECT_CONFIG_FILENAME, RuntimeDiscoveryKind, runtime_provider, runtime_providers,
+};
 
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 
@@ -92,39 +94,10 @@ pub fn scan_project_sources(start: &Path) -> io::Result<DiscoveryReport> {
 
     let mut scanner = Scanner::new(boundary.clone());
     for directory in &directories {
-        scanner.scan_simple("nvmrc", &directory.join(".nvmrc"), "node", normalize_node);
-        scanner.scan_simple(
-            "node-version",
-            &directory.join(".node-version"),
-            "node",
-            normalize_node,
-        );
-        scanner.scan_simple(
-            "bun-version",
-            &directory.join(".bun-version"),
-            "bun",
-            normalize_bun,
-        );
-        scanner.scan_simple(
-            "go-version",
-            &directory.join(".go-version"),
-            "go",
-            normalize_go,
-        );
-        scanner.scan_python_version(directory);
-        scanner.scan_simple(
-            "java-version",
-            &directory.join(".java-version"),
-            "java",
-            normalize_java,
-        );
+        scanner.scan_provider_sources(directory);
         scanner.scan_package_json(directory);
         scanner.scan_go_file(directory, "go.mod");
         scanner.scan_go_file(directory, "go.work");
-        scanner.scan_fvm(directory);
-        scanner.scan_sdkman(directory);
-        scanner.scan_rust(directory);
-        scanner.scan_global_json(directory);
         scanner.scan_tool_versions(directory);
         scanner.scan_mise(directory);
         scanner.scan_pyproject(directory);
@@ -214,6 +187,26 @@ impl Scanner {
         })
     }
 
+    fn scan_provider_sources(&mut self, directory: &Path) {
+        for provider in runtime_providers() {
+            for rule in provider.discovery {
+                match rule.kind {
+                    RuntimeDiscoveryKind::SimpleFile { filename } => self.scan_simple(
+                        rule.source,
+                        &directory.join(filename),
+                        provider.tool,
+                        |raw| normalize_tool(provider.tool, raw),
+                    ),
+                    RuntimeDiscoveryKind::PythonVersion => self.scan_python_version(directory),
+                    RuntimeDiscoveryKind::Fvm => self.scan_fvm(directory),
+                    RuntimeDiscoveryKind::Sdkman => self.scan_sdkman(directory),
+                    RuntimeDiscoveryKind::RustToolchain => self.scan_rust(directory),
+                    RuntimeDiscoveryKind::DotnetGlobalJson => self.scan_global_json(directory),
+                }
+            }
+        }
+    }
+
     fn load(&mut self, group: &'static str, path: &Path, tool: &str) -> Option<String> {
         if self.seen.contains(group) {
             return None;
@@ -249,7 +242,7 @@ impl Scanner {
         group: &'static str,
         path: &Path,
         tool: &str,
-        normalize: fn(&str) -> Result<String, String>,
+        normalize: impl FnOnce(&str) -> Result<String, String>,
     ) {
         let Some(content) = self.load(group, path, tool) else {
             return;

@@ -13,7 +13,9 @@ It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart th
 ## Highlights
 
 - One CLI for global defaults and reproducible project selections.
-- Exact versions and per-platform artifacts recorded in `pinset.lock`.
+- Requested selectors stay in `pinset.toml`; exact versions and per-platform artifacts are recorded in `pinset.lock`.
+- Strict project routing by default, with explicit global inheritance and system fallback policies.
+- Explainable resolution through `current --explain`, `which --explain`, and `doctor`.
 - Direct command routing through one small, runtime-independent shim.
 - Node.js release manifests verified with embedded OpenPGP trust roots before checksums are parsed.
 - Provider integrity checks, safe extraction, atomic installs, ownership-aware uninstall, and a content-addressed download cache.
@@ -40,7 +42,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.1.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -127,7 +129,18 @@ pinset install --locked
 pinset exec -- node --version
 ```
 
-Commit `pinset.toml` and `pinset.lock`. Selectors such as `latest`, `lts`, `stable`, or a version prefix are resolved to exact versions in the lockfile.
+Commit `pinset.toml` and `pinset.lock`. Selectors such as `latest`, `lts`, `stable`, or version prefixes remain visible in `pinset.toml`; their exact resolved versions are recorded in the lockfile. `pinset outdated` distinguishes a compatible lock refresh from a selector-changing upgrade, and `pinset update --dry-run` previews compatible lock changes.
+
+Schema 3 projects are strict by default: once `pinset.toml` exists, an undeclared tool does not inherit a global selection or use the system `PATH`. Opt in deliberately when needed:
+
+```toml
+[policy]
+inherit-global = true
+system-fallback = false
+boundary = "git"
+```
+
+Resolution stops at the nearest Git root by default; it crosses that boundary only when the parent configuration itself explicitly sets `boundary = "filesystem"`. Use `pinset current node --explain` or `pinset which node --explain` to inspect every candidate and any traditional files that remain explicit migration inputs only. Existing schema 1/2 state remains readable; preview and perform its schema-only upgrade with `pinset migrate --dry-run` and `pinset migrate`.
 
 To migrate an existing repository, inspect traditional files locally first, then import and install their unambiguous selections:
 
@@ -166,13 +179,15 @@ Flutter does not publish an official Linux ARM64 SDK archive that matches Pinset
 
 See the complete [English command reference](docs/commands.md) or [Chinese command reference](docs/commands.zh-CN.md). It documents every command and subcommand, state changes, JSON support, exit codes, and common failures.
 
+For product positioning and trade-offs, see the sourced [Pinset v1.5 comparison (Chinese)](docs/comparison.zh-CN.md).
+
 ## Future Roadmap
 
 The roadmap describes direction, not promised versions or dates.
 
 | Status | Direction |
 | --- | --- |
-| Planned | v1.x migration and upgrade assistance for future stable protocol changes. |
+| Planned | Expand lock auditing, stable failure reason codes, and compatibility diagnostics. |
 | Exploring | Official distribution through Homebrew, Winget, Scoop, and similar channels. |
 | Exploring | Additional platforms and architectures when upstream runtimes provide suitable artifacts. |
 | Exploring | New Providers or a Provider extension mechanism, guided by real-world demand. |

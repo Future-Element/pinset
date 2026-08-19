@@ -24,7 +24,8 @@ use pinset_core::{
     RuntimeInstallKind, RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
     ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
-    find_optional_project_config, find_project_config, global_config_path, global_lockfile_path,
+    find_optional_project_config, find_project_config, find_project_context, global_config_path,
+    global_lockfile_path,
     import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
     install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
     install_locked_npm_tool, install_locked_python, install_locked_rust, is_managed_command_shim,
@@ -138,6 +139,9 @@ enum Commands {
         command: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Explain the project/global/system candidate chain.
+        #[arg(long)]
+        explain: bool,
         /// Emit a stable machine-readable result.
         #[arg(long)]
         json: bool,
@@ -148,6 +152,9 @@ enum Commands {
         tool: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Explain the project/global/system candidate chain.
+        #[arg(long)]
+        explain: bool,
         /// Emit a stable machine-readable result.
         #[arg(long)]
         json: bool,
@@ -173,6 +180,38 @@ enum Commands {
         /// Project directory whose nearest Pinset configuration is checked.
         #[arg(long, conflicts_with = "global")]
         cwd: Option<PathBuf>,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Re-resolve configured selectors and update exact lock records without installing.
+    Update {
+        /// Limit the update to one runtime provider.
+        tool: Option<String>,
+        /// Update only global selections.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        /// Project directory whose nearest Pinset configuration is updated.
+        #[arg(long, conflicts_with = "global")]
+        cwd: Option<PathBuf>,
+        /// Report the proposed lock changes without writing them.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a stable machine-readable result.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Upgrade project or global configuration and lock data to schema 3.
+    Migrate {
+        /// Migrate the global selection state instead of a project.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        /// Project directory whose nearest Pinset state is migrated.
+        #[arg(long, conflicts_with = "global")]
+        cwd: Option<PathBuf>,
+        /// Report the schema change without writing it.
+        #[arg(long)]
+        dry_run: bool,
         /// Emit a stable machine-readable result.
         #[arg(long)]
         json: bool,
@@ -407,6 +446,8 @@ impl Commands {
             Self::Current { json: true, .. } => Some("current"),
             Self::List { json: true, .. } => Some("list"),
             Self::Outdated { json: true, .. } => Some("outdated"),
+            Self::Update { json: true, .. } => Some("update"),
+            Self::Migrate { json: true, .. } => Some("migrate"),
             Self::Uninstall { json: true, .. } => Some("uninstall"),
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
@@ -507,6 +548,8 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "current"
                 | "list"
                 | "outdated"
+                | "update"
+                | "migrate"
                 | "uninstall"
                 | "prune"
                 | "doctor"
@@ -575,6 +618,7 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::ToolSelectionNotFound { .. }
         | Error::CommandSelectionNotFound { .. }
         | Error::ToolNotConfigured { .. }
+        | Error::ProjectToolSelectionRequired { .. }
         | Error::LockedToolMissing { .. }
         | Error::LockedArtifactMissing { .. } => "selection_missing",
         Error::ReadProjectConfig { .. }
@@ -862,32 +906,62 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 install_project(&effective_cwd(cwd)?, catalog)?;
             }
         }
-        Commands::Which { command, cwd, json } => {
+        Commands::Which {
+            command,
+            cwd,
+            explain,
+            json,
+        } => {
             let cwd = effective_cwd(cwd)?;
-            let resolution = resolve_command(&command, &cwd, &pinset_home()?)?;
+            let resolution = match resolve_command(&command, &cwd, &pinset_home()?) {
+                Ok(resolution) => resolution,
+                Err(error) => {
+                    if explain && !json {
+                        if let Some(tool) = command_tool(&command) {
+                            if let Ok(explanation) = resolution_explanation(&cwd, tool, "none") {
+                                print_resolution_explanation(&explanation);
+                            }
+                        }
+                    }
+                    return Err(error.into());
+                }
+            };
+            let explanation = explain
+                .then(|| resolution_explanation(&cwd, &resolution.tool, resolution.source.as_str()))
+                .transpose()?;
             if json {
                 print_json_success(
                     "which",
                     WhichReport {
                         command,
                         tool: resolution.tool,
+                        requested: resolution.requested,
                         version: resolution.version,
                         source: resolution.source.as_str(),
                         executable: resolution.executable,
                         config: resolution.selection_path,
+                        explanation,
                     },
                 )?;
             } else {
+                if let Some(explanation) = explanation.as_ref() {
+                    print_resolution_explanation(explanation);
+                }
                 println!("{}", resolution.executable.display());
             }
         }
-        Commands::Current { tool, cwd, json } => {
+        Commands::Current {
+            tool,
+            cwd,
+            explain,
+            json,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let tool = tool.as_deref().unwrap_or("node");
             if json {
-                print_json_success("current", current_report(&cwd, tool)?)?;
+                print_json_success("current", current_report(&cwd, tool, explain)?)?;
             } else {
-                print_current(&cwd, tool, catalog)?;
+                print_current(&cwd, tool, explain, catalog)?;
             }
         }
         Commands::List {
@@ -901,6 +975,19 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             cwd,
             json,
         } => run_outdated(tool.as_deref(), global, cwd, json)?,
+        Commands::Update {
+            tool,
+            global,
+            cwd,
+            dry_run,
+            json,
+        } => run_update(tool.as_deref(), global, cwd, dry_run, json)?,
+        Commands::Migrate {
+            global,
+            cwd,
+            dry_run,
+            json,
+        } => run_migrate(global, cwd, dry_run, json)?,
         Commands::Uninstall {
             selection,
             force,
@@ -990,22 +1077,52 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
 struct WhichReport {
     command: String,
     tool: String,
+    requested: Option<String>,
     version: String,
     source: &'static str,
     executable: PathBuf,
     config: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<ResolutionExplanation>,
 }
 
 #[derive(Debug, Serialize)]
 struct CurrentReport {
     command: String,
     tool: String,
+    requested: Option<String>,
     version: String,
     source: &'static str,
     installed: bool,
     executable: Option<PathBuf>,
     expected_directory: Option<PathBuf>,
     config: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<ResolutionExplanation>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResolutionExplanation {
+    start: PathBuf,
+    boundary: PathBuf,
+    project_config: Option<PathBuf>,
+    project_strict: bool,
+    global_eligible: bool,
+    system_eligible: bool,
+    selected_source: String,
+    fallback_used: bool,
+    candidates: Vec<ResolutionCandidate>,
+    traditional_sources: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResolutionCandidate {
+    source: &'static str,
+    config: Option<PathBuf>,
+    requested: Option<String>,
+    resolved: Option<String>,
+    status: &'static str,
+    reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1021,9 +1138,12 @@ struct OutdatedReport {
     scope: &'static str,
     config: PathBuf,
     tool: String,
+    requested: String,
     current: String,
+    latest_compatible: String,
     latest: String,
-    outdated: bool,
+    update_available: bool,
+    upgrade_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1031,7 +1151,31 @@ struct SelectedRuntime {
     scope: &'static str,
     config: PathBuf,
     tool: String,
+    requested: String,
     version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateReport {
+    scope: &'static str,
+    config: PathBuf,
+    tool: String,
+    requested: String,
+    previous: String,
+    resolved: String,
+    changed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct MigrationReport {
+    scope: &'static str,
+    config: PathBuf,
+    lockfile: PathBuf,
+    from_config_schema: u32,
+    from_lock_schema: u32,
+    to_schema: u32,
+    changed: bool,
+    dry_run: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1061,6 +1205,7 @@ struct CacheMutationReport {
 fn current_report(
     cwd: &Path,
     requested: &str,
+    explain: bool,
 ) -> Result<CurrentReport, Box<dyn std::error::Error>> {
     let home = pinset_home()?;
     let provider = runtime_provider(requested)
@@ -1080,16 +1225,23 @@ fn current_report(
             })?
     };
     match resolve_command(command, cwd, &home) {
-        Ok(resolution) => Ok(CurrentReport {
-            command: command.to_owned(),
-            tool: resolution.tool,
-            version: resolution.version,
-            source: resolution.source.as_str(),
-            installed: true,
-            executable: Some(resolution.executable),
-            expected_directory: None,
-            config: resolution.selection_path,
-        }),
+        Ok(resolution) => {
+            let explanation = explain
+                .then(|| resolution_explanation(cwd, provider.tool, resolution.source.as_str()))
+                .transpose()?;
+            Ok(CurrentReport {
+                command: command.to_owned(),
+                tool: resolution.tool,
+                requested: resolution.requested,
+                version: resolution.version,
+                source: resolution.source.as_str(),
+                installed: true,
+                executable: Some(resolution.executable),
+                expected_directory: None,
+                config: resolution.selection_path,
+                explanation,
+            })
+        }
         Err(Error::RuntimeCommandNotFound { .. }) => {
             let selection = resolve_tool_selection(provider.tool, cwd, &home)?;
             let install_dir = home
@@ -1100,15 +1252,206 @@ fn current_report(
             Ok(CurrentReport {
                 command: command.to_owned(),
                 tool: provider.tool.to_owned(),
+                requested: Some(selection.requested),
                 version: selection.version,
                 source: selection.source.as_str(),
                 installed: false,
                 executable: None,
                 expected_directory: Some(runtime_command_directory(provider.tool, &install_dir)),
                 config: Some(selection.config_path),
+                explanation: explain
+                    .then(|| resolution_explanation(cwd, provider.tool, selection.source.as_str()))
+                    .transpose()?,
             })
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+fn resolution_explanation(
+    cwd: &Path,
+    tool: &str,
+    selected_source: &str,
+) -> Result<ResolutionExplanation, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    let context = find_project_context(cwd)?;
+    let mut candidates = Vec::new();
+    let mut project_strict = false;
+    let mut global_eligible = true;
+    let mut system_eligible = true;
+    if let Some(config_path) = context.config_path.as_ref() {
+        let config = load_project_config(config_path)?;
+        project_strict = !config.policy.inherit_global && !config.policy.system_fallback;
+        global_eligible = config.policy.inherit_global;
+        system_eligible = config.policy.system_fallback;
+        if let Some(requested) = config.tools.get(tool) {
+            let resolved = selected_version_from_lock(
+                tool,
+                requested,
+                config.schema,
+                config_path,
+                &lockfile_path(config_path),
+            )?;
+            candidates.push(ResolutionCandidate {
+                source: "project",
+                config: Some(config_path.clone()),
+                requested: Some(requested.clone()),
+                resolved: Some(resolved),
+                status: if selected_source == "project" {
+                    "selected"
+                } else {
+                    "available"
+                },
+                reason: "nearest project selection".to_owned(),
+            });
+        } else {
+            candidates.push(ResolutionCandidate {
+                source: "project",
+                config: Some(config_path.clone()),
+                requested: None,
+                resolved: None,
+                status: "missing",
+                reason: if project_strict {
+                    "strict project does not declare this tool"
+                } else if config.policy.inherit_global {
+                    "project allows global inheritance"
+                } else {
+                    "project allows system fallback"
+                }
+                .to_owned(),
+            });
+        }
+    } else {
+        candidates.push(ResolutionCandidate {
+            source: "project",
+            config: None,
+            requested: None,
+            resolved: None,
+            status: "not-found",
+            reason: "no Pinset project exists inside the effective boundary".to_owned(),
+        });
+    }
+
+    let global_path = global_config_path(&home);
+    if let Some(global) = load_optional_global_config(&global_path)? {
+        if let Some(requested) = global.tools.get(tool) {
+            let resolved = selected_version_from_lock(
+                tool,
+                requested,
+                global.schema,
+                &global_path,
+                &global_lockfile_path(&home),
+            )?;
+            candidates.push(ResolutionCandidate {
+                source: "global",
+                config: Some(global_path.clone()),
+                requested: Some(requested.clone()),
+                resolved: Some(resolved),
+                status: if selected_source == "global" {
+                    "selected"
+                } else if !global_eligible {
+                    "suppressed"
+                } else {
+                    "not-selected"
+                },
+                reason: if context.config_path.is_some() && !global_eligible {
+                    "project policy does not allow global inheritance"
+                } else {
+                    "global selection is eligible"
+                }
+                .to_owned(),
+            });
+        } else {
+            candidates.push(ResolutionCandidate {
+                source: "global",
+                config: Some(global_path.clone()),
+                requested: None,
+                resolved: None,
+                status: "missing",
+                reason: "global configuration does not declare this tool".to_owned(),
+            });
+        }
+    } else {
+        candidates.push(ResolutionCandidate {
+            source: "global",
+            config: Some(global_path),
+            requested: None,
+            resolved: None,
+            status: "not-found",
+            reason: "global configuration does not exist".to_owned(),
+        });
+    }
+    candidates.push(ResolutionCandidate {
+        source: "system",
+        config: None,
+        requested: None,
+        resolved: None,
+        status: if selected_source == "system" {
+            "selected"
+        } else if !system_eligible {
+            "suppressed"
+        } else {
+            "not-selected"
+        },
+        reason: if context.config_path.is_some() && !system_eligible {
+            "project policy does not allow system fallback"
+        } else {
+            "system PATH is the final eligible fallback"
+        }
+        .to_owned(),
+    });
+
+    let traditional_sources = scan_project_sources(cwd)?
+        .findings
+        .into_iter()
+        .map(|finding| {
+            format!(
+                "{}:{}:{}",
+                finding.tool,
+                finding.source,
+                discovery_status_name(finding.status, Language::English)
+            )
+        })
+        .collect();
+    Ok(ResolutionExplanation {
+        start: context.start,
+        boundary: context.boundary,
+        project_config: context.config_path,
+        project_strict,
+        global_eligible,
+        system_eligible,
+        selected_source: selected_source.to_owned(),
+        fallback_used: selected_source != "project",
+        candidates,
+        traditional_sources,
+    })
+}
+
+fn print_resolution_explanation(explanation: &ResolutionExplanation) {
+    println!("resolution start={}", explanation.start.display());
+    println!("resolution boundary={}", explanation.boundary.display());
+    println!(
+        "resolution policy project-strict={} global-eligible={} system-eligible={}",
+        explanation.project_strict,
+        explanation.global_eligible,
+        explanation.system_eligible
+    );
+    for candidate in &explanation.candidates {
+        println!(
+            "candidate source={} status={} requested={} resolved={} config={} reason={}",
+            candidate.source,
+            candidate.status,
+            candidate.requested.as_deref().unwrap_or("-"),
+            candidate.resolved.as_deref().unwrap_or("-"),
+            candidate
+                .config
+                .as_deref()
+                .map_or_else(|| "-".to_owned(), |path| path.display().to_string()),
+            candidate.reason
+        );
+    }
+    for source in &explanation.traditional_sources {
+        println!("traditional-source {source} (explicit detect/import only)");
     }
 }
 
@@ -1317,6 +1660,7 @@ fn run_outdated(
     let mut reports = Vec::new();
     let mut latest_versions: BTreeMap<String, String> = BTreeMap::new();
     for selection in selected {
+        let latest_compatible = resolve_locked_tool(&selection.tool, &selection.requested)?.version;
         let latest = if let Some(latest) = latest_versions.get(&selection.tool) {
             latest.clone()
         } else {
@@ -1330,8 +1674,11 @@ fn run_outdated(
             scope: selection.scope,
             config: selection.config,
             tool: selection.tool,
-            outdated: selection.version != latest,
+            requested: selection.requested,
+            update_available: selection.version != latest_compatible,
+            upgrade_available: latest_compatible != latest,
             current: selection.version,
+            latest_compatible,
             latest,
         });
     }
@@ -1339,13 +1686,17 @@ fn run_outdated(
         print_json_success("outdated", serde_json::json!({ "runtimes": reports }))?;
     } else {
         let mut count = 0;
-        for report in reports.iter().filter(|report| report.outdated) {
+        for report in reports
+            .iter()
+            .filter(|report| report.update_available || report.upgrade_available)
+        {
             count += 1;
             println!(
-                "{}@{} -> {}@{} scope={} config={}",
+                "{}@{} requested={} compatible={} latest={} scope={} config={}",
                 report.tool,
                 report.current,
-                report.tool,
+                report.requested,
+                report.latest_compatible,
                 report.latest,
                 report.scope,
                 report.config.display()
@@ -1368,16 +1719,26 @@ fn selected_runtimes_for_outdated(
     let mut seen = BTreeSet::new();
     if !global_only {
         if let Some(path) = find_optional_project_config(cwd)? {
-            for (selected_tool, version) in load_project_config(&path)?.tools {
+            let config = load_project_config(&path)?;
+            let lock_path = lockfile_path(&path);
+            for (selected_tool, requested) in config.tools {
                 if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
                     continue;
                 }
                 require_provider(&selected_tool)?;
+                let version = selected_version_from_lock(
+                    &selected_tool,
+                    &requested,
+                    config.schema,
+                    &path,
+                    &lock_path,
+                )?;
                 if seen.insert(("project", selected_tool.clone(), path.clone())) {
                     selected.push(SelectedRuntime {
                         scope: "project",
                         config: path.clone(),
                         tool: selected_tool,
+                        requested,
                         version,
                     });
                 }
@@ -1386,22 +1747,50 @@ fn selected_runtimes_for_outdated(
     }
     let global_path = global_config_path(home);
     if let Some(global) = load_optional_global_config(&global_path)? {
-        for (selected_tool, version) in global.tools {
+        let lock_path = global_lockfile_path(home);
+        for (selected_tool, requested) in global.tools {
             if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
                 continue;
             }
             require_provider(&selected_tool)?;
+            let version = selected_version_from_lock(
+                &selected_tool,
+                &requested,
+                global.schema,
+                &global_path,
+                &lock_path,
+            )?;
             if seen.insert(("global", selected_tool.clone(), global_path.clone())) {
                 selected.push(SelectedRuntime {
                     scope: "global",
                     config: global_path.clone(),
                     tool: selected_tool,
+                    requested,
                     version,
                 });
             }
         }
     }
     Ok(selected)
+}
+
+fn selected_version_from_lock(
+    tool: &str,
+    requested: &str,
+    config_schema: u32,
+    config_path: &Path,
+    lock_path: &Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(lockfile) = load_optional_lockfile(lock_path)? {
+        return Ok(validate_lock_matches_tool(&lockfile, tool, requested, config_path)?
+            .version
+            .clone());
+    }
+    if config_schema < PROJECT_CONFIG_SCHEMA {
+        return Ok(requested.to_owned());
+    }
+    load_lockfile(lock_path)?;
+    unreachable!("loading a missing schema 3 lock always returns an error")
 }
 
 fn latest_stable_selector(tool: &str) -> &'static str {
@@ -1696,7 +2085,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated uninstall prune cache exec doctor venv shim activate completions source";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated update migrate uninstall prune cache exec doctor venv shim activate completions source";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
@@ -1737,10 +2126,12 @@ fn completion_script(shell: ActivationShell) -> String {
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
             list) values="__PROVIDERS__ --available --json --lang --help" ;;
-            current) values="__PROVIDERS__ --cwd --json --lang --help" ;;
+            current) values="__PROVIDERS__ --cwd --explain --json --lang --help" ;;
             outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
+            update) values="__PROVIDERS__ --global --cwd --dry-run --json --lang --help" ;;
+            migrate) values="--global --cwd --dry-run --json --lang --help" ;;
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
-            which) values="--cwd --json --lang --help" ;;
+            which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
@@ -1771,10 +2162,12 @@ _pinset_completion() {
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
             list) values="__PROVIDERS__ --available --json --lang --help" ;;
-            current) values="__PROVIDERS__ --cwd --json --lang --help" ;;
+            current) values="__PROVIDERS__ --cwd --explain --json --lang --help" ;;
             outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
+            update) values="__PROVIDERS__ --global --cwd --dry-run --json --lang --help" ;;
+            migrate) values="--global --cwd --dry-run --json --lang --help" ;;
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
-            which) values="--cwd --json --lang --help" ;;
+            which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
@@ -1791,16 +2184,18 @@ compdef _pinset_completion pinset"#
         ActivationShell::Fish => {
             r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated' -a '__PROVIDERS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated uninstall prune doctor cache' -a '--json'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect import' -a '--cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated update migrate uninstall prune doctor cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from which current' -a '--explain'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor' -a '--cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
-complete -c pinset -f -n '__fish_seen_subcommand_from uninstall prune cache' -a '--dry-run'
+complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate' -a '--global'
+complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -1817,10 +2212,12 @@ complete -c pinset -f -a '--help --lang'"#
         'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
         'unset' { '__PROVIDERS__ --global --cwd --lang --help' -split ' ' }
         'list' { '__PROVIDERS__ --available --json --lang --help' -split ' ' }
-        'current' { '__PROVIDERS__ --cwd --json --lang --help' -split ' ' }
+        'current' { '__PROVIDERS__ --cwd --explain --json --lang --help' -split ' ' }
         'outdated' { '__PROVIDERS__ --global --cwd --json --lang --help' -split ' ' }
+        'update' { '__PROVIDERS__ --global --cwd --dry-run --json --lang --help' -split ' ' }
+        'migrate' { '--global --cwd --dry-run --json --lang --help' -split ' ' }
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
-        'which' { '--cwd --json --lang --help' -split ' ' }
+        'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
@@ -1902,33 +2299,33 @@ fn resolve_locked_tool(
     selector: &str,
 ) -> Result<LockedTool, Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("validated provider");
-    match provider.metadata {
+    let mut locked = match provider.metadata {
         RuntimeMetadataKind::Node => {
             let lockfile = node_metadata_client(&pinset_home()?)?
                 .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
-            Ok(lockfile
+            lockfile
                 .tool("node")
                 .expect("generated Node lock contains node")
-                .clone())
+                .clone()
         }
         RuntimeMetadataKind::Npm => {
             let client = NpmMetadataClient::official()?;
             let version = client.resolve_version_selector(tool, selector)?;
-            Ok(client.resolve_tool(tool, &version)?)
+            client.resolve_tool(tool, &version)?
         }
-        RuntimeMetadataKind::Go => Ok(go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?),
+        RuntimeMetadataKind::Go => go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?,
         RuntimeMetadataKind::Flutter => {
-            Ok(flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?)
+            flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?
         }
-        RuntimeMetadataKind::Python => {
-            Ok(PythonMetadataClient::official()?.resolve_tool(selector)?)
-        }
-        RuntimeMetadataKind::Java => Ok(JavaMetadataClient::official()?.resolve_tool(selector)?),
-        RuntimeMetadataKind::Rust => Ok(RustMetadataClient::official()?.resolve_tool(selector)?),
+        RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Java => JavaMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Rust => RustMetadataClient::official()?.resolve_tool(selector)?,
         RuntimeMetadataKind::Dotnet => {
-            Ok(DotnetMetadataClient::official()?.resolve_tool(selector)?)
+            DotnetMetadataClient::official()?.resolve_tool(selector)?
         }
-    }
+    };
+    locked.requested = selector.to_owned();
+    Ok(locked)
 }
 
 fn new_lockfile() -> Lockfile {
@@ -1961,7 +2358,7 @@ fn select_tool(
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
         lockfile.upsert_tool(locked_tool.clone());
-        config.set_tool(&tool, &version);
+        config.set_tool(&tool, &selector);
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
         save_global_state(&home, &config, &lockfile)?;
         ("global", lock_path)
@@ -1976,7 +2373,7 @@ fn select_tool(
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
         lockfile.upsert_tool(locked_tool.clone());
-        project.set_tool(&tool, &version);
+        project.set_tool(&tool, &selector);
         save_project_state(&config_path, &project, &lockfile)?;
         ("project", lock_path)
     };
@@ -2189,6 +2586,7 @@ fn run_project_import(
     } else {
         ProjectConfig {
             schema: PROJECT_CONFIG_SCHEMA,
+            policy: Default::default(),
             tools: BTreeMap::new(),
         }
     };
@@ -2272,7 +2670,7 @@ fn run_project_import(
                 locked_tool.version
             );
         }
-        project.set_tool(tool, &locked_tool.version);
+        project.set_tool(tool, selector);
         lockfile.upsert_tool(locked_tool.clone());
     }
     save_project_state(&config_path, &project, &lockfile)?;
@@ -2329,12 +2727,175 @@ fn import_replacement_conflict(
     project: &ProjectConfig,
     resolved: &[(String, String, LockedTool)],
 ) -> Option<(String, String, String)> {
-    resolved.iter().find_map(|(tool, _, locked_tool)| {
+    resolved.iter().find_map(|(tool, selector, _)| {
         project.tools.get(tool).and_then(|existing| {
-            (existing != &locked_tool.version)
-                .then(|| (tool.clone(), existing.clone(), locked_tool.version.clone()))
+            (existing != selector)
+                .then(|| (tool.clone(), existing.clone(), selector.clone()))
         })
     })
+}
+
+fn run_update(
+    tool: Option<&str>,
+    global: bool,
+    cwd: Option<PathBuf>,
+    dry_run: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(tool) = tool {
+        require_provider(tool)?;
+    }
+    let home = pinset_home()?;
+    let cwd = effective_cwd(cwd)?;
+    let (scope, config_path, tools, mut lockfile) = if global {
+        let config_path = global_config_path(&home);
+        let config = load_global_config(&config_path)?;
+        let lockfile = load_lockfile(&global_lockfile_path(&home))?;
+        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        ("global", config_path, config.tools, lockfile)
+    } else {
+        let config_path = find_project_config(&cwd)?;
+        let config = load_project_config(&config_path)?;
+        let lockfile = load_lockfile(&lockfile_path(&config_path))?;
+        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        ("project", config_path, config.tools, lockfile)
+    };
+
+    let mut reports = Vec::new();
+    for (selected_tool, requested) in &tools {
+        if tool.is_some_and(|tool| tool != selected_tool) {
+            continue;
+        }
+        let previous = lockfile
+            .tool(selected_tool)
+            .expect("validated lock contains configured tool")
+            .version
+            .clone();
+        let resolved = resolve_locked_tool(selected_tool, requested)?;
+        let report = UpdateReport {
+            scope,
+            config: config_path.clone(),
+            tool: selected_tool.clone(),
+            requested: requested.clone(),
+            changed: previous != resolved.version,
+            previous,
+            resolved: resolved.version.clone(),
+        };
+        lockfile.upsert_tool(resolved);
+        reports.push(report);
+    }
+    if tool.is_some() && reports.is_empty() {
+        return Err(format!(
+            "{} does not declare runtime provider {:?}",
+            config_path.display(),
+            tool.expect("checked")
+        )
+        .into());
+    }
+
+    if !dry_run {
+        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        if global {
+            let config = load_global_config(&config_path)?;
+            save_global_state(&home, &config, &lockfile)?;
+        } else {
+            let config = load_project_config(&config_path)?;
+            save_project_state(&config_path, &config, &lockfile)?;
+        }
+    }
+
+    if json {
+        print_json_success(
+            "update",
+            serde_json::json!({ "dry_run": dry_run, "runtimes": reports }),
+        )?;
+    } else if reports.iter().all(|report| !report.changed) {
+        println!("all selected runtimes already match their configured selectors");
+    } else {
+        for report in reports.iter().filter(|report| report.changed) {
+            println!(
+                "{}@{} -> {} requested={} scope={} lock-only",
+                report.tool, report.previous, report.resolved, report.requested, report.scope
+            );
+        }
+        if dry_run {
+            println!("dry-run: lockfile was not changed");
+        } else {
+            println!("lock updated; run `pinset install --locked` to install resolved runtimes");
+        }
+    }
+    Ok(())
+}
+
+fn run_migrate(
+    global: bool,
+    cwd: Option<PathBuf>,
+    dry_run: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = effective_cwd(cwd)?;
+    let (scope, config_path, lock_path, config_schema, lock_schema) = if global {
+        let home = pinset_home()?;
+        let config_path = global_config_path(&home);
+        let lock_path = global_lockfile_path(&home);
+        let config = load_global_config(&config_path)?;
+        let lockfile = load_lockfile(&lock_path)?;
+        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        let report = (
+            "global",
+            config_path.clone(),
+            lock_path.clone(),
+            config.schema,
+            lockfile.schema,
+        );
+        if !dry_run {
+            save_global_state(&home, &config, &lockfile)?;
+        }
+        report
+    } else {
+        let config_path = find_project_config(&cwd)?;
+        let lock_path = lockfile_path(&config_path);
+        let config = load_project_config(&config_path)?;
+        let lockfile = load_lockfile(&lock_path)?;
+        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        let report = (
+            "project",
+            config_path.clone(),
+            lock_path.clone(),
+            config.schema,
+            lockfile.schema,
+        );
+        if !dry_run {
+            save_project_state(&config_path, &config, &lockfile)?;
+        }
+        report
+    };
+    let report = MigrationReport {
+        scope,
+        config: config_path,
+        lockfile: lock_path,
+        from_config_schema: config_schema,
+        from_lock_schema: lock_schema,
+        to_schema: PROJECT_CONFIG_SCHEMA,
+        changed: config_schema != PROJECT_CONFIG_SCHEMA
+            || lock_schema != pinset_core::LOCKFILE_SCHEMA,
+        dry_run,
+    };
+    if json {
+        print_json_success("migrate", report)?;
+    } else if report.changed {
+        println!(
+            "{} config-schema={} lock-schema={} -> schema={}{}",
+            report.scope,
+            report.from_config_schema,
+            report.from_lock_schema,
+            report.to_schema,
+            if dry_run { " dry-run" } else { "" }
+        );
+    } else {
+        println!("{} state already uses schema 3", report.scope);
+    }
+    Ok(())
 }
 
 fn install_tool_selection(
@@ -2469,7 +3030,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 21] = [
+    const COMMANDS: [&str; 23] = [
         "init",
         "detect",
         "import",
@@ -2480,6 +3041,8 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "which",
         "current",
         "outdated",
+        "update",
+        "migrate",
         "exec",
         "doctor",
         "shim",
@@ -2531,8 +3094,15 @@ fn install_project_with_venv(
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
     install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
-    if let Some(distribution) = project.tools.get("python") {
-        ensure_project_python_environment(&home, &config_path, distribution, recreate_venv)?;
+    if let Some(requested) = project.tools.get("python") {
+        let distribution = selected_version_from_lock(
+            "python",
+            requested,
+            project.schema,
+            &config_path,
+            &lock_path,
+        )?;
+        ensure_project_python_environment(&home, &config_path, &distribution, recreate_venv)?;
     }
     Ok(())
 }
@@ -2548,16 +3118,23 @@ fn run_venv_command(
     };
     let config_path = find_project_config(&cwd)?;
     let project = load_project_config(&config_path)?;
-    let distribution =
+    let requested =
         project
             .tools
             .get("python")
             .ok_or_else(|| Error::PythonEnvironmentSelectionMissing {
                 path: config_path.clone(),
             })?;
+    let distribution = selected_version_from_lock(
+        "python",
+        requested,
+        project.schema,
+        &config_path,
+        &lockfile_path(&config_path),
+    )?;
     if action == "status" {
         let target = current_target_for_tool("python");
-        let environment = load_project_python_environment(&config_path, distribution, &target)?;
+        let environment = load_project_python_environment(&config_path, &distribution, &target)?;
         println!(
             "python@{} project environment {}",
             environment.distribution,
@@ -2986,8 +3563,24 @@ fn print_global_current(catalog: Catalog) -> Result<(), Box<dyn std::error::Erro
         println!("{}", catalog.global_not_selected(&config_path));
         return Ok(());
     }
-    for (tool, version) in &config.tools {
-        print_declared_tool(&home, tool, version, "global", &config_path, catalog)?;
+    let lock_path = global_lockfile_path(&home);
+    for (tool, requested) in &config.tools {
+        let version = selected_version_from_lock(
+            tool,
+            requested,
+            config.schema,
+            &config_path,
+            &lock_path,
+        )?;
+        print_declared_tool(
+            &home,
+            tool,
+            requested,
+            &version,
+            "global",
+            &config_path,
+            catalog,
+        )?;
     }
     Ok(())
 }
@@ -3021,11 +3614,15 @@ fn print_project_override(
 fn print_declared_tool(
     home: &Path,
     tool: &str,
+    requested: &str,
     version: &str,
     source: &str,
     config_path: &Path,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if requested != version {
+        println!("{tool}@{requested} resolved to {tool}@{version}");
+    }
     let install_dir = home
         .join("installs")
         .join(tool)
@@ -3055,9 +3652,37 @@ fn print_declared_tool(
 fn print_current(
     cwd: &Path,
     tool: &str,
+    explain: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let report = current_report(cwd, tool)?;
+    let report = match current_report(cwd, tool, explain) {
+        Ok(report) => report,
+        Err(error) => {
+            if explain {
+                let provider = runtime_provider(tool)
+                    .or_else(|| command_tool(tool).and_then(runtime_provider));
+                if let Some(provider) = provider {
+                    if let Ok(explanation) = resolution_explanation(cwd, provider.tool, "none") {
+                        print_resolution_explanation(&explanation);
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
+    if let Some(explanation) = report.explanation.as_ref() {
+        print_resolution_explanation(explanation);
+    }
+    if let Some(requested) = report
+        .requested
+        .as_deref()
+        .filter(|value| *value != report.version.as_str())
+    {
+        println!(
+            "{}@{} resolved to {}@{}",
+            report.tool, requested, report.tool, report.version
+        );
+    }
     if let Some(executable) = report.executable.as_deref() {
         println!(
             "{}",
@@ -3235,6 +3860,7 @@ fn command_for_runtime(executable: &Path) -> Command {
 struct DoctorReport {
     cwd: String,
     pinset_home: String,
+    boundary: String,
     project_config: DoctorItem,
     global_config: DoctorItem,
     selection: Option<DoctorSelection>,
@@ -3245,6 +3871,7 @@ struct DoctorReport {
     legacy_shim_path: DoctorItem,
     path_candidates: Vec<DoctorPathCandidate>,
     routing_issues: Vec<DoctorRoutingIssue>,
+    traditional_sources: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3257,6 +3884,7 @@ struct DoctorItem {
 #[derive(Debug, Serialize)]
 struct DoctorSelection {
     tool: String,
+    requested: String,
     version: String,
     source: String,
     config_path: Option<String>,
@@ -3282,7 +3910,8 @@ struct DoctorRoutingIssue {
 
 fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>> {
     let home = pinset_home()?;
-    let project_path = find_optional_project_config(cwd)?;
+    let context = find_project_context(cwd)?;
+    let project_path = context.config_path.clone();
     let global_path = global_config_path(&home);
     let project_config = DoctorItem {
         status: if project_path.is_some() {
@@ -3305,11 +3934,14 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
 
     let selected = match resolve_tool_selection("node", cwd, &home) {
         Ok(selection) => Some(selection),
-        Err(Error::ToolSelectionNotFound { .. }) => None,
+        Err(Error::ToolSelectionNotFound { .. } | Error::ProjectToolSelectionRequired { .. }) => {
+            None
+        }
         Err(error) => return Err(error.into()),
     };
     let selection = selected.as_ref().map(|selection| DoctorSelection {
         tool: selection.tool.clone(),
+        requested: selection.requested.clone(),
         version: selection.version.clone(),
         source: selection.source.as_str().to_owned(),
         config_path: Some(selection.config_path.display().to_string()),
@@ -3321,7 +3953,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
             pinset_core::SelectionSource::System => unreachable!("declared selection"),
         };
         let lockfile = load_lockfile(&path)?;
-        validate_lock_matches_selection(&lockfile, &selection.version, &selection.config_path)?;
+        validate_lock_matches_selection(&lockfile, &selection.requested, &selection.config_path)?;
         DoctorItem {
             status: "ok",
             path: Some(path.display().to_string()),
@@ -3356,6 +3988,11 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
             path: None,
             detail: Some(format!("searched={searched}")),
         },
+        Err(Error::ProjectToolSelectionRequired { config_path, .. }) => DoctorItem {
+            status: "blocked",
+            path: Some(config_path.display().to_string()),
+            detail: Some("strict project does not declare node".to_owned()),
+        },
         Err(error) => return Err(error.into()),
     };
     let python_environment = doctor_python_environment(cwd, &home)?;
@@ -3388,9 +4025,22 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         routing_issues.push(issue);
     }
     routing_issues.extend(java_environment_issues(cwd, &home));
+    let traditional_sources = scan_project_sources(cwd)?
+        .findings
+        .into_iter()
+        .map(|finding| {
+            format!(
+                "{}:{}:{}",
+                finding.tool,
+                finding.source,
+                discovery_status_name(finding.status, Language::English)
+            )
+        })
+        .collect();
     Ok(DoctorReport {
         cwd: cwd.display().to_string(),
         pinset_home: home.display().to_string(),
+        boundary: context.boundary.display().to_string(),
         project_config,
         global_config,
         selection,
@@ -3419,6 +4069,7 @@ fn doctor_report(cwd: &Path) -> Result<DoctorReport, Box<dyn std::error::Error>>
         },
         path_candidates,
         routing_issues,
+        traditional_sources,
     })
 }
 
@@ -3428,7 +4079,7 @@ fn doctor_python_environment(
 ) -> Result<DoctorItem, Box<dyn std::error::Error>> {
     let selection = match resolve_tool_selection("python", cwd, home) {
         Ok(selection) => selection,
-        Err(Error::ToolSelectionNotFound { .. }) => {
+        Err(Error::ToolSelectionNotFound { .. } | Error::ProjectToolSelectionRequired { .. }) => {
             return Ok(DoctorItem {
                 status: "not-applicable",
                 path: None,
@@ -3680,7 +4331,7 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
                 validate_lock_matches_tool(
                     &lockfile,
                     provider.tool,
-                    &selection.version,
+                    &selection.requested,
                     &selection.config_path,
                 )?;
                 println!(
@@ -3697,6 +4348,14 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
                 );
             }
             Err(Error::ToolSelectionNotFound { .. }) => {}
+            Err(Error::ProjectToolSelectionRequired { config_path, .. }) => println!(
+                "{}",
+                catalog.doctor_line(
+                    &format!("{}_selection", provider.tool),
+                    config_path.display(),
+                    "strict-missing",
+                )
+            ),
             Err(error) => return Err(error.into()),
         }
 
@@ -3753,6 +4412,7 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
                 println!("{}", catalog.no_selection())
             }
             Err(Error::CommandSelectionNotFound { .. }) => {}
+            Err(Error::ProjectToolSelectionRequired { .. }) => {}
             Err(error) => return Err(error.into()),
         }
     }
@@ -3820,6 +4480,14 @@ fn run_doctor(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Er
                 issue.path.as_deref(),
                 issue.action,
             )
+        );
+    }
+    for finding in scan_project_sources(cwd)?.findings {
+        println!(
+            "traditional_source tool={} source={} status={} action=pinset-detect-or-import",
+            finding.tool,
+            finding.source,
+            discovery_status_name(finding.status, Language::English)
         );
     }
     Ok(())
@@ -4536,6 +5204,7 @@ mod tests {
     fn import_replacement_check_is_limited_to_discovered_tools() {
         let project = ProjectConfig {
             schema: PROJECT_CONFIG_SCHEMA,
+            policy: Default::default(),
             tools: BTreeMap::from([
                 ("go".to_owned(), "1.24.0".to_owned()),
                 ("node".to_owned(), "22.0.0".to_owned()),
@@ -4586,6 +5255,49 @@ mod tests {
                 global: false,
                 ..
             }) if selection == "node@24"
+        ));
+    }
+
+    #[test]
+    fn parses_v15_explain_update_and_migrate_options() {
+        let which = Cli::try_parse_from(["pinset", "which", "node", "--explain", "--json"])
+            .expect("which explain");
+        assert!(matches!(
+            which.command,
+            Some(Commands::Which {
+                explain: true,
+                json: true,
+                ..
+            })
+        ));
+
+        let update = Cli::try_parse_from([
+            "pinset",
+            "update",
+            "node",
+            "--dry-run",
+            "--json",
+        ])
+        .expect("update");
+        assert!(matches!(
+            update.command,
+            Some(Commands::Update {
+                tool: Some(tool),
+                dry_run: true,
+                json: true,
+                ..
+            }) if tool == "node"
+        ));
+
+        let migrate = Cli::try_parse_from(["pinset", "migrate", "--global", "--dry-run"])
+            .expect("migrate");
+        assert!(matches!(
+            migrate.command,
+            Some(Commands::Migrate {
+                global: true,
+                dry_run: true,
+                ..
+            })
         ));
     }
 

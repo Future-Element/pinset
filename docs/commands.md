@@ -2,15 +2,15 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.1 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.5 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
 ### Selections and scope
 
-A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Pinset resolves selectors to exact versions before writing a lockfile.
+A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Schema 3 keeps that requested selector in configuration and records its exact resolved version in the lockfile.
 
-Supported tools are Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter. Dart is provided by the selected Flutter SDK. A nearest project `pinset.toml` takes precedence over global state; Pinset can then fall back to an eligible system command.
+Supported tools are Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter. Dart is provided by the selected Flutter SDK. Project discovery stops at the nearest Git root by default; without a Git marker it inspects only the start directory. A project is strict by default: an undeclared tool neither inherits global state nor falls back to the system command unless `[policy]` explicitly enables `inherit-global` or `system-fallback`. Outside a project, global state then system `PATH` remain eligible.
 
 The global `--lang <en|zh-CN>` option selects output language for one invocation. Running `pinset --lang <language>` without a subcommand saves the default language.
 
@@ -52,7 +52,7 @@ The tables below repeat exceptional behavior where it matters. Otherwise the com
 | --- | --- |
 | Purpose | Create a minimal project configuration in the current directory. |
 | Syntax and arguments | `pinset init`; no command-specific options. |
-| Modifies state | **Yes.** Creates `pinset.toml`; it does not select or install a runtime. |
+| Modifies state | **Yes.** Creates schema 3 `pinset.toml` with strict project policy; it does not select or install a runtime. |
 | Example | `mkdir app && cd app && pinset init` |
 | JSON | No. |
 | Exit | `0` success; `2` if the file cannot be safely created. |
@@ -76,9 +76,9 @@ Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, 
 
 | Field | Description |
 | --- | --- |
-| Purpose | Re-scan and import every safe traditional selection into schema-2 `pinset.toml` and `pinset.lock`. |
-| Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools already selected at another exact version. |
-| Modifies state | **Yes.** Resolves metadata, writes lock then config atomically, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
+| Purpose | Re-scan and import every safe traditional selection into schema 3 `pinset.toml` and `pinset.lock`. |
+| Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools whose existing requested selector differs. |
+| Modifies state | **Yes.** Resolves metadata, atomically replaces the lock file and then the config file, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
 | Example | `pinset import --no-install` |
 | JSON | No. |
 | Exit | `0` after a complete import/install; `2` for no selection, blockers, invalid existing Pinset state, resolution/write failure, or installation failure. |
@@ -141,10 +141,10 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Print the exact executable Pinset would use for a command. |
-| Syntax and arguments | `pinset which <command> [--cwd <path>] [--json]`. |
+| Syntax and arguments | `pinset which <command> [--cwd <path>] [--explain] [--json]`. |
 | Modifies state | No. |
 | Example | `pinset which node --json` |
-| JSON | **Yes**; command name `which`. |
+| JSON | **Yes**; command name `which`. With `--explain`, `data.explanation` includes the boundary, candidate chain, policy result, and traditional migration-only sources. |
 | Exit | `0` when resolved; `2` when no usable command can be resolved. |
 | Key errors | Unknown managed command, missing selected runtime, invalid lock, or no eligible system fallback. |
 
@@ -153,10 +153,10 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Show the effective project, global, or system runtime selection and executable. |
-| Syntax and arguments | `pinset current [tool] [--cwd <path>] [--json]`; the default tool is Node.js. |
+| Syntax and arguments | `pinset current [tool] [--cwd <path>] [--explain] [--json]`; the default tool is Node.js. |
 | Modifies state | No. |
 | Example | `pinset current python --cwd ./app` |
-| JSON | **Yes**; command name `current`. |
+| JSON | **Yes**; command name `current`, including both `requested` and exact `version`; `--explain` adds the resolution trace. |
 | Exit | `0` when resolved; `2` when selection or installation is unusable. |
 | Key errors | Unsupported tool, invalid config/lock, missing runtime, or blocked system fallback. |
 
@@ -176,13 +176,37 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Compare selected project and global runtimes with current stable releases. |
+| Purpose | Compare each exact locked version with the newest version compatible with its requested selector and with the latest stable release. |
 | Syntax and arguments | `pinset outdated [tool] [--global | --cwd <path>] [--json]`. |
 | Modifies state | No. |
 | Example | `pinset outdated --cwd ./app --json` |
-| JSON | **Yes**; command name `outdated`, with results under `data.runtimes`. |
+| JSON | **Yes**; command name `outdated`, with `requested`, `current`, `latest_compatible`, `latest`, `update_available`, and `upgrade_available` under `data.runtimes`. |
 | Exit | `0` after a complete comparison; `2` if scope, lock, or metadata validation fails. |
 | Key errors | Missing project, unsupported tool, invalid lock, or Provider metadata failure. |
+
+### `update`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Re-resolve requested selectors and refresh exact lock records without changing selectors or installing runtimes. |
+| Syntax and arguments | `pinset update [tool] [--global | --cwd <path>] [--dry-run] [--json]`. |
+| Modifies state | **Yes**, unless `--dry-run`; updates only the selected lockfile. |
+| Example | `pinset update node --cwd ./app --dry-run` |
+| JSON | **Yes**; command name `update`, with previous/resolved exact versions and requested selector. |
+| Exit | `0` after comparison/write; `2` on scope, lock, or Provider metadata failure. |
+| Key errors | Missing project/selection, invalid lock, unsupported tool, or unavailable metadata. |
+
+### `migrate`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Validate and rewrite existing schema 1/2 project or global config and lock state as schema 3 without re-resolving versions. |
+| Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
+| Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
+| Example | `pinset migrate --cwd ./app --dry-run` |
+| JSON | **Yes**; command name `migrate`, including source and target schemas. |
+| Exit | `0` after validation/migration; `2` when config and lock cannot be proven consistent. |
+| Key errors | Missing config/lock, unsupported schema, config-lock mismatch, or write failure. |
 
 ### `uninstall`
 
@@ -224,7 +248,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Diagnose project, lockfile, installation, command-routing, environment, and PATH state. |
+| Purpose | Diagnose the project boundary and strict policy, lockfile, installation, command routing, environment, PATH state, and traditional migration-only sources. |
 | Syntax and arguments | `pinset doctor [--cwd <path>] [--json]`. |
 | Modifies state | No. |
 | Example | `pinset doctor --json` |
@@ -536,4 +560,4 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 ## Stable protocol boundary
 
-Pinset v1.0 writes schema 2 for project/global configuration, lockfiles, global state, and installation receipts. Compatible readers may add fields within a major version. Removing a field or changing its type or meaning requires a new major version; a future disk-format change must remain readable or provide an explicit migration. A pre-v1 Node lock that records only an HTTPS checksum is rejected with instructions to run `pinset use` again, because it lacks the v1 OpenPGP verification evidence.
+Pinset v1.5 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable; `pinset migrate` validates and upgrades existing config-lock pairs. Schema 3 deliberately separates the requested selector from the exact resolved lock version and introduces explicit project fallback/boundary policy. Direct downgrade from schema 3 is not supported. Installation receipts retain their own independent schema. A pre-v1 Node lock that records only an HTTPS checksum is rejected with instructions to run `pinset use` again, because it lacks the v1 OpenPGP verification evidence.

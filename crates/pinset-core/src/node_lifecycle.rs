@@ -4,11 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    Error, Result, find_optional_project_config, global_config_path, load_optional_global_config,
-    load_project_config, validate_exact_node_version,
-};
 use serde::Deserialize;
+
+use crate::{Error, Result, find_tool_version_references, validate_exact_node_version};
+#[cfg(test)]
+use crate::global_config_path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledNodeVersion {
@@ -81,34 +81,15 @@ pub fn find_node_version_references(
     version: &str,
 ) -> Result<Vec<NodeVersionReference>> {
     validate_exact_node_version(version)?;
-    let mut references = Vec::new();
-    if let Some(path) = find_optional_project_config(cwd)? {
-        let config = load_project_config(&path)?;
-        if config
-            .tools
-            .get("node")
-            .is_some_and(|selected| selected == version)
-        {
-            references.push(NodeVersionReference {
-                scope: "project",
-                path,
-            });
-        }
-    }
-    let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)? {
-        if config
-            .tools
-            .get("node")
-            .is_some_and(|selected| selected == version)
-        {
-            references.push(NodeVersionReference {
-                scope: "global",
-                path,
-            });
-        }
-    }
-    Ok(references)
+    find_tool_version_references(pinset_home, cwd, "node", version).map(|references| {
+        references
+            .into_iter()
+            .map(|reference| NodeVersionReference {
+                scope: reference.scope,
+                path: reference.path,
+            })
+            .collect()
+    })
 }
 
 pub fn uninstall_node_version(

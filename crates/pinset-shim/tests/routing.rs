@@ -14,6 +14,7 @@ fn executes_fake_node_selected_by_nearest_project_config() {
     let nested = project.join("packages").join("app").join("src");
     let home = root.path().join("home");
     fs::create_dir_all(&nested).expect("nested directory");
+    fs::create_dir(project.join(".git")).expect("git marker");
     fs::write(
         project.join("pinset.toml"),
         "schema = 1\n[tools]\nnode = \"20.0.0\"\n",
