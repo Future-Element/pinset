@@ -5,7 +5,7 @@
 - Upgrade `pgp` to 0.19.0 to resolve three runtime dependency advisories, including two high-severity parser denial-of-service issues.
 - Raise the minimum supported Rust version to 1.88, required by the patched OpenPGP implementation.
 - Bound Node.js clear-signed manifest input and cover valid, malformed, oversized, and deeply repeated-signature inputs without panics.
-- Block Pull Requests and Releases when the pinned RustSec audit reports vulnerabilities or warnings.
+- Block Pull Requests and Releases when the pinned RustSec audit reports unapproved vulnerabilities or warnings; document the single non-reachable, unfixed RSA private-key timing exception.
 
 ## 1.5.0 - 2026-08-19
 

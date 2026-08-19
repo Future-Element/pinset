@@ -58,7 +58,10 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Reject dependency security warnings
-        run: cargo audit --deny warnings
+        # RUSTSEC-2023-0071 affects observable timing of RSA private-key operations. Pinset only
+        # parses public Node.js release certificates and verifies signatures; it never decrypts or
+        # stores OpenPGP private keys. The advisory has no patched version as of this release.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
       - name: Check formatting
         run: cargo fmt --all -- --check
