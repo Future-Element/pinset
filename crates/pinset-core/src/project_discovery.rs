@@ -7,9 +7,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::{
-    PROJECT_CONFIG_FILENAME, RuntimeDiscoveryKind, runtime_provider, runtime_providers,
-};
+use crate::{PROJECT_CONFIG_FILENAME, RuntimeDiscoveryKind, runtime_provider, runtime_providers};
 
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 

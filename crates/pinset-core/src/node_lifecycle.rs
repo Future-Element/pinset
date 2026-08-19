@@ -6,9 +6,9 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::{Error, Result, find_tool_version_references, validate_exact_node_version};
 #[cfg(test)]
 use crate::global_config_path;
+use crate::{Error, Result, find_tool_version_references, validate_exact_node_version};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledNodeVersion {

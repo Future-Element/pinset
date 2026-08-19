@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -82,9 +81,11 @@ impl ProjectConfig {
 
 pub fn find_project_config(start: &Path) -> Result<PathBuf> {
     let context = find_project_context(start)?;
-    context.config_path.ok_or_else(|| Error::ProjectConfigNotFound {
-        start: context.start,
-    })
+    context
+        .config_path
+        .ok_or_else(|| Error::ProjectConfigNotFound {
+            start: context.start,
+        })
 }
 
 pub fn find_optional_project_config(start: &Path) -> Result<Option<PathBuf>> {
@@ -173,11 +174,7 @@ fn nearest_git_root(start: &Path) -> Option<PathBuf> {
 }
 
 fn filesystem_root(start: &Path) -> PathBuf {
-    start
-        .ancestors()
-        .last()
-        .unwrap_or(start)
-        .to_path_buf()
+    start.ancestors().last().unwrap_or(start).to_path_buf()
 }
 
 fn ancestors_through<'a>(start: &'a Path, boundary: &'a Path) -> impl Iterator<Item = &'a Path> {

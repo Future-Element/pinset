@@ -77,8 +77,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
         "stderr: {}",
         String::from_utf8_lossy(&current.stderr)
     );
-    let report: serde_json::Value =
-        serde_json::from_slice(&current.stdout).expect("current JSON");
+    let report: serde_json::Value = serde_json::from_slice(&current.stdout).expect("current JSON");
     assert_eq!(report["data"]["requested"], "24");
     assert_eq!(report["data"]["version"], "24.0.0");
 
@@ -685,11 +684,7 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     fs::create_dir(&project).expect("project");
     let config_path = project.join("pinset.toml");
     let lock_path = project.join("pinset.lock");
-    fs::write(
-        &config_path,
-        "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n",
-    )
-    .expect("legacy config");
+    fs::write(&config_path, "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n").expect("legacy config");
     let artifacts = MVP_NODE_TARGETS
         .into_iter()
         .map(|target| locked_artifact("24.0.0", target))
@@ -715,9 +710,11 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert_eq!(preview["data"]["from_config_schema"], 2);
     assert_eq!(preview["data"]["from_lock_schema"], 2);
     assert_eq!(preview["data"]["to_schema"], 3);
-    assert!(fs::read_to_string(&config_path)
-        .expect("unchanged config")
-        .starts_with("schema = 2"));
+    assert!(
+        fs::read_to_string(&config_path)
+            .expect("unchanged config")
+            .starts_with("schema = 2")
+    );
 
     let migrated = pinset(&project, &home, &["migrate"]);
     assert!(
@@ -728,9 +725,11 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     let config = fs::read_to_string(config_path).expect("migrated config");
     assert!(config.starts_with("schema = 3"));
     assert!(config.contains("inherit-global = false"));
-    assert!(fs::read_to_string(lock_path)
-        .expect("migrated lock")
-        .starts_with("schema = 3"));
+    assert!(
+        fs::read_to_string(lock_path)
+            .expect("migrated lock")
+            .starts_with("schema = 3")
+    );
 }
 
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {

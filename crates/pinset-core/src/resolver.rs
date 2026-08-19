@@ -15,10 +15,9 @@ use std::{
 use crate::current_target;
 use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
-    find_project_context, global_config_path, is_managed_command_shim,
-    load_optional_global_config, load_project_config, load_project_python_environment,
-    project_python_command_candidates, runtime_provider, runtime_provider_for_command,
-    runtime_providers,
+    find_project_context, global_config_path, is_managed_command_shim, load_optional_global_config,
+    load_project_config, load_project_python_environment, project_python_command_candidates,
+    runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "lockfile")]
 use crate::{
@@ -954,12 +953,10 @@ mod tests {
         let project = root.path().join("project");
         let home = root.path().join("home");
         fs::create_dir_all(&project).expect("project");
-        fs::write(project.join("pinset.toml"), "schema = 2\n[tools]\n")
-            .expect("project config");
+        fs::write(project.join("pinset.toml"), "schema = 2\n[tools]\n").expect("project config");
         let global_path = global_config_path(&home);
         fs::create_dir_all(global_path.parent().expect("state directory")).expect("state");
-        fs::write(global_path, "schema = 1\n[tools]\nnode = \"24.0.0\"\n")
-            .expect("global config");
+        fs::write(global_path, "schema = 1\n[tools]\nnode = \"24.0.0\"\n").expect("global config");
 
         assert!(matches!(
             resolve_tool_selection("node", &project, &home),
