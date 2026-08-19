@@ -15,10 +15,14 @@ use std::{
 use crate::current_target;
 use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
-    find_optional_project_config, global_config_path, is_managed_command_shim,
+    find_project_context, global_config_path, is_managed_command_shim,
     load_optional_global_config, load_project_config, load_project_python_environment,
     project_python_command_candidates, runtime_provider, runtime_provider_for_command,
     runtime_providers,
+};
+#[cfg(feature = "lockfile")]
+use crate::{
+    global_lockfile_path, load_optional_lockfile, lockfile_path, validate_lock_matches_tool,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +45,7 @@ impl SelectionSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolSelection {
     pub tool: String,
+    pub requested: String,
     pub version: String,
     pub source: SelectionSource,
     pub config_path: PathBuf,
@@ -50,6 +55,7 @@ pub struct ToolSelection {
 pub struct CommandResolution {
     pub command: String,
     pub tool: String,
+    pub requested: Option<String>,
     pub version: String,
     pub source: SelectionSource,
     pub selection_path: Option<PathBuf>,
@@ -141,6 +147,7 @@ pub fn resolve_command_with_path(
             return Ok(CommandResolution {
                 command: command.to_owned(),
                 tool: tool.to_owned(),
+                requested: None,
                 version: "unknown".to_owned(),
                 source: SelectionSource::System,
                 selection_path: None,
@@ -173,6 +180,7 @@ pub fn resolve_command_with_path(
         return Ok(CommandResolution {
             command: command.to_owned(),
             tool: tool.to_owned(),
+            requested: Some(selection.requested.clone()),
             version,
             source: selection.source,
             selection_path: Some(selection.config_path),
@@ -204,6 +212,7 @@ pub fn resolve_command_with_path(
     Ok(CommandResolution {
         command: command.to_owned(),
         tool: tool.to_owned(),
+        requested: Some(selection.requested.clone()),
         version,
         source: selection.source,
         selection_path: Some(selection.config_path),
@@ -243,6 +252,7 @@ pub fn resolve_project_python_command(
     Ok(CommandResolution {
         command: command.to_owned(),
         tool: "python".to_owned(),
+        requested: Some(selection.requested),
         version: selection.version,
         source: SelectionSource::Project,
         selection_path: Some(selection.config_path),
@@ -251,35 +261,148 @@ pub fn resolve_project_python_command(
 }
 
 pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Result<ToolSelection> {
-    let project_path = find_optional_project_config(cwd)?;
-    if let Some(config_path) = project_path.as_ref() {
+    let context = find_project_context(cwd)?;
+    if let Some(config_path) = context.config_path.as_ref() {
         let config = load_project_config(config_path)?;
-        if let Some(version) = config.tools.get(tool) {
-            return Ok(ToolSelection {
+        if let Some(requested) = config.tools.get(tool) {
+            return selection_from_config(
+                tool,
+                requested,
+                config.schema,
+                SelectionSource::Project,
+                config_path,
+                lockfile_for_project(config_path),
+            );
+        }
+        if !config.policy.inherit_global {
+            if config.policy.system_fallback {
+                return Err(selection_not_found(tool, cwd, pinset_home));
+            }
+            return Err(Error::ProjectToolSelectionRequired {
                 tool: tool.to_owned(),
-                version: version.clone(),
-                source: SelectionSource::Project,
                 config_path: config_path.clone(),
             });
         }
+
+        let global_path = global_config_path(pinset_home);
+        if let Some(global) = load_optional_global_config(&global_path)? {
+            if let Some(requested) = global.tools.get(tool) {
+                return selection_from_config(
+                    tool,
+                    requested,
+                    global.schema,
+                    SelectionSource::Global,
+                    &global_path,
+                    lockfile_for_global(pinset_home),
+                );
+            }
+        }
+        if config.policy.system_fallback {
+            return Err(selection_not_found(tool, cwd, pinset_home));
+        }
+        return Err(Error::ProjectToolSelectionRequired {
+            tool: tool.to_owned(),
+            config_path: config_path.clone(),
+        });
     }
 
     let global_path = global_config_path(pinset_home);
     if let Some(config) = load_optional_global_config(&global_path)? {
-        if let Some(version) = config.tools.get(tool) {
-            return Ok(ToolSelection {
-                tool: tool.to_owned(),
-                version: version.clone(),
-                source: SelectionSource::Global,
-                config_path: global_path,
-            });
+        if let Some(requested) = config.tools.get(tool) {
+            return selection_from_config(
+                tool,
+                requested,
+                config.schema,
+                SelectionSource::Global,
+                &global_path,
+                lockfile_for_global(pinset_home),
+            );
         }
     }
 
-    Err(Error::ToolSelectionNotFound {
+    Err(selection_not_found(tool, cwd, pinset_home))
+}
+
+fn selection_not_found(tool: &str, cwd: &Path, pinset_home: &Path) -> Error {
+    Error::ToolSelectionNotFound {
         tool: tool.to_owned(),
         start: cwd.to_path_buf(),
-        global_config_path: global_path,
+        global_config_path: global_config_path(pinset_home),
+    }
+}
+
+#[cfg(feature = "lockfile")]
+fn lockfile_for_project(config_path: &Path) -> Result<Option<crate::Lockfile>> {
+    load_optional_lockfile(&lockfile_path(config_path))
+}
+
+#[cfg(not(feature = "lockfile"))]
+fn lockfile_for_project(_config_path: &Path) {}
+
+#[cfg(feature = "lockfile")]
+fn lockfile_for_global(pinset_home: &Path) -> Result<Option<crate::Lockfile>> {
+    load_optional_lockfile(&global_lockfile_path(pinset_home))
+}
+
+#[cfg(not(feature = "lockfile"))]
+fn lockfile_for_global(_pinset_home: &Path) {}
+
+#[cfg(feature = "lockfile")]
+fn selection_from_config(
+    tool: &str,
+    requested: &str,
+    config_schema: u32,
+    source: SelectionSource,
+    config_path: &Path,
+    lockfile: Result<Option<crate::Lockfile>>,
+) -> Result<ToolSelection> {
+    let lockfile = lockfile?;
+    let version = if let Some(lockfile) = lockfile {
+        validate_lock_matches_tool(&lockfile, tool, requested, config_path)?
+            .version
+            .clone()
+    } else if config_schema < crate::PROJECT_CONFIG_SCHEMA {
+        requested.to_owned()
+    } else {
+        return Err(Error::ReadLockfile {
+            path: if source == SelectionSource::Project {
+                lockfile_path(config_path)
+            } else {
+                config_path
+                    .parent()
+                    .unwrap_or(config_path)
+                    .join(crate::GLOBAL_LOCKFILE_FILENAME)
+            },
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "schema 3 selections require a lockfile",
+            ),
+        });
+    };
+    Ok(ToolSelection {
+        tool: tool.to_owned(),
+        requested: requested.to_owned(),
+        version,
+        source,
+        config_path: config_path.to_path_buf(),
+    })
+}
+
+#[cfg(not(feature = "lockfile"))]
+fn selection_from_config(
+    tool: &str,
+    requested: &str,
+    _config_schema: u32,
+    source: SelectionSource,
+    config_path: &Path,
+    _lockfile: (),
+) -> Result<ToolSelection> {
+    Ok(ToolSelection {
+        tool: tool.to_owned(),
+        requested: requested.to_owned(),
+        version: requested.to_owned(),
+        source,
+        config_path: config_path.to_path_buf(),
     })
 }
 
@@ -659,6 +782,7 @@ mod tests {
         let nested = project.join("src").join("feature");
         let home = root.path().join("home");
         fs::create_dir_all(&nested).expect("nested directory");
+        fs::create_dir(project.join(".git")).expect("git marker");
         fs::write(
             project.join("pinset.toml"),
             "schema = 1\n[tools]\nnode = \"20.0.0\"\n",
@@ -804,12 +928,16 @@ mod tests {
     }
 
     #[test]
-    fn project_without_tool_falls_back_to_global_selection() {
+    fn project_can_explicitly_inherit_global_selection() {
         let root = tempdir().expect("temp directory");
         let project = root.path().join("project");
         let home = root.path().join("home");
         fs::create_dir_all(&project).expect("project");
-        fs::write(project.join("pinset.toml"), "schema = 1\n[tools]\n").expect("project config");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 2\n[policy]\ninherit-global = true\n[tools]\n",
+        )
+        .expect("project config");
         let global_path = global_config_path(&home);
         fs::create_dir_all(global_path.parent().expect("state directory")).expect("state");
         fs::write(&global_path, "schema = 1\n[tools]\nnode = \"24.0.0\"\n").expect("global config");
@@ -818,6 +946,47 @@ mod tests {
         assert_eq!(selection.version, "24.0.0");
         assert_eq!(selection.source, SelectionSource::Global);
         assert_eq!(selection.config_path, global_path);
+    }
+
+    #[test]
+    fn project_without_tool_is_strict_by_default() {
+        let root = tempdir().expect("temp directory");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(project.join("pinset.toml"), "schema = 2\n[tools]\n")
+            .expect("project config");
+        let global_path = global_config_path(&home);
+        fs::create_dir_all(global_path.parent().expect("state directory")).expect("state");
+        fs::write(global_path, "schema = 1\n[tools]\nnode = \"24.0.0\"\n")
+            .expect("global config");
+
+        assert!(matches!(
+            resolve_tool_selection("node", &project, &home),
+            Err(Error::ProjectToolSelectionRequired { .. })
+        ));
+    }
+
+    #[test]
+    fn project_can_explicitly_fall_back_to_system_path() {
+        let root = tempdir().expect("temp directory");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        let system_bin = root.path().join("system-bin");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 2\n[policy]\nsystem-fallback = true\n[tools]\n",
+        )
+        .expect("project config");
+        let executable = create_fake_command(&system_bin, "node");
+        let path = env::join_paths([&system_bin]).expect("system PATH");
+
+        let resolution =
+            resolve_command_with_path("node", &project, &home, Some(path.as_os_str()), &[])
+                .expect("system resolution");
+        assert_eq!(resolution.source, SelectionSource::System);
+        assert_eq!(resolution.executable, executable);
     }
 
     #[test]

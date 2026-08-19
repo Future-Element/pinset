@@ -7,7 +7,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-pinset-core = { path = "../pinset-core" }
+pinset-core = { path = "../pinset-core", features = ["lockfile"] }
 
 [dev-dependencies]
 tempfile.workspace = true

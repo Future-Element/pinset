@@ -6,6 +6,23 @@ pub struct RuntimeProvider {
     pub metadata: RuntimeMetadataKind,
     pub installer: RuntimeInstallKind,
     pub environment: RuntimeEnvironmentKind,
+    pub discovery: &'static [RuntimeDiscoveryRule],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeDiscoveryRule {
+    pub source: &'static str,
+    pub kind: RuntimeDiscoveryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeDiscoveryKind {
+    SimpleFile { filename: &'static str },
+    PythonVersion,
+    Fvm,
+    Sdkman,
+    RustToolchain,
+    DotnetGlobalJson,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +69,58 @@ pub enum RuntimeEnvironmentKind {
 }
 
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
+const NODE_DISCOVERY: &[RuntimeDiscoveryRule] = &[
+    RuntimeDiscoveryRule {
+        source: "nvmrc",
+        kind: RuntimeDiscoveryKind::SimpleFile { filename: ".nvmrc" },
+    },
+    RuntimeDiscoveryRule {
+        source: "node-version",
+        kind: RuntimeDiscoveryKind::SimpleFile {
+            filename: ".node-version",
+        },
+    },
+];
+const BUN_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "bun-version",
+    kind: RuntimeDiscoveryKind::SimpleFile {
+        filename: ".bun-version",
+    },
+}];
+const GO_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "go-version",
+    kind: RuntimeDiscoveryKind::SimpleFile {
+        filename: ".go-version",
+    },
+}];
+const FLUTTER_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "fvm",
+    kind: RuntimeDiscoveryKind::Fvm,
+}];
+const PYTHON_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "python-version",
+    kind: RuntimeDiscoveryKind::PythonVersion,
+}];
+const JAVA_DISCOVERY: &[RuntimeDiscoveryRule] = &[
+    RuntimeDiscoveryRule {
+        source: "java-version",
+        kind: RuntimeDiscoveryKind::SimpleFile {
+            filename: ".java-version",
+        },
+    },
+    RuntimeDiscoveryRule {
+        source: "sdkmanrc",
+        kind: RuntimeDiscoveryKind::Sdkman,
+    },
+];
+const RUST_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "rust-toolchain",
+    kind: RuntimeDiscoveryKind::RustToolchain,
+}];
+const DOTNET_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
+    source: "global-json",
+    kind: RuntimeDiscoveryKind::DotnetGlobalJson,
+}];
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
@@ -59,6 +128,7 @@ const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Node,
     installer: RuntimeInstallKind::Node,
     environment: RuntimeEnvironmentKind::None,
+    discovery: NODE_DISCOVERY,
 };
 const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "pnpm",
@@ -67,6 +137,7 @@ const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Npm,
     installer: RuntimeInstallKind::Npm,
     environment: RuntimeEnvironmentKind::None,
+    discovery: &[],
 };
 const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "bun",
@@ -75,6 +146,7 @@ const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Npm,
     installer: RuntimeInstallKind::Npm,
     environment: RuntimeEnvironmentKind::None,
+    discovery: BUN_DISCOVERY,
 };
 const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "go",
@@ -83,6 +155,7 @@ const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Go,
     installer: RuntimeInstallKind::Go,
     environment: RuntimeEnvironmentKind::Go,
+    discovery: GO_DISCOVERY,
 };
 const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "flutter",
@@ -91,6 +164,7 @@ const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Flutter,
     installer: RuntimeInstallKind::Flutter,
     environment: RuntimeEnvironmentKind::Flutter,
+    discovery: FLUTTER_DISCOVERY,
 };
 const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "python",
@@ -99,6 +173,7 @@ const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Python,
     installer: RuntimeInstallKind::Python,
     environment: RuntimeEnvironmentKind::Python,
+    discovery: PYTHON_DISCOVERY,
 };
 const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "java",
@@ -109,6 +184,7 @@ const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Java,
     installer: RuntimeInstallKind::Java,
     environment: RuntimeEnvironmentKind::Java,
+    discovery: JAVA_DISCOVERY,
 };
 const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "rust",
@@ -125,6 +201,7 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Rust,
     installer: RuntimeInstallKind::Rust,
     environment: RuntimeEnvironmentKind::None,
+    discovery: RUST_DISCOVERY,
 };
 const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "dotnet",
@@ -133,6 +210,7 @@ const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
     metadata: RuntimeMetadataKind::Dotnet,
     installer: RuntimeInstallKind::Dotnet,
     environment: RuntimeEnvironmentKind::Dotnet,
+    discovery: DOTNET_DISCOVERY,
 };
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
@@ -279,5 +357,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn provider_specific_discovery_is_declared_in_provider_manifests() {
+        assert_eq!(
+            runtime_provider("node").expect("node").discovery,
+            NODE_DISCOVERY
+        );
+        assert_eq!(
+            runtime_provider("python").expect("python").discovery,
+            PYTHON_DISCOVERY
+        );
+        assert_eq!(
+            runtime_provider("dotnet").expect("dotnet").discovery,
+            DOTNET_DISCOVERY
+        );
     }
 }

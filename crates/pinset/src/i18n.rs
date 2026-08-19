@@ -77,7 +77,7 @@ impl Catalog {
                 format!("错误：项目配置 {} 格式无效：{source}", path.display())
             }
             Error::UnsupportedSchema { actual } => {
-                format!("错误：不支持 pinset.toml schema {actual}，当前支持 schema 1 和 2")
+                format!("错误：不支持 pinset.toml schema {actual}，当前支持 schema 1、2 和 3")
             }
             Error::GlobalConfigNotFound { path } => {
                 format!("错误：全局配置不存在：{}", path.display())
@@ -89,7 +89,7 @@ impl Catalog {
                 format!("错误：全局配置 {} 格式无效：{source}", path.display())
             }
             Error::UnsupportedGlobalConfigSchema { actual } => {
-                format!("错误：不支持 global.toml schema {actual}，当前仅支持 schema 1")
+                format!("错误：不支持 global.toml schema {actual}，当前支持 schema 1、2 和 3")
             }
             Error::ReadUserSettings { path, source } => {
                 format!("错误：无法读取用户设置 {}：{source}", path.display())
@@ -106,6 +106,10 @@ impl Catalog {
             Error::ToolNotConfigured { tool, config_path } => {
                 format!("错误：工具 {tool:?} 未在 {} 中声明", config_path.display())
             }
+            Error::ProjectToolSelectionRequired { tool, config_path } => format!(
+                "错误：严格项目 {} 未声明工具 {tool:?}；请运行 `pinset use {tool}@<选择器>`，或在项目策略中显式启用回退",
+                config_path.display()
+            ),
             Error::ToolSelectionNotFound {
                 tool,
                 start,

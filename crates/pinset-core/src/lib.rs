@@ -86,8 +86,9 @@ mod user_settings;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 pub use config::save_project_state;
 pub use config::{
-    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectConfig, find_optional_project_config,
-    find_project_config, load_project_config,
+    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
+    ProjectPolicy, find_optional_project_config, find_project_config, find_project_context,
+    load_project_config,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
@@ -224,8 +225,9 @@ pub use runtime_lifecycle::{
     uninstall_tool_version,
 };
 pub use runtime_provider::{
-    RuntimeCommandLayout, RuntimeEnvironmentKind, RuntimeInstallKind, RuntimeMetadataKind,
-    RuntimeProvider, runtime_provider, runtime_provider_for_command, runtime_providers,
+    RuntimeCommandLayout, RuntimeDiscoveryKind, RuntimeDiscoveryRule, RuntimeEnvironmentKind,
+    RuntimeInstallKind, RuntimeMetadataKind, RuntimeProvider, runtime_provider,
+    runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "rust-metadata")]
 pub use rust_metadata::{RustMetadataClient, RustRelease};

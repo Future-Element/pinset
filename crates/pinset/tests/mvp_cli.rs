@@ -53,6 +53,56 @@ fn current_which_exec_and_doctor_share_the_locked_fake_runtime() {
 }
 
 #[test]
+fn current_keeps_requested_selector_separate_from_locked_version() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    let config_path = project.join("pinset.toml");
+    let config = ProjectConfig {
+        schema: 3,
+        policy: Default::default(),
+        tools: BTreeMap::from([("node".to_owned(), "24".to_owned())]),
+    };
+    save_project_config(&config_path, &config).expect("project config");
+    let mut lockfile = test_lockfile("24.0.0");
+    lockfile.tools[0].requested = "24".to_owned();
+    save_lockfile(&project.join("pinset.lock"), &lockfile).expect("lockfile");
+    create_fake_node(&home, "24.0.0");
+    create_complete_install_receipt(&home, "24.0.0");
+
+    let current = pinset(&project, &home, &["current", "--json"]);
+    assert!(
+        current.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&current.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&current.stdout).expect("current JSON");
+    assert_eq!(report["data"]["requested"], "24");
+    assert_eq!(report["data"]["version"], "24.0.0");
+
+    let global_config = GlobalConfig {
+        schema: 3,
+        tools: BTreeMap::from([("node".to_owned(), "24".to_owned())]),
+    };
+    let mut global_lock = test_lockfile("24.0.0");
+    global_lock.tools[0].requested = "24".to_owned();
+    save_global_state(&home, &global_config, &global_lock).expect("global selector state");
+    let global = pinset(&project, &home, &["global"]);
+    assert_success_contains(&global, "node@24 resolved to node@24.0.0");
+    assert_success_contains(&global, "node 24.0.0 installed");
+
+    let uninstall = pinset(&project, &home, &["uninstall", "node@24.0.0"]);
+    assert!(!uninstall.status.success());
+    assert!(
+        String::from_utf8_lossy(&uninstall.stderr).contains("it is selected"),
+        "stderr: {}",
+        String::from_utf8_lossy(&uninstall.stderr)
+    );
+}
+
+#[test]
 fn which_and_exec_use_the_global_fake_runtime_without_a_project() {
     let root = tempdir().expect("temporary root");
     let workspace = root.path().join("workspace");
@@ -484,8 +534,12 @@ fn unset_clears_project_then_global_selection_without_uninstalling_runtimes() {
             .contains("[tools]")
     );
     let current = pinset(&project, &home, &["current"]);
-    assert_success_contains(&current, "node 24.0.0 installed");
-    assert_success_contains(&current, "source=global");
+    assert!(!current.status.success());
+    assert!(
+        String::from_utf8_lossy(&current.stderr).contains("strict project"),
+        "stderr: {}",
+        String::from_utf8_lossy(&current.stderr)
+    );
     assert!(
         project_runtime.is_file(),
         "project runtime must be preserved"
@@ -619,14 +673,71 @@ fn doctor_json_is_machine_readable_and_has_no_manager_migration_report() {
     assert!(report["data"].get("legacy_node_configs").is_none());
     assert_eq!(
         fs::read_to_string(project.join("pinset.toml")).expect("project config"),
-        "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n"
+        "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n"
     );
+}
+
+#[test]
+fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    let config_path = project.join("pinset.toml");
+    let lock_path = project.join("pinset.lock");
+    fs::write(
+        &config_path,
+        "schema = 2\n\n[tools]\nnode = \"24.0.0\"\n",
+    )
+    .expect("legacy config");
+    let artifacts = MVP_NODE_TARGETS
+        .into_iter()
+        .map(|target| locked_artifact("24.0.0", target))
+        .collect();
+    let mut lockfile = Lockfile::new_node(
+        "pinset integration test".to_owned(),
+        "24.0.0".to_owned(),
+        "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+        "official".to_owned(),
+        artifacts,
+    );
+    lockfile.schema = 2;
+    fs::write(
+        &lock_path,
+        toml::to_string_pretty(&lockfile).expect("legacy lock TOML"),
+    )
+    .expect("legacy lock");
+
+    let preview = pinset(&project, &home, &["migrate", "--dry-run", "--json"]);
+    assert!(preview.status.success());
+    let preview: serde_json::Value =
+        serde_json::from_slice(&preview.stdout).expect("migration preview JSON");
+    assert_eq!(preview["data"]["from_config_schema"], 2);
+    assert_eq!(preview["data"]["from_lock_schema"], 2);
+    assert_eq!(preview["data"]["to_schema"], 3);
+    assert!(fs::read_to_string(&config_path)
+        .expect("unchanged config")
+        .starts_with("schema = 2"));
+
+    let migrated = pinset(&project, &home, &["migrate"]);
+    assert!(
+        migrated.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    let config = fs::read_to_string(config_path).expect("migrated config");
+    assert!(config.starts_with("schema = 3"));
+    assert!(config.contains("inherit-global = false"));
+    assert!(fs::read_to_string(lock_path)
+        .expect("migrated lock")
+        .starts_with("schema = 3"));
 }
 
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
         schema: 1,
+        policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
     };
     save_project_config(&config_path, &config).expect("project config");

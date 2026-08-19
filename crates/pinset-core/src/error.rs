@@ -19,7 +19,7 @@ pub enum Error {
         source: toml::de::Error,
     },
 
-    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1 and 2")]
+    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1, 2 and 3")]
     UnsupportedSchema { actual: u32 },
 
     #[error("global config does not exist: {path}")]
@@ -39,7 +39,7 @@ pub enum Error {
         source: toml::de::Error,
     },
 
-    #[error("unsupported global.toml schema {actual}; this version supports schema 1")]
+    #[error("unsupported global.toml schema {actual}; this version supports schemas 1, 2 and 3")]
     UnsupportedGlobalConfigSchema { actual: u32 },
 
     #[error("failed to read user settings {path}: {source}")]
@@ -122,7 +122,7 @@ pub enum Error {
     },
 
     #[cfg(feature = "lockfile")]
-    #[error("unsupported pinset.lock schema {actual}; this version supports schemas 1 and 2")]
+    #[error("unsupported pinset.lock schema {actual}; this version supports schemas 1, 2 and 3")]
     UnsupportedLockfileSchema { actual: u32 },
 
     #[cfg(feature = "lockfile")]
@@ -187,6 +187,11 @@ pub enum Error {
 
     #[error("tool \"{tool}\" is not declared in {config_path}")]
     ToolNotConfigured { tool: String, config_path: PathBuf },
+
+    #[error(
+        "tool \"{tool}\" is not declared in strict project {config_path}; add it with `pinset use {tool}@<selector>` or explicitly enable project fallback"
+    )]
+    ProjectToolSelectionRequired { tool: String, config_path: PathBuf },
 
     #[error(
         "no version selected for tool \"{tool}\"; checked project ancestors from {start} and global config {global_config_path}"

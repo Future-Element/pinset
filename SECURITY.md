@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Pinset 仍处于预发布阶段，目前只对最新 GitHub Release 提供安全修复。预发布版本可能包含不兼容变更。
+Pinset 只对最新发布的 GitHub Release 提供安全修复。仓库中的版本号不代表对应 Release 已经发布；报告问题时请同时注明实际安装版本和提交。
 
 ## Reporting a vulnerability
 

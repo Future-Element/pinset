@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    env,
     fs,
     path::{Path, PathBuf},
 };
@@ -19,9 +20,9 @@ use crate::{Error, Result};
 use crate::{Lockfile, lockfile_path, save_lockfile, validate_lock_matches_tools};
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
-pub const PROJECT_CONFIG_SCHEMA: u32 = 2;
+pub const PROJECT_CONFIG_SCHEMA: u32 = 3;
 #[cfg(feature = "project-write")]
-const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 2\n\n[tools]\n";
+const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n";
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -30,7 +31,47 @@ static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 pub struct ProjectConfig {
     pub schema: u32,
     #[serde(default)]
+    pub policy: ProjectPolicy,
+    #[serde(default)]
     pub tools: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectBoundary {
+    Git,
+    Filesystem,
+}
+
+impl Default for ProjectBoundary {
+    fn default() -> Self {
+        Self::Git
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectPolicy {
+    pub inherit_global: bool,
+    pub system_fallback: bool,
+    pub boundary: ProjectBoundary,
+}
+
+impl Default for ProjectPolicy {
+    fn default() -> Self {
+        Self {
+            inherit_global: false,
+            system_fallback: false,
+            boundary: ProjectBoundary::Git,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectContext {
+    pub start: PathBuf,
+    pub boundary: PathBuf,
+    pub config_path: Option<PathBuf>,
 }
 
 impl ProjectConfig {
@@ -40,22 +81,77 @@ impl ProjectConfig {
 }
 
 pub fn find_project_config(start: &Path) -> Result<PathBuf> {
-    find_optional_project_config(start)?.ok_or_else(|| Error::ProjectConfigNotFound {
-        start: normalized_search_start(start).to_path_buf(),
+    let context = find_project_context(start)?;
+    context.config_path.ok_or_else(|| Error::ProjectConfigNotFound {
+        start: context.start,
     })
 }
 
 pub fn find_optional_project_config(start: &Path) -> Result<Option<PathBuf>> {
-    let start = normalized_search_start(start);
+    Ok(find_project_context(start)?.config_path)
+}
 
-    for directory in start.ancestors() {
+pub fn find_project_context(start: &Path) -> Result<ProjectContext> {
+    let start = normalized_search_start(start);
+    let start = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|source| Error::ReadProjectConfig {
+                path: start.to_path_buf(),
+                source,
+            })?
+            .join(start)
+    };
+    let default_boundary = nearest_git_root(&start).unwrap_or_else(|| start.clone());
+
+    for directory in ancestors_through(&start, &default_boundary) {
         let candidate = directory.join(PROJECT_CONFIG_FILENAME);
         if candidate.is_file() {
-            return Ok(Some(candidate));
+            let config = load_project_config(&candidate)?;
+            let boundary = if config.policy.boundary == ProjectBoundary::Filesystem {
+                filesystem_root(&start)
+            } else {
+                default_boundary
+            };
+            return Ok(ProjectContext {
+                start,
+                boundary,
+                config_path: Some(candidate),
+            });
         }
     }
 
-    Ok(None)
+    // A configuration above the normal Git/home boundary is considered only when it explicitly
+    // opts into filesystem-wide discovery. This preserves an escape hatch without allowing an
+    // unrelated parent configuration to silently capture a repository.
+    let mut above_boundary = false;
+    for directory in start.ancestors() {
+        if !above_boundary {
+            if directory == default_boundary {
+                above_boundary = true;
+            }
+            continue;
+        }
+        let candidate = directory.join(PROJECT_CONFIG_FILENAME);
+        if candidate.is_file() {
+            let config = load_project_config(&candidate)?;
+            if config.policy.boundary == ProjectBoundary::Filesystem {
+                return Ok(ProjectContext {
+                    start: start.clone(),
+                    boundary: filesystem_root(&start),
+                    config_path: Some(candidate),
+                });
+            }
+            break;
+        }
+    }
+
+    Ok(ProjectContext {
+        start,
+        boundary: default_boundary,
+        config_path: None,
+    })
 }
 
 fn normalized_search_start(start: &Path) -> &Path {
@@ -64,6 +160,30 @@ fn normalized_search_start(start: &Path) -> &Path {
     } else {
         start
     }
+}
+
+fn nearest_git_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|directory| {
+            let marker = directory.join(".git");
+            marker.is_file() || marker.is_dir()
+        })
+        .map(Path::to_path_buf)
+}
+
+fn filesystem_root(start: &Path) -> PathBuf {
+    start
+        .ancestors()
+        .last()
+        .unwrap_or(start)
+        .to_path_buf()
+}
+
+fn ancestors_through<'a>(start: &'a Path, boundary: &'a Path) -> impl Iterator<Item = &'a Path> {
+    start
+        .ancestors()
+        .take_while(move |directory| directory.starts_with(boundary))
 }
 
 pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
@@ -77,7 +197,7 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
             source,
         })?;
 
-    if !matches!(config.schema, 1 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -119,7 +239,7 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
 
 #[cfg(feature = "project-write")]
 pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
-    if !matches!(config.schema, 1 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -171,6 +291,7 @@ mod tests {
         let root = tempdir().expect("temp directory");
         let nested = root.path().join("packages").join("web").join("src");
         fs::create_dir_all(&nested).expect("nested directory");
+        fs::create_dir(root.path().join(".git")).expect("git marker");
         fs::write(
             root.path().join("pinset.toml"),
             "schema = 1\n[tools]\nnode = \"20.0.0\"\n",
@@ -191,6 +312,43 @@ mod tests {
     }
 
     #[test]
+    fn git_boundary_prevents_parent_project_capture() {
+        let root = tempdir().expect("temp directory");
+        let repository = root.path().join("repo");
+        let nested = repository.join("packages").join("app");
+        fs::create_dir_all(repository.join(".git")).expect("git marker");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(
+            root.path().join(PROJECT_CONFIG_FILENAME),
+            "schema = 3\n[tools]\nnode = \"24\"\n",
+        )
+        .expect("parent config");
+
+        let context = find_project_context(&nested).expect("project context");
+        assert_eq!(context.boundary, repository);
+        assert_eq!(context.config_path, None);
+    }
+
+    #[test]
+    fn filesystem_policy_can_cross_the_git_boundary() {
+        let root = tempdir().expect("temp directory");
+        let repository = root.path().join("repo");
+        let nested = repository.join("packages").join("app");
+        fs::create_dir_all(repository.join(".git")).expect("git marker");
+        fs::create_dir_all(&nested).expect("nested directory");
+        let parent_config = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &parent_config,
+            "schema = 3\n[policy]\nboundary = \"filesystem\"\n[tools]\n",
+        )
+        .expect("parent config");
+
+        let context = find_project_context(&nested).expect("project context");
+        assert_eq!(context.config_path, Some(parent_config));
+        assert_eq!(context.boundary, filesystem_root(&nested));
+    }
+
+    #[test]
     fn rejects_executable_or_unknown_config_fields() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
@@ -208,10 +366,10 @@ mod tests {
     fn rejects_unknown_schema() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
-        fs::write(&config_path, "schema = 3\n[tools]\nnode = \"20\"\n").expect("config");
+        fs::write(&config_path, "schema = 4\n[tools]\nnode = \"20\"\n").expect("config");
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
-        assert!(matches!(error, Error::UnsupportedSchema { actual: 3 }));
+        assert!(matches!(error, Error::UnsupportedSchema { actual: 4 }));
     }
 
     #[cfg(feature = "project-write")]
@@ -225,12 +383,13 @@ mod tests {
             load_project_config(&path).expect("load created config"),
             ProjectConfig {
                 schema: PROJECT_CONFIG_SCHEMA,
+                policy: ProjectPolicy::default(),
                 tools: BTreeMap::new(),
             }
         );
         assert_eq!(
             fs::read_to_string(path).expect("created config"),
-            "schema = 2\n\n[tools]\n"
+            "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n"
         );
     }
 
@@ -314,6 +473,7 @@ mod tests {
         let config_path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
             schema: PROJECT_CONFIG_SCHEMA,
+            policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
         };
         let lockfile = Lockfile {

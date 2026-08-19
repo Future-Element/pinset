@@ -13,7 +13,9 @@ Pinset 是一个行为可预测、理解项目边界的多语言运行时版本�
 ## 核心特性
 
 - 使用一个 CLI 管理全局默认版本与可复现的项目版本。
-- 在 `pinset.lock` 中记录精确版本和各平台制品。
+- `pinset.toml` 保留用户请求的选择器，`pinset.lock` 记录精确版本和各平台制品。
+- 项目内默认严格路由，只有显式策略才允许继承全局版本或回退系统命令。
+- 通过 `current --explain`、`which --explain` 与 `doctor` 解释完整解析过程。
 - 通过一个轻量、与运行时无关的 shim 路由命令。
 - 解析摘要之前，先使用内嵌 OpenPGP 信任根验证 Node.js 发布清单。
 - Provider 完整性校验、安全解压、原子安装、带所有权检查的卸载，以及内容寻址下载缓存。
@@ -40,7 +42,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.1.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -127,7 +129,18 @@ pinset install --locked
 pinset exec -- node --version
 ```
 
-请提交 `pinset.toml` 和 `pinset.lock`。`latest`、`lts`、`stable` 或版本前缀等选择器会在锁文件中解析为精确版本。
+请提交 `pinset.toml` 和 `pinset.lock`。`latest`、`lts`、`stable` 或版本前缀等选择器会保留在 `pinset.toml`，锁文件则记录其精确解析版本。`pinset outdated` 会区分“兼容选择器内可更新”与“必须修改选择器才能升级”，`pinset update --dry-run` 可预览兼容的锁更新。
+
+schema 3 项目默认严格：只要存在 `pinset.toml`，未声明的工具就不会继承全局选择，也不会使用系统 `PATH`。需要时必须明确选择：
+
+```toml
+[policy]
+inherit-global = true
+system-fallback = false
+boundary = "git"
+```
+
+默认解析边界是最近的 Git 根目录；只有父级配置自身明确设置 `boundary = "filesystem"` 时，才允许跨过 Git 边界。使用 `pinset current node --explain` 或 `pinset which node --explain` 可以查看每个候选，以及那些只作为显式迁移输入的传统配置文件。schema 1/2 状态仍可读取；可通过 `pinset migrate --dry-run` 预览，再运行 `pinset migrate` 完成仅格式层面的升级。
 
 迁移现有仓库时，先在本地检查传统配置，再导入并安装其中无歧义的选择：
 
@@ -166,13 +179,15 @@ Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档�
 
 请查阅完整的[中文命令文档](docs/commands.zh-CN.md)或[英文命令文档](docs/commands.md)。其中记录了每个命令及二级命令、状态修改、JSON 支持、退出码与常见错误。
 
+产品定位与取舍见带官方来源的 [Pinset v1.5 横向对比](docs/comparison.zh-CN.md)。
+
 ## 未来规划
 
 路线图只表达方向，不承诺具体版本或发布日期。
 
 | 状态 | 方向 |
 | --- | --- |
-| Planned | 为 v1.x 后续稳定协议变化提供迁移与升级辅助。 |
+| Planned | 扩展锁审计、失败原因码与兼容性迁移诊断。 |
 | Exploring | 评估通过 Homebrew、Winget、Scoop 等渠道进行官方分发。 |
 | Exploring | 在上游运行时提供合适制品时扩展平台和架构。 |
 | Exploring | 根据真实需求增加 Provider 或 Provider 扩展机制。 |

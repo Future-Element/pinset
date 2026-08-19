@@ -14,8 +14,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Result, find_optional_project_config, global_config_path, load_optional_global_config,
-    load_project_config, runtime_provider, runtime_providers,
+    Error, GlobalConfig, ProjectConfig, Result, find_optional_project_config, global_config_path,
+    load_optional_global_config, load_project_config, runtime_provider, runtime_providers,
+};
+
+#[cfg(feature = "lockfile")]
+use crate::{
+    GLOBAL_STATE_SCHEMA, PROJECT_CONFIG_SCHEMA, global_lockfile_path, load_lockfile,
+    load_optional_lockfile, lockfile_path, validate_lock_matches_tool,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -129,6 +135,78 @@ pub fn list_all_installed_tool_versions(pinset_home: &Path) -> Result<Vec<Instal
     Ok(installed)
 }
 
+fn project_config_selects_version(
+    config_path: &Path,
+    config: &ProjectConfig,
+    tool: &str,
+    version: &str,
+) -> Result<bool> {
+    let Some(requested) = config.tools.get(tool) else {
+        return Ok(false);
+    };
+    #[cfg(feature = "lockfile")]
+    {
+        locked_config_selects_version(
+            config_path,
+            &lockfile_path(config_path),
+            config.schema < PROJECT_CONFIG_SCHEMA,
+            tool,
+            requested,
+            version,
+        )
+    }
+    #[cfg(not(feature = "lockfile"))]
+    {
+        let _ = config_path;
+        Ok(requested == version)
+    }
+}
+
+fn global_config_selects_version(
+    pinset_home: &Path,
+    config_path: &Path,
+    config: &GlobalConfig,
+    tool: &str,
+    version: &str,
+) -> Result<bool> {
+    let Some(requested) = config.tools.get(tool) else {
+        return Ok(false);
+    };
+    #[cfg(feature = "lockfile")]
+    {
+        locked_config_selects_version(
+            config_path,
+            &global_lockfile_path(pinset_home),
+            config.schema < GLOBAL_STATE_SCHEMA,
+            tool,
+            requested,
+            version,
+        )
+    }
+    #[cfg(not(feature = "lockfile"))]
+    {
+        let _ = (pinset_home, config_path);
+        Ok(requested == version)
+    }
+}
+
+#[cfg(feature = "lockfile")]
+fn locked_config_selects_version(
+    config_path: &Path,
+    lock_path: &Path,
+    legacy_without_lock: bool,
+    tool: &str,
+    requested: &str,
+    version: &str,
+) -> Result<bool> {
+    let lockfile = match load_optional_lockfile(lock_path)? {
+        Some(lockfile) => lockfile,
+        None if legacy_without_lock => return Ok(requested == version),
+        None => load_lockfile(lock_path)?,
+    };
+    Ok(validate_lock_matches_tool(&lockfile, tool, requested, config_path)?.version == version)
+}
+
 pub fn find_tool_version_references(
     pinset_home: &Path,
     cwd: &Path,
@@ -139,11 +217,7 @@ pub fn find_tool_version_references(
     let mut references = Vec::new();
     if let Some(path) = find_optional_project_config(cwd)? {
         let config = load_project_config(&path)?;
-        if config
-            .tools
-            .get(tool)
-            .is_some_and(|selected| selected == version)
-        {
+        if project_config_selects_version(&path, &config, tool, version)? {
             references.push(ToolVersionReference {
                 scope: "project",
                 path,
@@ -152,11 +226,7 @@ pub fn find_tool_version_references(
     }
     let path = global_config_path(pinset_home);
     if let Some(config) = load_optional_global_config(&path)? {
-        if config
-            .tools
-            .get(tool)
-            .is_some_and(|selected| selected == version)
-        {
+        if global_config_selects_version(pinset_home, &path, &config, tool, version)? {
             references.push(ToolVersionReference {
                 scope: "global",
                 path,
@@ -183,11 +253,7 @@ pub fn find_tool_version_references_in_projects(
             continue;
         }
         let config = load_project_config(&path)?;
-        if config
-            .tools
-            .get(tool)
-            .is_some_and(|selected| selected == version)
-        {
+        if project_config_selects_version(&path, &config, tool, version)? {
             references.push(ToolVersionReference {
                 scope: "project",
                 path,
@@ -196,11 +262,7 @@ pub fn find_tool_version_references_in_projects(
     }
     let path = global_config_path(pinset_home);
     if let Some(config) = load_optional_global_config(&path)? {
-        if config
-            .tools
-            .get(tool)
-            .is_some_and(|selected| selected == version)
-        {
+        if global_config_selects_version(pinset_home, &path, &config, tool, version)? {
             references.push(ToolVersionReference {
                 scope: "global",
                 path,

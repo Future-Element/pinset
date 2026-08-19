@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
-pub const LOCKFILE_SCHEMA: u32 = 2;
+pub const LOCKFILE_SCHEMA: u32 = 3;
 pub const MVP_NODE_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
@@ -230,18 +230,18 @@ pub fn validate_lock_matches_project<'a>(
 
 pub fn validate_lock_matches_selection<'a>(
     lockfile: &'a Lockfile,
-    selected_node_version: &str,
+    selected_node_selector: &str,
     selection_path: &Path,
 ) -> Result<&'a LockedTool> {
     let tool = lockfile.tool("node").ok_or(Error::LockedToolMissing {
         tool: "node".to_owned(),
     })?;
-    if tool.requested != selected_node_version || tool.version != selected_node_version {
+    if tool.requested != selected_node_selector {
         return Err(Error::LockfileMismatch {
             selection_path: selection_path.to_path_buf(),
             tool: "node".to_owned(),
-            configured: selected_node_version.to_owned(),
-            locked: tool.version.clone(),
+            configured: selected_node_selector.to_owned(),
+            locked: format!("{} -> {}", tool.requested, tool.version),
         });
     }
     Ok(tool)
@@ -250,7 +250,7 @@ pub fn validate_lock_matches_selection<'a>(
 pub fn validate_lock_matches_tool<'a>(
     lockfile: &'a Lockfile,
     tool_name: &str,
-    selected_version: &str,
+    selected_selector: &str,
     selection_path: &Path,
 ) -> Result<&'a LockedTool> {
     let tool = lockfile
@@ -258,12 +258,12 @@ pub fn validate_lock_matches_tool<'a>(
         .ok_or_else(|| Error::LockedToolMissing {
             tool: tool_name.to_owned(),
         })?;
-    if tool.requested != selected_version || tool.version != selected_version {
+    if tool.requested != selected_selector {
         return Err(Error::LockfileMismatch {
             selection_path: selection_path.to_path_buf(),
             tool: tool_name.to_owned(),
-            configured: selected_version.to_owned(),
-            locked: tool.version.clone(),
+            configured: selected_selector.to_owned(),
+            locked: format!("{} -> {}", tool.requested, tool.version),
         });
     }
     Ok(tool)
@@ -289,7 +289,7 @@ pub fn validate_lock_matches_tools(
 }
 
 fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
-    if !matches!(lockfile.schema, 1 | LOCKFILE_SCHEMA) {
+    if !matches!(lockfile.schema, 1 | 2 | LOCKFILE_SCHEMA) {
         return Err(Error::UnsupportedLockfileSchema {
             actual: lockfile.schema,
         });
@@ -307,6 +307,14 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
             });
         }
         validate_locked_tool(tool)?;
+        if lockfile.schema < LOCKFILE_SCHEMA && tool.requested != tool.version {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "schema {} requires {} requested and resolved versions to match",
+                    lockfile.schema, tool.name
+                ),
+            });
+        }
     }
     if lockfile.schema == 1 && lockfile.tools.iter().any(|tool| tool.name != "node") {
         return Err(Error::InvalidLockfile {
@@ -337,12 +345,9 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
             ),
         });
     }
-    if tool.requested != tool.version {
+    if tool.requested.trim().is_empty() {
         return Err(Error::InvalidLockfile {
-            reason: format!(
-                "{} requires requested and version to be the same exact version",
-                tool.name
-            ),
+            reason: format!("{} requested selector cannot be empty", tool.name),
         });
     }
     if tool.name != "node"
@@ -1177,6 +1182,36 @@ mod tests {
                 "windows-x86_64",
             ]
         );
+    }
+
+    #[test]
+    fn schema_three_separates_requested_selector_from_resolved_version() {
+        let artifacts = MVP_NODE_TARGETS
+            .into_iter()
+            .map(locked_artifact)
+            .collect::<Vec<_>>();
+        let mut lockfile = Lockfile::new_node(
+            "pinset 1.5.0".to_owned(),
+            "24.0.0".to_owned(),
+            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+            "official".to_owned(),
+            artifacts,
+        );
+        lockfile.tools[0].requested = "24".to_owned();
+
+        validate_lockfile(&lockfile).expect("schema 3 accepts a selector");
+        assert_eq!(
+            validate_lock_matches_selection(&lockfile, "24", Path::new("pinset.toml"))
+                .expect("selector matches")
+                .version,
+            "24.0.0"
+        );
+
+        lockfile.schema = 2;
+        assert!(matches!(
+            validate_lockfile(&lockfile),
+            Err(Error::InvalidLockfile { .. })
+        ));
     }
 
     #[test]
