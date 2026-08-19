@@ -112,10 +112,10 @@ pub fn find_project_context(start: &Path) -> Result<ProjectContext> {
             let boundary = if config.policy.boundary == ProjectBoundary::Filesystem {
                 filesystem_root(&start)
             } else {
-                default_boundary
+                default_boundary.clone()
             };
             return Ok(ProjectContext {
-                start,
+                start: start.clone(),
                 boundary,
                 config_path: Some(candidate),
             });
