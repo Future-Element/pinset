@@ -42,7 +42,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.1
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 

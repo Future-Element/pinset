@@ -14,6 +14,7 @@ const NODE_RELEASE_KEYS_SOURCE: &str =
     "nodejs/release-keys@b28073028e6d6855cfb53bf7fa0137599c01f967";
 const PUBLIC_KEY_ARMOR_BEGIN: &str = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const PUBLIC_KEY_ARMOR_END: &str = "-----END PGP PUBLIC KEY BLOCK-----";
+const MAX_NODE_MANIFEST_BYTES: usize = 1024 * 1024;
 
 // INVARIANT: These primary fingerprints are the trust decision. The armored bundle is only
 // accepted when every parsed certificate belongs to this pinned allowlist.
@@ -59,6 +60,13 @@ pub(crate) struct VerifiedNodeManifest {
 }
 
 pub(crate) fn verify_node_manifest(armored: &str) -> Result<VerifiedNodeManifest> {
+    if armored.len() > MAX_NODE_MANIFEST_BYTES {
+        return Err(Error::NodeSignatureInvalid {
+            reason: format!(
+                "clear-signed manifest exceeds the {MAX_NODE_MANIFEST_BYTES}-byte verification limit"
+            ),
+        });
+    }
     let (message, _) = CleartextSignedMessage::from_string(armored).map_err(|source| {
         Error::NodeSignatureInvalid {
             reason: format!("cannot parse clear-signed manifest: {source}"),
@@ -100,7 +108,7 @@ pub(crate) fn verify_node_manifest(armored: &str) -> Result<VerifiedNodeManifest
         .map(|value| hex::encode_upper(value.as_bytes()))
         .collect::<Vec<_>>();
     let issuer_ids = signature
-        .issuer()
+        .issuer_key_id()
         .into_iter()
         .map(|value| hex::encode_upper(value.as_ref()))
         .collect::<Vec<_>>();
@@ -168,7 +176,7 @@ fn verify_signing_authority(key: &SignedPublicKey) -> Result<()> {
     // still verify against the pinned primary key before the certificate is accepted.
     for subkey in &key.public_subkeys {
         subkey
-            .verify(&key.primary_key)
+            .verify_bindings(&key.primary_key)
             .map_err(|source| Error::NodeTrustStoreInvalid {
                 reason: format!("signing subkey binding verification failed: {source}"),
             })?;
@@ -219,10 +227,10 @@ fn trusted_identities(keys: &[SignedPublicKey]) -> BTreeSet<String> {
     let mut identities = BTreeSet::new();
     for key in keys {
         identities.insert(fingerprint(key));
-        identities.insert(hex::encode_upper(key.primary_key.key_id().as_ref()));
+        identities.insert(hex::encode_upper(key.primary_key.legacy_key_id().as_ref()));
         for subkey in &key.public_subkeys {
             identities.insert(hex::encode_upper(subkey.fingerprint().as_bytes()));
-            identities.insert(hex::encode_upper(subkey.key_id().as_ref()));
+            identities.insert(hex::encode_upper(subkey.legacy_key_id().as_ref()));
         }
     }
     identities
@@ -231,6 +239,7 @@ fn trusted_identities(keys: &[SignedPublicKey]) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     const OFFICIAL_MANIFEST: &str =
         include_str!("../tests/fixtures/node-v24.19.0-SHASUMS256.txt.asc");
@@ -283,6 +292,46 @@ mod tests {
         assert!(matches!(
             verify_node_manifest(&malformed),
             Err(Error::NodeSignatureInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_deeply_repeated_signature_packets_without_panicking() {
+        let normalized = OFFICIAL_MANIFEST.replace("\r\n", "\n");
+        let (signed_message, signature_armor) = normalized
+            .split_once("-----BEGIN PGP SIGNATURE-----")
+            .expect("signature armor");
+        let encoded_signature = signature_armor
+            .split_once("\n\n")
+            .expect("signature armor headers")
+            .1
+            .lines()
+            .take_while(|line| {
+                !line.starts_with('=') && *line != "-----END PGP SIGNATURE-----"
+            })
+            .collect::<String>();
+        let packet = STANDARD
+            .decode(encoded_signature)
+            .expect("signature packet");
+        let repeated_packets = packet.repeat(512);
+        let deeply_composed = format!(
+            "{signed_message}-----BEGIN PGP SIGNATURE-----\n\n{}\n-----END PGP SIGNATURE-----\n",
+            STANDARD.encode(repeated_packets)
+        );
+
+        let result = std::panic::catch_unwind(|| verify_node_manifest(&deeply_composed));
+        assert!(matches!(
+            result,
+            Ok(Err(Error::NodeSignatureInvalid { .. }))
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_manifest_before_openpgp_parsing() {
+        let oversized = "x".repeat(MAX_NODE_MANIFEST_BYTES + 1);
+        assert!(matches!(
+            verify_node_manifest(&oversized),
+            Err(Error::NodeSignatureInvalid { reason }) if reason.contains("verification limit")
         ));
     }
 }

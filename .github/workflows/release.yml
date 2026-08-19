@@ -50,9 +50,15 @@ jobs:
       - name: Prepare Rust toolchain
         run: |
           rustup set profile minimal
-          rustup update 1.85.0
-          rustup default 1.85.0
+          rustup update 1.88.0
+          rustup default 1.88.0
           rustup component add clippy rustfmt
+
+      - name: Install pinned RustSec audit tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Reject dependency security warnings
+        run: cargo audit --deny warnings
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -133,8 +139,8 @@ jobs:
         shell: bash
         run: |
           rustup set profile minimal
-          rustup update 1.85.0
-          rustup default 1.85.0
+          rustup update 1.88.0
+          rustup default 1.88.0
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim

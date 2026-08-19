@@ -17,3 +17,9 @@ Pinset 只对最新发布的 GitHub Release 提供安全修复。仓库中的版
 - 建议的缓解方式（如有）。
 
 维护者确认安全沟通渠道后，再交换完整细节。修复发布前会尽量协调披露时间。
+
+## Release security gate
+
+- Pull Request 与 Release 工作流必须对提交的 `Cargo.lock` 执行固定版本的 `cargo audit --deny warnings`。
+- 最新 RustSec 数据库中的漏洞、停止维护和撤回告警会阻止合并与发布；不得通过忽略规则绕过高危运行时依赖告警。
+- GitHub Dependabot 标记为高危的运行时依赖必须在创建正式版本标签前升级或移除。Pinset 不发布带有未解决高危运行时依赖告警的版本。
