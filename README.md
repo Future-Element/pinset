@@ -185,13 +185,15 @@ For product positioning and trade-offs, see the sourced [Pinset v1.5 comparison 
 
 The roadmap describes direction, not promised versions or dates.
 
-| Status | Direction |
-| --- | --- |
-| Planned | Expand lock auditing, stable failure reason codes, and compatibility diagnostics. |
-| Exploring | Official distribution through Homebrew, Winget, Scoop, and similar channels. |
-| Exploring | Additional platforms and architectures when upstream runtimes provide suitable artifacts. |
-| Exploring | New Providers or a Provider extension mechanism, guided by real-world demand. |
-| Ongoing | Stronger supply-chain verification, cache behavior, and diagnostics. |
+| Version | Theme | Planned work |
+| --- | --- | --- |
+| v1.6 | Lock auditing and security foundations | Add a read-only, offline-by-default `pinset lock audit` that checks configuration, locks, platform artifacts, caches, install receipts, and ownership state; expose stable reason codes for automation; and define one capability model for all nine built-in Providers. The first release will report issues and repair plans without changing state automatically. |
+| v1.7 | General provenance verification | Move the existing Node.js OpenPGP verification behind a common verifier interface, then add signed checksums, Minisign, Sigstore, GitHub Attestations, and SLSA provenance where upstreams actually provide them. Add optional verification-strength and `minimum-release-age` policies, and reject silent verification downgrades. |
+| v1.8 | Constrained Provider Registry | Preview declarative Provider manifests and a signed Registry. Third-party Providers must reuse Pinset's HTTPS, integrity, safe extraction, path, and ownership rules and cannot run arbitrary Shell/Lua or post-install scripts. Add toolchain dependency graphs, a composite `PATH`, and cycle detection so tools such as pnpm run with the correct runtime. |
+| v1.9 | Developer experience and distribution | Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution without modifying project state. Provide a GitHub Action, Renovate integration, VS Code schemas, Dev Container examples, and official Winget, Scoop, and Homebrew distribution. |
+| Ongoing | Platforms and quality | Add platforms and architectures when upstreams publish suitable artifacts. Continue cross-platform CI, security audits, malicious-input regressions, signed tags, `SHA256SUMS`, SBOMs, and build-provenance verification. |
+
+The roadmap preserves Pinset's explicit boundaries: traditional version files remain opt-in `detect` / `import` inputs; strict projects do not download and execute missing tools by default; and the core will not absorb tasks, hooks, `.env`, secrets, service management, Nix/Conda solving, or arbitrary-code plugins. These releases will continue using schema 3 and prefer backward-compatible optional fields.
 
 ## Uninstall
 

@@ -185,13 +185,15 @@ Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档�
 
 路线图只表达方向，不承诺具体版本或发布日期。
 
-| 状态 | 方向 |
-| --- | --- |
-| Planned | 扩展锁审计、失败原因码与兼容性迁移诊断。 |
-| Exploring | 评估通过 Homebrew、Winget、Scoop 等渠道进行官方分发。 |
-| Exploring | 在上游运行时提供合适制品时扩展平台和架构。 |
-| Exploring | 根据真实需求增加 Provider 或 Provider 扩展机制。 |
-| Ongoing | 持续加强供应链验证、缓存行为与诊断能力。 |
+| 版本 | 主题 | 计划内容 |
+| --- | --- | --- |
+| v1.6 | 锁审计与安全策略基础 | 增加只读、默认离线的 `pinset lock audit`，检查配置、锁、平台制品、缓存、安装收据与所有权状态；为自动化提供稳定 reason code；建立 9 个内置 Provider 的统一 capability model。首版只报告问题与修复计划，不自动修改状态。 |
+| v1.7 | 通用来源证明 | 把 Node.js 已有的 OpenPGP 验证迁移到统一验证接口，并按上游实际能力逐步支持 signed checksum、Minisign、Sigstore、GitHub Attestation 与 SLSA provenance；增加可选的验证强度和 `minimum-release-age` 策略，禁止静默降低验证能力。 |
+| v1.8 | 受约束的 Provider Registry | 预览纯声明式 Provider manifest 与签名 Registry；第三方 Provider 必须复用 Pinset 的 HTTPS、完整性、安全解压、路径和所有权规则，不能执行任意 Shell/Lua 或 post-install 脚本；增加工具链依赖图、composite `PATH` 与循环检测，支持 pnpm 等工具与正确运行时组合。 |
+| v1.9 | 开发者体验与正式分发 | 增加不修改项目状态的 `pinset x <tool>@<selector> -- <command>`；补齐 GitHub Action、Renovate、VS Code schema、Dev Container 示例，以及 Winget、Scoop、Homebrew 等官方分发渠道。 |
+| 持续进行 | 平台与质量 | 在上游提供合适制品时扩展平台和架构；持续执行跨平台 CI、安全审计、恶意输入回归、签名标签、`SHA256SUMS`、SBOM 与构建来源证明验证。 |
+
+路线图会保持 Pinset 的明确边界：传统版本文件仍只由 `detect` / `import` 显式读取；严格项目不默认自动下载并执行缺失工具；核心不加入任务、hooks、`.env`、Secrets、服务管理、Nix/Conda 求解或任意代码插件。上述路线继续使用 schema 3，并优先采用向后兼容的可选字段。
 
 ## 卸载
 
