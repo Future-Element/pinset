@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.0 - 2026-08-20
+
+- Add a constrained, clear-signed Provider Registry preview with a pinned OpenPGP signer. `pinset provider list` and `pinset provider verify [REGISTRY]` validate declarative manifests without installing, activating, or executing third-party code.
+- Reject unknown manifest fields, unsupported capabilities, duplicate identifiers or commands, missing dependencies, dependency cycles, non-regular registry files, oversized inputs, unsigned data, and signature tampering.
+- Add declarative Provider dependency graphs and topological install/state validation. pnpm now explicitly depends on Node.js instead of inheriting unrelated selected runtimes.
+- Build each routed command's composite `PATH` and environment from its selected Provider plus declared transitive dependencies, preserving deterministic order and reporting missing dependencies explicitly.
+- Keep registry verification out of the runtime-independent shim dependency graph; the embedded registry is also checked against built-in commands, dependencies, and provenance declarations to detect drift.
+
+No configuration or lock schema migration is required. v1.8 continues to write schema 3 and read schema 1/2. The Registry is a read-only preview: only Providers compiled into Pinset may install or activate in this release.
+
 ## 1.7.0 - 2026-08-20
 
 - Add a common provenance verifier contract and one verification vocabulary for HTTPS checksums, OpenPGP/Minisign signed checksums, npm registry signatures, Sigstore bundles, GitHub Attestations, and SLSA provenance. Node.js OpenPGP validation now runs behind that contract.

@@ -43,7 +43,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.7.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.8.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -191,15 +191,24 @@ Flutter does not publish an official Linux ARM64 SDK archive that matches Pinset
 
 All nine built-in Providers declare command layout, metadata resolution, installation, environment, traditional-file discovery, lock-audit support, verification methods, and release-time availability through one capability model. Node locks currently reach `signed-checksum` through embedded OpenPGP trust roots; pnpm and Bun reach it through npm registry ECDSA signatures. The other built-in Providers currently reach `checksum`. Minisign, Sigstore, GitHub Attestation, and SLSA are distinct recognized methods, but Pinset reports `provenance` only after a Provider actually verifies the corresponding bundle and identity policy.
 
+v1.8 adds a clear-signed declarative Registry preview and explicit Provider dependencies. Inspect the embedded manifest set or verify another clear-signed Registry file without activating it:
+
+```sh
+pinset provider list
+pinset provider verify registry/providers.json.asc --json
+```
+
+Registry verification is deliberately read-only. Unknown fields, arbitrary scripts/hooks, unsupported capabilities, missing dependencies, cycles, signer mismatch, and signature tampering fail closed. Only the nine Providers compiled into this Pinset release can install or route commands. pnpm declares Node.js as a dependency, so its composite `PATH` contains the project-selected Node.js runtime and does not inherit unrelated Providers.
+
 ## Command reference
 
 See the complete [English command reference](docs/commands.md) or [Chinese command reference](docs/commands.zh-CN.md). It documents every command and subcommand, state changes, JSON support, exit codes, and common failures.
 
 For product positioning and trade-offs, see the sourced [Pinset comparison (Chinese)](docs/comparison.zh-CN.md).
 
-## v1.7
+## v1.8
 
-v1.7 delivers general provenance policy: a common verifier contract, explicit proof strengths, release-age enforcement, Provider capability declarations, stable audit findings, and downgrade protection. It keeps schema 3 and does not treat an HTTPS checksum or an advertised signature URL as verified provenance.
+v1.8 delivers a constrained Provider Registry preview and dependency graph. Registry manifests are clear-signed by a pinned OpenPGP key, strictly declarative, bounded, and deny unknown capabilities; verification never installs or executes them. Built-in dependencies are cycle-checked and produce deterministic install/environment order, including pnpm's explicit Node.js runtime dependency. It keeps schema 3 and the v1 JSON envelope.
 
 ## Future Roadmap
 
@@ -207,7 +216,6 @@ The roadmap describes direction, not promised versions or dates.
 
 | Version | Theme | Planned work |
 | --- | --- | --- |
-| v1.8 | Constrained Provider Registry | Preview declarative Provider manifests and a signed Registry. Third-party Providers must reuse Pinset's HTTPS, integrity, safe extraction, path, and ownership rules and cannot run arbitrary Shell/Lua or post-install scripts. Add toolchain dependency graphs, a composite `PATH`, and cycle detection so tools such as pnpm run with the correct runtime. |
 | v1.9 | Developer experience and distribution | Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution without modifying project state. Provide a GitHub Action, Renovate integration, VS Code schemas, Dev Container examples, and official Winget, Scoop, and Homebrew distribution. |
 | Ongoing | Platforms and quality | Add platforms and architectures when upstreams publish suitable artifacts. Continue cross-platform CI, security audits, malicious-input regressions, signed tags, `SHA256SUMS`, SBOMs, and build-provenance verification. |
 

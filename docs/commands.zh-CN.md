@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.7 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.8 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -578,8 +578,36 @@
 | 退出码 | 连接与元数据验证均成功为 `0`；其他情况为 `2`。 |
 | 关键错误 | 网络失败、响应超限、元数据无效、Node 签名缺失/无效、签名者未知、不安全策略或别名未知。 |
 
+## Provider Registry 命令
+
+v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖、共享 capability 和来源证明方法，但不能安装、激活或执行 Provider；只有编译进当前 Pinset 二进制的 Provider 才会生效。Registry 必须是大小受限的普通文件，并且只包含一个由 Pinset 固定 Registry 公钥验证通过的 cleartext OpenPGP 签名。
+
+### `provider list`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 验证并列出内嵌声明式 Provider Registry。 |
+| 语法与参数 | `pinset provider list [--json]`。 |
+| 修改状态 | 否。不联网、不安装运行时、不激活 Provider，也不执行 manifest 内容。 |
+| 示例 | `pinset provider list --json` |
+| JSON | **支持**；命令名为 `provider.list`，包含签名文档与签名者指纹。 |
+| 退出码 | 签名、schema、capability、依赖图及内置声明全部验证通过为 `0`；否则为 `2`。 |
+| 关键错误 | 内嵌密钥/签名无效、capability 未知、命令重复、依赖缺失、循环或声明漂移。 |
+
+### `provider verify`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 验证内嵌 Registry 或一个本地 clear-signed Registry 文件，但不激活它。 |
+| 语法与参数 | `pinset provider verify [REGISTRY] [--json]`；省略路径时验证内嵌 Registry。 |
+| 修改状态 | 否。本地文件只读；不会安装、激活或执行 Provider。 |
+| 示例 | `pinset provider verify registry/providers.json.asc --json` |
+| JSON | **支持**；命令名为 `provider.verify`，包含验证后的文档与签名者指纹。 |
+| 退出码 | 密码学、schema、capability 与依赖验证全部通过为 `0`；否则为 `2`。 |
+| 关键错误 | 符号链接/非文件、输入超过 256 KiB、未签名或多重签名、签名者不匹配、内容篡改、未知字段/capability、依赖缺失或循环。 |
+
 ## 稳定协议边界
 
-Pinset v1.7 继续为项目/全局配置与锁文件写入 schema 3，并读取 schema 1/2。schema 3 项目 `[policy]` 新增可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。安装收据继续使用独立 schema。
+Pinset v1.8 继续为项目/全局配置与锁文件写入 schema 3，并读取 schema 1/2。schema 3 项目 `[policy]` 新增可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。安装收据继续使用独立 schema。
 
-v1.7 不修改 JSON schema 1 外层结构。`lock.audit` 通过稳定的 `verification_below_policy`、`release_age_unavailable` 与 `release_too_new` reason code 报告来源证明策略失败；自动化应依据 reason code 与报告状态分支，不要匹配面向用户的消息。
+v1.8 不修改 JSON schema 1 外层结构；`provider.list` 与 `provider.verify` 只增加各自命令数据。`lock.audit` 通过稳定的 `verification_below_policy`、`release_age_unavailable` 与 `release_too_new` reason code 报告来源证明策略失败；自动化应依据 reason code 与报告状态分支，不要匹配面向用户的消息。

@@ -63,7 +63,12 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         managed_runtime_arguments(&resolution.tool, &invocation.command, &invocation.arguments)
     };
 
-    let runtime_path = path_with_selected_tools(&resolution.executable, &invocation.cwd, &home)?;
+    let runtime_path = path_with_selected_tools(
+        &resolution.tool,
+        &resolution.executable,
+        &invocation.cwd,
+        &home,
+    )?;
     let mut child = command_for_runtime(&resolution.executable, &runtime_arguments);
     child
         .env("PATH", runtime_path)
@@ -71,7 +76,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
         .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
-    for variable in selected_runtime_environment(&invocation.cwd, &home) {
+    for variable in selected_runtime_environment(&resolution.tool, &invocation.cwd, &home) {
         child.env(variable.name, variable.value);
     }
     if resolution.tool == "python" {

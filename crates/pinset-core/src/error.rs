@@ -238,6 +238,31 @@ pub enum Error {
     #[error("unsupported runtime provider \"{provider}\"")]
     UnsupportedRuntimeProvider { provider: String },
 
+    #[error("provider {tool} requires selected provider {dependency}")]
+    ProviderDependencyMissing { tool: String, dependency: String },
+
+    #[error("provider {tool} declares unknown dependency {dependency}")]
+    ProviderDependencyUnknown { tool: String, dependency: String },
+
+    #[error("provider dependency graph contains a cycle: {cycle}")]
+    ProviderDependencyCycle { cycle: String },
+
+    #[cfg(feature = "provider-registry")]
+    #[error("failed to read Provider Registry {path}: {source}")]
+    ReadProviderRegistry {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "provider-registry")]
+    #[error("Provider Registry signature is invalid: {reason}")]
+    ProviderRegistrySignatureInvalid { reason: String },
+
+    #[cfg(feature = "provider-registry")]
+    #[error("Provider Registry is invalid: {reason}")]
+    ProviderRegistryInvalid { reason: String },
+
     #[cfg(feature = "sources")]
     #[error("invalid source alias \"{alias}\"; use lowercase letters, digits, '.', '_' or '-'")]
     InvalidSourceAlias { alias: String },

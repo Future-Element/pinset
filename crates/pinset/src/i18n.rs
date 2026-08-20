@@ -249,6 +249,25 @@ impl Catalog {
                 released_at,
                 required,
             } => format!("错误：{tool} 发布于 {released_at}，尚未满足最短发布年龄 {required}"),
+            Error::ProviderDependencyMissing { tool, dependency } => {
+                format!("错误：{tool} 依赖 {dependency}，请先为当前作用域选择并锁定 {dependency}")
+            }
+            Error::ProviderDependencyUnknown { tool, dependency } => {
+                format!("错误：{tool} 声明了未知 Provider 依赖 {dependency}")
+            }
+            Error::ProviderDependencyCycle { cycle } => {
+                format!("错误：Provider 依赖图存在循环：{cycle}")
+            }
+            Error::ReadProviderRegistry { path, source } => format!(
+                "错误：无法读取 Provider Registry {}：{source}",
+                path.display()
+            ),
+            Error::ProviderRegistrySignatureInvalid { reason } => {
+                format!("错误：Provider Registry 签名无效：{reason}")
+            }
+            Error::ProviderRegistryInvalid { reason } => {
+                format!("错误：Provider Registry 内容无效：{reason}")
+            }
             _ => format!("错误：操作失败：{error}"),
         }
     }
@@ -269,7 +288,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n  provider     Inspect and verify Provider manifests\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -346,8 +365,11 @@ impl Catalog {
             Some("source") => {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
+            Some("provider") => {
+                "只读查看并验证受约束的声明式 Provider Registry；验证不会安装、激活或执行第三方代码。\n\n用法：\n  pinset provider list [--json]\n  pinset provider verify [Registry 文件] [--json]"
+            }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init         创建项目配置\n  detect       检测传统版本配置\n  import       导入传统版本选择\n  global       查看或设置全局默认版本\n  use          选择并锁定项目版本\n  unset        清除项目或全局选择\n  install      安装锁定或指定版本\n  uninstall    安全卸载精确版本\n  prune        清理未引用的受管版本\n  outdated     检查已选版本更新\n  current      显示当前生效选择\n  list         列出已安装或可用版本\n  lock         审计锁完整性与所有权\n  cache        统计、验证或清理下载缓存\n  which        显示实际命令路径\n  exec         使用当前选择执行命令\n  doctor       诊断配置与 PATH\n  venv         管理项目 Python 虚拟环境\n  shim         管理和迁移命令 shim\n  activate     为当前 Shell 启用命令路由\n  completions  生成 Shell 命令补全\n  source       管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init         创建项目配置\n  detect       检测传统版本配置\n  import       导入传统版本选择\n  global       查看或设置全局默认版本\n  use          选择并锁定项目版本\n  unset        清除项目或全局选择\n  install      安装锁定或指定版本\n  uninstall    安全卸载精确版本\n  prune        清理未引用的受管版本\n  outdated     检查已选版本更新\n  current      显示当前生效选择\n  list         列出已安装或可用版本\n  lock         审计锁完整性与所有权\n  cache        统计、验证或清理下载缓存\n  which        显示实际命令路径\n  exec         使用当前选择执行命令\n  doctor       诊断配置与 PATH\n  venv         管理项目 Python 虚拟环境\n  shim         管理和迁移命令 shim\n  activate     为当前 Shell 启用命令路由\n  completions  生成 Shell 命令补全\n  source       管理下载源\n  provider     查看和验证 Provider 清单\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
