@@ -770,10 +770,7 @@ fn audit_install_receipt(
             LockAuditCategory::InstallReceipt,
             subject,
             Some(&receipt_path),
-            format!(
-                "the ownership receipt exceeds the {} byte audit limit",
-                MAX_AUDIT_RECEIPT_BYTES
-            ),
+            format!("the ownership receipt exceeds the {MAX_AUDIT_RECEIPT_BYTES} byte audit limit"),
             Some(repair(
                 "review the oversized receipt before replacing the installation",
                 None,
