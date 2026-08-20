@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.5 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.6 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -39,6 +39,7 @@ Only commands marked **Yes** below accept `--json`. They write one JSON document
 ### Exit codes
 
 - `0`: Pinset completed successfully.
+- `1`: `pinset lock audit` completed and found one or more errors or warnings that require action. Informational findings alone still return `0`.
 - `2`: Pinset usage, configuration, metadata, integrity, or installation failure.
 - `pinset exec`: returns the exact child-process exit code after a successful launch; Pinset failures before launch return `2`.
 
@@ -207,6 +208,25 @@ Import never reads installed state from another runtime manager, executes manage
 | JSON | **Yes**; command name `migrate`, including source and target schemas. |
 | Exit | `0` after validation/migration; `2` when config and lock cannot be proven consistent. |
 | Key errors | Missing config/lock, unsupported schema, config-lock mismatch, or write failure. |
+
+### `lock audit`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Audit one project or global configuration/lock pair, its current-platform artifacts, relevant content-addressed cache entries, install receipts, and receipt-backed ownership. Project Python selections also audit the `.venv` ownership marker. |
+| Syntax and arguments | `pinset lock audit [--global | --cwd <path>] [--json]`. Project scope is the default and follows normal repository-bounded discovery. |
+| Modifies state | **No.** The command is always read-only, never runs a repair plan, and never contacts Provider metadata or archive services. Cache checks hash only entries referenced by the selected current-platform artifacts. |
+| Example | `pinset lock audit --cwd ./app --json` |
+| JSON | **Yes**; command name `lock.audit`. A completed audit uses `ok: true` even when `data.passed` is false. Stable `reason_code`, `severity`, `category`, `subject`, optional `path`, and optional `repair` fields are returned under `data.findings`. |
+| Exit | `0` when there are no errors or warnings; `1` when the audit completes with action-required errors/warnings; `2` only when command parsing or audit startup itself fails. An optional cache miss is informational and does not cause exit `1`. |
+| Key findings | Missing/invalid/legacy configuration or lock state, selector drift, unsupported Providers, missing current-platform artifacts, missing/corrupt/unsafe cache entries, missing/unsafe installations, invalid or mismatched receipts, and invalid Python environment ownership. |
+
+Stable reason codes are grouped as follows:
+
+- Configuration and lock: `config_missing`, `config_invalid`, `config_schema_legacy`, `lock_missing`, `lock_invalid`, `lock_schema_legacy`, `lock_tool_missing`, `lock_tool_unconfigured`, `lock_selector_mismatch`.
+- Provider and platform: `provider_unsupported`, `provider_audit_unsupported`, `platform_artifact_missing`, `platform_artifact_invalid`.
+- Cache: `cache_entry_missing`, `cache_entry_corrupt`, `cache_entry_unsafe`, `cache_entry_unreadable`.
+- Receipt and ownership: `install_missing`, `install_path_unsafe`, `receipt_missing`, `receipt_unreadable`, `receipt_invalid`, `receipt_schema_legacy`, `receipt_schema_unsupported`, `receipt_incomplete`, `receipt_identity_mismatch`, `receipt_integrity_missing`, `receipt_integrity_mismatch`, `receipt_overlay_mismatch`, `python_environment_missing`, `python_environment_ownership_invalid`.
 
 ### `uninstall`
 
@@ -560,4 +580,6 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 ## Stable protocol boundary
 
-Pinset v1.5 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable; `pinset migrate` validates and upgrades existing config-lock pairs. Schema 3 deliberately separates the requested selector from the exact resolved lock version and introduces explicit project fallback/boundary policy. Direct downgrade from schema 3 is not supported. Installation receipts retain their own independent schema. A pre-v1 Node lock that records only an HTTPS checksum is rejected with instructions to run `pinset use` again, because it lacks the v1 OpenPGP verification evidence.
+Pinset v1.6 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable; `pinset migrate` validates and upgrades existing config-lock pairs. Schema 3 deliberately separates the requested selector from the exact resolved lock version and introduces explicit project fallback/boundary policy. Direct downgrade from schema 3 is not supported. Installation receipts retain their own independent schema. A pre-v1 Node lock that records only an HTTPS checksum is rejected with instructions to run `pinset use` again, because it lacks the v1 OpenPGP verification evidence.
+
+The JSON schema 1 envelope remains unchanged in v1.6. `lock.audit` adds a versioned data report within that envelope: automation should branch on stable `reason_code`, `severity`, `data.passed`, and `summary.action_required`, not on human-facing messages or repair prose.

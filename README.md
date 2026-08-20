@@ -22,6 +22,7 @@ It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart th
 - First-class English and Simplified Chinese output, JSON schema 1 for automation, and shell completion.
 - Project-owned Python `.venv` support without requiring shell activation.
 - Read-only detection and explicit import of repository-local traditional version files.
+- Read-only, offline lock auditing with stable reason codes and repair plans that never run automatically.
 
 ## Install and upgrade
 
@@ -42,7 +43,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.6.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -126,6 +127,7 @@ pinset use node@22
 pinset use pnpm@10
 pinset use python@3.14
 pinset install --locked
+pinset lock audit
 pinset exec -- node --version
 ```
 
@@ -151,6 +153,15 @@ pinset import
 
 `detect` never uses the network or writes files. `import --no-install` writes the Pinset config and exact lock without downloading runtimes. Pinset scans from the working directory to the nearest Git repository root and does not modify or delete the source files.
 
+Audit the selected state before CI, packaging, or an offline handoff:
+
+```sh
+pinset lock audit --json
+pinset lock audit --global
+```
+
+`lock audit` is always read-only and offline. It checks configuration/lock consistency, the current platform artifact, referenced cache bytes when present, install receipts, and receipt-backed ownership. It returns `0` when no action is required, `1` when the completed audit contains errors or warnings, and `2` only when the command itself cannot run. Findings include stable snake_case `reason_code` values and repair plans; Pinset never executes those plans automatically.
+
 Discover available and installed versions:
 
 ```sh
@@ -175,11 +186,17 @@ pinset list
 
 Flutter does not publish an official Linux ARM64 SDK archive that matches Pinset's install model, so Pinset returns an explicit unsupported-target error instead of falling back to x64. macOS Intel is not a Pinset v1.0 release target.
 
+All nine built-in Providers declare command layout, metadata resolution, installation, environment, traditional-file discovery, and lock-audit support through one capability model. Resolver, installer, discovery, routing, and audit code consume that shared declaration instead of maintaining separate Provider lists.
+
 ## Command reference
 
 See the complete [English command reference](docs/commands.md) or [Chinese command reference](docs/commands.zh-CN.md). It documents every command and subcommand, state changes, JSON support, exit codes, and common failures.
 
-For product positioning and trade-offs, see the sourced [Pinset v1.5 comparison (Chinese)](docs/comparison.zh-CN.md).
+For product positioning and trade-offs, see the sourced [Pinset comparison (Chinese)](docs/comparison.zh-CN.md).
+
+## v1.6
+
+v1.6 delivers the first lock-audit and security-foundation release: the offline/read-only `pinset lock audit`, stable automation reason codes, explicit repair plans, and one capability model covering all nine built-in Providers. It deliberately reports state drift without changing it; provenance policy and automatic remediation remain outside this release.
 
 ## Future Roadmap
 
@@ -187,7 +204,6 @@ The roadmap describes direction, not promised versions or dates.
 
 | Version | Theme | Planned work |
 | --- | --- | --- |
-| v1.6 | Lock auditing and security foundations | Add a read-only, offline-by-default `pinset lock audit` that checks configuration, locks, platform artifacts, caches, install receipts, and ownership state; expose stable reason codes for automation; and define one capability model for all nine built-in Providers. The first release will report issues and repair plans without changing state automatically. |
 | v1.7 | General provenance verification | Move the existing Node.js OpenPGP verification behind a common verifier interface, then add signed checksums, Minisign, Sigstore, GitHub Attestations, and SLSA provenance where upstreams actually provide them. Add optional verification-strength and `minimum-release-age` policies, and reject silent verification downgrades. |
 | v1.8 | Constrained Provider Registry | Preview declarative Provider manifests and a signed Registry. Third-party Providers must reuse Pinset's HTTPS, integrity, safe extraction, path, and ownership rules and cannot run arbitrary Shell/Lua or post-install scripts. Add toolchain dependency graphs, a composite `PATH`, and cycle detection so tools such as pnpm run with the correct runtime. |
 | v1.9 | Developer experience and distribution | Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution without modifying project state. Provide a GitHub Action, Renovate integration, VS Code schemas, Dev Container examples, and official Winget, Scoop, and Homebrew distribution. |

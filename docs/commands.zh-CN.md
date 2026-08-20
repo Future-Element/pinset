@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.5 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.6 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -39,6 +39,7 @@
 ### 退出码
 
 - `0`：Pinset 成功完成。
+- `1`：`pinset lock audit` 已完成，但发现一个或多个需要处理的错误或警告。只有信息级发现时仍返回 `0`。
 - `2`：Pinset 使用、配置、元数据、完整性或安装失败。
 - `pinset exec`：成功启动子进程后，透传子进程的精确退出码；启动前的 Pinset 错误返回 `2`。
 
@@ -207,6 +208,25 @@
 | JSON | **支持**；命令名为 `migrate`，包含来源与目标 schema。 |
 | 退出码 | 验证/迁移完成为 `0`；无法证明配置与锁一致时为 `2`。 |
 | 关键错误 | 配置/锁缺失、schema 不支持、配置与锁不匹配或写入失败。 |
+
+### `lock audit`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 审计一组项目或全局配置/锁、当前平台制品、相关内容寻址缓存、安装收据与由收据证明的所有权。项目选择 Python 时还会审计 `.venv` 所有权标记。 |
+| 语法与参数 | `pinset lock audit [--global | --cwd <path>] [--json]`。默认使用项目作用域，并遵循正常的仓库边界发现规则。 |
+| 修改状态 | **否。** 命令始终只读，不会执行修复计划，也不会访问 Provider 元数据或归档服务。缓存检查只散列当前选择、当前平台制品所引用的缓存项。 |
+| 示例 | `pinset lock audit --cwd ./app --json` |
+| JSON | **支持**；命令名为 `lock.audit`。审计正常完成时，即使 `data.passed` 为 false，外层仍为 `ok: true`。`data.findings` 中返回稳定的 `reason_code`、`severity`、`category`、`subject`，以及可选的 `path` 和 `repair`。 |
+| 退出码 | 没有错误或警告时为 `0`；审计完成但存在需处理错误/警告时为 `1`；只有命令解析或审计启动本身失败时才为 `2`。可选缓存缺失属于信息，不会导致退出码 `1`。 |
+| 关键发现 | 配置/锁缺失、无效或过旧，选择器漂移，Provider 不受支持，当前平台制品缺失，缓存缺失/损坏/不安全，安装缺失/不安全，收据无效或不匹配，以及 Python 环境所有权无效。 |
+
+稳定 reason code 按类别如下：
+
+- 配置与锁：`config_missing`、`config_invalid`、`config_schema_legacy`、`lock_missing`、`lock_invalid`、`lock_schema_legacy`、`lock_tool_missing`、`lock_tool_unconfigured`、`lock_selector_mismatch`。
+- Provider 与平台：`provider_unsupported`、`provider_audit_unsupported`、`platform_artifact_missing`、`platform_artifact_invalid`。
+- 缓存：`cache_entry_missing`、`cache_entry_corrupt`、`cache_entry_unsafe`、`cache_entry_unreadable`。
+- 收据与所有权：`install_missing`、`install_path_unsafe`、`receipt_missing`、`receipt_unreadable`、`receipt_invalid`、`receipt_schema_legacy`、`receipt_schema_unsupported`、`receipt_incomplete`、`receipt_identity_mismatch`、`receipt_integrity_missing`、`receipt_integrity_mismatch`、`receipt_overlay_mismatch`、`python_environment_missing`、`python_environment_ownership_invalid`。
 
 ### `uninstall`
 
@@ -560,4 +580,6 @@
 
 ## 稳定协议边界
 
-Pinset v1.5 为项目/全局配置与锁文件写入 schema 3。schema 1/2 仍可读取；`pinset migrate` 会验证并升级现有配置与锁。schema 3 明确区分请求选择器和锁中的精确解析版本，并引入显式项目回退/边界策略；不支持从 schema 3 直接降级。安装收据继续使用自身独立的 schema。仅记录 HTTPS 摘要的 v1 前 Node 锁会被拒绝，并提示重新运行 `pinset use`，因为它缺少 v1 OpenPGP 验证证据。
+Pinset v1.6 为项目/全局配置与锁文件写入 schema 3。schema 1/2 仍可读取；`pinset migrate` 会验证并升级现有配置与锁。schema 3 明确区分请求选择器和锁中的精确解析版本，并引入显式项目回退/边界策略；不支持从 schema 3 直接降级。安装收据继续使用自身独立的 schema。仅记录 HTTPS 摘要的 v1 前 Node 锁会被拒绝，并提示重新运行 `pinset use`，因为它缺少 v1 OpenPGP 验证证据。
+
+v1.6 不修改 JSON schema 1 外层结构。`lock.audit` 只是在该外层内增加一份带版本边界的数据报告：自动化应依据稳定的 `reason_code`、`severity`、`data.passed` 与 `summary.action_required` 分支，不应匹配面向用户的消息或修复说明。

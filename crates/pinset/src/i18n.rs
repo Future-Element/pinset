@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt, path::Path, str::FromStr};
 
-use pinset_core::Error;
+use pinset_core::{Error, LockAuditSummary};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -249,7 +249,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -299,6 +299,9 @@ impl Catalog {
             Some("prune") => {
                 "清理未被全局、当前项目或显式附加项目选择引用的受管版本。\n\n用法：pinset prune [--cwd <目录>] [--project <目录>...] [--dry-run] [--json]"
             }
+            Some("lock") => {
+                "只读、离线审计配置、锁定平台制品、缓存、安装收据和所有权。\n\n用法：pinset lock audit [--global | --cwd <目录>] [--json]"
+            }
             Some("cache") => {
                 "统计、验证、修复、清理或离线导入运行时下载缓存。\n\n用法：pinset cache <list|info|verify|repair|clean|import> [参数...]"
             }
@@ -324,7 +327,7 @@ impl Catalog {
                 "管理并测试本机下载源。\n\n用法：pinset source <list|add|use|fallback|remove|test> [参数...]"
             }
             _ => {
-                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init         创建项目配置\n  detect       检测传统版本配置\n  import       导入传统版本选择\n  global       查看或设置全局默认版本\n  use          选择并锁定项目版本\n  unset        清除项目或全局选择\n  install      安装锁定或指定版本\n  uninstall    安全卸载精确版本\n  prune        清理未引用的受管版本\n  outdated     检查已选版本更新\n  current      显示当前生效选择\n  list         列出已安装或可用版本\n  cache        统计、验证或清理下载缓存\n  which        显示实际命令路径\n  exec         使用当前选择执行命令\n  doctor       诊断配置与 PATH\n  venv         管理项目 Python 虚拟环境\n  shim         管理和迁移命令 shim\n  activate     为当前 Shell 启用命令路由\n  completions  生成 Shell 命令补全\n  source       管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
+                "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n命令：\n  init         创建项目配置\n  detect       检测传统版本配置\n  import       导入传统版本选择\n  global       查看或设置全局默认版本\n  use          选择并锁定项目版本\n  unset        清除项目或全局选择\n  install      安装锁定或指定版本\n  uninstall    安全卸载精确版本\n  prune        清理未引用的受管版本\n  outdated     检查已选版本更新\n  current      显示当前生效选择\n  list         列出已安装或可用版本\n  lock         审计锁完整性与所有权\n  cache        统计、验证或清理下载缓存\n  which        显示实际命令路径\n  exec         使用当前选择执行命令\n  doctor       诊断配置与 PATH\n  venv         管理项目 Python 虚拟环境\n  shim         管理和迁移命令 shim\n  activate     为当前 Shell 启用命令路由\n  completions  生成 Shell 命令补全\n  source       管理下载源\n\n执行 `pinset --lang zh-CN <命令> --help` 查看详情。"
             }
         }
     }
@@ -510,6 +513,100 @@ impl Catalog {
             Language::SimplifiedChinese => format!(
                 "已导入校验通过的缓存归档：完整性={integrity}；字节数={size}；路径={}",
                 path.display()
+            ),
+        }
+    }
+
+    pub fn lock_audit_header(
+        self,
+        scope: &str,
+        config: &Path,
+        lockfile: &Path,
+        passed: bool,
+    ) -> String {
+        match self.language {
+            Language::English => format!(
+                "lock audit scope={scope} mode=offline/read-only status={} config={} lock={}",
+                if passed { "passed" } else { "action-required" },
+                config.display(),
+                lockfile.display()
+            ),
+            Language::SimplifiedChinese => format!(
+                "锁审计 范围={} 模式=离线/只读 状态={} 配置={} 锁文件={}",
+                if scope == "project" {
+                    "项目"
+                } else {
+                    "全局"
+                },
+                if passed { "通过" } else { "需要处理" },
+                config.display(),
+                lockfile.display()
+            ),
+        }
+    }
+
+    pub fn lock_audit_finding(
+        self,
+        severity: &str,
+        reason_code: &str,
+        subject: &str,
+        path: Option<&Path>,
+        message: &str,
+    ) -> String {
+        let path = path
+            .map(|path| format!(" path={}", path.display()))
+            .unwrap_or_default();
+        match self.language {
+            Language::English => {
+                format!("[{severity}] {reason_code} subject={subject}{path}: {message}")
+            }
+            Language::SimplifiedChinese => {
+                let severity = match severity {
+                    "error" => "错误",
+                    "warning" => "警告",
+                    _ => "信息",
+                };
+                format!("[{severity}] {reason_code} 对象={subject}{path}：{message}")
+            }
+        }
+    }
+
+    pub fn lock_audit_repair(self, action: &str, command: Option<&str>) -> String {
+        match (self.language, command) {
+            (Language::English, Some(command)) => {
+                format!("  repair: {action}; command={command}")
+            }
+            (Language::English, None) => format!("  repair: {action}"),
+            (Language::SimplifiedChinese, Some(command)) => {
+                format!("  修复计划：{action}；命令={command}")
+            }
+            (Language::SimplifiedChinese, None) => format!("  修复计划：{action}"),
+        }
+    }
+
+    pub fn lock_audit_summary(self, summary: &LockAuditSummary) -> String {
+        match self.language {
+            Language::English => format!(
+                "summary tools={} platform_artifacts={} cache_entries={} receipts={} owned_installs={} errors={} warnings={} info={}",
+                summary.tools,
+                summary.platform_artifacts,
+                summary.cache_entries,
+                summary.receipts,
+                summary.owned_installs,
+                summary.errors,
+                summary.warnings,
+                summary.info
+            ),
+            Language::SimplifiedChinese => format!(
+                "汇总 工具={} 平台制品={} 缓存项={} 收据={} 已确认归属安装={} 错误={} 警告={} 信息={}",
+                summary.tools,
+                summary.platform_artifacts,
+                summary.cache_entries,
+                summary.receipts,
+                summary.owned_installs,
+                summary.errors,
+                summary.warnings,
+                summary.info
             ),
         }
     }

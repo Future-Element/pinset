@@ -2,11 +2,22 @@
 pub struct RuntimeProvider {
     pub tool: &'static str,
     pub commands: &'static [&'static str],
+    pub capabilities: RuntimeProviderCapabilities,
+}
+
+/// The complete set of behaviors implemented by one built-in runtime Provider.
+///
+/// Keeping these declarations together prevents command routing, discovery, metadata
+/// resolution, installation, environment setup, and lock auditing from maintaining
+/// separate Provider lists that can drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeProviderCapabilities {
     pub command_layout: RuntimeCommandLayout,
     pub metadata: RuntimeMetadataKind,
     pub installer: RuntimeInstallKind,
     pub environment: RuntimeEnvironmentKind,
     pub discovery: &'static [RuntimeDiscoveryRule],
+    pub lock_audit: RuntimeLockAuditKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +79,15 @@ pub enum RuntimeEnvironmentKind {
     Dotnet,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLockAuditKind {
+    /// Audit the locked platform artifact, relevant cache entries, install receipt, and
+    /// receipt-backed ownership without contacting the Provider.
+    ArtifactReceipt,
+    /// Reserved for a future constrained Provider that cannot satisfy the shared audit contract.
+    Unsupported,
+}
+
 const NODE_COMMANDS: &[&str] = &["node", "npm", "npx", "corepack"];
 const NODE_DISCOVERY: &[RuntimeDiscoveryRule] = &[
     RuntimeDiscoveryRule {
@@ -124,67 +144,88 @@ const DOTNET_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
-    command_layout: RuntimeCommandLayout::NodeNative,
-    metadata: RuntimeMetadataKind::Node,
-    installer: RuntimeInstallKind::Node,
-    environment: RuntimeEnvironmentKind::None,
-    discovery: NODE_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::NodeNative,
+        metadata: RuntimeMetadataKind::Node,
+        installer: RuntimeInstallKind::Node,
+        environment: RuntimeEnvironmentKind::None,
+        discovery: NODE_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "pnpm",
     commands: &["pnpm"],
-    command_layout: RuntimeCommandLayout::Root,
-    metadata: RuntimeMetadataKind::Npm,
-    installer: RuntimeInstallKind::Npm,
-    environment: RuntimeEnvironmentKind::None,
-    discovery: &[],
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Root,
+        metadata: RuntimeMetadataKind::Npm,
+        installer: RuntimeInstallKind::Npm,
+        environment: RuntimeEnvironmentKind::None,
+        discovery: &[],
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "bun",
     commands: &["bun", "bunx"],
-    command_layout: RuntimeCommandLayout::Bin,
-    metadata: RuntimeMetadataKind::Npm,
-    installer: RuntimeInstallKind::Npm,
-    environment: RuntimeEnvironmentKind::None,
-    discovery: BUN_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Bin,
+        metadata: RuntimeMetadataKind::Npm,
+        installer: RuntimeInstallKind::Npm,
+        environment: RuntimeEnvironmentKind::None,
+        discovery: BUN_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "go",
     commands: &["go", "gofmt"],
-    command_layout: RuntimeCommandLayout::Bin,
-    metadata: RuntimeMetadataKind::Go,
-    installer: RuntimeInstallKind::Go,
-    environment: RuntimeEnvironmentKind::Go,
-    discovery: GO_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Bin,
+        metadata: RuntimeMetadataKind::Go,
+        installer: RuntimeInstallKind::Go,
+        environment: RuntimeEnvironmentKind::Go,
+        discovery: GO_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "flutter",
     commands: &["flutter", "dart"],
-    command_layout: RuntimeCommandLayout::Bin,
-    metadata: RuntimeMetadataKind::Flutter,
-    installer: RuntimeInstallKind::Flutter,
-    environment: RuntimeEnvironmentKind::Flutter,
-    discovery: FLUTTER_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Bin,
+        metadata: RuntimeMetadataKind::Flutter,
+        installer: RuntimeInstallKind::Flutter,
+        environment: RuntimeEnvironmentKind::Flutter,
+        discovery: FLUTTER_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "python",
     commands: &["python", "python3", "pip", "pip3"],
-    command_layout: RuntimeCommandLayout::Python,
-    metadata: RuntimeMetadataKind::Python,
-    installer: RuntimeInstallKind::Python,
-    environment: RuntimeEnvironmentKind::Python,
-    discovery: PYTHON_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Python,
+        metadata: RuntimeMetadataKind::Python,
+        installer: RuntimeInstallKind::Python,
+        environment: RuntimeEnvironmentKind::Python,
+        discovery: PYTHON_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "java",
     commands: &[
         "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell",
     ],
-    command_layout: RuntimeCommandLayout::Java,
-    metadata: RuntimeMetadataKind::Java,
-    installer: RuntimeInstallKind::Java,
-    environment: RuntimeEnvironmentKind::Java,
-    discovery: JAVA_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Java,
+        metadata: RuntimeMetadataKind::Java,
+        installer: RuntimeInstallKind::Java,
+        environment: RuntimeEnvironmentKind::Java,
+        discovery: JAVA_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "rust",
@@ -197,20 +238,26 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
         "clippy-driver",
         "cargo-clippy",
     ],
-    command_layout: RuntimeCommandLayout::Bin,
-    metadata: RuntimeMetadataKind::Rust,
-    installer: RuntimeInstallKind::Rust,
-    environment: RuntimeEnvironmentKind::None,
-    discovery: RUST_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Bin,
+        metadata: RuntimeMetadataKind::Rust,
+        installer: RuntimeInstallKind::Rust,
+        environment: RuntimeEnvironmentKind::None,
+        discovery: RUST_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "dotnet",
     commands: &["dotnet"],
-    command_layout: RuntimeCommandLayout::Root,
-    metadata: RuntimeMetadataKind::Dotnet,
-    installer: RuntimeInstallKind::Dotnet,
-    environment: RuntimeEnvironmentKind::Dotnet,
-    discovery: DOTNET_DISCOVERY,
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Root,
+        metadata: RuntimeMetadataKind::Dotnet,
+        installer: RuntimeInstallKind::Dotnet,
+        environment: RuntimeEnvironmentKind::Dotnet,
+        discovery: DOTNET_DISCOVERY,
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+    },
 };
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
@@ -362,16 +409,38 @@ mod tests {
     #[test]
     fn provider_specific_discovery_is_declared_in_provider_manifests() {
         assert_eq!(
-            runtime_provider("node").expect("node").discovery,
+            runtime_provider("node")
+                .expect("node")
+                .capabilities
+                .discovery,
             NODE_DISCOVERY
         );
         assert_eq!(
-            runtime_provider("python").expect("python").discovery,
+            runtime_provider("python")
+                .expect("python")
+                .capabilities
+                .discovery,
             PYTHON_DISCOVERY
         );
         assert_eq!(
-            runtime_provider("dotnet").expect("dotnet").discovery,
+            runtime_provider("dotnet")
+                .expect("dotnet")
+                .capabilities
+                .discovery,
             DOTNET_DISCOVERY
         );
+    }
+
+    #[test]
+    fn every_provider_declares_the_complete_v16_capability_model() {
+        assert_eq!(runtime_providers().len(), 9);
+        for provider in runtime_providers() {
+            assert_eq!(
+                provider.capabilities.lock_audit,
+                RuntimeLockAuditKind::ArtifactReceipt,
+                "{} must participate in the shared lock audit contract",
+                provider.tool
+            );
+        }
     }
 }

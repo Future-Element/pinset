@@ -19,31 +19,32 @@ use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
     ArtifactIntegrity, DiscoveryReport, DiscoveryStatus, DotnetMetadataClient,
     DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig, GoMetadataClient,
-    InstallLimits, Installer, JavaMetadataClient, LockedTool, Lockfile, NodeMetadataClient,
-    NpmMetadataClient, PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient,
-    RuntimeInstallKind, RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS,
-    ShimInstallMethod, SourceView, clean_download_cache, command_tool, create_project_config,
-    create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
-    find_optional_project_config, find_project_config, find_project_context, global_config_path,
-    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
-    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
-    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
-    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
-    list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
-    load_optional_lockfile, load_project_config, load_project_python_environment,
-    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
-    path_with_selected_tools, pinset_home, plan_prune_tool_versions, plan_uninstall_tool_version,
-    project_python_environment_path, repair_download_cache, resolve_command,
-    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
-    runtime_command_directory, runtime_environment_for_install, runtime_provider,
-    save_global_config, save_global_state, save_lockfile, save_project_config, save_project_state,
-    save_source_config, save_user_settings, scan_project_sources, selected_runtime_environment,
-    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
-    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
-    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
-    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
-    verify_download_cache,
+    InstallLimits, Installer, JavaMetadataClient, LockAuditReport, LockAuditScope,
+    LockAuditSeverity, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient,
+    PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient, RuntimeInstallKind,
+    RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
+    SourceView, audit_global_lock, audit_project_lock, clean_download_cache, command_tool,
+    create_project_config, create_project_python_environment, current_target_for_tool,
+    download_cache_info, ensure_shims, find_optional_project_config, find_project_config,
+    find_project_context, global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_dotnet, install_locked_flutter,
+    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
+    install_locked_python, install_locked_rust, is_managed_command_shim,
+    list_all_installed_tool_versions, list_download_cache, list_installed_tool_versions,
+    load_global_config, load_lockfile, load_optional_global_config, load_optional_lockfile,
+    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
+    lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
+    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
+    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
+    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
+    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
+    save_project_state, save_source_config, save_user_settings, scan_project_sources,
+    selected_runtime_environment, source_config_path, uninstall_node_version,
+    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
+    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
+    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
+    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
+    validate_lock_matches_tools, validate_managed_runtime_invocation, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -248,6 +249,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Audit configuration, locks, cached artifacts, receipts, and ownership without writes.
+    Lock {
+        #[command(subcommand)]
+        command: LockCommands,
+    },
     /// Inspect or clean verified runtime download archives.
     Cache {
         #[command(subcommand)]
@@ -396,6 +402,22 @@ enum CacheCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum LockCommands {
+    /// Audit one project or global lock without network access or state changes.
+    Audit {
+        /// Audit the global selection instead of the nearest project.
+        #[arg(long, conflicts_with = "cwd")]
+        global: bool,
+        /// Project directory whose nearest Pinset configuration is audited.
+        #[arg(long, conflicts_with = "global")]
+        cwd: Option<PathBuf>,
+        /// Emit stable reason codes in the JSON schema 1 envelope.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum SourceCommands {
     /// List built-in and custom sources.
     List {
@@ -451,7 +473,17 @@ impl Commands {
             Self::Uninstall { json: true, .. } => Some("uninstall"),
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
+            Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
+            _ => None,
+        }
+    }
+}
+
+impl LockCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Audit { json: true, .. } => Some("lock.audit"),
             _ => None,
         }
     }
@@ -553,24 +585,28 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "uninstall"
                 | "prune"
                 | "doctor"
+                | "lock"
                 | "cache"
         )
     });
     let Some(index) = top_level else {
         return Some("pinset".to_owned());
     };
-    if values[index] != "cache" {
+    if values[index] != "cache" && values[index] != "lock" {
         return Some(values[index].as_ref().to_owned());
     }
-    let subcommand = values[index + 1..].iter().find(|value| {
-        matches!(
+    let group = values[index].as_ref();
+    let subcommand = values[index + 1..].iter().find(|value| match group {
+        "cache" => matches!(
             value.as_ref(),
             "list" | "info" | "verify" | "repair" | "clean"
-        )
+        ),
+        "lock" => value.as_ref() == "audit",
+        _ => false,
     });
     Some(match subcommand {
-        Some(subcommand) => format!("cache.{subcommand}"),
-        None => "cache".to_owned(),
+        Some(subcommand) => format!("{group}.{subcommand}"),
+        None => group.to_owned(),
     })
 }
 
@@ -1001,6 +1037,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             dry_run,
             json,
         } => run_prune(cwd, &project, dry_run, json)?,
+        Commands::Lock { command } => return run_lock_command(command, catalog),
         Commands::Cache { command } => run_cache(command, catalog)?,
         Commands::Exec { cwd, command } => {
             let cwd = effective_cwd(cwd)?;
@@ -1539,7 +1576,7 @@ fn available_version_reports(
 ) -> Result<Vec<AvailableVersionReport>, Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("required provider exists");
     let mut reports = Vec::new();
-    match provider.metadata {
+    match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
             for release in node_metadata_client(&pinset_home()?)?.available_releases()? {
                 let mut details = BTreeMap::new();
@@ -1933,6 +1970,64 @@ fn run_prune(
     Ok(())
 }
 
+fn run_lock_command(
+    command: LockCommands,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    match command {
+        LockCommands::Audit { global, cwd, json } => {
+            let home = pinset_home()?;
+            let report = if global {
+                audit_global_lock(&home)
+            } else {
+                audit_project_lock(&home, &effective_cwd(cwd)?)
+            };
+            let action_required = report.action_required();
+            if json {
+                print_json_success("lock.audit", report)?;
+            } else {
+                print_lock_audit_report(&report, catalog);
+            }
+            Ok(if action_required { 1 } else { 0 })
+        }
+    }
+}
+
+fn print_lock_audit_report(report: &LockAuditReport, catalog: Catalog) {
+    let scope = match report.scope {
+        LockAuditScope::Project => "project",
+        LockAuditScope::Global => "global",
+    };
+    println!(
+        "{}",
+        catalog.lock_audit_header(scope, &report.config, &report.lockfile, report.passed)
+    );
+    for finding in &report.findings {
+        let severity = match finding.severity {
+            LockAuditSeverity::Error => "error",
+            LockAuditSeverity::Warning => "warning",
+            LockAuditSeverity::Info => "info",
+        };
+        println!(
+            "{}",
+            catalog.lock_audit_finding(
+                severity,
+                finding.reason_code.as_str(),
+                &finding.subject,
+                finding.path.as_deref(),
+                &finding.message,
+            )
+        );
+        if let Some(repair) = &finding.repair {
+            println!(
+                "{}",
+                catalog.lock_audit_repair(&repair.action, repair.command.as_deref())
+            );
+        }
+    }
+    println!("{}", catalog.lock_audit_summary(&report.summary));
+}
+
 fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
     let home = pinset_home()?;
     match command {
@@ -2085,8 +2180,9 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated update migrate uninstall prune cache exec doctor venv shim activate completions source";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated update migrate uninstall prune lock cache exec doctor venv shim activate completions source";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
+const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
@@ -2133,6 +2229,7 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --json --lang --help" ;;
+            lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
@@ -2169,6 +2266,7 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --json --lang --help" ;;
+            lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
@@ -2186,15 +2284,16 @@ compdef _pinset_completion pinset"#
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from lock' -a '__LOCK_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated update migrate uninstall prune doctor cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated update migrate uninstall prune doctor lock cache' -a '--json'
 complete -c pinset -f -n '__fish_seen_subcommand_from which current' -a '--explain'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor' -a '--cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor lock' -a '--cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
-complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate' -a '--global'
+complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -a '--help --lang'"#
         }
@@ -2219,6 +2318,7 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --json --lang --help' -split ' ' }
+        'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help' -split ' ' }
@@ -2237,6 +2337,7 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__PROVIDERS__", &providers)
         .replace("__SELECTIONS__", &selections)
         .replace("__SHELLS__", COMPLETION_SHELLS)
+        .replace("__LOCK_COMMANDS__", COMPLETION_LOCK_COMMANDS)
         .replace("__CACHE_COMMANDS__", COMPLETION_CACHE_COMMANDS)
         .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
@@ -2269,7 +2370,7 @@ fn validate_exact_tool_version(
     version: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("validated provider");
-    match provider.metadata {
+    match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => validate_exact_node_version(version)?,
         RuntimeMetadataKind::Npm => validate_exact_npm_tool_version(tool, version)?,
         RuntimeMetadataKind::Go => {
@@ -2299,7 +2400,7 @@ fn resolve_locked_tool(
     selector: &str,
 ) -> Result<LockedTool, Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("validated provider");
-    let mut locked = match provider.metadata {
+    let mut locked = match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
             let lockfile = node_metadata_client(&pinset_home()?)?
                 .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
@@ -3027,7 +3128,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 23] = [
+    const COMMANDS: [&str; 24] = [
         "init",
         "detect",
         "import",
@@ -3049,6 +3150,7 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "list",
         "uninstall",
         "prune",
+        "lock",
         "cache",
         "venv",
     ];
@@ -3227,7 +3329,7 @@ fn install_tool_from_lock(
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
     let provider = runtime_provider(tool).expect("locked tool provider exists");
-    let outcome = match provider.installer {
+    let outcome = match provider.capabilities.installer {
         RuntimeInstallKind::Node => {
             let sources = load_source_config(&source_config_path(home))?;
             install_locked_node(&installer, home, &sources, locked_tool, &target)?
@@ -4630,7 +4732,9 @@ fn run_source_command(
         }
         SourceCommands::Test { provider, alias } => {
             let source = config.source(&provider, alias.as_deref())?;
-            let releases = match runtime_provider(&provider).map(|provider| provider.metadata) {
+            let releases = match runtime_provider(&provider)
+                .map(|provider| provider.capabilities.metadata)
+            {
                 Some(RuntimeMetadataKind::Node) => {
                     let client = NodeMetadataClient::for_base_url(&source.base_url)?;
                     let releases = client.available_releases()?;
@@ -5176,7 +5280,8 @@ mod tests {
         ] {
             let script = completion_script(shell);
             for expected in [
-                "pinset", "detect", "import", "node@", "dotnet", "verify", "recreate", "--json",
+                "pinset", "detect", "import", "node@", "dotnet", "lock", "audit", "verify",
+                "recreate", "--json",
             ] {
                 assert!(
                     script.contains(expected),
@@ -5283,6 +5388,32 @@ mod tests {
                 global: true,
                 dry_run: true,
                 ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_v16_read_only_lock_audit_options() {
+        let project =
+            Cli::try_parse_from(["pinset", "lock", "audit", "--cwd", "project", "--json"])
+                .expect("project lock audit");
+        assert!(matches!(
+            project.command,
+            Some(Commands::Lock {
+                command: LockCommands::Audit {
+                    global: false,
+                    json: true,
+                    ..
+                }
+            })
+        ));
+
+        let global = Cli::try_parse_from(["pinset", "lock", "audit", "--global"])
+            .expect("global lock audit");
+        assert!(matches!(
+            global.command,
+            Some(Commands::Lock {
+                command: LockCommands::Audit { global: true, .. }
             })
         ));
     }

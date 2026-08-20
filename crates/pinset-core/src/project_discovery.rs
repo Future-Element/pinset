@@ -187,7 +187,7 @@ impl Scanner {
 
     fn scan_provider_sources(&mut self, directory: &Path) {
         for provider in runtime_providers() {
-            for rule in provider.discovery {
+            for rule in provider.capabilities.discovery {
                 match rule.kind {
                     RuntimeDiscoveryKind::SimpleFile { filename } => self.scan_simple(
                         rule.source,
