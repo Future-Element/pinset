@@ -10,33 +10,138 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  schedule:
+    - cron: "23 3 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      validation_required: ${{ steps.classify.outputs.validation_required }}
+      code_changed: ${{ steps.classify.outputs.code_changed }}
+      cargo_changed: ${{ steps.classify.outputs.cargo_changed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Classify the event and changed paths
+        id: classify
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          IS_DRAFT: ${{ github.event.pull_request.draft || false }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          validation_required=true
+          code_changed=true
+          cargo_changed=true
+
+          if [[ "${EVENT_NAME}" == "pull_request" && "${IS_DRAFT}" == "true" ]]; then
+            validation_required=false
+          elif [[ "${EVENT_NAME}" == "push" ]]; then
+            merged_prs="$(
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+                --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length'
+            )"
+            if [[ "${merged_prs}" -gt 0 ]]; then
+              validation_required=false
+            fi
+          fi
+
+          if [[ "${EVENT_NAME}" == "schedule" ]]; then
+            code_changed=false
+            cargo_changed=true
+          elif [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            if [[ -n "${BASE_SHA}" && "${BASE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+              changed_files="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
+            else
+              changed_files="$(git diff-tree --root --no-commit-id --name-only -r "${HEAD_SHA}")"
+            fi
+
+            code_changed=false
+            cargo_changed=false
+            while IFS= read -r changed_file; do
+              [[ -z "${changed_file}" ]] && continue
+
+              case "${changed_file}" in
+                *.md|docs/*|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*)
+                  ;;
+                *)
+                  code_changed=true
+                  ;;
+              esac
+
+              case "${changed_file}" in
+                Cargo.toml|Cargo.lock|rust-toolchain.toml|crates/*/Cargo.toml)
+                  cargo_changed=true
+                  ;;
+              esac
+            done <<< "${changed_files}"
+          fi
+
+          {
+            echo "validation_required=${validation_required}"
+            echo "code_changed=${code_changed}"
+            echo "cargo_changed=${cargo_changed}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "validation_required=${validation_required}"
+          echo "code_changed=${code_changed}"
+          echo "cargo_changed=${cargo_changed}"
+
   security:
     name: Audit Rust dependencies
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.validation_required == 'true' &&
+        needs.changes.outputs.cargo_changed == 'true'
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Prepare Rust toolchain
-        shell: bash
-        run: |
-          rustup set profile minimal
-          rustup update 1.88.0
-          rustup default 1.88.0
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
 
-      - name: Install pinned RustSec audit tool
-        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Restore pinned RustSec audit tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22.2
+
+      - name: Install pinned RustSec audit tool when absent
+        shell: bash
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Reject dependency security warnings
         # RUSTSEC-2023-0071 affects observable timing of RSA private-key operations. Pinset only
@@ -46,93 +151,170 @@ jobs:
 
   quality:
     name: Validate Rust workspace
-    needs: security
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.validation_required == 'true' &&
+        needs.changes.outputs.code_changed == 'true'
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Prepare Rust toolchain
-        shell: bash
+      - name: Prepare pinned Rust toolchain
         run: |
-          rustup set profile minimal
-          rustup update 1.88.0
-          rustup default 1.88.0
+          rustup show active-toolchain
           rustup component add clippy rustfmt
 
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
       - name: Check formatting
+        id: formatting
+        continue-on-error: true
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
+        id: clippy
+        continue-on-error: true
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run Rust tests
+        id: tests
+        continue-on-error: true
         run: cargo test --workspace --all-features --locked
+
+      - name: Enforce all workspace checks
+        if: always()
+        shell: bash
+        env:
+          CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
+          FORMATTING_OUTCOME: ${{ steps.formatting.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "formatting=${FORMATTING_OUTCOME}" \
+            "clippy=${CLIPPY_OUTCOME}" \
+            "tests=${TESTS_OUTCOME}"; do
+            if [[ "${result#*=}" != "success" ]]; then
+              echo "${result%%=*} failed" >&2
+              failed=1
+            fi
+          done
+          exit "${failed}"
 
   build:
     name: Build ${{ matrix.artifact }}
     needs:
+      - changes
       - security
       - quality
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: >-
+      ${{
+        always() &&
+        needs.changes.outputs.validation_required == 'true' &&
+        needs.changes.outputs.code_changed == 'true'
+      }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
             artifact: pinset-linux-x86_64
-            archive: pinset-linux-x86_64.tar.gz
-          - os: ubuntu-24.04-arm
-            artifact: pinset-linux-aarch64
-            archive: pinset-linux-aarch64.tar.gz
           - os: windows-2025
             artifact: pinset-windows-x86_64
-            archive: pinset-windows-x86_64.zip
           - os: macos-15
             artifact: pinset-macos-aarch64
-            archive: pinset-macos-aarch64.tar.gz
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
+      - name: Propagate prerequisite failures
+        shell: bash
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+        run: |
+          if [[ "${QUALITY_RESULT}" != "success" ]]; then
+            echo "Validate Rust workspace did not succeed: ${QUALITY_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${SECURITY_RESULT}" != "success" && "${SECURITY_RESULT}" != "skipped" ]]; then
+            echo "Audit Rust dependencies did not succeed: ${SECURITY_RESULT}" >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Prepare Rust toolchain
-        shell: bash
-        run: |
-          rustup set profile minimal
-          rustup update 1.88.0
-          rustup default 1.88.0
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
 
-      - name: Build release binaries
-        run: cargo build --release --locked -p pinset-cli -p pinset-shim
-
-      - name: Package Unix binaries
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir package
-          cp target/release/pinset package/pinset
-          cp target/release/pinset-shim package/pinset-shim
-          tar -czf "${{ matrix.archive }}" -C package pinset pinset-shim
-
-      - name: Package Windows binaries
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path package
-          Copy-Item target/release/pinset.exe package/pinset.exe
-          Copy-Item target/release/pinset-shim.exe package/pinset-shim.exe
-          Compress-Archive `
-            -Path package/pinset.exe,package/pinset-shim.exe `
-            -DestinationPath "${{ matrix.archive }}"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.archive }}
-          if-no-files-found: error
-          retention-days: 14
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Link development binaries
+        run: cargo build --locked -p pinset-cli -p pinset-shim
+
+  gate:
+    name: CI Gate
+    needs:
+      - changes
+      - security
+      - quality
+      - build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report the aggregate result
+        shell: bash
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          VALIDATION_REQUIRED: ${{ needs.changes.outputs.validation_required }}
+        run: |
+          if [[ "${CHANGES_RESULT}" != "success" ]]; then
+            echo "Change classification failed" >&2
+            exit 1
+          fi
+          if [[ "${VALIDATION_REQUIRED}" != "true" ]]; then
+            echo "Heavy validation is not required for this event"
+            exit 0
+          fi
+          if [[ "${SECURITY_RESULT}" != "success" && "${SECURITY_RESULT}" != "skipped" ]]; then
+            echo "Dependency audit failed: ${SECURITY_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${CODE_CHANGED}" != "true" ]]; then
+            echo "No code validation required; dependency audit result accepted"
+            exit 0
+          fi
+          if [[ "${QUALITY_RESULT}" != "success" ]]; then
+            echo "Workspace validation failed: ${QUALITY_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${BUILD_RESULT}" != "success" ]]; then
+            echo "Cross-platform builds failed: ${BUILD_RESULT}" >&2
+            exit 1
+          fi
+          echo "All required CI checks passed"

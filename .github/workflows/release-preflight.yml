@@ -1,0 +1,221 @@
+name: Release preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate release candidate
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate workspace release metadata
+        shell: bash
+        run: |
+          workspace_version="$(
+            python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
+          )"
+          installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
+          if [[ "${installer_version}" != "${workspace_version}" ]]; then
+            echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
+            exit 1
+          fi
+          if ! grep -F "## ${workspace_version} " CHANGELOG.md >/dev/null; then
+            echo "CHANGELOG.md does not contain a ${workspace_version} release heading" >&2
+            exit 1
+          fi
+
+      - name: Prepare pinned Rust toolchain
+        run: |
+          rustup show active-toolchain
+          rustup component add clippy rustfmt
+
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Restore pinned RustSec audit tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.22.2
+
+      - name: Install pinned RustSec audit tool when absent
+        shell: bash
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Reject dependency security warnings
+        id: audit
+        continue-on-error: true
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+
+      - name: Check formatting
+        id: formatting
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        id: clippy
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run Rust tests
+        id: tests
+        continue-on-error: true
+        run: cargo test --workspace --all-features --locked
+
+      - name: Test curl installer without network or runtime installation
+        id: installer
+        continue-on-error: true
+        run: sh scripts/tests/install_sh_test.sh
+
+      - name: Test full uninstaller in an isolated home
+        id: uninstaller
+        continue-on-error: true
+        run: sh scripts/tests/uninstall_sh_test.sh
+
+      - name: Keep the shim dependency graph lightweight
+        id: shim_dependencies
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo tree -p pinset-shim -e normal --locked > shim-dependencies.txt
+          if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile' shim-dependencies.txt; then
+            echo "pinset-shim unexpectedly includes download or archive dependencies" >&2
+            exit 1
+          fi
+
+      - name: Enforce every release candidate check
+        if: always()
+        shell: bash
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
+          FORMATTING_OUTCOME: ${{ steps.formatting.outcome }}
+          INSTALLER_OUTCOME: ${{ steps.installer.outcome }}
+          SHIM_OUTCOME: ${{ steps.shim_dependencies.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          UNINSTALLER_OUTCOME: ${{ steps.uninstaller.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "audit=${AUDIT_OUTCOME}" \
+            "formatting=${FORMATTING_OUTCOME}" \
+            "clippy=${CLIPPY_OUTCOME}" \
+            "tests=${TESTS_OUTCOME}" \
+            "installer=${INSTALLER_OUTCOME}" \
+            "uninstaller=${UNINSTALLER_OUTCOME}" \
+            "shim_dependencies=${SHIM_OUTCOME}"; do
+            if [[ "${result#*=}" != "success" ]]; then
+              echo "${result%%=*} failed" >&2
+              failed=1
+            fi
+          done
+          exit "${failed}"
+
+  windows_scripts:
+    name: Validate Windows scripts
+    if: github.ref_name == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test PowerShell uninstaller in an isolated home
+        shell: pwsh
+        run: ./scripts/tests/uninstall_ps1_test.ps1
+
+  build:
+    name: Preflight ${{ matrix.artifact }}
+    if: github.ref_name == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04-arm
+            artifact: pinset-linux-aarch64
+          - os: macos-15
+            artifact: pinset-macos-aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Build release binaries
+        run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Verify macOS release dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: >-
+          sh scripts/tests/macos_release_dependencies.sh
+          target/release/pinset
+          target/release/pinset-shim
+
+  gate:
+    name: Release preflight gate
+    needs:
+      - validate
+      - windows_scripts
+      - build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report the aggregate result
+        shell: bash
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          REF_NAME: ${{ github.ref_name }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          WINDOWS_RESULT: ${{ needs.windows_scripts.result }}
+        run: |
+          if [[ "${REF_NAME}" != "main" ]]; then
+            echo "Release preflight must be dispatched from main" >&2
+            exit 1
+          fi
+          if [[ "${VALIDATE_RESULT}" != "success" ]]; then
+            echo "Release candidate validation failed: ${VALIDATE_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${WINDOWS_RESULT}" != "success" ]]; then
+            echo "Windows script validation failed: ${WINDOWS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${BUILD_RESULT}" != "success" ]]; then
+            echo "Release candidate builds failed: ${BUILD_RESULT}" >&2
+            exit 1
+          fi
+          echo "Release candidate is ready to tag"

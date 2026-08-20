@@ -6,6 +6,7 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -13,13 +14,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  quality:
-    name: Validate release
+  metadata:
+    name: Prepare release metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Validate tag and workspace version
         shell: bash
@@ -47,50 +50,66 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare Rust toolchain
-        run: |
-          rustup set profile minimal
-          rustup update 1.88.0
-          rustup default 1.88.0
-          rustup component add clippy rustfmt
-
-      - name: Install pinned RustSec audit tool
-        run: cargo install cargo-audit --version 0.22.2 --locked
-
-      - name: Reject dependency security warnings
-        # RUSTSEC-2023-0071 affects observable timing of RSA private-key operations. Pinset only
-        # parses public Node.js release certificates and verifies signatures; it never decrypts or
-        # stores OpenPGP private keys. The advisory has no patched version as of this release.
-        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Run Rust tests
-        run: cargo test --workspace --all-features --locked
-
-      - name: Test curl installer without network or runtime installation
-        run: sh scripts/tests/install_sh_test.sh
-
-      - name: Test full uninstaller in an isolated home
-        run: sh scripts/tests/uninstall_sh_test.sh
-
-      - name: Keep the shim dependency graph lightweight
+      - name: Require a recent successful release preflight
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cargo tree -p pinset-shim -e normal --locked > shim-dependencies.txt
-          if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile' shim-dependencies.txt; then
-            echo "pinset-shim unexpectedly includes download or archive dependencies" >&2
+          release_commit="$(git rev-parse HEAD)"
+          preflight_json="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/release-preflight.yml/runs?event=workflow_dispatch&status=success&head_sha=${release_commit}&per_page=10"
+          )"
+          preflight_created="$(
+            jq -r \
+              --arg commit "${release_commit}" \
+              '[.workflow_runs[] | select(.head_sha == $commit and .head_branch == "main")] | .[0].created_at // empty' \
+              <<< "${preflight_json}"
+          )"
+          if [[ -z "${preflight_created}" ]]; then
+            echo "No successful Release preflight exists for main commit ${release_commit}" >&2
             exit 1
           fi
+
+          PREFLIGHT_CREATED="${preflight_created}" python3 - <<'PY'
+          import datetime
+          import os
+
+          created = datetime.datetime.fromisoformat(
+              os.environ["PREFLIGHT_CREATED"].replace("Z", "+00:00")
+          )
+          age = datetime.datetime.now(datetime.timezone.utc) - created
+          if age < datetime.timedelta(0) or age > datetime.timedelta(hours=24):
+              raise SystemExit(
+                  f"Release preflight is {age} old; run it again on main before tagging"
+              )
+          print(f"Using Release preflight from {created.isoformat()}")
+          PY
+
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Restore pinned CycloneDX tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: ${{ runner.os }}-cargo-cyclonedx-0.5.9
 
       - name: Generate CycloneDX SBOMs
         shell: bash
         run: |
-          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          command -v cargo-cyclonedx >/dev/null || cargo install cargo-cyclonedx --version 0.5.9 --locked
           cargo cyclonedx --format json --all --all-features --target all
           mkdir sbom
           cp crates/pinset/pinset-cli.cdx.json sbom/pinset-cli.cdx.json
@@ -110,7 +129,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.artifact }}
-    needs: quality
+    needs: metadata
     strategy:
       fail-fast: false
       matrix:
@@ -138,12 +157,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Prepare Rust toolchain
-        shell: bash
-        run: |
-          rustup set profile minimal
-          rustup update 1.88.0
-          rustup default 1.88.0
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Restore Cargo registry cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
@@ -192,7 +217,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs:
-      - quality
+      - metadata
       - build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
