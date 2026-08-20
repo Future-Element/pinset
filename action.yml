@@ -35,8 +35,8 @@ runs:
         release="https://github.com/Future-Element/pinset/releases/download/v${PINSET_VERSION}"
         root="${RUNNER_TEMP}/pinset-action-${PINSET_VERSION}"
         mkdir -p "${root}/bin"
-        curl --fail --location --silent --show-error "${release}/${archive}" --output "${root}/${archive}"
-        curl --fail --location --silent --show-error "${release}/SHA256SUMS" --output "${root}/SHA256SUMS"
+        curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 2 "${release}/${archive}" --output "${root}/${archive}"
+        curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 2 "${release}/SHA256SUMS" --output "${root}/SHA256SUMS"
         expected="$(awk -v name="${archive}" '$2 == name { print $1 }' "${root}/SHA256SUMS")"
         [[ "${expected}" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Missing checksum for ${archive}" >&2; exit 1; }
         actual="$(sha256sum "${root}/${archive}" | awk '{ print $1 }')"
@@ -56,8 +56,19 @@ runs:
         $root = Join-Path $env:RUNNER_TEMP "pinset-action-$env:PINSET_VERSION"
         $bin = Join-Path $root 'bin'
         New-Item -ItemType Directory -Force -Path $bin | Out-Null
-        Invoke-WebRequest -Uri "$release/$archive" -OutFile (Join-Path $root $archive)
-        Invoke-WebRequest -Uri "$release/SHA256SUMS" -OutFile (Join-Path $root 'SHA256SUMS')
+        function Invoke-PinsetDownload([string] $Uri, [string] $OutFile) {
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+              return
+            } catch {
+              if ($attempt -eq 4) { throw }
+              Start-Sleep -Seconds 2
+            }
+          }
+        }
+        Invoke-PinsetDownload -Uri "$release/$archive" -OutFile (Join-Path $root $archive)
+        Invoke-PinsetDownload -Uri "$release/SHA256SUMS" -OutFile (Join-Path $root 'SHA256SUMS')
         $line = Get-Content (Join-Path $root 'SHA256SUMS') | Where-Object { $_ -match "^[0-9a-fA-F]{64}\s+$([regex]::Escape($archive))$" } | Select-Object -First 1
         if (-not $line) { throw "Missing checksum for $archive" }
         $expected = ($line -split '\s+')[0]
