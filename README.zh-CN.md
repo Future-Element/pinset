@@ -43,7 +43,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.7.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.8.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -191,15 +191,24 @@ Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档�
 
 9 个内置 Provider 都通过同一 capability model 声明命令布局、元数据解析、安装、环境、传统文件发现、锁审计、验证方法与发布时间能力。Node 通过内嵌 OpenPGP 信任根达到 `signed-checksum`，pnpm 与 Bun 通过 npm registry ECDSA 签名达到该等级；其他内置 Provider 当前为 `checksum`。Minisign、Sigstore、GitHub Attestation 与 SLSA 是彼此独立的已识别方法，但只有 Provider 真正验证对应 bundle 和身份策略后，Pinset 才会报告 `provenance`。
 
+v1.8 新增 clear-signed 声明式 Registry 预览和显式 Provider 依赖。可以查看内置 manifest 集合，或只读验证另一个 clear-signed Registry 文件：
+
+```sh
+pinset provider list
+pinset provider verify registry/providers.json.asc --json
+```
+
+Registry 验证刻意保持只读。未知字段、任意脚本/hooks、不支持的 capability、依赖缺失、循环、签名者不匹配与签名篡改都会失败关闭。此版本仍只有编译进 Pinset 的 9 个 Provider 可以安装和路由命令。pnpm 显式依赖 Node.js，因此 composite `PATH` 会包含项目选择的 Node.js，而不会继承无关 Provider。
+
 ## 命令文档
 
 请查阅完整的[中文命令文档](docs/commands.zh-CN.md)或[英文命令文档](docs/commands.md)。其中记录了每个命令及二级命令、状态修改、JSON 支持、退出码与常见错误。
 
 产品定位与取舍见带官方来源的 [Pinset 横向对比](docs/comparison.zh-CN.md)。
 
-## v1.7
+## v1.8
 
-v1.7 交付通用来源证明策略：统一 verifier 接口、明确的证明强度、发布年龄约束、Provider 能力声明、稳定审计发现与降级保护。它继续使用 schema 3，也不会把 HTTPS 摘要或仅声明了签名链接的制品包装成已验证 provenance。
+v1.8 交付受约束的 Provider Registry 预览与依赖图。Registry manifest 由固定 OpenPGP 公钥验证 clear-signature，严格保持纯声明式、输入有界并拒绝未知 capability；验证不会安装或执行 manifest。内置依赖会检查循环并生成确定的安装和环境顺序，包括 pnpm 对 Node.js 的显式运行时依赖。它继续使用 schema 3 与 v1 JSON 外层协议。
 
 ## 未来规划
 
@@ -207,7 +216,6 @@ v1.7 交付通用来源证明策略：统一 verifier 接口、明确的证明�
 
 | 版本 | 主题 | 计划内容 |
 | --- | --- | --- |
-| v1.8 | 受约束的 Provider Registry | 预览纯声明式 Provider manifest 与签名 Registry；第三方 Provider 必须复用 Pinset 的 HTTPS、完整性、安全解压、路径和所有权规则，不能执行任意 Shell/Lua 或 post-install 脚本；增加工具链依赖图、composite `PATH` 与循环检测，支持 pnpm 等工具与正确运行时组合。 |
 | v1.9 | 开发者体验与正式分发 | 增加不修改项目状态的 `pinset x <tool>@<selector> -- <command>`；补齐 GitHub Action、Renovate、VS Code schema、Dev Container 示例，以及 Winget、Scoop、Homebrew 等官方分发渠道。 |
 | 持续进行 | 平台与质量 | 在上游提供合适制品时扩展平台和架构；持续执行跨平台 CI、安全审计、恶意输入回归、签名标签、`SHA256SUMS`、SBOM 与构建来源证明验证。 |
 

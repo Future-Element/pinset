@@ -33,7 +33,7 @@ impl std::fmt::Display for VerificationStrength {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum VerificationMethod {
     HttpsChecksum,
@@ -46,6 +46,18 @@ pub enum VerificationMethod {
 }
 
 impl VerificationMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HttpsChecksum => "https-checksum",
+            Self::OpenPgpSignedChecksum => "open-pgp-signed-checksum",
+            Self::NpmRegistrySignature => "npm-registry-signature",
+            Self::MinisignSignedChecksum => "minisign-signed-checksum",
+            Self::SigstoreBundle => "sigstore-bundle",
+            Self::GitHubAttestation => "github-attestation",
+            Self::SlsaProvenance => "slsa-provenance",
+        }
+    }
+
     pub const fn strength(self) -> VerificationStrength {
         match self {
             Self::HttpsChecksum => VerificationStrength::Checksum,

@@ -270,6 +270,7 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
 
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 pub fn save_project_state(path: &Path, config: &ProjectConfig, lockfile: &Lockfile) -> Result<()> {
+    crate::validate_provider_selections(&config.tools)?;
     validate_lock_matches_tools(lockfile, &config.tools, path)?;
     validate_project_lock_policy(config, lockfile, std::time::SystemTime::now())?;
     let _guard = PROJECT_STATE_WRITE_LOCK

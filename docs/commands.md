@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.7 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.8 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -578,8 +578,36 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 | Exit | `0` only when connectivity and metadata validation succeed; `2` otherwise. |
 | Key errors | Network failure, response limit, invalid metadata, missing/invalid Node signature, unknown signer, insecure policy, or unknown alias. |
 
+## Provider Registry commands
+
+The v1.8 Registry is a read-only preview. A verified manifest describes commands, dependencies, shared capabilities, and provenance methods, but it cannot install, activate, or execute a Provider. Only Providers compiled into the current Pinset binary are active. Registry files must be bounded regular files containing exactly one valid cleartext OpenPGP signature from Pinset's pinned registry key.
+
+### `provider list`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Verify and list the embedded declarative Provider Registry. |
+| Syntax and arguments | `pinset provider list [--json]`. |
+| Modifies state | No. It does not use the network, install runtimes, activate Providers, or execute manifest content. |
+| Example | `pinset provider list --json` |
+| JSON | **Yes**; command name `provider.list`, including the signed document and signer fingerprint. |
+| Exit | `0` when signature, schema, capabilities, dependency graph, and built-in declarations all verify; `2` otherwise. |
+| Key errors | Invalid embedded key/signature, unknown capability, duplicate command, missing dependency, cycle, or declaration drift. |
+
+### `provider verify`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Verify the embedded Registry or one local clear-signed Registry file without activating it. |
+| Syntax and arguments | `pinset provider verify [REGISTRY] [--json]`; omitted path verifies the embedded Registry. |
+| Modifies state | No. Local files are read only; no Provider is installed, activated, or executed. |
+| Example | `pinset provider verify registry/providers.json.asc --json` |
+| JSON | **Yes**; command name `provider.verify`, including the verified document and signer fingerprint. |
+| Exit | `0` only after cryptographic, schema, capability, and dependency validation; `2` otherwise. |
+| Key errors | Symlink/non-file input, input over 256 KiB, unsigned or multiply-signed data, signer mismatch, tampering, unknown field/capability, missing dependency, or cycle. |
+
 ## Stable protocol boundary
 
-Pinset v1.7 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable. Schema 3 project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected. Installation receipts retain their independent schema.
+Pinset v1.8 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable. Schema 3 project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected. Installation receipts retain their independent schema.
 
-The JSON schema 1 envelope remains unchanged in v1.7. `lock.audit` exposes provenance policy failures through stable `verification_below_policy`, `release_age_unavailable`, and `release_too_new` reason codes. Automation should branch on reason codes and report state, not human-facing messages.
+The JSON schema 1 envelope remains unchanged in v1.8. `provider.list` and `provider.verify` add command-specific data without changing that envelope. `lock.audit` exposes provenance policy failures through stable `verification_below_policy`, `release_age_unavailable`, and `release_too_new` reason codes. Automation should branch on reason codes and report state, not human-facing messages.

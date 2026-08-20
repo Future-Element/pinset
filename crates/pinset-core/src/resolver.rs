@@ -17,7 +17,7 @@ use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
     find_project_context, global_config_path, is_managed_command_shim, load_optional_global_config,
     load_project_config, load_project_python_environment, project_python_command_candidates,
-    runtime_provider, runtime_provider_for_command, runtime_providers,
+    provider_dependency_order, runtime_provider, runtime_provider_for_command,
 };
 #[cfg(feature = "lockfile")]
 use crate::{
@@ -506,6 +506,7 @@ pub fn path_with_selected_runtime(executable: &Path) -> Result<OsString> {
 }
 
 pub fn path_with_selected_tools(
+    tool: &str,
     executable: &Path,
     cwd: &Path,
     pinset_home: &Path,
@@ -518,10 +519,16 @@ pub fn path_with_selected_tools(
         .to_path_buf();
     let shim_dir = pinset_home.join("shims");
     let mut entries = vec![selected_dir.clone()];
-    for provider in runtime_providers() {
-        let Ok(selection) = resolve_tool_selection(provider.tool, cwd, pinset_home) else {
+    for provider in provider_dependency_order(tool)? {
+        if provider.tool == tool {
             continue;
-        };
+        }
+        let selection = resolve_tool_selection(provider.tool, cwd, pinset_home).map_err(|_| {
+            Error::ProviderDependencyMissing {
+                tool: tool.to_owned(),
+                dependency: provider.tool.to_owned(),
+            }
+        })?;
         let install_dir = pinset_home
             .join("installs")
             .join(provider.tool)
@@ -558,11 +565,15 @@ pub fn path_with_selected_tools(
 }
 
 pub fn selected_runtime_environment(
+    tool: &str,
     cwd: &Path,
     pinset_home: &Path,
 ) -> Vec<RuntimeEnvironmentVariable> {
     let mut variables = Vec::new();
-    for provider in runtime_providers() {
+    let Ok(providers) = provider_dependency_order(tool) else {
+        return variables;
+    };
+    for provider in providers {
         if provider.capabilities.environment == RuntimeEnvironmentKind::None {
             continue;
         }

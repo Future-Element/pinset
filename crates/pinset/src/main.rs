@@ -300,6 +300,11 @@ enum Commands {
         #[command(subcommand)]
         command: SourceCommands,
     },
+    /// Inspect the signed declarative Provider Registry preview.
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -455,6 +460,24 @@ enum SourceCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ProviderCommands {
+    /// List manifests from the embedded signed Registry.
+    List {
+        /// Emit the verified Registry using the stable JSON envelope.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify an official clear-signed Registry file without activating Providers.
+    Verify {
+        /// Registry file. Omit it to verify the copy embedded in this binary.
+        registry: Option<PathBuf>,
+        /// Emit the verified Registry using the stable JSON envelope.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 impl Cli {
     fn json_command(&self) -> Option<&'static str> {
         self.command.as_ref()?.json_command()
@@ -476,6 +499,17 @@ impl Commands {
             Self::Doctor { json: true, .. } => Some("doctor"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
+            Self::Provider { command } => command.json_command(),
+            _ => None,
+        }
+    }
+}
+
+impl ProviderCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::List { json: true } => Some("provider.list"),
+            Self::Verify { json: true, .. } => Some("provider.verify"),
             _ => None,
         }
     }
@@ -588,12 +622,13 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "doctor"
                 | "lock"
                 | "cache"
+                | "provider"
         )
     });
     let Some(index) = top_level else {
         return Some("pinset".to_owned());
     };
-    if values[index] != "cache" && values[index] != "lock" {
+    if values[index] != "cache" && values[index] != "lock" && values[index] != "provider" {
         return Some(values[index].as_ref().to_owned());
     }
     let group = values[index].as_ref();
@@ -603,6 +638,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
             "list" | "info" | "verify" | "repair" | "clean"
         ),
         "lock" => value.as_ref() == "audit",
+        "provider" => matches!(value.as_ref(), "list" | "verify"),
         _ => false,
     });
     Some(match subcommand {
@@ -628,6 +664,9 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::UnsupportedJavaTarget { .. }
         | Error::UnsupportedRustTarget { .. }
         | Error::UnsupportedDotnetTarget { .. } => "unsupported_provider",
+        Error::ProviderDependencyMissing { .. }
+        | Error::ProviderDependencyUnknown { .. }
+        | Error::ProviderDependencyCycle { .. } => "provider_dependency_failed",
         Error::InvalidNodeSelector { .. }
         | Error::InvalidGoSelector { .. }
         | Error::InvalidFlutterSelector { .. }
@@ -722,6 +761,10 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::NodeTrustStoreInvalid { .. }
         | Error::NpmSignatureVerification { .. } => "signature_invalid",
         Error::NodeSignerUntrusted { .. } => "signature_untrusted",
+        Error::ProviderRegistrySignatureInvalid { .. } => "signature_invalid",
+        Error::ReadProviderRegistry { .. } | Error::ProviderRegistryInvalid { .. } => {
+            "provider_registry_invalid"
+        }
         Error::VerificationPolicyViolation { .. } => "verification_policy_failed",
         Error::VerificationDowngrade { .. } => "verification_downgrade",
         Error::ReleaseAgeUnavailable { .. } | Error::ReleaseTooNew { .. } => {
@@ -1111,6 +1154,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         }
         Commands::Completions { shell } => print_completions(shell),
         Commands::Source { command } => run_source_command(command, catalog)?,
+        Commands::Provider { command } => run_provider_command(command)?,
     }
 
     Ok(0)
@@ -2186,13 +2230,14 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated update migrate uninstall prune lock cache exec doctor venv shim activate completions source";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install which current list outdated update migrate uninstall prune lock cache exec doctor venv shim activate completions source provider";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
+const COMPLETION_PROVIDER_COMMANDS: &str = "list verify";
 
 fn print_completions(shell: ActivationShell) {
     println!("{}", completion_script(shell));
@@ -2241,6 +2286,7 @@ fn completion_script(shell: ActivationShell) -> String {
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
+            provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -2278,6 +2324,7 @@ _pinset_completion() {
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help" ;;
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
+            provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -2295,7 +2342,8 @@ complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS_
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated update migrate uninstall prune doctor lock cache' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from provider' -a '__PROVIDER_COMMANDS__ --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect which current list outdated update migrate uninstall prune doctor lock cache provider' -a '--json'
 complete -c pinset -f -n '__fish_seen_subcommand_from which current' -a '--explain'
 complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor lock' -a '--cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
@@ -2330,6 +2378,7 @@ complete -c pinset -f -a '--help --lang'"#
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --binary --dir --lang --help' -split ' ' }
         { $_ -in @('activate', 'completions') } { '__SHELLS__ --lang --help' -split ' ' }
         'source' { '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help' -split ' ' }
+        'provider' { '__PROVIDER_COMMANDS__ --json --lang --help' -split ' ' }
         default { '__COMMANDS__ --help --version --lang' -split ' ' }
     }
     $values |
@@ -2349,6 +2398,7 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
         .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
         .replace("__SOURCE_PROVIDERS__", &source_providers)
+        .replace("__PROVIDER_COMMANDS__", COMPLETION_PROVIDER_COMMANDS)
 }
 
 fn parse_tool_selection(
@@ -3319,10 +3369,8 @@ fn install_locked_selection(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lockfile = load_lockfile(lock_path)?;
     validate_lock_matches_tools(&lockfile, configured, config_path)?;
-    for provider in pinset_core::runtime_providers() {
-        if configured.contains_key(provider.tool) {
-            install_tool_from_lock(home, &lockfile, provider.tool, catalog)?;
-        }
+    for provider in pinset_core::selected_provider_order(configured)? {
+        install_tool_from_lock(home, &lockfile, provider.tool, catalog)?;
     }
     Ok(())
 }
@@ -3894,7 +3942,7 @@ fn execute_selected(
                 Vec::new(),
             )
         };
-    let runtime_path = path_with_selected_tools(&executable, cwd, &home)?;
+    let runtime_path = path_with_selected_tools(&tool, &executable, cwd, &home)?;
     if source != "system" {
         validate_managed_runtime_invocation(&tool, command_name, &command[1..])?;
     }
@@ -3911,7 +3959,7 @@ fn execute_selected(
         .env("PINSET_SELECTED_TOOL", &tool)
         .env("PINSET_SELECTED_VERSION", &version)
         .env("PINSET_SELECTION_SOURCE", source);
-    for variable in selected_runtime_environment(cwd, &home) {
+    for variable in selected_runtime_environment(&tool, cwd, &home) {
         child.env(variable.name, variable.value);
     }
     for variable in ephemeral_environment {
@@ -4822,6 +4870,65 @@ fn run_source_command(
                     source.base_url.starts_with("https://"),
                 )
             );
+        }
+    }
+    Ok(())
+}
+
+fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        ProviderCommands::List { json } => {
+            let verified = pinset_core::embedded_provider_registry()?;
+            if json {
+                print_json_success("provider.list", verified)?;
+            } else {
+                println!(
+                    "registry={} schema={} signer={}",
+                    verified.document.registry,
+                    verified.document.schema,
+                    verified.signer_fingerprint
+                );
+                for provider in &verified.document.providers {
+                    let dependencies = if provider.dependencies.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        provider.dependencies.join(",")
+                    };
+                    let methods = provider
+                        .capabilities
+                        .provenance
+                        .methods
+                        .iter()
+                        .map(|method| method.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    println!(
+                        "{} id={} commands={} dependencies={} verification={} activation=built-in-only",
+                        provider.tool,
+                        provider.id,
+                        provider.commands.join(","),
+                        dependencies,
+                        methods
+                    );
+                }
+            }
+        }
+        ProviderCommands::Verify { registry, json } => {
+            let verified = match registry.as_deref() {
+                Some(path) => pinset_core::load_signed_provider_registry(path)?,
+                None => pinset_core::embedded_provider_registry()?,
+            };
+            if json {
+                print_json_success("provider.verify", verified)?;
+            } else {
+                println!(
+                    "Provider Registry verified: registry={} schema={} providers={} signer={} activation=none",
+                    verified.document.registry,
+                    verified.document.schema,
+                    verified.document.providers.len(),
+                    verified.signer_fingerprint
+                );
+            }
         }
     }
     Ok(())

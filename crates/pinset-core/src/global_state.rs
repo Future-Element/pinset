@@ -139,6 +139,7 @@ pub fn save_global_state(
     lockfile: &Lockfile,
 ) -> Result<()> {
     let config_path = global_config_path(pinset_home);
+    crate::validate_provider_selections(&config.tools)?;
     validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
 
     let _guard = GLOBAL_STATE_WRITE_LOCK

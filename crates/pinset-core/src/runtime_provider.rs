@@ -2,6 +2,9 @@
 pub struct RuntimeProvider {
     pub tool: &'static str,
     pub commands: &'static [&'static str],
+    /// Other selected Providers whose command directories must be available to this tool.
+    /// Dependencies are declarative and never execute setup hooks or arbitrary code.
+    pub dependencies: &'static [&'static str],
     pub capabilities: RuntimeProviderCapabilities,
 }
 
@@ -158,6 +161,7 @@ const NPM_METHODS: &[crate::VerificationMethod] =
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::NodeNative,
         metadata: RuntimeMetadataKind::Node,
@@ -174,6 +178,7 @@ const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
 const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "pnpm",
     commands: &["pnpm"],
+    dependencies: &["node"],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Root,
         metadata: RuntimeMetadataKind::Npm,
@@ -190,6 +195,7 @@ const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
 const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "bun",
     commands: &["bun", "bunx"],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Bin,
         metadata: RuntimeMetadataKind::Npm,
@@ -206,6 +212,7 @@ const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
 const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "go",
     commands: &["go", "gofmt"],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Bin,
         metadata: RuntimeMetadataKind::Go,
@@ -222,6 +229,7 @@ const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
 const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "flutter",
     commands: &["flutter", "dart"],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Bin,
         metadata: RuntimeMetadataKind::Flutter,
@@ -238,6 +246,7 @@ const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
 const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "python",
     commands: &["python", "python3", "pip", "pip3"],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Python,
         metadata: RuntimeMetadataKind::Python,
@@ -256,6 +265,7 @@ const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
     commands: &[
         "java", "javac", "jar", "javadoc", "javap", "keytool", "jshell",
     ],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Java,
         metadata: RuntimeMetadataKind::Java,
@@ -280,6 +290,7 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
         "clippy-driver",
         "cargo-clippy",
     ],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Bin,
         metadata: RuntimeMetadataKind::Rust,
@@ -296,6 +307,7 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
 const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "dotnet",
     commands: &["dotnet"],
+    dependencies: &[],
     capabilities: RuntimeProviderCapabilities {
         command_layout: RuntimeCommandLayout::Root,
         metadata: RuntimeMetadataKind::Dotnet,
@@ -333,6 +345,87 @@ pub fn runtime_provider_for_command(command: &str) -> Option<&'static RuntimePro
     PROVIDERS
         .iter()
         .find(|provider| provider.commands.contains(&command))
+}
+
+/// Return dependencies before dependants, rejecting missing declarations and cycles.
+pub fn provider_dependency_order(tool: &str) -> crate::Result<Vec<&'static RuntimeProvider>> {
+    let mut visiting = Vec::new();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut ordered = Vec::new();
+    visit_provider(tool, &mut visiting, &mut visited, &mut ordered)?;
+    Ok(ordered)
+}
+
+pub fn validate_provider_selections(
+    tools: &std::collections::BTreeMap<String, String>,
+) -> crate::Result<()> {
+    for tool in tools.keys() {
+        let provider =
+            runtime_provider(tool).ok_or_else(|| crate::Error::UnsupportedRuntimeProvider {
+                provider: tool.clone(),
+            })?;
+        for dependency in provider_dependency_order(provider.tool)? {
+            if dependency.tool != provider.tool && !tools.contains_key(dependency.tool) {
+                return Err(crate::Error::ProviderDependencyMissing {
+                    tool: provider.tool.to_owned(),
+                    dependency: dependency.tool.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn selected_provider_order(
+    tools: &std::collections::BTreeMap<String, String>,
+) -> crate::Result<Vec<&'static RuntimeProvider>> {
+    validate_provider_selections(tools)?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut ordered = Vec::new();
+    for tool in tools.keys() {
+        for provider in provider_dependency_order(tool)? {
+            if seen.insert(provider.tool) {
+                ordered.push(provider);
+            }
+        }
+    }
+    Ok(ordered)
+}
+
+fn visit_provider(
+    tool: &str,
+    visiting: &mut Vec<String>,
+    visited: &mut std::collections::BTreeSet<String>,
+    ordered: &mut Vec<&'static RuntimeProvider>,
+) -> crate::Result<()> {
+    if visited.contains(tool) {
+        return Ok(());
+    }
+    if let Some(position) = visiting.iter().position(|candidate| candidate == tool) {
+        let mut cycle = visiting[position..].to_vec();
+        cycle.push(tool.to_owned());
+        return Err(crate::Error::ProviderDependencyCycle {
+            cycle: cycle.join(" -> "),
+        });
+    }
+    let provider =
+        runtime_provider(tool).ok_or_else(|| crate::Error::UnsupportedRuntimeProvider {
+            provider: tool.to_owned(),
+        })?;
+    visiting.push(tool.to_owned());
+    for dependency in provider.dependencies {
+        if runtime_provider(dependency).is_none() {
+            return Err(crate::Error::ProviderDependencyUnknown {
+                tool: tool.to_owned(),
+                dependency: (*dependency).to_owned(),
+            });
+        }
+        visit_provider(dependency, visiting, visited, ordered)?;
+    }
+    visiting.pop();
+    visited.insert(tool.to_owned());
+    ordered.push(provider);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -433,6 +526,27 @@ mod tests {
     }
 
     #[test]
+    fn provider_dependencies_are_acyclic_and_topologically_ordered() {
+        let order = provider_dependency_order("pnpm")
+            .expect("pnpm dependency graph")
+            .into_iter()
+            .map(|provider| provider.tool)
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["node", "pnpm"]);
+
+        let selected = std::collections::BTreeMap::from([
+            ("node".to_owned(), "24".to_owned()),
+            ("pnpm".to_owned(), "11".to_owned()),
+        ]);
+        assert!(validate_provider_selections(&selected).is_ok());
+        let missing = std::collections::BTreeMap::from([("pnpm".to_owned(), "11".to_owned())]);
+        assert!(matches!(
+            validate_provider_selections(&missing),
+            Err(crate::Error::ProviderDependencyMissing { .. })
+        ));
+    }
+
+    #[test]
     fn provider_tools_and_commands_are_globally_unique() {
         let mut tools = HashSet::new();
         let mut commands = HashSet::new();
@@ -482,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn every_provider_declares_the_complete_v17_capability_model() {
+    fn every_provider_declares_the_complete_v18_capability_model() {
         assert_eq!(runtime_providers().len(), 9);
         for provider in runtime_providers() {
             assert_eq!(

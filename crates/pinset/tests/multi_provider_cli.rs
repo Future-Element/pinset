@@ -7,21 +7,27 @@ use std::{
 use tempfile::tempdir;
 
 #[test]
-fn resolves_lists_and_executes_pnpm_and_bun_with_a_composite_path() {
+fn resolves_lists_and_executes_pnpm_with_its_declared_node_dependency() {
     let root = tempdir().expect("root");
     let project = root.path().join("project");
     let home = root.path().join("home");
     fs::create_dir(&project).expect("project");
     fs::write(
         project.join("pinset.toml"),
-        "schema = 2\n\n[tools]\nbun = \"1.3.14\"\npnpm = \"11.21.0\"\n",
+        "schema = 2\n\n[tools]\nbun = \"1.3.14\"\nnode = \"24.0.0\"\npnpm = \"11.21.0\"\n",
     )
     .expect("config");
 
     let pnpm_dir = install_dir(&home, "pnpm", "11.21.0");
     fs::create_dir_all(&pnpm_dir).expect("pnpm dir");
-    write_command(&pnpm_dir, "pnpm", nested_bun_command());
+    write_command(&pnpm_dir, "pnpm", nested_node_command());
     write_receipt(&pnpm_dir, "pnpm", "11.21.0");
+
+    let node_dir = install_dir(&home, "node", "24.0.0");
+    let node_commands = pinset_core::runtime_command_directory("node", &node_dir);
+    fs::create_dir_all(&node_commands).expect("node dir");
+    write_command(&node_commands, "node", &echo_command("fake-node-24.0.0"));
+    write_receipt(&node_dir, "node", "24.0.0");
 
     let bun_dir = install_dir(&home, "bun", "1.3.14").join("bin");
     fs::create_dir_all(&bun_dir).expect("bun dir");
@@ -40,7 +46,7 @@ fn resolves_lists_and_executes_pnpm_and_bun_with_a_composite_path() {
     assert_success_contains(&current_bun, "bun 1.3.14");
 
     let executed = pinset(&project, &home, &["exec", "--", "pnpm", "--version"]);
-    assert_success_contains(&executed, "fake-bun-1.3.14");
+    assert_success_contains(&executed, "fake-node-24.0.0");
 
     let pnpm_list = pinset(&project, &home, &["list", "pnpm"]);
     assert_success_contains(&pnpm_list, "pnpm@11.21.0");
@@ -81,13 +87,13 @@ fn write_command(directory: &Path, command: &str, body: &str) {
 }
 
 #[cfg(windows)]
-fn nested_bun_command() -> &'static str {
-    "@echo off\r\nbun --version\r\n"
+fn nested_node_command() -> &'static str {
+    "@echo off\r\nnode --version\r\n"
 }
 
 #[cfg(unix)]
-fn nested_bun_command() -> &'static str {
-    "#!/bin/sh\nexec bun --version\n"
+fn nested_node_command() -> &'static str {
+    "#!/bin/sh\nexec node --version\n"
 }
 
 #[cfg(windows)]

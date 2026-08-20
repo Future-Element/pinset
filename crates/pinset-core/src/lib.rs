@@ -60,6 +60,8 @@ mod npm_runtime;
 #[cfg(feature = "project-discovery")]
 mod project_discovery;
 mod provenance;
+#[cfg(feature = "provider-registry")]
+mod provider_registry;
 #[cfg(feature = "python-metadata")]
 mod python_metadata;
 #[cfg(feature = "python-provider")]
@@ -205,6 +207,12 @@ pub use provenance::{
     valid_release_time, validate_tool_policy, validate_verification_transition,
     verification_method,
 };
+#[cfg(feature = "provider-registry")]
+pub use provider_registry::{
+    DeclarativeProvenanceCapabilities, DeclarativeProviderCapabilities,
+    DeclarativeProviderManifest, ProviderRegistryDocument, VerifiedProviderRegistry,
+    embedded_provider_registry, load_signed_provider_registry, verify_signed_provider_registry,
+};
 #[cfg(feature = "python-metadata")]
 pub use python_metadata::{PythonMetadataClient, PythonRelease};
 #[cfg(feature = "python-provider")]
@@ -242,8 +250,9 @@ pub use runtime_lifecycle::{
 pub use runtime_provider::{
     RuntimeCommandLayout, RuntimeDiscoveryKind, RuntimeDiscoveryRule, RuntimeEnvironmentKind,
     RuntimeInstallKind, RuntimeLockAuditKind, RuntimeMetadataKind, RuntimeProvenanceCapabilities,
-    RuntimeProvider, RuntimeProviderCapabilities, runtime_provider, runtime_provider_for_command,
-    runtime_providers,
+    RuntimeProvider, RuntimeProviderCapabilities, provider_dependency_order, runtime_provider,
+    runtime_provider_for_command, runtime_providers, selected_provider_order,
+    validate_provider_selections,
 };
 #[cfg(feature = "rust-metadata")]
 pub use rust_metadata::{RustMetadataClient, RustRelease};
