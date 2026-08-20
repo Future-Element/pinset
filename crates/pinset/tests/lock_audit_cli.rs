@@ -7,8 +7,8 @@ use std::{
 
 use pinset_core::{
     LockedArtifact, LockedArtifactFormat, Lockfile, MVP_NODE_TARGETS, NodeArchiveFormat,
-    ProjectConfig, SourceConfig, current_target_for_tool, plan_node_artifact, save_lockfile,
-    save_project_config,
+    ProjectConfig, SourceConfig, VerificationStrength, current_target_for_tool, plan_node_artifact,
+    save_lockfile, save_project_config,
 };
 use tempfile::tempdir;
 
@@ -77,6 +77,37 @@ fn lock_audit_uses_exit_one_for_findings_and_does_not_repair_state() {
             .any(|finding| finding["reason_code"] == "receipt_missing")
     );
     assert!(!install.join(".pinset-install.toml").exists());
+}
+
+#[test]
+fn lock_audit_json_exposes_provenance_policy_reason_codes() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    let mut config = ProjectConfig {
+        schema: 3,
+        policy: Default::default(),
+        tools: BTreeMap::from([("node".to_owned(), "24.0.0".to_owned())]),
+    };
+    config.policy.verification_strength = Some(VerificationStrength::Provenance);
+    save_project_config(&project.join("pinset.toml"), &config).expect("project config");
+    save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).expect("lockfile");
+
+    let output = pinset(&project, &home, &["lock", "audit", "--json"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("audit JSON");
+    assert!(
+        json["data"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| {
+                finding["reason_code"] == "verification_below_policy"
+                    && finding["category"] == "provenance"
+            })
+    );
 }
 
 fn write_project(project: &Path, version: &str) {

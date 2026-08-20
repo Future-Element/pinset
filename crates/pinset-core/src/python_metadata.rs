@@ -131,6 +131,7 @@ impl PythonMetadataClient {
             requested: release.distribution.clone(),
             version: release.distribution,
             provider: "python-build-standalone".to_owned(),
+            released_at: Some(release.date),
             metadata,
             artifacts,
         })

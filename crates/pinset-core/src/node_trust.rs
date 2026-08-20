@@ -7,7 +7,10 @@ use pgp::{
     types::KeyDetails,
 };
 
-use crate::{Error, Result};
+use crate::{
+    Error, Result,
+    provenance::{ProvenanceVerifier, VerifiedPayload},
+};
 
 const NODE_RELEASE_KEYS: &str = include_str!("../assets/node-release-keys.asc");
 const NODE_RELEASE_KEYS_SOURCE: &str =
@@ -60,6 +63,42 @@ pub(crate) struct VerifiedNodeManifest {
 }
 
 pub(crate) fn verify_node_manifest(armored: &str) -> Result<VerifiedNodeManifest> {
+    let verifier = NodeOpenPgpVerifier;
+    debug_assert_eq!(
+        verifier.method(),
+        crate::VerificationMethod::OpenPgpSignedChecksum
+    );
+    let verified = verifier.verify(armored.as_bytes())?;
+    Ok(VerifiedNodeManifest {
+        text: String::from_utf8(verified.payload).map_err(|_| Error::NodeSignatureInvalid {
+            reason: "verified manifest is not UTF-8".to_owned(),
+        })?,
+        signer_fingerprint: verified.signer.ok_or_else(|| Error::NodeSignatureInvalid {
+            reason: "verified manifest did not identify its signer".to_owned(),
+        })?,
+    })
+}
+
+struct NodeOpenPgpVerifier;
+
+impl ProvenanceVerifier for NodeOpenPgpVerifier {
+    fn method(&self) -> crate::VerificationMethod {
+        crate::VerificationMethod::OpenPgpSignedChecksum
+    }
+
+    fn verify(&self, input: &[u8]) -> Result<VerifiedPayload> {
+        let armored = std::str::from_utf8(input).map_err(|_| Error::NodeSignatureInvalid {
+            reason: "clear-signed manifest is not UTF-8".to_owned(),
+        })?;
+        let verified = verify_node_openpgp_manifest(armored)?;
+        Ok(VerifiedPayload {
+            payload: verified.text.into_bytes(),
+            signer: Some(verified.signer_fingerprint),
+        })
+    }
+}
+
+fn verify_node_openpgp_manifest(armored: &str) -> Result<VerifiedNodeManifest> {
     if armored.len() > MAX_NODE_MANIFEST_BYTES {
         return Err(Error::NodeSignatureInvalid {
             reason: format!(

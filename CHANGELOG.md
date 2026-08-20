@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.0 - 2026-08-20
+
+- Add a common provenance verifier contract and one verification vocabulary for HTTPS checksums, OpenPGP/Minisign signed checksums, npm registry signatures, Sigstore bundles, GitHub Attestations, and SLSA provenance. Node.js OpenPGP validation now runs behind that contract.
+- Add optional project-wide `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<n>d|h|m|s"` policy fields. Selection, import, update, project install, and lock audit fail closed when the lock cannot satisfy them.
+- Record upstream release timestamps in new locks when the consumed Provider metadata supplies one. Go deliberately reports release age as unavailable because its official downloads JSON has no release timestamp.
+- Reject silent verification downgrades when replacing an existing tool lock, while keeping schema 3 and legacy schema 1/2 reads compatible.
+- Extend Provider capabilities and lock-audit findings with provenance methods, release-time availability, and stable `verification_below_policy`, `release_age_unavailable`, and `release_too_new` reason codes.
+
+No schema migration is required. The optional `released-at` lock field and project policy keys are schema-3-compatible; existing locks remain valid until a project explicitly enables a policy they cannot satisfy.
+
 ## 1.6.0 - 2026-08-20
 
 - Add `pinset lock audit` for project or global scope. It is always read-only and offline, checks config/lock consistency, current-platform artifacts, referenced cache bytes, install receipts, receipt-backed ownership, and project Python environment ownership.

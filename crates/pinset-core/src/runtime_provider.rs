@@ -18,6 +18,15 @@ pub struct RuntimeProviderCapabilities {
     pub environment: RuntimeEnvironmentKind,
     pub discovery: &'static [RuntimeDiscoveryRule],
     pub lock_audit: RuntimeLockAuditKind,
+    pub provenance: RuntimeProvenanceCapabilities,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeProvenanceCapabilities {
+    pub methods: &'static [crate::VerificationMethod],
+    /// Whether the consumed upstream metadata supplies a release timestamp that can enforce
+    /// `minimum-release-age` without guessing from a version or local file time.
+    pub release_time: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +150,11 @@ const DOTNET_DISCOVERY: &[RuntimeDiscoveryRule] = &[RuntimeDiscoveryRule {
     source: "global-json",
     kind: RuntimeDiscoveryKind::DotnetGlobalJson,
 }];
+const CHECKSUM_METHODS: &[crate::VerificationMethod] = &[crate::VerificationMethod::HttpsChecksum];
+const NODE_METHODS: &[crate::VerificationMethod] =
+    &[crate::VerificationMethod::OpenPgpSignedChecksum];
+const NPM_METHODS: &[crate::VerificationMethod] =
+    &[crate::VerificationMethod::NpmRegistrySignature];
 const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
     tool: "node",
     commands: NODE_COMMANDS,
@@ -151,6 +165,10 @@ const NODE_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::None,
         discovery: NODE_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: NODE_METHODS,
+            release_time: true,
+        },
     },
 };
 const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -163,6 +181,10 @@ const PNPM_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::None,
         discovery: &[],
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: NPM_METHODS,
+            release_time: true,
+        },
     },
 };
 const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -175,6 +197,10 @@ const BUN_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::None,
         discovery: BUN_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: NPM_METHODS,
+            release_time: true,
+        },
     },
 };
 const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -187,6 +213,10 @@ const GO_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::Go,
         discovery: GO_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: false,
+        },
     },
 };
 const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -199,6 +229,10 @@ const FLUTTER_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::Flutter,
         discovery: FLUTTER_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
     },
 };
 const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -211,6 +245,10 @@ const PYTHON_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::Python,
         discovery: PYTHON_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
     },
 };
 const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -225,6 +263,10 @@ const JAVA_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::Java,
         discovery: JAVA_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
     },
 };
 const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -245,6 +287,10 @@ const RUST_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::None,
         discovery: RUST_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
     },
 };
 const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
@@ -257,6 +303,10 @@ const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
         environment: RuntimeEnvironmentKind::Dotnet,
         discovery: DOTNET_DISCOVERY,
         lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
     },
 };
 const PROVIDERS: &[RuntimeProvider] = &[
@@ -432,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn every_provider_declares_the_complete_v16_capability_model() {
+    fn every_provider_declares_the_complete_v17_capability_model() {
         assert_eq!(runtime_providers().len(), 9);
         for provider in runtime_providers() {
             assert_eq!(
@@ -441,6 +491,25 @@ mod tests {
                 "{} must participate in the shared lock audit contract",
                 provider.tool
             );
+            assert!(
+                !provider.capabilities.provenance.methods.is_empty(),
+                "{} must declare its verification method",
+                provider.tool
+            );
         }
+        assert!(
+            !runtime_provider("go")
+                .expect("Go")
+                .capabilities
+                .provenance
+                .release_time
+        );
+        assert!(
+            runtime_provider("node")
+                .expect("Node")
+                .capabilities
+                .provenance
+                .release_time
+        );
     }
 }

@@ -59,6 +59,7 @@ mod npm_metadata;
 mod npm_runtime;
 #[cfg(feature = "project-discovery")]
 mod project_discovery;
+mod provenance;
 #[cfg(feature = "python-metadata")]
 mod python_metadata;
 #[cfg(feature = "python-provider")]
@@ -87,6 +88,8 @@ mod user_settings;
 
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 pub use config::save_project_state;
+#[cfg(feature = "lockfile")]
+pub use config::validate_project_lock_policy;
 pub use config::{
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
     ProjectPolicy, find_optional_project_config, find_project_config, find_project_context,
@@ -197,6 +200,11 @@ pub use npm_runtime::install_locked_npm_tool;
 pub use project_discovery::{
     DiscoveryFinding, DiscoveryKind, DiscoveryReport, DiscoveryStatus, scan_project_sources,
 };
+pub use provenance::{
+    MinimumReleaseAge, VerificationMethod, VerificationStrength, tool_verification_strength,
+    valid_release_time, validate_tool_policy, validate_verification_transition,
+    verification_method,
+};
 #[cfg(feature = "python-metadata")]
 pub use python_metadata::{PythonMetadataClient, PythonRelease};
 #[cfg(feature = "python-provider")]
@@ -233,8 +241,9 @@ pub use runtime_lifecycle::{
 };
 pub use runtime_provider::{
     RuntimeCommandLayout, RuntimeDiscoveryKind, RuntimeDiscoveryRule, RuntimeEnvironmentKind,
-    RuntimeInstallKind, RuntimeLockAuditKind, RuntimeMetadataKind, RuntimeProvider,
-    RuntimeProviderCapabilities, runtime_provider, runtime_provider_for_command, runtime_providers,
+    RuntimeInstallKind, RuntimeLockAuditKind, RuntimeMetadataKind, RuntimeProvenanceCapabilities,
+    RuntimeProvider, RuntimeProviderCapabilities, runtime_provider, runtime_provider_for_command,
+    runtime_providers,
 };
 #[cfg(feature = "rust-metadata")]
 pub use rust_metadata::{RustMetadataClient, RustRelease};

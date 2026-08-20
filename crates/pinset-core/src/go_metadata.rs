@@ -122,6 +122,8 @@ impl GoMetadataClient {
             requested: release.version.clone(),
             version: release.version,
             provider: "go-official".to_owned(),
+            // The official Go downloads JSON does not publish a release timestamp.
+            released_at: None,
             metadata: BTreeMap::new(),
             artifacts,
         })

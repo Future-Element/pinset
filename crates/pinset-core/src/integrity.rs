@@ -90,7 +90,6 @@ impl ArtifactIntegrity {
         self.canonical_digest(&self.bytes)
     }
 
-    #[cfg(feature = "installer")]
     pub(crate) fn canonical_digest(&self, bytes: &[u8]) -> String {
         match self.algorithm {
             IntegrityAlgorithm::Sha256 => format!("sha256:{}", hex::encode(bytes)),

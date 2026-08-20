@@ -17,7 +17,7 @@ It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart th
 - Strict project routing by default, with explicit global inheritance and system fallback policies.
 - Explainable resolution through `current --explain`, `which --explain`, and `doctor`.
 - Direct command routing through one small, runtime-independent shim.
-- Node.js release manifests verified with embedded OpenPGP trust roots before checksums are parsed.
+- Common provenance classification with Node.js OpenPGP and npm registry signatures verified before checksums or integrity values are trusted.
 - Provider integrity checks, safe extraction, atomic installs, ownership-aware uninstall, and a content-addressed download cache.
 - First-class English and Simplified Chinese output, JSON schema 1 for automation, and shell completion.
 - Project-owned Python `.venv` support without requiring shell activation.
@@ -43,7 +43,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.6.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.7.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -140,9 +140,12 @@ Schema 3 projects are strict by default: once `pinset.toml` exists, an undeclare
 inherit-global = true
 system-fallback = false
 boundary = "git"
+# Optional, project-wide supply-chain policy:
+verification-strength = "checksum"
+minimum-release-age = "7d"
 ```
 
-Resolution stops at the nearest Git root by default; it crosses that boundary only when the parent configuration itself explicitly sets `boundary = "filesystem"`. Use `pinset current node --explain` or `pinset which node --explain` to inspect every candidate and any traditional files that remain explicit migration inputs only. Existing schema 1/2 state remains readable; preview and perform its schema-only upgrade with `pinset migrate --dry-run` and `pinset migrate`.
+The optional verification policy applies to every selected tool. Strength is ordered as `checksum < signed-checksum < provenance`; Pinset rejects a lock below the configured minimum and refuses to replace an existing lock with weaker evidence. Release age accepts positive `d`, `h`, `m`, or `s` durations and fails closed when an upstream does not publish a usable timestamp. Resolution stops at the nearest Git root by default; it crosses that boundary only when the parent configuration itself explicitly sets `boundary = "filesystem"`.
 
 To migrate an existing repository, inspect traditional files locally first, then import and install their unambiguous selections:
 
@@ -186,7 +189,7 @@ pinset list
 
 Flutter does not publish an official Linux ARM64 SDK archive that matches Pinset's install model, so Pinset returns an explicit unsupported-target error instead of falling back to x64. macOS Intel is not a Pinset v1.0 release target.
 
-All nine built-in Providers declare command layout, metadata resolution, installation, environment, traditional-file discovery, and lock-audit support through one capability model. Resolver, installer, discovery, routing, and audit code consume that shared declaration instead of maintaining separate Provider lists.
+All nine built-in Providers declare command layout, metadata resolution, installation, environment, traditional-file discovery, lock-audit support, verification methods, and release-time availability through one capability model. Node locks currently reach `signed-checksum` through embedded OpenPGP trust roots; pnpm and Bun reach it through npm registry ECDSA signatures. The other built-in Providers currently reach `checksum`. Minisign, Sigstore, GitHub Attestation, and SLSA are distinct recognized methods, but Pinset reports `provenance` only after a Provider actually verifies the corresponding bundle and identity policy.
 
 ## Command reference
 
@@ -194,9 +197,9 @@ See the complete [English command reference](docs/commands.md) or [Chinese comma
 
 For product positioning and trade-offs, see the sourced [Pinset comparison (Chinese)](docs/comparison.zh-CN.md).
 
-## v1.6
+## v1.7
 
-v1.6 delivers the first lock-audit and security-foundation release: the offline/read-only `pinset lock audit`, stable automation reason codes, explicit repair plans, and one capability model covering all nine built-in Providers. It deliberately reports state drift without changing it; provenance policy and automatic remediation remain outside this release.
+v1.7 delivers general provenance policy: a common verifier contract, explicit proof strengths, release-age enforcement, Provider capability declarations, stable audit findings, and downgrade protection. It keeps schema 3 and does not treat an HTTPS checksum or an advertised signature URL as verified provenance.
 
 ## Future Roadmap
 
@@ -204,7 +207,6 @@ The roadmap describes direction, not promised versions or dates.
 
 | Version | Theme | Planned work |
 | --- | --- | --- |
-| v1.7 | General provenance verification | Move the existing Node.js OpenPGP verification behind a common verifier interface, then add signed checksums, Minisign, Sigstore, GitHub Attestations, and SLSA provenance where upstreams actually provide them. Add optional verification-strength and `minimum-release-age` policies, and reject silent verification downgrades. |
 | v1.8 | Constrained Provider Registry | Preview declarative Provider manifests and a signed Registry. Third-party Providers must reuse Pinset's HTTPS, integrity, safe extraction, path, and ownership rules and cannot run arbitrary Shell/Lua or post-install scripts. Add toolchain dependency graphs, a composite `PATH`, and cycle detection so tools such as pnpm run with the correct runtime. |
 | v1.9 | Developer experience and distribution | Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution without modifying project state. Provide a GitHub Action, Renovate integration, VS Code schemas, Dev Container examples, and official Winget, Scoop, and Homebrew distribution. |
 | Ongoing | Platforms and quality | Add platforms and architectures when upstreams publish suitable artifacts. Continue cross-platform CI, security audits, malicious-input regressions, signed tags, `SHA256SUMS`, SBOMs, and build-provenance verification. |

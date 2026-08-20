@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.6 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.7 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -580,6 +580,6 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 ## Stable protocol boundary
 
-Pinset v1.6 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable; `pinset migrate` validates and upgrades existing config-lock pairs. Schema 3 deliberately separates the requested selector from the exact resolved lock version and introduces explicit project fallback/boundary policy. Direct downgrade from schema 3 is not supported. Installation receipts retain their own independent schema. A pre-v1 Node lock that records only an HTTPS checksum is rejected with instructions to run `pinset use` again, because it lacks the v1 OpenPGP verification evidence.
+Pinset v1.7 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable. Schema 3 project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected. Installation receipts retain their independent schema.
 
-The JSON schema 1 envelope remains unchanged in v1.6. `lock.audit` adds a versioned data report within that envelope: automation should branch on stable `reason_code`, `severity`, `data.passed`, and `summary.action_required`, not on human-facing messages or repair prose.
+The JSON schema 1 envelope remains unchanged in v1.7. `lock.audit` exposes provenance policy failures through stable `verification_below_policy`, `release_age_unavailable`, and `release_too_new` reason codes. Automation should branch on reason codes and report state, not human-facing messages.
