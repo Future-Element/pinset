@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0 - 2026-08-20
+
+- Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution. It resolves and installs the requested runtime in Pinset-owned storage, preserves the child exit code, and never creates or modifies project/global selection or lock state.
+- Resolve declared Provider dependencies before one-shot installation. A pnpm one-shot uses the project/global Node.js selection and fails explicitly when that dependency is unavailable.
+- Add a checksum-verifying composite GitHub Action, a Renovate custom-manager preset, JSON Schemas for `pinset.toml` and `pinset.lock`, and a verified Dev Container example.
+- Generate ready-to-consume Winget, Scoop, and Homebrew manifests from the exact release archive hashes. The manifests are checksummed, attested, and published alongside every release.
+- Add static integration-contract tests to CI and release preflight so action, schema, container, Renovate, and package-manifest drift blocks publication.
+
+No configuration or lock schema migration is required. v1.9 continues to write schema 3 and read schema 1/2. One-shot installation may populate Pinset-owned download/cache/install directories, but selection state remains unchanged.
+
 ## 1.8.0 - 2026-08-20
 
 - Add a constrained, clear-signed Provider Registry preview with a pinned OpenPGP signer. `pinset provider list` and `pinset provider verify [REGISTRY]` validate declarative manifests without installing, activating, or executing third-party code.

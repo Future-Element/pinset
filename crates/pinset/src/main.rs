@@ -35,17 +35,17 @@ use pinset_core::{
     load_project_config, load_project_python_environment, load_source_config, load_user_settings,
     lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
     plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
-    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
-    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
-    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
-    save_project_state, save_source_config, save_user_settings, scan_project_sources,
-    selected_runtime_environment, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
-    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
-    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
-    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools, validate_managed_runtime_invocation, validate_project_lock_policy,
-    verify_download_cache,
+    provider_dependency_order, repair_download_cache, resolve_command,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state, save_lockfile, save_project_config, save_project_state,
+    save_source_config, save_user_settings, scan_project_sources, selected_runtime_environment,
+    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
+    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
+    validate_project_lock_policy, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -264,6 +264,17 @@ enum Commands {
     Exec {
         #[arg(long)]
         cwd: Option<PathBuf>,
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<OsString>,
+    },
+    /// Install and execute one verified runtime selection without changing project state.
+    X {
+        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25, python@3.14, java@21, rust@stable or dotnet@lts.
+        selection: String,
+        /// Directory used for dependency selection and command execution.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Runtime command and arguments, normally separated with `--`.
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<OsString>,
     },
@@ -1090,7 +1101,18 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         Commands::Cache { command } => run_cache(command, catalog)?,
         Commands::Exec { cwd, command } => {
             let cwd = effective_cwd(cwd)?;
-            return execute_selected(&cwd, &command, catalog);
+            return execute_selected(&cwd, &command, false, catalog);
+        }
+        Commands::X {
+            selection,
+            cwd,
+            command,
+        } => {
+            let cwd = effective_cwd(cwd)?;
+            let mut selected_command = Vec::with_capacity(command.len() + 1);
+            selected_command.push(OsString::from(selection));
+            selected_command.extend(command);
+            return execute_selected(&cwd, &selected_command, true, catalog);
         }
         Commands::Doctor { cwd, json } => {
             let cwd = effective_cwd(cwd)?;
@@ -3071,7 +3093,7 @@ fn install_tool_selection(
     }
     let mut lockfile = new_lockfile();
     lockfile.upsert_tool(locked_tool)?;
-    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, catalog)
+    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, true, catalog)
 }
 
 fn unset_tool(
@@ -3370,7 +3392,7 @@ fn install_locked_selection(
     let lockfile = load_lockfile(lock_path)?;
     validate_lock_matches_tools(&lockfile, configured, config_path)?;
     for provider in pinset_core::selected_provider_order(configured)? {
-        install_tool_from_lock(home, &lockfile, provider.tool, catalog)?;
+        install_tool_from_lock(home, &lockfile, provider.tool, true, catalog)?;
     }
     Ok(())
 }
@@ -3379,6 +3401,7 @@ fn install_tool_from_lock(
     home: &Path,
     lockfile: &Lockfile,
     tool: &str,
+    register_shims: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let locked_tool = lockfile
@@ -3445,11 +3468,13 @@ fn install_tool_from_lock(
             outcome.install_dir.display()
         );
     }
-    if let Err(error) = register_provider_commands(home, tool, catalog) {
-        eprintln!(
-            "{}",
-            catalog.shim_auto_registration_failed(&error.to_string())
-        );
+    if register_shims {
+        if let Err(error) = register_provider_commands(home, tool, catalog) {
+            eprintln!(
+                "{}",
+                catalog.shim_auto_registration_failed(&error.to_string())
+            );
+        }
     }
     Ok(())
 }
@@ -3870,6 +3895,7 @@ fn print_current(
 fn execute_selected(
     cwd: &Path,
     command: &[OsString],
+    install_ephemeral: bool,
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let (ephemeral_selection, mut command) = command
@@ -3894,16 +3920,19 @@ fn execute_selected(
     let (executable, tool, version, source, config_path, ephemeral_environment) =
         if let Some(selection) = ephemeral_selection {
             let (tool, selector) = parse_tool_selection(selection, catalog)?;
-            let locked_tool = resolve_locked_tool(&tool, &selector)?;
-            let version = locked_tool.version;
-            if selector != version {
-                println!("{tool}@{selector} resolved to {tool}@{version}");
-            }
             if command_tool(command_name) != Some(tool.as_str()) {
                 return Err(Error::UnsupportedCommand {
                     command: command_name.to_owned(),
                 }
                 .into());
+            }
+            let locked_tool = resolve_locked_tool(&tool, &selector)?;
+            let version = locked_tool.version.clone();
+            if selector != version {
+                println!("{tool}@{selector} resolved to {tool}@{version}");
+            }
+            if install_ephemeral {
+                install_ephemeral_selection(&home, cwd, &tool, locked_tool, catalog)?;
             }
             let install_dir = home
                 .join("installs")
@@ -3926,7 +3955,18 @@ fn execute_selected(
                         .join(", "),
                 })?;
             let environment = runtime_environment_for_install(&tool, &install_dir);
-            (executable, tool, version, "ephemeral", None, environment)
+            (
+                executable,
+                tool,
+                version,
+                if install_ephemeral {
+                    "one-shot"
+                } else {
+                    "ephemeral"
+                },
+                None,
+                environment,
+            )
         } else {
             let resolution = if command_tool(command_name).is_some() {
                 resolve_command(command_name, cwd, &home)?
@@ -3980,6 +4020,68 @@ fn execute_selected(
     // INVARIANT: exec is transparent after launch. Keep the platform's full i32 exit value
     // instead of narrowing it to Pinset's own small exit-code range.
     Ok(status.code().unwrap_or(1))
+}
+
+fn install_ephemeral_selection(
+    home: &Path,
+    cwd: &Path,
+    tool: &str,
+    selected: LockedTool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let providers = provider_dependency_order(tool)?;
+    let mut lockfile = new_lockfile();
+    for provider in &providers {
+        let locked_tool = if provider.tool == tool {
+            selected.clone()
+        } else {
+            let selection = match resolve_tool_selection(provider.tool, cwd, home) {
+                Ok(selection) => selection,
+                Err(
+                    Error::ToolSelectionNotFound { .. }
+                    | Error::ProjectToolSelectionRequired { .. },
+                ) => {
+                    return Err(Error::ProviderDependencyMissing {
+                        tool: tool.to_owned(),
+                        dependency: provider.tool.to_owned(),
+                    }
+                    .into());
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let lock_path = match selection.source {
+                pinset_core::SelectionSource::Project => lockfile_path(&selection.config_path),
+                pinset_core::SelectionSource::Global => global_lockfile_path(home),
+                pinset_core::SelectionSource::System => unreachable!("declared selection"),
+            };
+            let dependency_lock = load_lockfile(&lock_path)?;
+            validate_lock_matches_tool(
+                &dependency_lock,
+                provider.tool,
+                &selection.requested,
+                &selection.config_path,
+            )?;
+            if selection.source == pinset_core::SelectionSource::Project {
+                let config = load_project_config(&selection.config_path)?;
+                validate_project_lock_policy(
+                    &config,
+                    &dependency_lock,
+                    std::time::SystemTime::now(),
+                )?;
+            }
+            dependency_lock
+                .tool(provider.tool)
+                .cloned()
+                .ok_or_else(|| Error::LockedToolMissing {
+                    tool: provider.tool.to_owned(),
+                })?
+        };
+        lockfile.upsert_tool(locked_tool)?;
+    }
+    for provider in providers {
+        install_tool_from_lock(home, &lockfile, provider.tool, false, catalog)?;
+    }
+    Ok(())
 }
 
 fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
@@ -5309,6 +5411,129 @@ fn activation_script(shell: ActivationShell, shim_directory: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_shot_install_reuses_verified_runtime_without_writing_selection_state() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        let target = current_target_for_tool("node");
+        let install_dir = home
+            .join("installs")
+            .join("node")
+            .join("24.0.0")
+            .join(&target);
+        let command = if cfg!(windows) {
+            install_dir.join("node.exe")
+        } else {
+            install_dir.join("bin").join("node")
+        };
+        fs::create_dir_all(command.parent().expect("command parent")).expect("install directory");
+        fs::write(&command, b"fixture").expect("runtime command");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&command)
+                .expect("command metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&command, permissions).expect("command permissions");
+        }
+        fs::write(
+            install_dir.join(".pinset-install.toml"),
+            format!(
+                "complete = true\ntool = \"node\"\nversion = \"24.0.0\"\ntarget = \"{target}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
+                "ab".repeat(32)
+            ),
+        )
+        .expect("install receipt");
+        fs::create_dir_all(&project).expect("project directory");
+        let locked = LockedTool {
+            name: "node".to_owned(),
+            requested: "24".to_owned(),
+            version: "24.0.0".to_owned(),
+            provider: "nodejs".to_owned(),
+            released_at: None,
+            metadata: BTreeMap::new(),
+            artifacts: pinset_core::MVP_NODE_TARGETS
+                .into_iter()
+                .map(|target| {
+                    let plan = pinset_core::plan_node_artifact(
+                        &pinset_core::SourceConfig::default(),
+                        "24.0.0",
+                        target,
+                    )
+                    .expect("Node artifact plan");
+                    pinset_core::LockedArtifact {
+                        target: target.to_owned(),
+                        canonical_url: plan.canonical_url,
+                        artifact_path: plan.artifact_path,
+                        sha256: "ab".repeat(32),
+                        integrity: None,
+                        format: match plan.format {
+                            pinset_core::NodeArchiveFormat::Zip => {
+                                pinset_core::LockedArtifactFormat::Zip
+                            }
+                            pinset_core::NodeArchiveFormat::TarXz => {
+                                pinset_core::LockedArtifactFormat::TarXz
+                            }
+                        },
+                        archive_root: plan.archive_root,
+                        verification: "nodejs-openpgp-sha256".to_owned(),
+                        overlays: Vec::new(),
+                    }
+                })
+                .collect(),
+        };
+
+        install_ephemeral_selection(
+            &home,
+            &project,
+            "node",
+            locked,
+            Catalog::new(Language::English),
+        )
+        .expect("one-shot install");
+
+        assert!(!project.join("pinset.toml").exists());
+        assert!(!project.join("pinset.lock").exists());
+        assert!(!global_config_path(&home).exists());
+        assert!(!global_lockfile_path(&home).exists());
+        assert!(!home.join("shims").exists());
+    }
+
+    #[test]
+    fn one_shot_resolves_provider_dependencies_before_installing() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir_all(&project).expect("project directory");
+        let selected = LockedTool {
+            name: "pnpm".to_owned(),
+            requested: "11".to_owned(),
+            version: "11.0.0".to_owned(),
+            provider: "pnpm-npm".to_owned(),
+            released_at: None,
+            metadata: BTreeMap::new(),
+            artifacts: Vec::new(),
+        };
+
+        let error = install_ephemeral_selection(
+            &home,
+            &project,
+            "pnpm",
+            selected,
+            Catalog::new(Language::English),
+        )
+        .expect_err("pnpm requires a selected Node.js runtime");
+
+        assert!(matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::ProviderDependencyMissing { tool, dependency })
+                if tool == "pnpm" && dependency == "node"
+        ));
+        assert!(!home.join("installs").exists());
+    }
 
     #[test]
     fn formats_download_sizes_for_progress_output() {

@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.8 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.9 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -41,7 +41,7 @@
 - `0`：Pinset 成功完成。
 - `1`：`pinset lock audit` 已完成，但发现一个或多个需要处理的错误或警告。只有信息级发现时仍返回 `0`。
 - `2`：Pinset 使用、配置、元数据、完整性或安装失败。
-- `pinset exec`：成功启动子进程后，透传子进程的精确退出码；启动前的 Pinset 错误返回 `2`。
+- `pinset exec` 与 `pinset x`：成功启动子进程后，透传子进程的精确退出码；启动前的 Pinset 错误返回 `2`。
 
 下表会在必要位置重复特殊行为；其余命令均遵循这些退出码。
 
@@ -263,6 +263,18 @@
 | JSON | 不支持；子进程 stdout/stderr 不会被包装。 |
 | 退出码 | 启动后透传子进程精确退出码；Pinset 无法解析或启动时为 `2`。 |
 | 关键错误 | 缺少命令、运行时无法解析、精确覆盖版本未安装、shim 防递归保护或进程启动失败。 |
+
+### `x`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 解析、验证、安装并运行一次 Provider 命令，同时不改变项目/全局选择状态。 |
+| 语法与参数 | `pinset x <tool>@<selector> [--cwd <path>] -- <command> [args...]`。命令必须属于所选择的 Provider。 |
+| 修改状态 | 选择状态：**否**。可能在 `PINSET_HOME` 下创建已验证下载、缓存项、安装收据与运行时；子进程可能修改自己的文件或外部状态。 |
+| 示例 | `pinset x node@24 -- node ./scripts/build.js` |
+| JSON | 不支持；子进程 stdout/stderr 不封装。 |
+| 退出码 | 成功启动后透传子进程精确退出码；Pinset 无法解析、验证、安装或启动时返回 `2`。 |
+| 关键错误 | 选择器无效、命令与 Provider 不匹配、元数据/制品验证失败、声明的 Provider 依赖缺失、平台不支持或进程启动失败。pnpm 需要有效的项目/全局 Node.js 选择。 |
 
 ### `doctor`
 

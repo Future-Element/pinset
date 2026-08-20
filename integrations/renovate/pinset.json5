@@ -1,0 +1,11 @@
+{
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)pinset\\.toml$/"],
+      matchStrings: [
+        '#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*[A-Za-z0-9_-]+\\s*=\\s*"(?<currentValue>[^"]+)"',
+      ],
+    },
+  ],
+}

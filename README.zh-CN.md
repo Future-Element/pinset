@@ -23,6 +23,7 @@ Pinset 是一个行为可预测、理解项目边界的多语言运行时版本�
 - 支持项目所有的 Python `.venv`，无需激活 Shell 环境。
 - 支持只读检测和显式导入仓库内的传统版本配置。
 - 支持带稳定 reason code 的只读离线锁审计；修复计划只报告、不自动执行。
+- 支持经过验证的一次性执行，以及持续维护的 CI、编辑器、容器和包管理器集成。
 
 ## 安装与升级
 
@@ -43,7 +44,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.8.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.9.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -131,6 +132,14 @@ pinset lock audit
 pinset exec -- node --version
 ```
 
+不修改项目或全局选择状态，临时验证并运行一个工具：
+
+```sh
+pinset x node@24 -- node --version
+```
+
+解析出的归档仍会经过 checksum/签名验证，也可能缓存在 `PINSET_HOME` 或安装到其中；但不会写入 `pinset.toml`、`pinset.lock`、`global.toml` 或 `global.lock`。Provider 依赖仍保持显式：`pinset x pnpm@11 -- pnpm --version` 需要有效的项目/全局 Node.js 选择。
+
 请提交 `pinset.toml` 和 `pinset.lock`。`latest`、`lts`、`stable` 或版本前缀等选择器会保留在 `pinset.toml`，锁文件则记录其精确解析版本。`pinset outdated` 会区分“兼容选择器内可更新”与“必须修改选择器才能升级”，`pinset update --dry-run` 可预览兼容的锁更新。
 
 schema 3 项目默认严格：只要存在 `pinset.toml`，未声明的工具就不会继承全局选择，也不会使用系统 `PATH`。需要时必须明确选择：
@@ -206,9 +215,9 @@ Registry 验证刻意保持只读。未知字段、任意脚本/hooks、不支�
 
 产品定位与取舍见带官方来源的 [Pinset 横向对比](docs/comparison.zh-CN.md)。
 
-## v1.8
+## v1.9
 
-v1.8 交付受约束的 Provider Registry 预览与依赖图。Registry manifest 由固定 OpenPGP 公钥验证 clear-signature，严格保持纯声明式、输入有界并拒绝未知 capability；验证不会安装或执行 manifest。内置依赖会检查循环并生成确定的安装和环境顺序，包括 pnpm 对 Node.js 的显式运行时依赖。它继续使用 schema 3 与 v1 JSON 外层协议。
+v1.9 交付经过验证的一次性执行和可维护的生态集成。仓库提供验证 checksum 的 composite GitHub Action、Renovate preset、项目/锁文件 JSON Schema 与 Dev Container 示例。每次 release 都会用真实归档哈希生成 Winget、Scoop、Homebrew manifest，并为它们提供 checksum 与构建证明。详见[集成与分发](docs/integrations.zh-CN.md)。
 
 ## 未来规划
 
@@ -216,7 +225,6 @@ v1.8 交付受约束的 Provider Registry 预览与依赖图。Registry manifest
 
 | 版本 | 主题 | 计划内容 |
 | --- | --- | --- |
-| v1.9 | 开发者体验与正式分发 | 增加不修改项目状态的 `pinset x <tool>@<selector> -- <command>`；补齐 GitHub Action、Renovate、VS Code schema、Dev Container 示例，以及 Winget、Scoop、Homebrew 等官方分发渠道。 |
 | 持续进行 | 平台与质量 | 在上游提供合适制品时扩展平台和架构；持续执行跨平台 CI、安全审计、恶意输入回归、签名标签、`SHA256SUMS`、SBOM 与构建来源证明验证。 |
 
 路线图会保持 Pinset 的明确边界：传统版本文件仍只由 `detect` / `import` 显式读取；严格项目不默认自动下载并执行缺失工具；核心不加入任务、hooks、`.env`、Secrets、服务管理、Nix/Conda 求解或任意代码插件。上述路线继续使用 schema 3，并优先采用向后兼容的可选字段。

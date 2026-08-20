@@ -1,0 +1,88 @@
+name: Setup Pinset
+description: Install an exact, checksum-verified Pinset release and optionally install the locked project runtimes.
+author: Future Element
+
+inputs:
+  version:
+    description: Exact Pinset release version without the leading v.
+    required: false
+    default: 1.9.0
+  install:
+    description: Run pinset install --locked after Pinset is available.
+    required: false
+    default: "true"
+  working-directory:
+    description: Directory containing pinset.toml and pinset.lock.
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Install Pinset on Unix
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        PINSET_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-$(uname -m)" in
+          Linux-x86_64) archive="pinset-linux-x86_64.tar.gz" ;;
+          Linux-aarch64|Linux-arm64) archive="pinset-linux-aarch64.tar.gz" ;;
+          macOS-arm64) archive="pinset-macos-aarch64.tar.gz" ;;
+          *) echo "Unsupported Pinset Action runner: ${RUNNER_OS}-$(uname -m)" >&2; exit 1 ;;
+        esac
+        release="https://github.com/Future-Element/pinset/releases/download/v${PINSET_VERSION}"
+        root="${RUNNER_TEMP}/pinset-action-${PINSET_VERSION}"
+        mkdir -p "${root}/bin"
+        curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 2 "${release}/${archive}" --output "${root}/${archive}"
+        curl --fail --location --silent --show-error --retry 4 --retry-all-errors --retry-delay 2 "${release}/SHA256SUMS" --output "${root}/SHA256SUMS"
+        expected="$(awk -v name="${archive}" '$2 == name { print $1 }' "${root}/SHA256SUMS")"
+        [[ "${expected}" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Missing checksum for ${archive}" >&2; exit 1; }
+        actual="$(sha256sum "${root}/${archive}" | awk '{ print $1 }')"
+        [[ "${actual,,}" == "${expected,,}" ]] || { echo "Checksum mismatch for ${archive}" >&2; exit 1; }
+        tar -xzf "${root}/${archive}" -C "${root}/bin"
+        printf '%s\n' "${root}/bin" >> "${GITHUB_PATH}"
+
+    - name: Install Pinset on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PINSET_VERSION: ${{ inputs.version }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $archive = 'pinset-windows-x86_64.zip'
+        $release = "https://github.com/Future-Element/pinset/releases/download/v$env:PINSET_VERSION"
+        $root = Join-Path $env:RUNNER_TEMP "pinset-action-$env:PINSET_VERSION"
+        $bin = Join-Path $root 'bin'
+        New-Item -ItemType Directory -Force -Path $bin | Out-Null
+        function Invoke-PinsetDownload([string] $Uri, [string] $OutFile) {
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+              return
+            } catch {
+              if ($attempt -eq 4) { throw }
+              Start-Sleep -Seconds 2
+            }
+          }
+        }
+        Invoke-PinsetDownload -Uri "$release/$archive" -OutFile (Join-Path $root $archive)
+        Invoke-PinsetDownload -Uri "$release/SHA256SUMS" -OutFile (Join-Path $root 'SHA256SUMS')
+        $line = Get-Content (Join-Path $root 'SHA256SUMS') | Where-Object { $_ -match "^[0-9a-fA-F]{64}\s+$([regex]::Escape($archive))$" } | Select-Object -First 1
+        if (-not $line) { throw "Missing checksum for $archive" }
+        $expected = ($line -split '\s+')[0]
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $archive)).Hash
+        if ($actual -ne $expected) { throw "Checksum mismatch for $archive" }
+        Expand-Archive -LiteralPath (Join-Path $root $archive) -DestinationPath $bin -Force
+        Add-Content -LiteralPath $env:GITHUB_PATH -Value $bin
+
+    - name: Install locked runtimes
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pinset install --locked
+
+branding:
+  icon: check-circle
+  color: blue

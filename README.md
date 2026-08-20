@@ -23,6 +23,7 @@ It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart th
 - Project-owned Python `.venv` support without requiring shell activation.
 - Read-only detection and explicit import of repository-local traditional version files.
 - Read-only, offline lock auditing with stable reason codes and repair plans that never run automatically.
+- Verified one-shot execution plus maintained CI, editor, container, and package-manager integrations.
 
 ## Install and upgrade
 
@@ -43,7 +44,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Run the same installer again to upgrade. To install an exact release or another absolute directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.8.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.9.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -131,6 +132,14 @@ pinset lock audit
 pinset exec -- node --version
 ```
 
+Run a verified tool once without changing project or global selection state:
+
+```sh
+pinset x node@24 -- node --version
+```
+
+The resolved archive is still checksum/signature verified and may be cached or installed under `PINSET_HOME`; `pinset.toml`, `pinset.lock`, `global.toml`, and `global.lock` are not written. Provider dependencies remain explicit: `pinset x pnpm@11 -- pnpm --version` requires a valid project/global Node.js selection.
+
 Commit `pinset.toml` and `pinset.lock`. Selectors such as `latest`, `lts`, `stable`, or version prefixes remain visible in `pinset.toml`; their exact resolved versions are recorded in the lockfile. `pinset outdated` distinguishes a compatible lock refresh from a selector-changing upgrade, and `pinset update --dry-run` previews compatible lock changes.
 
 Schema 3 projects are strict by default: once `pinset.toml` exists, an undeclared tool does not inherit a global selection or use the system `PATH`. Opt in deliberately when needed:
@@ -206,9 +215,9 @@ See the complete [English command reference](docs/commands.md) or [Chinese comma
 
 For product positioning and trade-offs, see the sourced [Pinset comparison (Chinese)](docs/comparison.zh-CN.md).
 
-## v1.8
+## v1.9
 
-v1.8 delivers a constrained Provider Registry preview and dependency graph. Registry manifests are clear-signed by a pinned OpenPGP key, strictly declarative, bounded, and deny unknown capabilities; verification never installs or executes them. Built-in dependencies are cycle-checked and produce deterministic install/environment order, including pnpm's explicit Node.js runtime dependency. It keeps schema 3 and the v1 JSON envelope.
+v1.9 delivers verified one-shot execution and maintained integration artifacts. The repository includes a checksum-verifying composite GitHub Action, Renovate preset, project/lock JSON Schemas, and a Dev Container example. Every release generates checksummed and attested Winget, Scoop, and Homebrew manifests from its actual archive hashes. See [Integrations and distribution](docs/integrations.md).
 
 ## Future Roadmap
 
@@ -216,7 +225,6 @@ The roadmap describes direction, not promised versions or dates.
 
 | Version | Theme | Planned work |
 | --- | --- | --- |
-| v1.9 | Developer experience and distribution | Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution without modifying project state. Provide a GitHub Action, Renovate integration, VS Code schemas, Dev Container examples, and official Winget, Scoop, and Homebrew distribution. |
 | Ongoing | Platforms and quality | Add platforms and architectures when upstreams publish suitable artifacts. Continue cross-platform CI, security audits, malicious-input regressions, signed tags, `SHA256SUMS`, SBOMs, and build-provenance verification. |
 
 The roadmap preserves Pinset's explicit boundaries: traditional version files remain opt-in `detect` / `import` inputs; strict projects do not download and execute missing tools by default; and the core will not absorb tasks, hooks, `.env`, secrets, service management, Nix/Conda solving, or arbitrary-code plugins. These releases will continue using schema 3 and prefer backward-compatible optional fields.

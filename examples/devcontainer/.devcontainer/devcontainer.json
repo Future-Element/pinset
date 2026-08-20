@@ -1,0 +1,11 @@
+{
+  "name": "Pinset",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "PINSET_VERSION": "1.9.0"
+    }
+  },
+  "postCreateCommand": "pinset install --locked",
+  "remoteUser": "vscode"
+}

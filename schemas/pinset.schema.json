@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Future-Element/pinset/main/schemas/pinset.schema.json",
+  "title": "Pinset project configuration",
+  "description": "Schema for pinset.toml. Associate it with TOML files through a VS Code TOML extension.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tools"],
+  "properties": {
+    "schema": { "const": 3 },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inherit-global": { "type": "boolean", "default": false },
+        "system-fallback": { "type": "boolean", "default": false },
+        "boundary": { "enum": ["git", "filesystem"], "default": "git" },
+        "verification-strength": {
+          "enum": ["checksum", "signed-checksum", "provenance"]
+        },
+        "minimum-release-age": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*[dhms]$"
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": { "$ref": "#/$defs/selector" },
+        "pnpm": { "$ref": "#/$defs/selector" },
+        "bun": { "$ref": "#/$defs/selector" },
+        "go": { "$ref": "#/$defs/selector" },
+        "flutter": { "$ref": "#/$defs/selector" },
+        "python": { "$ref": "#/$defs/selector" },
+        "java": { "$ref": "#/$defs/selector" },
+        "rust": { "$ref": "#/$defs/selector" },
+        "dotnet": { "$ref": "#/$defs/selector" }
+      }
+    }
+  },
+  "$defs": {
+    "selector": { "type": "string", "minLength": 1 }
+  }
+}
