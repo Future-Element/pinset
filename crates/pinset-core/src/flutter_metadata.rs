@@ -48,6 +48,8 @@ struct FlutterIndexRelease {
     archive: String,
     #[serde(default)]
     sha256: String,
+    #[serde(default)]
+    release_date: String,
 }
 
 #[derive(Debug)]
@@ -55,6 +57,7 @@ struct SupportedFlutterRelease {
     version: String,
     dart_version: String,
     release_hash: String,
+    release_date: Option<String>,
     artifacts: Vec<(String, FlutterIndexRelease)>,
 }
 
@@ -138,6 +141,7 @@ impl FlutterMetadataClient {
             requested: release.version.clone(),
             version: release.version,
             provider: "flutter-official".to_owned(),
+            released_at: release.release_date,
             metadata,
             artifacts,
         })
@@ -271,12 +275,16 @@ fn parse_indexes(
             .next()
             .expect("four required Flutter artifacts");
         if artifacts.values().any(|artifact| {
-            artifact.hash != first.hash || artifact.dart_sdk_version != first.dart_sdk_version
+            artifact.hash != first.hash
+                || artifact.dart_sdk_version != first.dart_sdk_version
+                || artifact.release_date != first.release_date
         }) {
             continue;
         }
         let release_hash = first.hash.clone();
         let dart_version = first.dart_sdk_version.clone();
+        let release_date =
+            crate::valid_release_time(&first.release_date).then(|| first.release_date.clone());
         let artifacts = FLUTTER_TARGETS
             .iter()
             .map(|target| {
@@ -290,6 +298,7 @@ fn parse_indexes(
             version,
             dart_version,
             release_hash,
+            release_date,
             artifacts,
         });
     }
@@ -408,6 +417,7 @@ mod tests {
         assert_eq!(locked.version, "3.47.0");
         assert_eq!(locked.metadata["channel"], "stable");
         assert_eq!(locked.metadata["dart_version"], "3.13.0");
+        assert_eq!(locked.released_at.as_deref(), Some("2026-08-05T12:00:00Z"));
         assert_eq!(locked.artifacts.len(), FLUTTER_TARGETS.len());
         assert!(locked.artifacts.iter().all(|artifact| {
             artifact.sha256 == "ab".repeat(32)
@@ -446,7 +456,8 @@ mod tests {
                 "dart_sdk_version": "3.13.0",
                 "dart_sdk_arch": plan.dart_arch,
                 "archive": plan.release_path,
-                "sha256": sha256
+                "sha256": sha256,
+                "release_date": "2026-08-05T12:00:00Z"
             })
         };
         let linux = serde_json::json!({"releases": [entry("linux-x86_64")]}).to_string();

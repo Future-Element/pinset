@@ -43,6 +43,12 @@ pub struct LockedTool {
     pub requested: String,
     pub version: String,
     pub provider: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "released-at"
+    )]
+    pub released_at: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
     #[serde(rename = "artifact")]
@@ -113,6 +119,7 @@ impl Lockfile {
                 requested: version.clone(),
                 version,
                 provider: "nodejs-official".to_owned(),
+                released_at: None,
                 metadata: BTreeMap::from([
                     (
                         "signature_primary_fingerprint".to_owned(),
@@ -133,13 +140,15 @@ impl Lockfile {
         self.tools.iter().find(|tool| tool.name == name)
     }
 
-    pub fn upsert_tool(&mut self, tool: LockedTool) {
+    pub fn upsert_tool(&mut self, tool: LockedTool) -> Result<()> {
         if let Some(existing) = self.tools.iter_mut().find(|item| item.name == tool.name) {
+            crate::validate_verification_transition(existing, &tool)?;
             *existing = tool;
         } else {
             self.tools.push(tool);
         }
         self.schema = LOCKFILE_SCHEMA;
+        Ok(())
     }
 
     pub fn remove_tool(&mut self, name: &str) {
@@ -325,6 +334,15 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
 }
 
 fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
+    if tool
+        .released_at
+        .as_deref()
+        .is_some_and(|value| !crate::valid_release_time(value))
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!("{} has an invalid released-at timestamp", tool.name),
+        });
+    }
     let provider_supported = matches!(
         (tool.name.as_str(), tool.provider.as_str()),
         ("node", "nodejs-official")
@@ -1310,6 +1328,7 @@ mod tests {
             requested: "1.25.1".to_owned(),
             version: "1.25.1".to_owned(),
             provider: "go-official".to_owned(),
+            released_at: None,
             metadata: BTreeMap::new(),
             artifacts: artifacts.clone(),
         };
@@ -1327,6 +1346,7 @@ mod tests {
             requested: "1.25.1".to_owned(),
             version: "1.25.1".to_owned(),
             provider: "go-official".to_owned(),
+            released_at: None,
             metadata: BTreeMap::new(),
             artifacts: artifacts.into_iter().skip(1).collect(),
         };
@@ -1351,6 +1371,7 @@ mod tests {
             requested: "3.47.0".to_owned(),
             version: "3.47.0".to_owned(),
             provider: "flutter-official".to_owned(),
+            released_at: None,
             metadata,
             artifacts: artifacts.clone(),
         };
@@ -1403,6 +1424,7 @@ mod tests {
             requested: distribution.to_owned(),
             version: distribution.to_owned(),
             provider: "python-build-standalone".to_owned(),
+            released_at: None,
             metadata,
             artifacts: artifacts.clone(),
         };
@@ -1455,6 +1477,7 @@ mod tests {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: "adoptium-temurin".to_owned(),
+            released_at: None,
             metadata,
             artifacts: artifacts.clone(),
         };
@@ -1491,6 +1514,7 @@ mod tests {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: "rust-official".to_owned(),
+            released_at: None,
             metadata: BTreeMap::from([
                 ("channel".to_owned(), "stable".to_owned()),
                 ("components".to_owned(), RUST_COMPONENTS.to_owned()),
@@ -1529,6 +1553,7 @@ mod tests {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: "microsoft-dotnet-sdk".to_owned(),
+            released_at: None,
             metadata: BTreeMap::from([
                 ("channel".to_owned(), "10.0".to_owned()),
                 ("release_date".to_owned(), "2026-08-11".to_owned()),
@@ -1581,6 +1606,7 @@ mod tests {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: "pnpm-npm".to_owned(),
+            released_at: None,
             metadata: BTreeMap::new(),
             artifacts: vec![artifact],
         }

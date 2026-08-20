@@ -229,6 +229,26 @@ impl Catalog {
             Error::InvalidSourceBaseUrl { url, reason } => {
                 format!("错误：安装源地址 {url:?} 无效：{reason}")
             }
+            Error::VerificationPolicyViolation {
+                tool,
+                required,
+                actual,
+            } => format!("错误：{tool} 的验证强度为 {actual}，低于项目要求的 {required}"),
+            Error::VerificationDowngrade {
+                tool,
+                previous,
+                next,
+            } => format!(
+                "错误：拒绝把 {tool} 的验证强度从 {previous} 降为 {next}；请保留更强证据或显式创建全新锁"
+            ),
+            Error::ReleaseAgeUnavailable { tool } => format!(
+                "错误：{tool} 的 Provider 没有提供发布时间，无法执行 minimum-release-age 策略"
+            ),
+            Error::ReleaseTooNew {
+                tool,
+                released_at,
+                required,
+            } => format!("错误：{tool} 发布于 {released_at}，尚未满足最短发布年龄 {required}"),
             _ => format!("错误：操作失败：{error}"),
         }
     }

@@ -341,6 +341,7 @@ fn resolve_manifest_tool(
         requested: requested_version.to_owned(),
         version: requested_version.to_owned(),
         provider: "rust-official".to_owned(),
+        released_at: Some(manifest.date.clone()),
         metadata: BTreeMap::from([
             ("channel".to_owned(), "stable".to_owned()),
             ("components".to_owned(), RUST_COMPONENTS.to_owned()),

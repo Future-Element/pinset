@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.6 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v1.7 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -580,6 +580,6 @@
 
 ## 稳定协议边界
 
-Pinset v1.6 为项目/全局配置与锁文件写入 schema 3。schema 1/2 仍可读取；`pinset migrate` 会验证并升级现有配置与锁。schema 3 明确区分请求选择器和锁中的精确解析版本，并引入显式项目回退/边界策略；不支持从 schema 3 直接降级。安装收据继续使用自身独立的 schema。仅记录 HTTPS 摘要的 v1 前 Node 锁会被拒绝，并提示重新运行 `pinset use`，因为它缺少 v1 OpenPGP 验证证据。
+Pinset v1.7 继续为项目/全局配置与锁文件写入 schema 3，并读取 schema 1/2。schema 3 项目 `[policy]` 新增可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。安装收据继续使用独立 schema。
 
-v1.6 不修改 JSON schema 1 外层结构。`lock.audit` 只是在该外层内增加一份带版本边界的数据报告：自动化应依据稳定的 `reason_code`、`severity`、`data.passed` 与 `summary.action_required` 分支，不应匹配面向用户的消息或修复说明。
+v1.7 不修改 JSON schema 1 外层结构。`lock.audit` 通过稳定的 `verification_below_policy`、`release_age_unavailable` 与 `release_too_new` reason code 报告来源证明策略失败；自动化应依据 reason code 与报告状态分支，不要匹配面向用户的消息。

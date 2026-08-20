@@ -825,6 +825,38 @@ pub enum Error {
         reason: String,
     },
 
+    #[error(
+        "verification policy for {tool} requires {required}, but the lock provides only {actual}"
+    )]
+    VerificationPolicyViolation {
+        tool: String,
+        required: String,
+        actual: String,
+    },
+
+    #[error(
+        "refusing to downgrade {tool} verification from {previous} to {next}; keep the stronger evidence or create a fresh lock explicitly"
+    )]
+    VerificationDowngrade {
+        tool: String,
+        previous: String,
+        next: String,
+    },
+
+    #[error(
+        "minimum release age cannot be enforced for {tool}: the Provider supplied no release timestamp"
+    )]
+    ReleaseAgeUnavailable { tool: String },
+
+    #[error(
+        "{tool} release {released_at} is newer than the required minimum release age {required}"
+    )]
+    ReleaseTooNew {
+        tool: String,
+        released_at: String,
+        required: String,
+    },
+
     #[error("failed to create shim directory {path}: {source}")]
     CreateShimDirectory {
         path: PathBuf,

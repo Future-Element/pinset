@@ -13,10 +13,12 @@ use std::sync::Mutex;
 use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{Error, MinimumReleaseAge, Result, VerificationStrength};
 
+#[cfg(feature = "lockfile")]
+use crate::Lockfile;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
-use crate::{Lockfile, lockfile_path, save_lockfile, validate_lock_matches_tools};
+use crate::{lockfile_path, save_lockfile, validate_lock_matches_tools};
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
 pub const PROJECT_CONFIG_SCHEMA: u32 = 3;
@@ -54,6 +56,10 @@ pub struct ProjectPolicy {
     pub inherit_global: bool,
     pub system_fallback: bool,
     pub boundary: ProjectBoundary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_strength: Option<VerificationStrength>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_release_age: Option<MinimumReleaseAge>,
 }
 
 impl Default for ProjectPolicy {
@@ -62,6 +68,8 @@ impl Default for ProjectPolicy {
             inherit_global: false,
             system_fallback: false,
             boundary: ProjectBoundary::Git,
+            verification_strength: None,
+            minimum_release_age: None,
         }
     }
 }
@@ -263,6 +271,7 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 pub fn save_project_state(path: &Path, config: &ProjectConfig, lockfile: &Lockfile) -> Result<()> {
     validate_lock_matches_tools(lockfile, &config.tools, path)?;
+    validate_project_lock_policy(config, lockfile, std::time::SystemTime::now())?;
     let _guard = PROJECT_STATE_WRITE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -271,6 +280,23 @@ pub fn save_project_state(path: &Path, config: &ProjectConfig, lockfile: &Lockfi
     // selection remains active and lock-dependent operations fail until this is retried.
     save_lockfile(&lockfile_path(path), lockfile)?;
     save_project_config(path, config)
+}
+
+#[cfg(feature = "lockfile")]
+pub fn validate_project_lock_policy(
+    config: &ProjectConfig,
+    lockfile: &Lockfile,
+    now: std::time::SystemTime,
+) -> Result<()> {
+    for tool in &lockfile.tools {
+        crate::validate_tool_policy(
+            tool,
+            config.policy.verification_strength,
+            config.policy.minimum_release_age,
+            now,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -461,6 +487,41 @@ mod tests {
                 .map(String::as_str),
             Some("24.0.0")
         );
+    }
+
+    #[test]
+    fn parses_optional_provenance_policy_without_changing_schema_three() {
+        let root = tempdir().expect("project");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            "schema = 3\n[policy]\nverification-strength = \"signed-checksum\"\nminimum-release-age = \"7d\"\n[tools]\nnode = \"24\"\n",
+        )
+        .expect("policy config");
+
+        let config = load_project_config(&path).expect("load policy");
+        assert_eq!(
+            config.policy.verification_strength,
+            Some(VerificationStrength::SignedChecksum)
+        );
+        assert_eq!(
+            config
+                .policy
+                .minimum_release_age
+                .expect("minimum age")
+                .as_duration(),
+            std::time::Duration::from_secs(7 * 86_400)
+        );
+
+        fs::write(
+            &path,
+            "schema = 3\n[policy]\nminimum-release-age = \"0d\"\n[tools]\n",
+        )
+        .expect("invalid policy config");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::ParseProjectConfig { .. })
+        ));
     }
 
     #[cfg(all(feature = "project-write", feature = "lockfile"))]

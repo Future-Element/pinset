@@ -96,6 +96,8 @@ pub struct NpmMetadataClient {
 struct PackageDocument {
     #[serde(default)]
     versions: BTreeMap<String, PackageVersion>,
+    #[serde(default)]
+    time: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -261,6 +263,7 @@ impl NpmMetadataClient {
             });
         }
         let wrapper = wrapper_package(tool)?;
+        let released_at = self.package_release_time(wrapper, version)?;
         let manifest = self.package_version(wrapper, version)?;
         validate_manifest_identity(wrapper, version, &manifest)?;
         let keys = self.registry_keys()?;
@@ -317,6 +320,7 @@ impl NpmMetadataClient {
             requested: version.to_owned(),
             version: version.to_owned(),
             provider: format!("{tool}-npm"),
+            released_at,
             metadata: std::collections::BTreeMap::new(),
             artifacts,
         })
@@ -328,6 +332,15 @@ impl NpmMetadataClient {
             .join(version)
             .expect("validated semver is a safe URL segment");
         self.download_json(url)
+    }
+
+    fn package_release_time(&self, package: &str, version: &str) -> Result<Option<String>> {
+        let document: PackageDocument = self.download_json(self.package_url(package)?)?;
+        Ok(document
+            .time
+            .get(version)
+            .filter(|value| crate::valid_release_time(value))
+            .cloned())
     }
 
     fn registry_keys(&self) -> Result<RegistryKeys> {

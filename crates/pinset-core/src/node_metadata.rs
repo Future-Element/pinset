@@ -157,14 +157,25 @@ impl NodeMetadataClient {
     }
 
     pub fn resolve_lock(&self, selector: &str, generated_by: &str) -> Result<Lockfile> {
-        let version = self.resolve_version_selector(selector)?;
-        self.resolve_exact_lock(&version, generated_by)
+        let release = self.resolve_release(selector)?;
+        let mut lockfile = self.resolve_exact_lock(&release.version, generated_by)?;
+        lockfile
+            .tools
+            .first_mut()
+            .expect("generated Node lock contains node")
+            .released_at = Some(release.date);
+        Ok(lockfile)
     }
 
     pub fn resolve_version_selector(&self, selector: &str) -> Result<String> {
         if crate::validate_exact_node_version(selector).is_ok() {
             return Ok(selector.to_owned());
         }
+        Ok(self.resolve_release(selector)?.version)
+    }
+
+    fn resolve_release(&self, selector: &str) -> Result<NodeRelease> {
+        let exact = crate::validate_exact_node_version(selector).is_ok();
 
         let normalized = selector.trim().to_ascii_lowercase();
         let numeric_parts = normalized.split('.').collect::<Vec<_>>();
@@ -172,7 +183,7 @@ impl NodeMetadataClient {
             && numeric_parts
                 .iter()
                 .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
-        if normalized != "current" && normalized != "lts" && !numeric_selector {
+        if normalized != "current" && normalized != "lts" && !numeric_selector && !exact {
             return Err(Error::InvalidNodeSelector {
                 selector: selector.to_owned(),
             });
@@ -192,6 +203,9 @@ impl NodeMetadataClient {
         self.available_releases()?
             .into_iter()
             .find(|release| {
+                if exact {
+                    return release.version == selector;
+                }
                 if normalized == "current" {
                     return true;
                 }
@@ -205,7 +219,6 @@ impl NodeMetadataClient {
                     .expect("numeric selector has parsed parts");
                 tuple.0 == requested[0] && (requested.len() == 1 || tuple.1 == requested[1])
             })
-            .map(|release| release.version)
             .ok_or_else(|| Error::NodeSelectorNotFound {
                 selector: selector.to_owned(),
             })
@@ -469,6 +482,28 @@ mod tests {
     }
 
     #[test]
+    fn generated_locks_record_the_indexed_release_date() {
+        let index = format!(
+            r#"[{{"version":"v24.19.0","date":"2026-07-28","files":{REQUIRED_FILES_JSON},"lts":"Krypton","security":false}}]"#
+        );
+        let manifest =
+            include_str!("../tests/fixtures/node-v24.19.0-SHASUMS256.txt.asc").to_owned();
+        let (base_url, server) = serve_responses(vec![index, manifest]);
+
+        let lockfile = test_client(&base_url)
+            .resolve_lock("24.19.0", "pinset test")
+            .expect("dated signed lock");
+        server.join().expect("server").expect("responses");
+
+        assert_eq!(
+            lockfile
+                .tool("node")
+                .and_then(|tool| tool.released_at.as_deref()),
+            Some("2026-07-28")
+        );
+    }
+
+    #[test]
     fn available_releases_are_sorted_and_expose_lts_and_security_metadata() {
         let index = format!(
             r#"[
@@ -627,6 +662,26 @@ mod tests {
                 body.len(),
                 body
             )?;
+            Ok(())
+        });
+        (format!("http://{address}/"), handle)
+    }
+
+    fn serve_responses(bodies: Vec<String>) -> (String, thread::JoinHandle<std::io::Result<()>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+        let address = listener.local_addr().expect("server address");
+        let handle = thread::spawn(move || -> std::io::Result<()> {
+            for body in bodies {
+                let (mut stream, _) = listener.accept()?;
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request)?;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )?;
+            }
             Ok(())
         });
         (format!("http://{address}/"), handle)

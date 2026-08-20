@@ -207,6 +207,7 @@ impl JavaMetadataClient {
             requested: version.clone(),
             version,
             provider: "adoptium-temurin".to_owned(),
+            released_at: Some(release.date),
             metadata,
             artifacts,
         })

@@ -178,6 +178,7 @@ impl DotnetMetadataClient {
             requested: version.clone(),
             version,
             provider: "microsoft-dotnet-sdk".to_owned(),
+            released_at: Some(release.date.clone()),
             metadata: BTreeMap::from([
                 ("channel".to_owned(), release.channel),
                 ("release_date".to_owned(), release.date),

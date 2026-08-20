@@ -8,16 +8,18 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ArtifactIntegrity, Error, GLOBAL_STATE_SCHEMA, LOCKFILE_SCHEMA, LockedArtifact, Lockfile,
-    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, RuntimeLockAuditKind, current_target_for_tool,
-    download_cache::verify_download_cache_integrity, find_optional_project_config,
-    global_config_path, global_lockfile_path, load_global_config, load_lockfile,
-    load_project_config, load_project_python_environment, lockfile_path, runtime_provider,
+    MinimumReleaseAge, PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, RuntimeLockAuditKind,
+    VerificationStrength, current_target_for_tool, download_cache::verify_download_cache_integrity,
+    find_optional_project_config, global_config_path, global_lockfile_path, load_global_config,
+    load_lockfile, load_project_config, load_project_python_environment, lockfile_path,
+    runtime_provider,
 };
 
 const MAX_AUDIT_RECEIPT_BYTES: u64 = 64 * 1024;
@@ -46,6 +48,7 @@ pub enum LockAuditCategory {
     Cache,
     InstallReceipt,
     Ownership,
+    Provenance,
 }
 
 /// Stable identifiers intended for scripts and policy checks. Messages and repair text are
@@ -84,6 +87,9 @@ pub enum LockAuditReasonCode {
     ReceiptOverlayMismatch,
     PythonEnvironmentMissing,
     PythonEnvironmentOwnershipInvalid,
+    VerificationBelowPolicy,
+    ReleaseAgeUnavailable,
+    ReleaseTooNew,
 }
 
 impl LockAuditReasonCode {
@@ -120,6 +126,9 @@ impl LockAuditReasonCode {
             Self::ReceiptOverlayMismatch => "receipt_overlay_mismatch",
             Self::PythonEnvironmentMissing => "python_environment_missing",
             Self::PythonEnvironmentOwnershipInvalid => "python_environment_ownership_invalid",
+            Self::VerificationBelowPolicy => "verification_below_policy",
+            Self::ReleaseAgeUnavailable => "release_age_unavailable",
+            Self::ReleaseTooNew => "release_too_new",
         }
     }
 }
@@ -192,6 +201,8 @@ impl LockAuditReport {
 struct ConfigSelection {
     schema: u32,
     tools: BTreeMap<String, String>,
+    verification_strength: Option<VerificationStrength>,
+    minimum_release_age: Option<MinimumReleaseAge>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,10 +290,14 @@ fn load_config_selection(
         LockAuditScope::Project => load_project_config(path).map(|config| ConfigSelection {
             schema: config.schema,
             tools: config.tools,
+            verification_strength: config.policy.verification_strength,
+            minimum_release_age: config.policy.minimum_release_age,
         }),
         LockAuditScope::Global => load_global_config(path).map(|config| ConfigSelection {
             schema: config.schema,
             tools: config.tools,
+            verification_strength: None,
+            minimum_release_age: None,
         }),
     };
     match result {
@@ -489,6 +504,40 @@ fn audit_config_lock_pair(
                 Some(repair("regenerate the lockfile from configuration", None)),
             ));
             continue;
+        }
+        if let Err(error) = crate::validate_tool_policy(
+            locked,
+            config.verification_strength,
+            config.minimum_release_age,
+            SystemTime::now(),
+        ) {
+            let (reason_code, action) = match error {
+                Error::VerificationPolicyViolation { .. } => (
+                    LockAuditReasonCode::VerificationBelowPolicy,
+                    "select a release with stronger verification evidence or lower the explicit policy",
+                ),
+                Error::ReleaseAgeUnavailable { .. } => (
+                    LockAuditReasonCode::ReleaseAgeUnavailable,
+                    "remove the minimum release age policy or select a Provider that publishes release time",
+                ),
+                Error::ReleaseTooNew { .. } => (
+                    LockAuditReasonCode::ReleaseTooNew,
+                    "wait until the release satisfies the configured minimum age or select an older release",
+                ),
+                _ => (
+                    LockAuditReasonCode::LockInvalid,
+                    "regenerate the lockfile from trusted metadata",
+                ),
+            };
+            report.push(finding(
+                reason_code,
+                LockAuditSeverity::Error,
+                LockAuditCategory::Provenance,
+                tool,
+                Some(&lock_path),
+                error.to_string(),
+                Some(repair(action, None)),
+            ));
         }
         audit_locked_tool(pinset_home, scope, config_path, locked, report);
     }
@@ -1200,6 +1249,27 @@ mod tests {
             })
         );
         assert!(!home.exists());
+    }
+
+    #[test]
+    fn provenance_policy_has_a_stable_audit_reason_code() {
+        let root = tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::write(
+            project.join(PROJECT_CONFIG_FILENAME),
+            "schema = 3\n\n[policy]\nverification-strength = \"provenance\"\n\n[tools]\nnode = \"24.0.0\"\n",
+        )
+        .expect("project config");
+        save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).expect("lockfile");
+
+        let report = audit_project_lock(&home, &project);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.reason_code == LockAuditReasonCode::VerificationBelowPolicy
+                && finding.category == LockAuditCategory::Provenance
+        }));
     }
 
     #[test]

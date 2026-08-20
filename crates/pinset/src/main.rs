@@ -44,7 +44,8 @@ use pinset_core::{
     validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
     validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
     validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools, validate_managed_runtime_invocation, verify_download_cache,
+    validate_lock_matches_tools, validate_managed_runtime_invocation, validate_project_lock_policy,
+    verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -721,6 +722,11 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::NodeTrustStoreInvalid { .. }
         | Error::NpmSignatureVerification { .. } => "signature_invalid",
         Error::NodeSignerUntrusted { .. } => "signature_untrusted",
+        Error::VerificationPolicyViolation { .. } => "verification_policy_failed",
+        Error::VerificationDowngrade { .. } => "verification_downgrade",
+        Error::ReleaseAgeUnavailable { .. } | Error::ReleaseTooNew { .. } => {
+            "release_age_policy_failed"
+        }
         Error::InvalidSha256 { .. }
         | Error::InvalidArtifactIntegrity { .. }
         | Error::ChecksumMismatch { .. } => "artifact_integrity_failed",
@@ -2456,7 +2462,7 @@ fn select_tool(
         let lock_path = global_lockfile_path(&home);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
-        lockfile.upsert_tool(locked_tool.clone());
+        lockfile.upsert_tool(locked_tool.clone())?;
         config.set_tool(&tool, &selector);
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
         save_global_state(&home, &config, &lockfile)?;
@@ -2471,7 +2477,7 @@ fn select_tool(
         let lock_path = lockfile_path(&config_path);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
-        lockfile.upsert_tool(locked_tool.clone());
+        lockfile.upsert_tool(locked_tool.clone())?;
         project.set_tool(&tool, &selector);
         save_project_state(&config_path, &project, &lockfile)?;
         ("project", lock_path)
@@ -2770,7 +2776,7 @@ fn run_project_import(
             );
         }
         project.set_tool(tool, selector);
-        lockfile.upsert_tool(locked_tool.clone());
+        lockfile.upsert_tool(locked_tool.clone())?;
     }
     save_project_state(&config_path, &project, &lockfile)?;
 
@@ -2879,16 +2885,21 @@ fn run_update(
             previous,
             resolved: resolved.version.clone(),
         };
-        lockfile.upsert_tool(resolved);
+        lockfile.upsert_tool(resolved)?;
         reports.push(report);
     }
-    if tool.is_some() && reports.is_empty() {
+    if let (Some(tool), true) = (tool, reports.is_empty()) {
         return Err(format!(
             "{} does not declare runtime provider {:?}",
             config_path.display(),
-            tool.expect("checked")
+            tool
         )
         .into());
+    }
+
+    if !global {
+        let config = load_project_config(&config_path)?;
+        validate_project_lock_policy(&config, &lockfile, std::time::SystemTime::now())?;
     }
 
     if !dry_run {
@@ -3009,7 +3020,7 @@ fn install_tool_selection(
         );
     }
     let mut lockfile = new_lockfile();
-    lockfile.upsert_tool(locked_tool);
+    lockfile.upsert_tool(locked_tool)?;
     install_tool_from_lock(&pinset_home()?, &lockfile, &tool, catalog)
 }
 
@@ -3192,6 +3203,8 @@ fn install_project_with_venv(
     let project = load_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
+    let policy_lock = load_lockfile(&lock_path)?;
+    validate_project_lock_policy(&project, &policy_lock, std::time::SystemTime::now())?;
     install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
     if let Some(requested) = project.tools.get("python") {
         let distribution = selected_version_from_lock(
@@ -5312,6 +5325,7 @@ mod tests {
             requested: "24.0.0".to_owned(),
             version: "24.0.0".to_owned(),
             provider: "nodejs-official".to_owned(),
+            released_at: None,
             metadata: BTreeMap::new(),
             artifacts: Vec::new(),
         };
