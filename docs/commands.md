@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.8 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v1.9 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -41,7 +41,7 @@ Only commands marked **Yes** below accept `--json`. They write one JSON document
 - `0`: Pinset completed successfully.
 - `1`: `pinset lock audit` completed and found one or more errors or warnings that require action. Informational findings alone still return `0`.
 - `2`: Pinset usage, configuration, metadata, integrity, or installation failure.
-- `pinset exec`: returns the exact child-process exit code after a successful launch; Pinset failures before launch return `2`.
+- `pinset exec` and `pinset x`: return the exact child-process exit code after a successful launch; Pinset failures before launch return `2`.
 
 The tables below repeat exceptional behavior where it matters. Otherwise the command follows these exit codes.
 
@@ -263,6 +263,18 @@ Stable reason codes are grouped as follows:
 | JSON | No; child stdout/stderr remains unwrapped. |
 | Exit | Exact child exit code after launch; `2` if Pinset cannot resolve or launch it. |
 | Key errors | Missing command, unresolved runtime, exact override not installed, shim recursion protection, or process launch failure. |
+
+### `x`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Resolve, verify, install, and run one Provider command without changing project/global selection state. |
+| Syntax and arguments | `pinset x <tool>@<selector> [--cwd <path>] -- <command> [args...]`. The command must belong to the selected Provider. |
+| Modifies state | Selection state: **No**. Verified downloads, cache entries, installation receipts, and installed runtimes under `PINSET_HOME` may be created. The launched program may modify its own files or external state. |
+| Example | `pinset x node@24 -- node ./scripts/build.js` |
+| JSON | No; child stdout/stderr remains unwrapped. |
+| Exit | Exact child exit code after launch; `2` if Pinset cannot resolve, verify, install, or launch it. |
+| Key errors | Invalid selector, command/Provider mismatch, failed metadata or artifact verification, missing declared Provider dependency, unsupported platform, or process launch failure. pnpm requires a valid project/global Node.js selection. |
 
 ### `doctor`
 

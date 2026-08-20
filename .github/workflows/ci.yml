@@ -170,6 +170,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Smoke test the local composite action
+        uses: ./
+        with:
+          version: 1.8.0
+          install: "false"
+
+      - name: Verify the action-installed CLI
+        shell: bash
+        run: pinset --version | grep -F "pinset 1.8.0"
+
       - name: Prepare pinned Rust toolchain
         run: |
           rustup show active-toolchain
@@ -200,19 +210,26 @@ jobs:
         continue-on-error: true
         run: cargo test --workspace --all-features --locked
 
+      - name: Validate integration contracts
+        id: integrations
+        continue-on-error: true
+        run: python3 scripts/tests/integrations_test.py
+
       - name: Enforce all workspace checks
         if: always()
         shell: bash
         env:
           CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
           FORMATTING_OUTCOME: ${{ steps.formatting.outcome }}
+          INTEGRATIONS_OUTCOME: ${{ steps.integrations.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
         run: |
           failed=0
           for result in \
             "formatting=${FORMATTING_OUTCOME}" \
             "clippy=${CLIPPY_OUTCOME}" \
-            "tests=${TESTS_OUTCOME}"; do
+            "tests=${TESTS_OUTCOME}" \
+            "integrations=${INTEGRATIONS_OUTCOME}"; do
             if [[ "${result#*=}" != "success" ]]; then
               echo "${result%%=*} failed" >&2
               failed=1

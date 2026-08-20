@@ -650,6 +650,30 @@ fn exec_can_select_an_installed_exact_version_without_changing_project_state() {
 }
 
 #[test]
+fn one_shot_rejects_a_command_from_another_provider_without_writing_state() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+
+    let output = pinset(
+        &workspace,
+        &home,
+        &["x", "node@24", "--", "python", "--version"],
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("python"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!workspace.join("pinset.toml").exists());
+    assert!(!workspace.join("pinset.lock").exists());
+    assert!(!home.exists());
+}
+
+#[test]
 fn doctor_json_is_machine_readable_and_has_no_manager_migration_report() {
     let root = tempdir().expect("temporary root");
     let project = root.path().join("project");
