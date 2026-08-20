@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0 - 2026-08-20
+
+- Add `pinset lock audit` for project or global scope. It is always read-only and offline, checks config/lock consistency, current-platform artifacts, referenced cache bytes, install receipts, receipt-backed ownership, and project Python environment ownership.
+- Add a stable audit finding contract with snake_case reason codes, severity/category/subject/path context, explicit repair plans, and JSON schema 1 command identity `lock.audit`.
+- Reserve exit code `1` for a completed audit that found action-required errors or warnings; clean audits and informational-only optional cache misses return `0`, while command failures remain `2`.
+- Consolidate command layout, metadata, installation, environment, traditional discovery, and lock-audit behavior into one capability model shared by all nine built-in Providers.
+- Add cross-platform CLI and core regression coverage for read-only behavior, matching/missing receipts, optional cache state, JSON output, exit semantics, Provider capability coverage, completions, and parser options.
+
+No configuration or lock schema migration is required. v1.6 continues to write schema 3 and read schema 1/2; `lock audit` reports legacy state and repair plans without changing it.
+
 ## 1.5.1 - 2026-08-19
 
 - Upgrade `pgp` to 0.19.0 to resolve three runtime dependency advisories, including two high-severity parser denial-of-service issues.

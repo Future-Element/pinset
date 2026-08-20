@@ -39,6 +39,8 @@ mod java_metadata;
 mod java_provider;
 #[cfg(all(feature = "installer", feature = "java-provider", feature = "lockfile"))]
 mod java_runtime;
+#[cfg(all(feature = "installer", feature = "lockfile"))]
+mod lock_audit;
 #[cfg(feature = "lockfile")]
 mod lockfile;
 #[cfg(feature = "node-provider")]
@@ -159,6 +161,11 @@ pub use java_provider::{
 };
 #[cfg(all(feature = "installer", feature = "java-provider", feature = "lockfile"))]
 pub use java_runtime::install_locked_java;
+#[cfg(all(feature = "installer", feature = "lockfile"))]
+pub use lock_audit::{
+    LockAuditCategory, LockAuditFinding, LockAuditReasonCode, LockAuditRepair, LockAuditReport,
+    LockAuditScope, LockAuditSeverity, LockAuditSummary, audit_global_lock, audit_project_lock,
+};
 #[cfg(feature = "lockfile")]
 pub use lockfile::{
     LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat,
@@ -226,8 +233,8 @@ pub use runtime_lifecycle::{
 };
 pub use runtime_provider::{
     RuntimeCommandLayout, RuntimeDiscoveryKind, RuntimeDiscoveryRule, RuntimeEnvironmentKind,
-    RuntimeInstallKind, RuntimeMetadataKind, RuntimeProvider, runtime_provider,
-    runtime_provider_for_command, runtime_providers,
+    RuntimeInstallKind, RuntimeLockAuditKind, RuntimeMetadataKind, RuntimeProvider,
+    RuntimeProviderCapabilities, runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "rust-metadata")]
 pub use rust_metadata::{RustMetadataClient, RustRelease};

@@ -22,6 +22,7 @@ Pinset 是一个行为可预测、理解项目边界的多语言运行时版本�
 - 原生支持英文和简体中文输出、自动化用 JSON schema 1 与 Shell 补全。
 - 支持项目所有的 Python `.venv`，无需激活 Shell 环境。
 - 支持只读检测和显式导入仓库内的传统版本配置。
+- 支持带稳定 reason code 的只读离线锁审计；修复计划只报告、不自动执行。
 
 ## 安装与升级
 
@@ -42,7 +43,7 @@ export PATH="$HOME/.local/bin:$PATH"
 再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.5.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.6.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -126,6 +127,7 @@ pinset use node@22
 pinset use pnpm@10
 pinset use python@3.14
 pinset install --locked
+pinset lock audit
 pinset exec -- node --version
 ```
 
@@ -151,6 +153,15 @@ pinset import
 
 `detect` 不联网、也不写文件。`import --no-install` 会写入 Pinset 配置和精确锁，但不下载运行时。扫描范围从工作目录到最近的 Git 仓库根目录，并且不会修改或删除来源文件。
 
+在 CI、制品打包或离线交接前审计当前选择状态：
+
+```sh
+pinset lock audit --json
+pinset lock audit --global
+```
+
+`lock audit` 始终只读、离线运行。它检查配置与锁是否一致、当前平台制品、存在时的相关缓存字节、安装收据及由收据证明的所有权。无需处理时返回 `0`；审计正常完成但包含错误或警告时返回 `1`；只有命令本身无法运行时才返回 `2`。每条发现都包含稳定的 snake_case `reason_code` 与修复计划，Pinset 不会自动执行修复计划。
+
 查看可用版本与已安装版本：
 
 ```sh
@@ -175,11 +186,17 @@ pinset list
 
 Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档，因此 Pinset 会返回明确的不支持目标错误，不会回退到 x64。macOS Intel 不是 Pinset v1.0 的发布目标。
 
+9 个内置 Provider 都通过同一 capability model 声明命令布局、元数据解析、安装、环境、传统文件发现与锁审计支持。解析器、安装器、发现、路由与审计逻辑共同消费这份声明，不再分别维护 Provider 列表。
+
 ## 命令文档
 
 请查阅完整的[中文命令文档](docs/commands.zh-CN.md)或[英文命令文档](docs/commands.md)。其中记录了每个命令及二级命令、状态修改、JSON 支持、退出码与常见错误。
 
-产品定位与取舍见带官方来源的 [Pinset v1.5 横向对比](docs/comparison.zh-CN.md)。
+产品定位与取舍见带官方来源的 [Pinset 横向对比](docs/comparison.zh-CN.md)。
+
+## v1.6
+
+v1.6 交付第一阶段锁审计与安全基础：离线/只读的 `pinset lock audit`、稳定的自动化 reason code、明确但不自动执行的修复计划，以及覆盖全部 9 个内置 Provider 的统一 capability model。来源证明策略与自动修复不属于本版本范围。
 
 ## 未来规划
 
@@ -187,7 +204,6 @@ Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档�
 
 | 版本 | 主题 | 计划内容 |
 | --- | --- | --- |
-| v1.6 | 锁审计与安全策略基础 | 增加只读、默认离线的 `pinset lock audit`，检查配置、锁、平台制品、缓存、安装收据与所有权状态；为自动化提供稳定 reason code；建立 9 个内置 Provider 的统一 capability model。首版只报告问题与修复计划，不自动修改状态。 |
 | v1.7 | 通用来源证明 | 把 Node.js 已有的 OpenPGP 验证迁移到统一验证接口，并按上游实际能力逐步支持 signed checksum、Minisign、Sigstore、GitHub Attestation 与 SLSA provenance；增加可选的验证强度和 `minimum-release-age` 策略，禁止静默降低验证能力。 |
 | v1.8 | 受约束的 Provider Registry | 预览纯声明式 Provider manifest 与签名 Registry；第三方 Provider 必须复用 Pinset 的 HTTPS、完整性、安全解压、路径和所有权规则，不能执行任意 Shell/Lua 或 post-install 脚本；增加工具链依赖图、composite `PATH` 与循环检测，支持 pnpm 等工具与正确运行时组合。 |
 | v1.9 | 开发者体验与正式分发 | 增加不修改项目状态的 `pinset x <tool>@<selector> -- <command>`；补齐 GitHub Action、Renovate、VS Code schema、Dev Container 示例，以及 Winget、Scoop、Homebrew 等官方分发渠道。 |

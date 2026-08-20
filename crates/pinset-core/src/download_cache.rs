@@ -130,6 +130,48 @@ pub fn verify_download_cache(pinset_home: &Path) -> Result<DownloadCacheVerifica
     Ok(verification)
 }
 
+pub(crate) fn verify_download_cache_integrity(
+    pinset_home: &Path,
+    integrity: &ArtifactIntegrity,
+) -> Result<Option<DownloadCacheVerificationEntry>> {
+    let mut directory = pinset_home.to_path_buf();
+    for segment in [CACHE_DIRECTORY, integrity.algorithm().as_str()] {
+        directory.push(segment);
+        let metadata = match fs::symlink_metadata(&directory) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(Error::ReadDownloadCache {
+                    path: directory,
+                    source,
+                });
+            }
+        };
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(Error::UnsafeDownloadCacheEntry { path: directory });
+        }
+    }
+    let path = download_cache_path_for_integrity(pinset_home, integrity)?;
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(Error::ReadDownloadCache { path, source }),
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(Error::UnsafeDownloadCacheEntry { path });
+    }
+    let expected = integrity.canonical();
+    let (actual, size) = hash_file(&path, integrity)?;
+    let valid = actual == expected;
+    Ok(Some(DownloadCacheVerificationEntry {
+        integrity: expected,
+        actual,
+        size,
+        path,
+        valid,
+    }))
+}
+
 pub fn repair_download_cache(pinset_home: &Path) -> Result<DownloadCacheCleanOutcome> {
     let verification = verify_download_cache(pinset_home)?;
     let mut outcome = DownloadCacheCleanOutcome {

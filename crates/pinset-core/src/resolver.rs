@@ -563,7 +563,7 @@ pub fn selected_runtime_environment(
 ) -> Vec<RuntimeEnvironmentVariable> {
     let mut variables = Vec::new();
     for provider in runtime_providers() {
-        if provider.environment == RuntimeEnvironmentKind::None {
+        if provider.capabilities.environment == RuntimeEnvironmentKind::None {
             continue;
         }
         let Ok(selection) = resolve_tool_selection(provider.tool, cwd, pinset_home) else {
@@ -574,7 +574,7 @@ pub fn selected_runtime_environment(
             .join(provider.tool)
             .join(&selection.version)
             .join(current_target_for_tool(provider.tool));
-        if provider.environment == RuntimeEnvironmentKind::Python {
+        if provider.capabilities.environment == RuntimeEnvironmentKind::Python {
             if selection.source == SelectionSource::Project {
                 if let Ok(environment) = load_project_python_environment(
                     &selection.config_path,
@@ -598,7 +598,7 @@ pub fn runtime_environment_for_install(
     tool: &str,
     install_dir: &Path,
 ) -> Vec<RuntimeEnvironmentVariable> {
-    match runtime_provider(tool).map(|provider| provider.environment) {
+    match runtime_provider(tool).map(|provider| provider.capabilities.environment) {
         Some(RuntimeEnvironmentKind::Go) => {
             let mut variables = vec![RuntimeEnvironmentVariable {
                 name: "GOROOT",
@@ -661,7 +661,7 @@ pub fn validate_managed_runtime_invocation(
 }
 
 pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
-    match runtime_provider(tool).map(|provider| provider.command_layout) {
+    match runtime_provider(tool).map(|provider| provider.capabilities.command_layout) {
         Some(RuntimeCommandLayout::NodeNative) if cfg!(windows) => install_dir.to_path_buf(),
         Some(RuntimeCommandLayout::NodeNative | RuntimeCommandLayout::Bin) => {
             install_dir.join("bin")
