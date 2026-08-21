@@ -87,8 +87,10 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
     fs::create_dir(&project).expect("project");
     let mut config = ProjectConfig {
         schema: 3,
+        project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), "24.0.0".to_owned())]),
+        environment: None,
     };
     config.policy.verification_strength = Some(VerificationStrength::Provenance);
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");
@@ -113,8 +115,10 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
 fn write_project(project: &Path, version: &str) {
     let config = ProjectConfig {
         schema: 3,
+        project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), version.to_owned())]),
+        environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");
     save_lockfile(&project.join("pinset.lock"), &node_lockfile(version)).expect("lockfile");

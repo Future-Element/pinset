@@ -2,13 +2,13 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v1.9 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v2.0 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 3 会在配置中保留这个请求选择器，并在锁文件中记录精确解析版本。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 4 项目配置会保留这个请求选择器，schema 3 锁文件记录精确解析版本。
 
 支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
@@ -53,7 +53,7 @@
 | --- | --- |
 | 用途 | 在当前目录创建最小项目配置。 |
 | 语法与参数 | `pinset init`；没有命令专属选项。 |
-| 修改状态 | **是。** 创建带严格项目策略的 schema 3 `pinset.toml`，但不选择或安装运行时。 |
+| 修改状态 | **是。** 创建包含唯一 `project-id` 与严格项目策略的 schema 4 `pinset.toml`，但不选择或安装运行时。 |
 | 示例 | `mkdir app && cd app && pinset init` |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；无法安全创建文件为 `2`。 |
@@ -77,7 +77,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 3 的 `pinset.toml` 与 `pinset.lock`。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 4 `pinset.toml` 与 schema 3 `pinset.lock`。 |
 | 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
 | 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
@@ -201,7 +201,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把现有 schema 1/2 项目或全局配置/锁重写为 schema 3，不重新解析版本。 |
+| 用途 | 验证并把 schema 1–3 项目配置重写为 schema 4，同时保持运行时锁为 schema 3，不重新解析版本。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -620,6 +620,16 @@ v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖�
 
 ## 稳定协议边界
 
-Pinset v1.8 继续为项目/全局配置与锁文件写入 schema 3，并读取 schema 1/2。schema 3 项目 `[policy]` 新增可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。安装收据继续使用独立 schema。
+## Pinset 2.0 项目环境与维护命令
 
-v1.8 不修改 JSON schema 1 外层结构；`provider.list` 与 `provider.verify` 只增加各自命令数据。`lock.audit` 通过稳定的 `verification_below_policy`、`release_age_unavailable` 与 `release_too_new` reason code 报告来源证明策略失败；自动化应依据 reason code 与报告状态分支，不要匹配面向用户的消息。
+`pinset paths [tool] [--json]` 会报告 CLI、相邻 shim、Pinset home、shim 目录、安装根，以及可选工具的已安装版本。`pinset list [tool] --long` 增加收据 schema、安装根、文件数量、总大小、关键入口与完整性状态。`pinset doctor --deep` 会重新扫描这些统计，但不宣称逐文件密码学验证。`pinset install <tool@精确版本> --repair` 只修复所有权收据与工具、版本、平台和目标目录全部匹配的安装。`pinset shim install --all` 注册所有内置 Provider 命令，但不下载运行时。
+
+`pinset env init --profile <名称> [--auto] --recovery <路径>` 创建独立 age profile 与设备身份；跳过恢复身份必须显式使用 `--no-recovery`，schema 1–3 项目必须先执行 `pinset migrate`。`env set`/`unset` 修改变量，`env list [--json]` 只列名称，`env reveal` 只能在交互终端显示一个值。import 只接受不可执行的 dotenv 子集；明文 export 必须指定新文件和 `--allow-plaintext`。recipient 变更会先解密并原子重新加密选定 profile。`env identity create|import|list|backup|export` 管理系统密钥库身份和显式的口令保护恢复文件。
+
+`pinset trust add [--project-id <id>]`、`trust status [--json]` 与 `trust revoke` 管理本地自动注入信任。信任绑定规范化项目根、项目 ID、完整环境配置和 recipients；只修改密文值不会使信任失效。`PINSET_ENV_PROFILE` 选择 profile，`PINSET_ENV_DISABLE=1` 关闭一次直接 shim 注入；`pinset exec --profile <名称>` 与 `pinset exec --no-env` 提供对应的显式方式。
+
+`pinset self outdated [--channel stable|prerelease] [--json]` 只在用户明确执行时检查固定官方仓库。`pinset self update [--version <版本>]` 验证平台、语义版本、归档结构与 `SHA256SUMS`，校验新 CLI 后成对替换 CLI/shim，并支持备份与回滚。普通命令和 `doctor` 不会后台检查更新。
+
+Pinset v2.0 写入 schema 4 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–3 项目仍可读取，并通过显式迁移升级。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+
+v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

@@ -31,6 +31,11 @@ jobs:
             echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
             exit 1
           fi
+          windows_installer_version="$(python3 -c 'import pathlib; lines=pathlib.Path("install.ps1").read_text().splitlines(); line=next((line for line in lines if "[string] $Version = " in line), ""); print(line.split(chr(39))[1] if line.count(chr(39)) >= 2 else "")')"
+          if [[ "${windows_installer_version}" != "${workspace_version}" ]]; then
+            echo "install.ps1 default ${windows_installer_version} does not match workspace version ${workspace_version}" >&2
+            exit 1
+          fi
           action_version="$(awk '/^  version:/{seen=1} seen && /^    default:/{print $2; exit}' action.yml)"
           if [[ "${action_version}" != "${workspace_version}" ]]; then
             echo "action.yml default ${action_version} does not match workspace version ${workspace_version}" >&2
@@ -107,8 +112,8 @@ jobs:
         shell: bash
         run: |
           cargo tree -p pinset-shim -e normal --locked > shim-dependencies.txt
-          if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile' shim-dependencies.txt; then
-            echo "pinset-shim unexpectedly includes download or archive dependencies" >&2
+          if grep -E 'reqwest|rustls|tar v|xz2|zip v|tempfile|(^| )age v|keyring' shim-dependencies.txt; then
+            echo "pinset-shim unexpectedly includes download, archive, cryptography, or keyring dependencies" >&2
             exit 1
           fi
 
@@ -154,6 +159,10 @@ jobs:
       - name: Test PowerShell uninstaller in an isolated home
         shell: pwsh
         run: ./scripts/tests/uninstall_ps1_test.ps1
+
+      - name: Validate PowerShell installer contract
+        shell: pwsh
+        run: ./scripts/tests/install_ps1_test.ps1
 
   build:
     name: Preflight ${{ matrix.artifact }}

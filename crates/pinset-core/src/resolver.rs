@@ -284,17 +284,17 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
         }
 
         let global_path = global_config_path(pinset_home);
-        if let Some(global) = load_optional_global_config(&global_path)? {
-            if let Some(requested) = global.tools.get(tool) {
-                return selection_from_config(
-                    tool,
-                    requested,
-                    global.schema,
-                    SelectionSource::Global,
-                    &global_path,
-                    lockfile_for_global(pinset_home),
-                );
-            }
+        if let Some(global) = load_optional_global_config(&global_path)?
+            && let Some(requested) = global.tools.get(tool)
+        {
+            return selection_from_config(
+                tool,
+                requested,
+                global.schema,
+                SelectionSource::Global,
+                &global_path,
+                lockfile_for_global(pinset_home),
+            );
         }
         if config.policy.system_fallback {
             return Err(selection_not_found(tool, cwd, pinset_home));
@@ -306,17 +306,17 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
     }
 
     let global_path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&global_path)? {
-        if let Some(requested) = config.tools.get(tool) {
-            return selection_from_config(
-                tool,
-                requested,
-                config.schema,
-                SelectionSource::Global,
-                &global_path,
-                lockfile_for_global(pinset_home),
-            );
-        }
+    if let Some(config) = load_optional_global_config(&global_path)?
+        && let Some(requested) = config.tools.get(tool)
+    {
+        return selection_from_config(
+            tool,
+            requested,
+            config.schema,
+            SelectionSource::Global,
+            &global_path,
+            lockfile_for_global(pinset_home),
+        );
     }
 
     Err(selection_not_found(tool, cwd, pinset_home))
@@ -586,17 +586,17 @@ pub fn selected_runtime_environment(
             .join(&selection.version)
             .join(current_target_for_tool(provider.tool));
         if provider.capabilities.environment == RuntimeEnvironmentKind::Python {
-            if selection.source == SelectionSource::Project {
-                if let Ok(environment) = load_project_python_environment(
+            if selection.source == SelectionSource::Project
+                && let Ok(environment) = load_project_python_environment(
                     &selection.config_path,
                     &selection.version,
                     &current_target_for_tool("python"),
-                ) {
-                    variables.push(RuntimeEnvironmentVariable {
-                        name: "VIRTUAL_ENV",
-                        value: environment.root.into_os_string(),
-                    });
-                }
+                )
+            {
+                variables.push(RuntimeEnvironmentVariable {
+                    name: "VIRTUAL_ENV",
+                    value: environment.root.into_os_string(),
+                });
             }
         } else if install_dir.is_dir() {
             variables.extend(runtime_environment_for_install(provider.tool, &install_dir));

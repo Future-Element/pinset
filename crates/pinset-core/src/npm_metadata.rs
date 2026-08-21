@@ -522,10 +522,10 @@ fn verify_package_signature(manifest: &PackageVersion, keys: &RegistryKeys) -> R
             .decode(&signature.sig)
             .ok()
             .and_then(|bytes| Signature::from_der(&bytes).ok());
-        if let (Some(public_key), Some(signature)) = (public_key, signature) {
-            if public_key.verify(message.as_bytes(), &signature).is_ok() {
-                return Ok(());
-            }
+        if let (Some(public_key), Some(signature)) = (public_key, signature)
+            && public_key.verify(message.as_bytes(), &signature).is_ok()
+        {
+            return Ok(());
         }
         failures.push(format!("invalid signature for key {}", key.keyid));
     }

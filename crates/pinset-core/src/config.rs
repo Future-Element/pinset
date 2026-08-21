@@ -21,9 +21,7 @@ use crate::Lockfile;
 use crate::{lockfile_path, save_lockfile, validate_lock_matches_tools};
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
-pub const PROJECT_CONFIG_SCHEMA: u32 = 3;
-#[cfg(feature = "project-write")]
-const MINIMAL_PROJECT_CONFIG: &[u8] = b"schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n";
+pub const PROJECT_CONFIG_SCHEMA: u32 = 4;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -31,23 +29,53 @@ static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     pub schema: u32,
+    #[serde(
+        default,
+        rename = "project-id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_id: Option<String>,
     #[serde(default)]
     pub policy: ProjectPolicy,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<ProjectEnvironment>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvironmentCollision {
+    #[default]
+    Error,
+    ProcessWins,
+    EncryptedWins,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectEnvironment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_profile: Option<String>,
+    #[serde(default)]
+    pub collision: EnvironmentCollision,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, EnvironmentProfile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct EnvironmentProfile {
+    pub file: String,
+    pub recipients: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectBoundary {
+    #[default]
     Git,
     Filesystem,
-}
-
-impl Default for ProjectBoundary {
-    fn default() -> Self {
-        Self::Git
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,11 +230,13 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
             source,
         })?;
 
-    if !matches!(config.schema, 1 | 2 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
     }
+
+    validate_environment_config(&config)?;
 
     Ok(config)
 }
@@ -214,6 +244,10 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
 #[cfg(feature = "project-write")]
 pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
     let path = directory.join(PROJECT_CONFIG_FILENAME);
+    let project_id = uuid::Uuid::new_v4();
+    let content = format!(
+        "schema = {PROJECT_CONFIG_SCHEMA}\nproject-id = \"{project_id}\"\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n"
+    );
     let mut temporary = tempfile::Builder::new()
         .prefix(".pinset.toml.")
         .tempfile_in(directory)
@@ -223,7 +257,7 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
         })?;
 
     temporary
-        .write_all(MINIMAL_PROJECT_CONFIG)
+        .write_all(content.as_bytes())
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|source| Error::WriteProjectConfig {
             path: path.clone(),
@@ -244,13 +278,17 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
 
 #[cfg(feature = "project-write")]
 pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
-    if !matches!(config.schema, 1 | 2 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
     }
+    validate_environment_config(config)?;
     let mut normalized = config.clone();
     normalized.schema = PROJECT_CONFIG_SCHEMA;
+    if normalized.project_id.is_none() {
+        normalized.project_id = Some(uuid::Uuid::new_v4().to_string());
+    }
     let serialized = toml::to_string_pretty(&normalized)
         .map_err(|source| Error::SerializeProjectConfig { source })?;
     let mut file =
@@ -265,6 +303,84 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
         .map_err(|source| Error::WriteProjectConfig {
             path: path.to_path_buf(),
             source,
+        })
+}
+
+fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
+    if config.schema < PROJECT_CONFIG_SCHEMA {
+        if config.project_id.is_some() || config.environment.is_some() {
+            return Err(Error::InvalidProjectConfig {
+                reason: "project-id and environment require schema 4".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+
+    let project_id = config
+        .project_id
+        .as_deref()
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: "schema 4 requires project-id".to_owned(),
+        })?;
+    if !valid_project_id(project_id) {
+        return Err(Error::InvalidProjectConfig {
+            reason: "project-id must be a lowercase UUID".to_owned(),
+        });
+    }
+
+    let Some(environment) = &config.environment else {
+        return Ok(());
+    };
+    if let Some(profile) = &environment.auto_profile
+        && !environment.profiles.contains_key(profile)
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("environment auto-profile {profile} is not declared"),
+        });
+    }
+    for (name, profile) in &environment.profiles {
+        if !valid_profile_name(name) {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("invalid environment profile name: {name}"),
+            });
+        }
+        if profile.file.is_empty() || profile.file.len() > 4096 {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("environment profile {name} has an invalid file path"),
+            });
+        }
+        if profile.recipients.is_empty() {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("environment profile {name} requires at least one recipient"),
+            });
+        }
+        let mut recipients = std::collections::BTreeSet::new();
+        for recipient in &profile.recipients {
+            if !recipient.starts_with("age1") || !recipients.insert(recipient) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "environment profile {name} has an invalid or duplicate recipient"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn valid_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn valid_project_id(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
         })
 }
 
@@ -390,10 +506,10 @@ mod tests {
     fn rejects_unknown_schema() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
-        fs::write(&config_path, "schema = 4\n[tools]\nnode = \"20\"\n").expect("config");
+        fs::write(&config_path, "schema = 5\n[tools]\nnode = \"20\"\n").expect("config");
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
-        assert!(matches!(error, Error::UnsupportedSchema { actual: 4 }));
+        assert!(matches!(error, Error::UnsupportedSchema { actual: 5 }));
     }
 
     #[cfg(feature = "project-write")]
@@ -403,18 +519,12 @@ mod tests {
         let path = create_project_config(root.path()).expect("create project config");
 
         assert_eq!(path, root.path().join(PROJECT_CONFIG_FILENAME));
-        assert_eq!(
-            load_project_config(&path).expect("load created config"),
-            ProjectConfig {
-                schema: PROJECT_CONFIG_SCHEMA,
-                policy: ProjectPolicy::default(),
-                tools: BTreeMap::new(),
-            }
-        );
-        assert_eq!(
-            fs::read_to_string(path).expect("created config"),
-            "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n"
-        );
+        let created = load_project_config(&path).expect("load created config");
+        assert_eq!(created.schema, PROJECT_CONFIG_SCHEMA);
+        assert!(created.project_id.is_some());
+        assert_eq!(created.policy, ProjectPolicy::default());
+        assert!(created.tools.is_empty());
+        assert!(created.environment.is_none());
     }
 
     #[cfg(feature = "project-write")]
@@ -532,8 +642,10 @@ mod tests {
         let config_path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
             schema: PROJECT_CONFIG_SCHEMA,
+            project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            environment: None,
         };
         let lockfile = Lockfile {
             schema: crate::LOCKFILE_SCHEMA,

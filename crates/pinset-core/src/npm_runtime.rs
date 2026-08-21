@@ -1,14 +1,12 @@
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use semver::Version;
 
 use crate::{
     ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error,
-    InstallOutcome, InstallRequest, Installer, LockedArtifactFormat, LockedArtifactOverlay,
-    LockedTool, Result, npm_metadata::pnpm_uses_wrapper_overlay, tool_targets,
+    InstallAlias, InstallOutcome, InstallRequest, Installer, LockedArtifactFormat,
+    LockedArtifactOverlay, LockedTool, Result, npm_metadata::pnpm_uses_wrapper_overlay,
+    tool_targets,
 };
 
 pub fn install_locked_npm_tool(
@@ -86,12 +84,9 @@ pub fn install_locked_npm_tool(
         required_paths: vec![PathBuf::from(target_manifest.required_path)],
         base_artifacts,
         executable_paths,
+        aliases: npm_install_aliases(&locked_tool.name, target),
     };
-    let outcome = installer.install(&request)?;
-    if locked_tool.name == "bun" {
-        ensure_bunx_alias(&outcome.install_dir, target)?;
-    }
-    Ok(outcome)
+    installer.install(&request)
 }
 
 fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInstallSpec> {
@@ -120,40 +115,19 @@ fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInsta
     })
 }
 
-fn ensure_bunx_alias(install_dir: &Path, target: &str) -> Result<()> {
+fn npm_install_aliases(tool: &str, target: &str) -> Vec<InstallAlias> {
+    if tool != "bun" {
+        return Vec::new();
+    }
     let (source, destination) = if target.starts_with("windows-") {
-        (
-            install_dir.join("bin/bun.exe"),
-            install_dir.join("bin/bunx.exe"),
-        )
+        (PathBuf::from("bin/bun.exe"), PathBuf::from("bin/bunx.exe"))
     } else {
-        (install_dir.join("bin/bun"), install_dir.join("bin/bunx"))
+        (PathBuf::from("bin/bun"), PathBuf::from("bin/bunx"))
     };
-    if destination.is_file() {
-        return Ok(());
-    }
-    match fs::hard_link(&source, &destination) {
-        Ok(()) => Ok(()),
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied | io::ErrorKind::Other
-            ) =>
-        {
-            fs::copy(&source, &destination)
-                .map(|_| ())
-                .map_err(|source_error| Error::CreateRuntimeAlias {
-                    source_path: source,
-                    destination,
-                    source: source_error,
-                })
-        }
-        Err(source_error) => Err(Error::CreateRuntimeAlias {
-            source_path: source,
-            destination,
-            source: source_error,
-        }),
-    }
+    vec![InstallAlias {
+        source,
+        destination,
+    }]
 }
 
 #[cfg(test)]
@@ -161,28 +135,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bunx_alias_is_idempotent() {
-        let root = tempfile::tempdir().expect("root");
-        let bin = root.path().join("bin");
-        fs::create_dir(&bin).expect("bin");
-        let source = if cfg!(windows) {
-            bin.join("bun.exe")
-        } else {
-            bin.join("bun")
-        };
-        fs::write(&source, b"bun").expect("bun fixture");
-        let target = if cfg!(windows) {
-            "windows-x86_64-avx2"
-        } else {
-            "linux-x86_64-avx2"
-        };
-        ensure_bunx_alias(root.path(), target).expect("first alias");
-        ensure_bunx_alias(root.path(), target).expect("second alias");
-        let alias = if cfg!(windows) {
-            bin.join("bunx.exe")
-        } else {
-            bin.join("bunx")
-        };
-        assert_eq!(fs::read(alias).expect("alias"), b"bun");
+    fn bun_declares_bunx_as_an_atomic_install_alias() {
+        let aliases = npm_install_aliases("bun", "linux-x86_64-avx2");
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].source, Path::new("bin/bun"));
+        assert_eq!(aliases[0].destination, Path::new("bin/bunx"));
+        assert!(npm_install_aliases("pnpm", "linux-x86_64").is_empty());
     }
 }

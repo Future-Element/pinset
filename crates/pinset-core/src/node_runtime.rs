@@ -50,6 +50,7 @@ pub fn install_locked_node(
         required_paths: required_node_paths(target)?,
         base_artifacts: Vec::new(),
         executable_paths: Vec::new(),
+        aliases: Vec::new(),
     };
     installer.install(&request)
 }

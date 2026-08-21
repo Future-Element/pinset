@@ -61,8 +61,10 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
         schema: 3,
+        project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), "24".to_owned())]),
+        environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");
     let mut lockfile = test_lockfile("24.0.0");
@@ -694,10 +696,9 @@ fn doctor_json_is_machine_readable_and_has_no_manager_migration_report() {
     assert_eq!(report["data"]["selection"]["version"], "24.0.0");
     assert_eq!(report["data"]["runtime"]["status"], "ok");
     assert!(report["data"].get("legacy_node_configs").is_none());
-    assert_eq!(
-        fs::read_to_string(project.join("pinset.toml")).expect("project config"),
-        "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n"
-    );
+    let config = fs::read_to_string(project.join("pinset.toml")).expect("project config");
+    assert!(config.starts_with("schema = 4\nproject-id = \""));
+    assert!(config.contains("node = \"24.0.0\""));
 }
 
 #[test]
@@ -733,7 +734,8 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
         serde_json::from_slice(&preview.stdout).expect("migration preview JSON");
     assert_eq!(preview["data"]["from_config_schema"], 2);
     assert_eq!(preview["data"]["from_lock_schema"], 2);
-    assert_eq!(preview["data"]["to_schema"], 3);
+    assert_eq!(preview["data"]["to_config_schema"], 4);
+    assert_eq!(preview["data"]["to_lock_schema"], 3);
     assert!(
         fs::read_to_string(&config_path)
             .expect("unchanged config")
@@ -747,7 +749,8 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
         String::from_utf8_lossy(&migrated.stderr)
     );
     let config = fs::read_to_string(config_path).expect("migrated config");
-    assert!(config.starts_with("schema = 3"));
+    assert!(config.starts_with("schema = 4"));
+    assert!(config.contains("project-id = \""));
     assert!(config.contains("inherit-global = false"));
     assert!(
         fs::read_to_string(lock_path)
@@ -756,12 +759,40 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     );
 }
 
+#[test]
+fn migrate_upgrades_a_config_only_project_without_inventing_a_lockfile() {
+    let root = tempdir().expect("temporary root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    let config_path = project.join("pinset.toml");
+    fs::write(&config_path, "schema = 2\n\n[tools]\n").expect("legacy config");
+
+    let preview = pinset(&project, &home, &["migrate", "--dry-run", "--json"]);
+    assert!(preview.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&preview.stdout).expect("preview JSON");
+    assert_eq!(report["data"]["from_config_schema"], 2);
+    assert!(report["data"]["from_lock_schema"].is_null());
+
+    let migrated = pinset(&project, &home, &["migrate"]);
+    assert!(
+        migrated.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    let config = fs::read_to_string(config_path).expect("migrated config");
+    assert!(config.starts_with("schema = 4\nproject-id = \""));
+    assert!(!project.join("pinset.lock").exists());
+}
+
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
         schema: 1,
+        project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
+        environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");
 

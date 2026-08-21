@@ -235,6 +235,16 @@ struct AuditInstallReceipt {
     base_artifact_integrities: Vec<String>,
     #[serde(default)]
     bytes_downloaded: Option<u64>,
+    #[serde(default)]
+    install_root: Option<String>,
+    #[serde(default)]
+    file_count: Option<u64>,
+    #[serde(default)]
+    total_size: Option<u64>,
+    #[serde(default)]
+    pinset_version: Option<String>,
+    #[serde(default)]
+    critical_entries: Vec<String>,
 }
 
 pub fn audit_project_lock(pinset_home: &Path, cwd: &Path) -> LockAuditReport {
@@ -864,7 +874,7 @@ fn audit_install_receipt(
         }
     };
     report.summary.receipts += 1;
-    if !matches!(receipt.schema, 1 | 2) {
+    if !matches!(receipt.schema, 1..=3) {
         report.push(finding(
             LockAuditReasonCode::ReceiptSchemaUnsupported,
             LockAuditSeverity::Error,
@@ -930,7 +940,7 @@ fn audit_install_receipt(
     }
     report.summary.owned_installs += 1;
 
-    if receipt.schema == 2
+    if receipt.schema >= 2
         && (receipt.canonical_url.as_deref() != Some(artifact.canonical_url.as_str())
             || receipt.selected_source.as_deref().is_none_or(str::is_empty)
             || !matches!(
@@ -947,11 +957,30 @@ fn audit_install_receipt(
             LockAuditCategory::InstallReceipt,
             subject,
             Some(&receipt_path),
-            "schema 2 receipt metadata does not describe the locked artifact and selected source"
-                .to_owned(),
+            "receipt metadata does not describe the locked artifact and selected source".to_owned(),
             Some(repair(
                 "move the malformed installation aside and reinstall the locked runtime",
                 None,
+            )),
+        ));
+    }
+    if receipt.schema == 3
+        && (receipt.install_root.as_deref().is_none_or(str::is_empty)
+            || receipt.file_count.is_none()
+            || receipt.total_size.is_none()
+            || receipt.pinset_version.as_deref().is_none_or(str::is_empty)
+            || receipt.critical_entries.is_empty())
+    {
+        report.push(finding(
+            LockAuditReasonCode::ReceiptInvalid,
+            LockAuditSeverity::Error,
+            LockAuditCategory::InstallReceipt,
+            subject,
+            Some(&receipt_path),
+            "schema 3 receipt is missing installation transparency metadata".to_owned(),
+            Some(repair(
+                "repair the owned installation",
+                Some("pinset install <tool@version> --repair".to_owned()),
             )),
         ));
     }
@@ -1280,7 +1309,7 @@ mod tests {
         fs::create_dir(&project).expect("project");
         fs::write(
             project.join(PROJECT_CONFIG_FILENAME),
-            "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n",
+            "schema = 4\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n",
         )
         .expect("project config");
         save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).expect("lockfile");
@@ -1310,7 +1339,7 @@ mod tests {
 
         let report = audit_project_lock(&home, &project);
 
-        assert!(report.passed);
+        assert!(report.passed, "findings: {:#?}", report.findings);
         assert_eq!(report.summary.errors, 0);
         assert_eq!(report.summary.warnings, 0);
         assert_eq!(report.summary.owned_installs, 1);

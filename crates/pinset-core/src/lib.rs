@@ -11,6 +11,7 @@ mod dotnet_provider;
 mod dotnet_runtime;
 #[cfg(feature = "installer")]
 mod download_cache;
+mod environment_protocol;
 mod error;
 #[cfg(feature = "flutter-metadata")]
 mod flutter_metadata;
@@ -93,9 +94,9 @@ pub use config::save_project_state;
 #[cfg(feature = "lockfile")]
 pub use config::validate_project_lock_policy;
 pub use config::{
-    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
-    ProjectPolicy, find_optional_project_config, find_project_config, find_project_context,
-    load_project_config,
+    EnvironmentCollision, EnvironmentProfile, PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA,
+    ProjectBoundary, ProjectConfig, ProjectContext, ProjectEnvironment, ProjectPolicy,
+    find_optional_project_config, find_project_config, find_project_context, load_project_config,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
@@ -119,6 +120,7 @@ pub use download_cache::{
     import_download_cache, import_download_cache_with_integrity, list_download_cache,
     repair_download_cache, verify_download_cache,
 };
+pub use environment_protocol::{decode_environment, encode_environment};
 pub use error::{Error, Result};
 #[cfg(feature = "flutter-metadata")]
 pub use flutter_metadata::{FlutterMetadataClient, FlutterRelease};
@@ -153,7 +155,8 @@ pub use go_runtime::install_locked_go;
 #[cfg(feature = "installer")]
 pub use installer::{
     ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
-    DownloadProgressEvent, InstallLimits, InstallOutcome, InstallRequest, Installer, sha256_hex,
+    DownloadProgressEvent, InstallAlias, InstallLimits, InstallOutcome, InstallRequest, Installer,
+    install_payload_statistics, sha256_hex,
 };
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
 pub use integrity::{ArtifactIntegrity, IntegrityAlgorithm};

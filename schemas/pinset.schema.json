@@ -5,9 +5,13 @@
   "description": "Schema for pinset.toml. Associate it with TOML files through a VS Code TOML extension.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "tools"],
+  "required": ["schema", "project-id", "tools"],
   "properties": {
-    "schema": { "const": 3 },
+    "schema": { "const": 4 },
+    "project-id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,
@@ -38,9 +42,44 @@
         "rust": { "$ref": "#/$defs/selector" },
         "dotnet": { "$ref": "#/$defs/selector" }
       }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto-profile": { "$ref": "#/$defs/profileName" },
+        "collision": {
+          "enum": ["error", "process-wins", "encrypted-wins"],
+          "default": "error"
+        },
+        "profiles": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/profileName" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "recipients"],
+            "properties": {
+              "file": { "type": "string", "minLength": 1, "maxLength": 4096 },
+              "recipients": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^age1" }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
-    "selector": { "type": "string", "minLength": 1 }
+    "selector": { "type": "string", "minLength": 1 },
+    "profileName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    }
   }
 }

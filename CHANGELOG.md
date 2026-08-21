@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0 - 2026-08-21
+
+- Add schema 4 project identities and profile-scoped age X25519 encrypted environments with explicit recipients, recovery files, system credential-store identities, portable dotenv import/export, and collision-safe direct shim injection.
+- Add local project trust bound to canonical root, `project-id`, the complete environment policy, profile paths, and recipient lists. CI may provide `PINSET_IDENTITY` and an explicit non-secret `trust-project-id`.
+- Add `paths`, `list --long`, `doctor --deep`, all-Provider shim registration, schema 3 installation receipts, owned-install repair, and a checksum-verifying Windows installer.
+- Add stable/prerelease self-update checks and paired CLI/shim replacement with checksum verification, version handshake, backups, rollback, and a Windows replacement helper.
+- Keep `pinset-shim` free of age, keyring, download, and archive dependencies; it invokes only the adjacent matching CLI when a trusted environment profile is selected.
+- Raise the minimum supported Rust version to 1.97 so development, CI, and Pinset's current Rust Provider use one toolchain baseline.
+
+Project configuration migrates to schema 4 and gains a generated `project-id`; `pinset.lock` remains schema 3. Run `pinset migrate --dry-run` before migration. KMS/OIDC, arbitrary age plugins, daemons, hooks, remote secret synchronization, and general-purpose vault behavior remain out of scope.
+
 ## 1.9.0 - 2026-08-20
 
 - Add `pinset x <tool>@<selector> -- <command>` for verified one-shot execution. It resolves and installs the requested runtime in Pinset-owned storage, preserves the child exit code, and never creates or modifies project/global selection or lock state.

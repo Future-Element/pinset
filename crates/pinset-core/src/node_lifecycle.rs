@@ -192,7 +192,7 @@ fn has_matching_complete_receipt(directory: &Path, version: &str, target: &str) 
     let Ok(receipt) = toml::from_str::<InstallReceiptIdentity>(&content) else {
         return false;
     };
-    matches!(receipt.schema, 1 | 2)
+    matches!(receipt.schema, 1..=3)
         && receipt.complete
         && receipt.tool == "node"
         && receipt.version == version

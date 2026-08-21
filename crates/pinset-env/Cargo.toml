@@ -1,0 +1,24 @@
+[package]
+name = "pinset-env"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+age.workspace = true
+atomic-write-file.workspace = true
+fs4.workspace = true
+keyring.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -69,6 +69,7 @@ pub fn install_locked_flutter(
         } else {
             Vec::new()
         },
+        aliases: Vec::new(),
     };
     installer.install(&request)
 }

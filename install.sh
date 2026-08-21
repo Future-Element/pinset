@@ -3,12 +3,16 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="1.9.0"
+DEFAULT_VERSION="2.0.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
 PINSET_TEMP=""
 SHIM_TEMP=""
+PINSET_BACKUP=""
+SHIM_BACKUP=""
+PINSET_PUBLISHED=0
+SHIM_PUBLISHED=0
 
 usage() {
     cat <<'EOF'
@@ -18,7 +22,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 1.9.0.
+  --version VERSION       Install an exact release, for example 2.0.0.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
   -h, --help              Show this help.
@@ -35,6 +39,18 @@ fail() {
 }
 
 cleanup() {
+    if [ -n "$PINSET_BACKUP" ]; then
+        rm -f -- "$INSTALL_DIR/pinset"
+        mv -- "$PINSET_BACKUP" "$INSTALL_DIR/pinset" 2>/dev/null || true
+    elif [ "$PINSET_PUBLISHED" = "1" ]; then
+        rm -f -- "$INSTALL_DIR/pinset"
+    fi
+    if [ -n "$SHIM_BACKUP" ]; then
+        rm -f -- "$INSTALL_DIR/pinset-shim"
+        mv -- "$SHIM_BACKUP" "$INSTALL_DIR/pinset-shim" 2>/dev/null || true
+    elif [ "$SHIM_PUBLISHED" = "1" ]; then
+        rm -f -- "$INSTALL_DIR/pinset-shim"
+    fi
     if [ -n "$PINSET_TEMP" ]; then
         rm -f -- "$PINSET_TEMP"
     fi
@@ -88,9 +104,6 @@ case "$INSTALL_DIR" in
 esac
 
 VERSION=${VERSION#v}
-case "$VERSION" in
-    ''|[!0-9A-Za-z]*|*[!0-9A-Za-z.-]*) fail "invalid version: $VERSION" ;;
-esac
 RELEASE_BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 RELEASE_LABEL="v$VERSION"
 
@@ -128,6 +141,10 @@ esac
 for command in curl tar awk mktemp chmod mv cp mkdir rm; do
     command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
+printf '%s\n' "$VERSION" | awk '
+    /^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/ { valid = 1 }
+    END { exit !valid }
+' || fail "version must be an exact stable or rc release: $VERSION"
 
 download() {
     url=$1
@@ -210,16 +227,43 @@ cp "$EXTRACT_DIR/pinset" "$PINSET_TEMP"
 cp "$EXTRACT_DIR/pinset-shim" "$SHIM_TEMP"
 chmod 755 "$PINSET_TEMP" "$SHIM_TEMP"
 
+REPORTED_VERSION=$("$PINSET_TEMP" --version) || fail "downloaded Pinset CLI failed its version handshake"
+[ "$REPORTED_VERSION" = "pinset $VERSION" ] || fail "downloaded Pinset CLI reported '$REPORTED_VERSION', expected 'pinset $VERSION'"
+
+if [ -f "$INSTALL_DIR/pinset" ]; then
+    PINSET_BACKUP=$(mktemp "$INSTALL_DIR/.pinset.backup.XXXXXX")
+    rm -f -- "$PINSET_BACKUP"
+    mv -- "$INSTALL_DIR/pinset" "$PINSET_BACKUP"
+fi
+if [ -f "$INSTALL_DIR/pinset-shim" ]; then
+    SHIM_BACKUP=$(mktemp "$INSTALL_DIR/.pinset-shim.backup.XXXXXX")
+    rm -f -- "$SHIM_BACKUP"
+    mv -- "$INSTALL_DIR/pinset-shim" "$SHIM_BACKUP"
+fi
+
 # Publish the companion first and the CLI last. Both files were fully copied
 # and verified before either existing executable is replaced.
 mv -f "$SHIM_TEMP" "$INSTALL_DIR/pinset-shim"
 SHIM_TEMP=""
+SHIM_PUBLISHED=1
 mv -f "$PINSET_TEMP" "$INSTALL_DIR/pinset"
 PINSET_TEMP=""
+PINSET_PUBLISHED=1
 
 printf 'Installed %s\n' "$INSTALL_DIR/pinset"
 printf 'Installed %s\n' "$INSTALL_DIR/pinset-shim"
 "$INSTALL_DIR/pinset" --version
+
+if [ "${PINSET_INSTALL_TEST_MODE:-0}" != "1" ]; then
+    "$INSTALL_DIR/pinset" shim install --all --binary "$INSTALL_DIR/pinset-shim" --dir "$INSTALL_DIR"
+fi
+
+if [ -n "$PINSET_BACKUP" ]; then rm -f -- "$PINSET_BACKUP"; fi
+if [ -n "$SHIM_BACKUP" ]; then rm -f -- "$SHIM_BACKUP"; fi
+PINSET_BACKUP=""
+SHIM_BACKUP=""
+PINSET_PUBLISHED=0
+SHIM_PUBLISHED=0
 
 case "${PATH:-}" in
     "$INSTALL_DIR"|"$INSTALL_DIR:"*) ;;
@@ -237,6 +281,7 @@ case "${PATH:-}" in
         ;;
 esac
 
-printf '\nInstalled only the Pinset CLI and its runtime-agnostic command router.\n'
-printf 'Runtime providers register their own commands only after you select or install that runtime.\n'
+printf '\nInstalled the Pinset CLI, its runtime-agnostic router, and lightweight Provider command shims.\n'
+printf 'Language runtimes remain isolated under PINSET_HOME/installs and are downloaded only by explicit install commands.\n'
+printf 'All built-in Provider command names are registered now; their SDK payloads remain separate.\n'
 printf 'Pinset does not modify shell profiles or install language runtimes automatically.\n'
