@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0 - 2026-08-21
+
+- Allow `pinset global` and `pinset use` to accept a variable-length batch of selections across any supported, non-duplicate Provider set whose dependencies are satisfied.
+- Parse and resolve the complete batch before one configuration/lock update, preserving unmentioned selections and leaving state unchanged on pre-commit failure.
+- Run installation once after the batch state commit in deterministic Provider dependency order; installation failure preserves the complete lock and reports the appropriate locked-install retry command.
+- Keep no-argument `global`, single-selection compatibility, `--no-install`, completions, and English/Chinese help and command documentation aligned with the batch interface.
+
+No configuration or lock schema migration is required. Explicit `install <tool@exact-version>` remains single-selection; `install --locked` continues to install the complete project or global scope.
+
 ## 2.0.0 - 2026-08-21
 
 - Add schema 4 project identities and profile-scoped age X25519 encrypted environments with explicit recipients, recovery files, system credential-store identities, portable dotenv import/export, and collision-safe direct shim injection.

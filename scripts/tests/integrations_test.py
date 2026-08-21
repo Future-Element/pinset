@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static contract checks for v2.0 editor, CI, container, and distribution assets."""
+"""Static contract checks for editor, CI, container, and distribution assets."""
 
 from __future__ import annotations
 
@@ -113,4 +113,4 @@ with tempfile.TemporaryDirectory() as temporary:
         (f'version "{WORKSPACE_VERSION}"', 'sha256 "' + "ab" * 32 + '"'),
     )
 
-print("v2.0 integration contracts passed")
+print(f"v{WORKSPACE_VERSION} integration contracts passed")

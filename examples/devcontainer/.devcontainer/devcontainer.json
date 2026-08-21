@@ -3,7 +3,7 @@
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
-        "PINSET_VERSION": "2.0.0"
+        "PINSET_VERSION": "2.1.0"
     }
   },
   "postCreateCommand": "pinset install --locked",

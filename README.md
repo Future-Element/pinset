@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.0.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.0.0
+.\install.ps1 -Version 2.1.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -151,8 +151,7 @@ pinset completions powershell | Out-String | Invoke-Expression
 Global selections apply outside Pinset projects, or when a project explicitly inherits them:
 
 ```sh
-pinset global node@lts
-pinset global pnpm@latest
+pinset global node@lts pnpm@latest
 pinset current node
 ```
 
@@ -161,9 +160,7 @@ pinset current node
 ```sh
 mkdir example && cd example
 pinset init
-pinset use node@24
-pinset use pnpm@11
-pinset use python@3.14
+pinset use node@24 pnpm@11 python@3.14 --no-install
 pinset install --locked
 pinset lock audit
 ```
@@ -284,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.0.0
+      - uses: Future-Element/pinset@v2.1.0
         with:
-          version: 2.0.0
+          version: 2.1.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -366,9 +363,27 @@ pinset prune --dry-run
 
 To remove Pinset itself, delete the CLI, shim, and routes from the command directory, then remove the initialization line you added to the Shell profile. Delete `PINSET_HOME` only when you also intend to remove every managed runtime, cache entry, global selection, and local trust record. Project `pinset.toml`, `pinset.lock`, `pinset.env/*.age`, and `.venv` files are never removed automatically.
 
-## Roadmap
+## Current release and roadmap
 
-Future 2.x work may evaluate KMS/OIDC, broader platform artifacts, and stronger provenance while preserving Pinset's local-first, fail-closed boundary. The roadmap does not promise specific versions or dates.
+### v2.1: batch selection and installation
+
+Pinset 2.1 lets `global` and `use` accept a variable-length `SELECTION...` list. A batch may contain any non-duplicate set of Pinset's built-in Providers whose declared dependencies are present in the resulting scope: Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter. Dart continues to come from the selected Flutter SDK. The examples below are illustrative, not a fixed tool set:
+
+```sh
+pinset global node@lts python@latest rust@stable
+pinset use java@lts dotnet@lts flutter@latest
+pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
+```
+
+- Public syntax is `pinset global [SELECTION...] [--no-install]` and `pinset use <SELECTION...> [--no-install] [--global]`. `global` keeps its no-argument inspection mode; `use` requires at least one selection. There is no fixed batch size.
+- `--no-install` applies to the complete batch. Existing selections not named by the command remain unchanged.
+- Every argument is parsed, duplicate Providers are rejected, and every selector is resolved before Pinset writes state. A parse, metadata, policy, or resolution failure leaves configuration, lockfiles, and installations unchanged.
+- All resolved selections are committed to configuration and the lockfile in one atomic state update. Project policy is validated against the complete resulting lock before the write.
+- After the state commit, Pinset performs one locked installation pass in Provider dependency order. Downloads are not run concurrently in v2.1, so output, shared dependencies, cache ownership, and failure recovery stay deterministic.
+- If installation fails after the state commit, successfully installed runtimes remain valid and the complete requested state remains locked. The error directs the user to retry with `pinset install --locked` or `pinset install --global --locked`; Pinset does not pretend that already completed filesystem installations can be rolled back atomically.
+- Help, completions, English/Chinese command references, and tests cover single-selection compatibility and multi-selection behavior. `install <tool@exact-version>` remains a single explicit-selection command; lock-based `install --locked` installs the complete scope.
+
+Later 2.x work may evaluate KMS/OIDC, broader platform artifacts, and stronger provenance while preserving Pinset's local-first, fail-closed boundary. The roadmap does not promise specific versions or dates.
 
 ## Contributing and license
 

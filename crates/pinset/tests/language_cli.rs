@@ -51,12 +51,9 @@ fn saves_chinese_and_uses_it_for_following_commands() {
     let help = pinset(&first_project, &home, &["--lang", "zh-CN", "use", "--help"]);
     assert_success_contains(
         &help,
-        "选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本",
+        "批量选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本",
     );
-    assert_success_contains(
-        &help,
-        "node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@21|rust@1.97|dotnet@10",
-    );
+    assert_success_contains(&help, "<工具>@<选择器> [<工具>@<选择器>...]");
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("Usage:"),
         "help should be localized: {}",
@@ -68,7 +65,7 @@ fn saves_chinese_and_uses_it_for_following_commands() {
         &home,
         &["--lang", "zh-CN", "global", "--help"],
     );
-    assert_success_contains(&global_help, "查看或设置项目之外使用的全局默认运行时");
+    assert_success_contains(&global_help, "查看或批量设置项目之外使用的全局默认运行时");
     assert_success_contains(&global_help, "pinset global");
 
     let activate_help = pinset(

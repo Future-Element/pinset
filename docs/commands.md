@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v2.0 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v2.1 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -91,25 +91,25 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Show global selections or set one global default. |
-| Syntax and arguments | `pinset global [<tool>@<selector>] [--no-install]`. `--no-install` requires a selection. |
-| Modifies state | Without a selection: **No**. With a selection: **Yes**, writes global config and lock; installs unless `--no-install` is used. |
-| Example | `pinset global node@lts` |
+| Purpose | Show global selections or batch-set any combination of global runtime defaults. |
+| Syntax and arguments | `pinset global [<tool>@<selector>...] [--no-install]`. With no selections it remains read-only; `--no-install` requires at least one selection. A Provider may appear only once per batch. |
+| Modifies state | Without selections: **No**. With selections: **Yes.** Pinset resolves the complete batch before one config/lock update, preserves unmentioned selections, then performs one locked installation pass unless `--no-install` is used. |
+| Example | `pinset global node@lts python@latest rust@stable` |
 | JSON | No. |
 | Exit | `0` success; `2` on Pinset failure. |
-| Key errors | Unsupported Provider, invalid selector, unavailable metadata, untrusted manifest, download/integrity failure, or unsupported target. |
+| Key errors | Duplicate/unsupported Provider, invalid selector, unavailable metadata, untrusted manifest, dependency or policy failure, download/integrity failure, or unsupported target. A pre-commit failure changes no selection; an installation failure retains the complete new lock and reports the global locked-install retry command. |
 
 ### `use`
 
 | Field | Description |
 | --- | --- |
-| Purpose | Resolve and lock one runtime for the nearest project, or for global scope. |
-| Syntax and arguments | `pinset use <tool>@<selector> [--no-install] [--global]`. |
-| Modifies state | **Yes.** Writes the selected scope's config and lock; installs unless `--no-install` is used. |
-| Example | `pinset use pnpm@10` |
+| Purpose | Resolve and lock one or more runtimes for the nearest project, or for global scope. |
+| Syntax and arguments | `pinset use <tool>@<selector>... [--no-install] [--global]`. At least one selection is required and a Provider may appear only once. |
+| Modifies state | **Yes.** Resolves every selection before one scope config/lock update, preserves unmentioned selections, then performs one dependency-ordered locked installation pass unless `--no-install` is used. |
+| Example | `pinset use java@lts dotnet@lts flutter@latest` |
 | JSON | No. |
 | Exit | `0` success; `2` on Pinset failure. |
-| Key errors | Missing project config, invalid selector, metadata/signature failure, unsupported platform, or installation failure. |
+| Key errors | Missing project config, duplicate Provider, invalid selector, metadata/signature, dependency or project-policy failure, unsupported platform, or installation failure. A pre-commit failure changes no selection; an installation failure retains the complete new lock and reports the locked-install retry command. |
 
 ### `unset`
 
@@ -889,9 +889,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.0.0
+      - uses: Future-Element/pinset@v2.1.0
         with:
-          version: 2.0.0
+          version: 2.1.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
