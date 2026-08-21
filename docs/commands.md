@@ -618,17 +618,294 @@ The v1.8 Registry is a read-only preview. A verified manifest describes commands
 | Exit | `0` only after cryptographic, schema, capability, and dependency validation; `2` otherwise. |
 | Key errors | Symlink/non-file input, input over 256 KiB, unsigned or multiply-signed data, signer mismatch, tampering, unknown field/capability, missing dependency, or cycle. |
 
-## Stable protocol boundary
+## Encrypted project environment commands
 
-## Pinset 2.0 project environment and maintenance commands
+Pinset manages project-scoped string environment variables in independent [age](https://age-encryption.org/) ciphertext profiles. Public recipients and ciphertext files belong in the repository; private identities and recovery passphrases do not. Pinset does not automatically read `.env`, write temporary plaintext files, interpolate values, or provide a general-purpose Secrets Vault.
+
+The normal first-computer workflow is:
+
+```sh
+# Existing schema 1–3 projects only; a new `pinset init` project is already schema 4.
+pinset migrate
+
+# Creates pinset.env/development.age, a device identity, and an encrypted recovery identity.
+pinset env init --profile development --auto \
+  --recovery ~/pinset-development-recovery.age
+pinset env set DATABASE_URL --profile development
+pinset env list --profile development
+pinset trust add
+
+# The direct shim selects the runtime and injects the trusted auto-profile.
+node app.js
+```
+
+Commit `pinset.toml` and `pinset.env/*.age`. Keep recovery and identity files outside the repository. Back up the recovery file and its passphrase separately; losing every matching identity makes the ciphertext unrecoverable.
+
+Profile names are 1–64 ASCII letters, digits, dots, underscores, or hyphens. A configured ciphertext path must remain inside the canonical project boundary and resolve to a regular non-symlink file. Decrypted profile data is limited to 1 MiB, and Pinset also refuses to launch when the inherited plus injected environment would exceed the platform environment-block limit.
+
+### Profile selection and injection
+
+Commands with an optional `--profile` select a profile in this order: explicit `--profile`, `PINSET_ENV_PROFILE`, then `[environment].auto-profile`. If none is available, Pinset asks for `--profile`. Commands whose syntax requires `--profile` do not use this fallback.
+
+Direct Provider commands such as `node`, `python`, `cargo`, and `flutter` inject only when the project is trusted and either `PINSET_ENV_PROFILE` or `auto-profile` selects a profile. `pinset exec --profile <name> -- <command>` makes the selection explicit. `PINSET_ENV_DISABLE=1` and `pinset exec --no-env -- <command>` disable injection for one launch.
+
+The `[environment].collision` policy is case-insensitive and defaults to `error`:
+
+- `error`: stop before launch when an encrypted name already exists in the process or runtime environment.
+- `process-wins`: keep the existing value and discard the encrypted value for that name.
+- `encrypted-wins`: replace the existing value with the encrypted value.
+
+`PINSET_IDENTITY`, `PINSET_IDENTITY_FILE`, `PINSET_ENV_PROFILE`, and `PINSET_ENV_DISABLE` are removed before the business process starts. This prevents accidental forwarding, but it is not process isolation: a process that receives a secret may pass it to other programs.
+
+### `env init`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Create one empty encrypted profile, a device age X25519 identity, and normally a separate recovery identity. |
+| Syntax and arguments | `pinset env init --profile <name> [--auto] (--recovery <path> | --no-recovery) [--identity-file <path>] [--cwd <path>]`. `--identity-file` stores the device identity in a passphrase-protected file instead of the system keyring. |
+| Modifies state | **Yes.** Creates `pinset.env/<profile>.age`, updates schema 4 `pinset.toml`, stores the device identity, and may create a recovery file. `--auto` sets this profile as `auto-profile`. |
+| Example | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
+| JSON | No. |
+| Key errors | Project is not schema 4, profile/file already exists, invalid profile name, unavailable keyring, unsafe path, existing recovery output, or encryption/write failure. A final configuration-write failure removes the new ciphertext; an identity or recovery file created earlier in the operation may remain and should be reviewed. |
+
+Use `--no-recovery` only when another tested identity-backup procedure exists. On Linux/SSH systems without a usable keyring, use `--identity-file <path>` and set `PINSET_IDENTITY_FILE` to that protected file for later interactive commands.
+
+### `env set`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Add or replace one encrypted variable in a profile. |
+| Syntax and arguments | `pinset env set <name> [--profile <name>] [--stdin] [--cwd <path>]`. Without `--stdin`, Pinset reads the value with hidden terminal input; the value is never a positional argument. |
+| Modifies state | **Yes.** Decrypts, modifies, re-encrypts with fresh age file-key material, and atomically replaces the selected ciphertext under a file lock. |
+| Example | `pinset env set DATABASE_URL --profile development` |
+| JSON | No. |
+| Key errors | No selected/matching identity, invalid variable name, process input failure, malformed/oversized profile, unsafe profile path, or encryption/write failure. |
+
+Portable names match `[A-Za-z_][A-Za-z0-9_]*`. Names are unique ignoring ASCII case; `PATH` and every `PINSET_*` name are reserved. Values may be empty or multiline but may not contain NUL. `--stdin` reads the entire standard input and removes one trailing line ending; ensure the producer does not expose the value in its own arguments, logs, or files.
+
+### `env unset`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Remove one variable, matching its name case-insensitively. |
+| Syntax and arguments | `pinset env unset <name> [--profile <name>] [--cwd <path>]`. |
+| Modifies state | **Yes.** Atomically re-encrypts the profile even when reporting that the name was not set. |
+| Example | `pinset env unset LEGACY_TOKEN --profile development` |
+| JSON | No. |
+| Key errors | Invalid name, missing profile or identity, unsafe/damaged ciphertext, or write failure. |
+
+### `env list`
+
+| Field | Description |
+| --- | --- |
+| Purpose | List variable names in one profile without writing values to output. |
+| Syntax and arguments | `pinset env list [--profile <name>] [--json] [--cwd <path>]`. |
+| Modifies state | No. The profile is decrypted in memory only. |
+| Example | `pinset env list --profile ci --json` |
+| JSON | **Yes**; command name `env.list`, with `profile` and `names`. Values are never included. |
+| Key errors | No selected profile, missing matching identity, unsafe/damaged ciphertext, or unsupported profile schema. |
+
+### `env reveal`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Print exactly one decrypted value for deliberate human inspection. |
+| Syntax and arguments | `pinset env reveal <name> --profile <name> [--cwd <path>]`. Both standard input and output must be interactive terminals. |
+| Modifies state | No. |
+| Example | `pinset env reveal DATABASE_URL --profile development` |
+| JSON | No. |
+| Key errors | Redirected/non-interactive terminal, unset name, no matching identity, or invalid ciphertext. |
+
+The value is written to the terminal and may remain visible in scrollback. Prefer `env list` for routine inspection.
+
+### `env import`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Import an explicitly named plaintext dotenv file into one encrypted profile. |
+| Syntax and arguments | `pinset env import --from <path> --profile <name> [--cwd <path>]`. |
+| Modifies state | **Yes.** Matching names replace profile values; other existing names remain. The source file is not modified or deleted. |
+| Example | `pinset env import --from .env --profile development` |
+| JSON | No. |
+| Key errors | Invalid UTF-8/assignment/name, case-insensitive duplicate, `export`, interpolation, command substitution, shell expression, unsupported escape, unmatched quote, missing identity, or encryption failure. |
+
+The portable subset accepts blank lines, `#` comments, empty values, unquoted values, single or double quotes, quoted multiline values, and double-quoted `\n`, `\r`, `\t`, `\\`, and `\"` escapes. It never executes input. After verifying the import, remove or protect the plaintext source yourself.
+
+### `env export`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Deliberately export one profile as a plaintext dotenv file for a system that cannot consume Pinset injection. |
+| Syntax and arguments | `pinset env export --profile <name> --format dotenv --output <path> --allow-plaintext [--cwd <path>]`. `dotenv` is the only format. |
+| Modifies state | **Yes.** Creates a new plaintext file; it never overwrites an existing path. |
+| Example | `pinset env export --profile development --format dotenv --output ./local.env --allow-plaintext` |
+| JSON | No. |
+| Key errors | Missing consent flag, existing/unsafe output, permission-hardening failure, missing identity, or invalid ciphertext. |
+
+The output is restricted to the current user (`0600` on Unix and a user-only ACL on Windows). It still contains plaintext; do not commit it, and delete it as soon as its explicit use is complete.
+
+### `env recipient add`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Allow another age X25519 identity to decrypt one profile. |
+| Syntax and arguments | `pinset env recipient add <age1...> --profile <name> [--cwd <path>]`. |
+| Modifies state | **Yes.** Decrypts with a current identity, re-encrypts atomically to the new deduplicated recipient set, then updates `pinset.toml`. |
+| Example | `pinset env recipient add age1example... --profile production` |
+| JSON | No. |
+| Key errors | Invalid recipient, no current matching identity, undeclared profile, unsafe/damaged ciphertext, or transactional write failure. |
+
+### `env recipient remove`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Remove one recipient from a profile after proving current decryption access. |
+| Syntax and arguments | `pinset env recipient remove <age1...> --profile <name> [--cwd <path>]`. |
+| Modifies state | **Yes.** Re-encrypts and updates configuration transactionally; the original ciphertext is restored if the configuration update fails. |
+| Example | `pinset env recipient remove age1example... --profile production` |
+| JSON | No. |
+| Key errors | Invalid recipient, attempt to remove the final recipient, no matching identity, or re-encryption/configuration failure. |
+
+Adding or removing a recipient changes the trusted environment policy. Commit both `pinset.toml` and the new ciphertext, then run `pinset trust add` again on each machine and in CI. Removing a recipient prevents future decryption with that identity but cannot revoke plaintext already obtained earlier.
+
+### `env recipient list`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Print the public recipients configured for one profile. |
+| Syntax and arguments | `pinset env recipient list --profile <name> [--cwd <path>]`. |
+| Modifies state | No. It reads committed configuration and does not decrypt the profile. |
+| Example | `pinset env recipient list --profile production` |
+| JSON | No. |
+| Key errors | Missing project/configuration or undeclared profile. |
+
+### `env identity create`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Generate an additional age X25519 identity and print its ID plus public recipient. |
+| Syntax and arguments | `pinset env identity create [--output <path>]`. Without `--output`, the private identity is stored in the system keyring; with it, a new passphrase-protected identity file is created. |
+| Modifies state | **Yes.** Writes the keyring and local identity metadata, or creates the protected output file. |
+| Example | `pinset env identity create` |
+| JSON | No. The printed `age1...` recipient is public; the private identity is never printed. |
+| Key errors | Keyring unavailable, output exists, passphrase confirmation mismatch, permission failure, or cryptographic failure. |
+
+Use the printed recipient with `env recipient add`. Creating an identity alone does not grant it access to an existing profile.
+
+### `env identity import`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Restore a passphrase-protected recovery/backup identity into this machine's system keyring. |
+| Syntax and arguments | `pinset env identity import --from <path>`. The passphrase is read with hidden input. |
+| Modifies state | **Yes.** Adds the decrypted identity to the keyring and local identity metadata; the source backup remains unchanged. |
+| Example | `pinset env identity import --from ~/pinset-development-recovery.age` |
+| JSON | No. |
+| Key errors | Wrong passphrase, damaged/non-identity input, unavailable keyring, or metadata write failure. |
+
+After cloning on a new computer, run `pinset install --locked`, import a matching recovery identity, run `pinset trust add`, and then use direct shims normally.
+
+### `env identity list`
+
+| Field | Description |
+| --- | --- |
+| Purpose | List registered identity IDs, public recipients, and storage backends without private keys. |
+| Syntax and arguments | `pinset env identity list [--json]`. |
+| Modifies state | No. |
+| Example | `pinset env identity list --json` |
+| JSON | **Yes**; command name `env.identity.list`. |
+| Key errors | Invalid or unreadable local identity metadata. |
+
+### `env identity backup`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Back up one keyring identity to a new passphrase-protected age file. |
+| Syntax and arguments | `pinset env identity backup <id> --output <path>`. A new backup passphrase is requested and confirmed. |
+| Modifies state | **Yes.** Creates the protected output without overwriting an existing file. |
+| Example | `pinset env identity backup 4c5652e4-... --output ~/pinset-device-backup.age` |
+| JSON | No. |
+| Key errors | Unknown ID, keyring access failure, output exists, passphrase mismatch, or encryption/write failure. |
+
+### `env identity export`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Export a keyring identity as plaintext, primarily for an explicitly protected CI secret. |
+| Syntax and arguments | `pinset env identity export <id> --output <path> --allow-plaintext`. |
+| Modifies state | **Yes.** Creates a new current-user-only plaintext file and never overwrites. |
+| Example | `pinset env identity export 4c5652e4-... --output ./ci-identity.txt --allow-plaintext` |
+| JSON | No. |
+| Key errors | Missing consent flag, unknown ID, keyring failure, existing output, or permission-hardening failure. |
+
+Copy the file contents into the CI secret, then securely remove the file. Never commit it or pass the private identity as a command-line argument.
+
+### `trust add`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Approve automatic environment injection for the current canonical project and its exact environment policy. |
+| Syntax and arguments | `pinset trust add [--project-id <id>] [--cwd <path>]`. The optional ID makes automation fail if the checked-out project has a different `project-id`. |
+| Modifies state | **Yes.** Writes a local trust record under `PINSET_HOME/state/trust`; nothing is added to the repository. |
+| Example | `pinset trust add --project-id 4c5652e4-0000-4000-8000-000000000000` |
+| JSON | No. |
+| Key errors | No environment configuration/project ID, expected ID mismatch, unsafe project root, or trust-store write failure. |
+
+Trust binds the canonical root, `project-id`, `auto-profile`, collision policy, every profile path, and every recipient. Changing any of these requires renewed trust; changing only encrypted variable values does not. Trust does not make project code safe.
+
+### `trust status`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Check whether the current project and environment policy match a local trust record. |
+| Syntax and arguments | `pinset trust status [--cwd <path>] [--json]`. |
+| Modifies state | No. |
+| Example | `pinset trust status --json` |
+| JSON | **Yes**; command name `trust.status`, with `trusted`, reason `trusted`/`trust_missing`/`trust_changed`, and canonical `root`. |
+| Exit | `0` when the status check completes, including untrusted states; use the JSON `trusted` field for automation. |
+| Key errors | Missing/invalid project environment configuration or unreadable trust storage. |
+
+### `trust revoke`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Remove this machine's automatic-injection approval for one project. |
+| Syntax and arguments | `pinset trust revoke [--cwd <path>]`. |
+| Modifies state | **Yes.** Deletes only the local trust record; ciphertext, configuration, identities, and already disclosed values remain unchanged. |
+| Example | `pinset trust revoke` |
+| JSON | No. |
+| Key errors | Project discovery or trust-store access failure. Revoking an already-untrusted project is successful and reports that no record existed. |
+
+### GitHub Actions identity flow
+
+Create a dedicated identity, add its public recipient only to the `ci` profile, and store the private identity text as the GitHub Actions secret `PINSET_IDENTITY`. The secret may contain multiple identities separated by newlines. Select the profile explicitly and pin the expected public project ID:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PINSET_IDENTITY: ${{ secrets.PINSET_IDENTITY }}
+      PINSET_ENV_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Future-Element/pinset@v2.0.0
+        with:
+          version: 2.0.0
+          install: "true"
+          trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
+      - run: pinset exec -- node app.js
+```
+
+The Action input is not a secret and does not persist the identity. Pinset removes `PINSET_IDENTITY` before launching the child. Do not inject server secrets into Flutter, Web, mobile, or other builds that compile values into client artifacts.
+
+## Pinset 2.0 maintenance commands
 
 `pinset paths [tool] [--json]` reports the CLI, adjacent shim, Pinset home, shim directory, installation root, and an optional tool's installed versions. `pinset list [tool] --long` adds receipt schema, installation root, file count, total size, critical entries, and integrity status. `pinset doctor --deep` rescans these statistics; it does not claim per-file cryptographic verification. `pinset install <tool@exact-version> --repair` repairs only an installation whose ownership receipt matches the requested tool, version, platform, and target directory. `pinset shim install --all` registers every built-in Provider command without downloading a runtime.
 
-`pinset env init --profile <name> [--auto] --recovery <path>` creates an independent age profile and device identity. `--no-recovery` must be explicit; schema 1–3 projects must first run `pinset migrate`. Values are changed with `env set`/`unset`, names are inspected with `env list [--json]`, and one value can be shown only through interactive `env reveal`. Import accepts a non-executable dotenv subset. Plaintext export requires a new output file plus `--allow-plaintext`. Recipient changes decrypt and atomically re-encrypt the selected profile. `env identity create|import|list|backup|export` manages system-keyring identities and explicit password-protected recovery files.
-
-`pinset trust add [--project-id <id>]`, `trust status [--json]`, and `trust revoke` manage local automatic-injection trust. Trust binds the canonical project root, project ID, complete environment configuration, and recipients. Ciphertext value-only changes do not invalidate trust. `PINSET_ENV_PROFILE` selects a profile and `PINSET_ENV_DISABLE=1` disables one direct shim invocation; `pinset exec --profile <name>` and `pinset exec --no-env` provide the explicit equivalents.
-
 `pinset self outdated [--channel stable|prerelease] [--json]` performs an explicit check against the fixed official repository. `pinset self update [--version <version>]` verifies platform, semantic version, archive structure, and `SHA256SUMS`, validates the new CLI, and replaces the CLI and shim as a pair with backup and rollback. Ordinary commands and `doctor` never check for updates in the background.
+
+## Stable protocol boundary
 
 Pinset v2.0 writes schema 4 project configuration and schema 3 global configuration/runtime locks. Schema 1–3 projects remain readable and are migrated explicitly. Installation receipts use independent schema 3 while schema 1/2 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
 
