@@ -32,7 +32,7 @@ mkdir -p "$RELEASE_DIR" "$PACKAGE_DIR"
 
 cat > "$PACKAGE_DIR/pinset" <<'EOF'
 #!/bin/sh
-printf 'pinset 9.8.7-test\n'
+printf 'pinset 9.8.7-rc.1\n'
 EOF
 cat > "$PACKAGE_DIR/pinset-shim" <<'EOF'
 #!/bin/sh
@@ -51,14 +51,14 @@ printf '%s  %s\n' "$HASH" "$ARCHIVE" > "$RELEASE_DIR/SHA256SUMS"
 INSTALL_OUTPUT=$(
     PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$INSTALL_DIR"
 )
 printf '%s\n' "$INSTALL_OUTPUT" | grep -F 'Add Pinset to the current shell:'
 printf '%s\n' "$INSTALL_OUTPUT" | grep -F "export PATH=\"$INSTALL_DIR:\$PATH\""
 
 [ -x "$INSTALL_DIR/pinset" ]
 [ -x "$INSTALL_DIR/pinset-shim" ]
-[ "$("$INSTALL_DIR/pinset" --version)" = "pinset 9.8.7-test" ]
+[ "$("$INSTALL_DIR/pinset" --version)" = "pinset 9.8.7-rc.1" ]
 INSTALLED_ENTRIES=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | awk '{ print $1 }')
 [ "$INSTALLED_ENTRIES" = "2" ]
 for runtime_command in node npm npx corepack pnpm bun bunx go gofmt flutter dart \
@@ -71,7 +71,7 @@ FRONT_OUTPUT=$(
     PATH="$INSTALL_DIR:/usr/bin:/bin" \
     PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$INSTALL_DIR"
 )
 if printf '%s\n' "$FRONT_OUTPUT" | grep -F 'for the current shell:' >/dev/null; then
     printf 'installer unexpectedly requested PATH activation when already first\n' >&2
@@ -82,7 +82,7 @@ SHADOWED_OUTPUT=$(
     PATH="/usr/bin:$INSTALL_DIR:/bin" \
     PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
-    sh "$ROOT/install.sh" --install-dir "$INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$INSTALL_DIR"
 )
 printf '%s\n' "$SHADOWED_OUTPUT" | grep -F 'Pinset is on PATH but may be shadowed by earlier system commands.'
 printf '%s\n' "$SHADOWED_OUTPUT" | grep -F 'Move Pinset to the front for the current shell:'
@@ -95,7 +95,7 @@ printf '%064d  %s\n' 0 "$ARCHIVE" > "$BAD_RELEASE_DIR/SHA256SUMS"
 
 if PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$BAD_RELEASE_DIR" \
-    sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$BAD_INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$BAD_INSTALL_DIR"
 then
     printf 'checksum mismatch unexpectedly succeeded\n' >&2
     exit 1
@@ -117,7 +117,7 @@ printf '%s  %s\n' "$EXTRA_HASH" "$ARCHIVE" > "$EXTRA_RELEASE_DIR/SHA256SUMS"
 
 if PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$EXTRA_RELEASE_DIR" \
-    sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$EXTRA_INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$EXTRA_INSTALL_DIR"
 then
     printf 'archive with an extra entry unexpectedly succeeded\n' >&2
     exit 1
@@ -140,7 +140,7 @@ PINSET_INSTALL_TEST_MODE=1 \
 PINSET_TEST_UNAME_S=Linux \
 PINSET_TEST_UNAME_M=aarch64 \
 PINSET_TEST_RELEASE_BASE_URL="file://$ARM_RELEASE_DIR" \
-    sh "$ROOT/install.sh" --version 9.8.7-test --install-dir "$ARM_INSTALL_DIR"
+    sh "$ROOT/install.sh" --version 9.8.7-rc.1 --install-dir "$ARM_INSTALL_DIR"
 [ -x "$ARM_INSTALL_DIR/pinset" ]
 [ -x "$ARM_INSTALL_DIR/pinset-shim" ]
 

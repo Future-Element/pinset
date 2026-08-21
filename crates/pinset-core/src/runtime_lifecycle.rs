@@ -225,13 +225,13 @@ pub fn find_tool_version_references(
         }
     }
     let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)? {
-        if global_config_selects_version(pinset_home, &path, &config, tool, version)? {
-            references.push(ToolVersionReference {
-                scope: "global",
-                path,
-            });
-        }
+    if let Some(config) = load_optional_global_config(&path)?
+        && global_config_selects_version(pinset_home, &path, &config, tool, version)?
+    {
+        references.push(ToolVersionReference {
+            scope: "global",
+            path,
+        });
     }
     Ok(references)
 }
@@ -261,13 +261,13 @@ pub fn find_tool_version_references_in_projects(
         }
     }
     let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)? {
-        if global_config_selects_version(pinset_home, &path, &config, tool, version)? {
-            references.push(ToolVersionReference {
-                scope: "global",
-                path,
-            });
-        }
+    if let Some(config) = load_optional_global_config(&path)?
+        && global_config_selects_version(pinset_home, &path, &config, tool, version)?
+    {
+        references.push(ToolVersionReference {
+            scope: "global",
+            path,
+        });
     }
     Ok(references)
 }
@@ -460,7 +460,7 @@ fn has_matching_complete_receipt(
     };
     // Legacy schema 1 receipts remain readable, but every identity field must still agree with
     // the directory being inspected before the directory is considered Pinset-owned.
-    matches!(receipt.schema, 1 | 2)
+    matches!(receipt.schema, 1..=3)
         && receipt.complete
         && receipt.tool == tool
         && receipt.version == version

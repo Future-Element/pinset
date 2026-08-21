@@ -17,10 +17,10 @@ fn init_creates_a_minimal_config_without_runtime_side_effects() {
         String::from_utf8_lossy(&output.stderr)
     );
     let config_path = project.join("pinset.toml");
-    assert_eq!(
-        fs::read_to_string(&config_path).expect("created config"),
-        "schema = 3\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\n"
-    );
+    let config = fs::read_to_string(&config_path).expect("created config");
+    assert!(config.starts_with("schema = 4\nproject-id = \""));
+    assert!(config.contains("\n[policy]\ninherit-global = false\n"));
+    assert!(config.ends_with("\n[tools]\n"));
     assert!(String::from_utf8_lossy(&output.stdout).contains(&config_path.display().to_string()));
     assert!(!isolated_home.exists());
     assert_eq!(

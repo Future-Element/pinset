@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-ARG PINSET_VERSION=1.9.0
+ARG PINSET_VERSION=2.0.0
 
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \

@@ -19,8 +19,11 @@ pub enum Error {
         source: toml::de::Error,
     },
 
-    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1, 2 and 3")]
+    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1, 2, 3 and 4")]
     UnsupportedSchema { actual: u32 },
+
+    #[error("invalid pinset.toml configuration: {reason}")]
+    InvalidProjectConfig { reason: String },
 
     #[error("global config does not exist: {path}")]
     GlobalConfigNotFound { path: PathBuf },

@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v1.9 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v2.0 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -53,7 +53,7 @@ The tables below repeat exceptional behavior where it matters. Otherwise the com
 | --- | --- |
 | Purpose | Create a minimal project configuration in the current directory. |
 | Syntax and arguments | `pinset init`; no command-specific options. |
-| Modifies state | **Yes.** Creates schema 3 `pinset.toml` with strict project policy; it does not select or install a runtime. |
+| Modifies state | **Yes.** Creates schema 4 `pinset.toml` with a unique `project-id` and strict project policy; it does not select or install a runtime. |
 | Example | `mkdir app && cd app && pinset init` |
 | JSON | No. |
 | Exit | `0` success; `2` if the file cannot be safely created. |
@@ -77,7 +77,7 @@ Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, 
 
 | Field | Description |
 | --- | --- |
-| Purpose | Re-scan and import every safe traditional selection into schema 3 `pinset.toml` and `pinset.lock`. |
+| Purpose | Re-scan and import every safe traditional selection into schema 4 `pinset.toml` and schema 3 `pinset.lock`. |
 | Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools whose existing requested selector differs. |
 | Modifies state | **Yes.** Resolves metadata, atomically replaces the lock file and then the config file, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
 | Example | `pinset import --no-install` |
@@ -201,7 +201,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite existing schema 1/2 project or global config and lock state as schema 3 without re-resolving versions. |
+| Purpose | Validate and rewrite schema 1–3 project configuration as schema 4 while retaining schema 3 runtime locks, without re-resolving versions. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -620,6 +620,16 @@ The v1.8 Registry is a read-only preview. A verified manifest describes commands
 
 ## Stable protocol boundary
 
-Pinset v1.8 writes schema 3 for project/global configuration and lockfiles. Schema 1/2 remains readable. Schema 3 project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected. Installation receipts retain their independent schema.
+## Pinset 2.0 project environment and maintenance commands
 
-The JSON schema 1 envelope remains unchanged in v1.8. `provider.list` and `provider.verify` add command-specific data without changing that envelope. `lock.audit` exposes provenance policy failures through stable `verification_below_policy`, `release_age_unavailable`, and `release_too_new` reason codes. Automation should branch on reason codes and report state, not human-facing messages.
+`pinset paths [tool] [--json]` reports the CLI, adjacent shim, Pinset home, shim directory, installation root, and an optional tool's installed versions. `pinset list [tool] --long` adds receipt schema, installation root, file count, total size, critical entries, and integrity status. `pinset doctor --deep` rescans these statistics; it does not claim per-file cryptographic verification. `pinset install <tool@exact-version> --repair` repairs only an installation whose ownership receipt matches the requested tool, version, platform, and target directory. `pinset shim install --all` registers every built-in Provider command without downloading a runtime.
+
+`pinset env init --profile <name> [--auto] --recovery <path>` creates an independent age profile and device identity. `--no-recovery` must be explicit; schema 1–3 projects must first run `pinset migrate`. Values are changed with `env set`/`unset`, names are inspected with `env list [--json]`, and one value can be shown only through interactive `env reveal`. Import accepts a non-executable dotenv subset. Plaintext export requires a new output file plus `--allow-plaintext`. Recipient changes decrypt and atomically re-encrypt the selected profile. `env identity create|import|list|backup|export` manages system-keyring identities and explicit password-protected recovery files.
+
+`pinset trust add [--project-id <id>]`, `trust status [--json]`, and `trust revoke` manage local automatic-injection trust. Trust binds the canonical project root, project ID, complete environment configuration, and recipients. Ciphertext value-only changes do not invalidate trust. `PINSET_ENV_PROFILE` selects a profile and `PINSET_ENV_DISABLE=1` disables one direct shim invocation; `pinset exec --profile <name>` and `pinset exec --no-env` provide the explicit equivalents.
+
+`pinset self outdated [--channel stable|prerelease] [--json]` performs an explicit check against the fixed official repository. `pinset self update [--version <version>]` verifies platform, semantic version, archive structure, and `SHA256SUMS`, validates the new CLI, and replaces the CLI and shim as a pair with backup and rollback. Ordinary commands and `doctor` never check for updates in the background.
+
+Pinset v2.0 writes schema 4 project configuration and schema 3 global configuration/runtime locks. Schema 1–3 projects remain readable and are migrated explicitly. Installation receipts use independent schema 3 while schema 1/2 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
+
+The JSON schema 1 envelope remains unchanged in v2.0. New JSON commands include `paths`, `env.list`, `env.identity.list`, `trust.status`, and `self.outdated`. Automation should branch on stable command and reason/code fields, not human-facing messages. JSON output and errors never include environment values, identities, or passphrases.

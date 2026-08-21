@@ -6,102 +6,138 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Future-Element/pinset?include_prereleases)](https://github.com/Future-Element/pinset/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Pinset is a predictable, project-aware runtime version manager for polyglot development.
+Pinset is a predictable, project-boundary-aware runtime version manager for polyglot projects.
 
-It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one configuration and lockfile model. Traditional version files are read only by the explicit `detect` and `import` migration commands, never as an implicit runtime fallback.
+It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, and `flutter` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
 
-## Highlights
+```text
+pinset.toml  ──selection intent, project policy, environment profiles
+     │
+     ├── pinset.lock ──exact versions, platform artifacts, integrity metadata
+     │
+     └── Pinset shim ──direct command routing and policy-controlled environment injection
+```
 
-- One CLI for global defaults and reproducible project selections.
-- Requested selectors stay in `pinset.toml`; exact versions and per-platform artifacts are recorded in `pinset.lock`.
-- Strict project routing by default, with explicit global inheritance and system fallback policies.
-- Explainable resolution through `current --explain`, `which --explain`, and `doctor`.
-- Direct command routing through one small, runtime-independent shim.
-- Common provenance classification with Node.js OpenPGP and npm registry signatures verified before checksums or integrity values are trusted.
-- Provider integrity checks, safe extraction, atomic installs, ownership-aware uninstall, and a content-addressed download cache.
-- First-class English and Simplified Chinese output, JSON schema 1 for automation, and shell completion.
-- Project-owned Python `.venv` support without requiring shell activation.
-- Read-only detection and explicit import of repository-local traditional version files.
-- Read-only, offline lock auditing with stable reason codes and repair plans that never run automatically.
-- Verified one-shot execution plus maintained CI, editor, container, and package-manager integrations.
+## Why Pinset
 
-## Install and upgrade
+- **One project model**: use `pinset.toml` and `pinset.lock` across languages instead of stacking a separate version manager for every ecosystem.
+- **Reproducible and explainable**: configuration retains selectors such as `lts`, `stable`, and version prefixes while the lock records exact versions. `current --explain`, `which --explain`, and `doctor` show how a result was chosen.
+- **Direct project commands**: after one Shell setup, `node`, `pnpm`, `python`, `cargo`, and other commands route automatically without requiring `pinset exec` every time.
+- **Strict project boundaries**: projects do not inherit global versions or silently fall back to system `PATH` unless policy explicitly permits it. Network installs and traditional version-file imports are also explicit.
+- **Safe installation**: Providers verify integrity, extract safely, install atomically, and create ownership receipts used by audit, repair, uninstall, and prune operations.
+- **Encrypted project environments**: every profile has its own age ciphertext and recipients. Private identities stay in the system keyring, a passphrase-protected recovery file, or a CI secret.
+- **Automation-friendly**: stable JSON schema 1, reason codes, exit codes, Shell completions, offline lock auditing, and a GitHub Composite Action.
+
+## Supported Providers
+
+| Provider | Main commands | Windows x64 | Linux x64 | Linux ARM64 | macOS ARM64 |
+| --- | --- | :---: | :---: | :---: | :---: |
+| Node.js | `node`, `npm`, `npx`, `corepack` | ✓ | ✓ | ✓ | ✓ |
+| pnpm | `pnpm` | ✓ | ✓ | ✓ | ✓ |
+| Bun | `bun`, `bunx` | ✓ | ✓ | ✓ | ✓ |
+| Go | `go`, `gofmt` | ✓ | ✓ | ✓ | ✓ |
+| Python | `python`, `python3`, `pip`, `pip3` | ✓ | ✓ | ✓ | ✓ |
+| Java (Temurin) | `java`, `javac`, `jar`, and JDK tools | ✓ | ✓ | ✓ | ✓ |
+| Rust stable | `rustc`, `cargo`, `rustdoc`, `rustfmt`, Clippy | ✓ | ✓ | ✓ | ✓ |
+| .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
+| Flutter / bundled Dart | `flutter`, `dart` | ✓ | ✓ | — | ✓ |
+
+Flutter does not publish an official Linux ARM64 SDK archive compatible with the current installation model, so Pinset returns an explicit unsupported-target error instead of downloading an x64 artifact. External components such as Android SDK, Visual Studio Build Tools, and Windows SDK are diagnosed by `doctor` but are not installed by Pinset.
+
+## How the installation layout works
+
+Files such as `node.cmd`, `cargo.cmd`, and `flutter.cmd` in the command directory are tiny routers, not complete SDK installations. Actual runtimes remain isolated by Provider, version, and platform under `PINSET_HOME`:
+
+```text
+command directory/
+├── pinset(.exe)           CLI
+├── pinset-shim(.exe)      lightweight command router
+├── node(.cmd)             routes to the selected Node.js runtime
+├── cargo(.cmd)            routes to the selected Rust runtime
+└── ...                    other built-in Provider commands
+
+PINSET_HOME/
+├── installs/
+│   ├── node/<version>/<platform>/...
+│   ├── rust/<version>/<platform>/...
+│   └── flutter/<version>/<platform>/...
+├── downloads/             content-addressed download cache
+└── state/                 global selections, trust records, and local state
+```
+
+Having every routed command in one PATH directory is therefore intentional. The directory provides stable command discovery while the SDK payloads remain separate. Inspect the actual layout at any time:
+
+```sh
+pinset paths
+pinset paths flutter
+pinset list --long
+pinset doctor --deep
+```
+
+## Install
 
 ### Linux and macOS
 
-The installer downloads the matching GitHub Release archive, verifies its entry in `SHA256SUMS`, and installs `pinset` and `pinset-shim` into `~/.local/bin` by default.
+The installer downloads the matching GitHub Release, verifies its `SHA256SUMS` entry, and installs into `~/.local/bin` by default:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh
-```
-
-Add the directory before system runtime directories in the current shell:
-
-```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Run the same installer again to upgrade. To install an exact release or another absolute directory:
+Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.9.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.0.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
-### Windows
-
-Download `pinset-windows-x86_64.zip` from [GitHub Releases](https://github.com/Future-Element/pinset/releases), extract `pinset.exe` and `pinset-shim.exe` into a permanent directory, and place that directory near the beginning of your user `PATH`.
+### Windows PowerShell
 
 ```powershell
-$pinsetBin = 'C:\Tools\pinset'
-$env:PATH = "$pinsetBin;$env:PATH"
-pinset --version
+Invoke-WebRequest https://raw.githubusercontent.com/Future-Element/pinset/main/install.ps1 -OutFile install.ps1
+.\install.ps1
+Remove-Item .\install.ps1
 ```
 
-Upgrade by replacing both binaries with the files from a newer Release archive. Windows and WSL installations are independent.
+Install an exact version:
 
-### Manual download
+```powershell
+.\install.ps1 -Version 2.0.0
+```
 
-All supported archives, `SHA256SUMS`, SBOMs, and build attestations are published on the [Releases page](https://github.com/Future-Element/pinset/releases). Verify the archive checksum before extracting it.
+Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
+
+Archives are also available from [GitHub Releases](https://github.com/Future-Element/pinset/releases), together with checksums, SBOMs, and build provenance.
 
 ## Shell setup
 
-Pinset does not edit shell profiles. Add the appropriate initialization yourself so its routing directory takes precedence.
-
-### Bash
+Pinset does not modify Shell profiles. Add the relevant command to your own profile so the Pinset routing directory precedes other runtime managers:
 
 ```sh
+# Bash
 eval "$(pinset activate bash)"
-```
 
-### Zsh
-
-```sh
+# Zsh
 eval "$(pinset activate zsh)"
 ```
 
-### Fish
-
 ```fish
+# Fish
 pinset activate fish | source
 ```
 
-### PowerShell
-
 ```powershell
+# PowerShell
 pinset activate powershell | Out-String | Invoke-Expression
 ```
 
-Add the matching line to your shell profile for future sessions. Run `pinset doctor` if another runtime manager or a system command appears earlier in `PATH`.
-
-## Shell completion
-
-Completion scripts are generated on demand:
+Generate completions when needed:
 
 ```sh
-pinset completions bash > ~/.local/share/bash-completion/completions/pinset
-pinset completions zsh > "${fpath[1]}/_pinset"
-pinset completions fish > ~/.config/fish/completions/pinset.fish
+pinset completions bash
+pinset completions zsh
+pinset completions fish
 ```
 
 ```powershell
@@ -110,141 +146,232 @@ pinset completions powershell | Out-String | Invoke-Expression
 
 ## Quick start
 
-Set global defaults used outside a Pinset project:
+### 1. Set global defaults
+
+Global selections apply outside Pinset projects, or when a project explicitly inherits them:
 
 ```sh
 pinset global node@lts
 pinset global pnpm@latest
-pinset global go@1.25
 pinset current node
 ```
 
-Pin a project independently:
+### 2. Create a project and lock its runtimes
 
 ```sh
 mkdir example && cd example
 pinset init
-pinset use node@22
-pinset use pnpm@10
+pinset use node@24
+pinset use pnpm@11
 pinset use python@3.14
 pinset install --locked
 pinset lock audit
-pinset exec -- node --version
 ```
 
-Run a verified tool once without changing project or global selection state:
+Commit the generated `pinset.toml` and `pinset.lock`. After cloning, another developer only needs:
 
 ```sh
-pinset x node@24 -- node --version
+pinset install --locked
+node --version
+pnpm --version
+python --version
 ```
 
-The resolved archive is still checksum/signature verified and may be cached or installed under `PINSET_HOME`; `pinset.toml`, `pinset.lock`, `global.toml`, and `global.lock` are not written. Provider dependencies remain explicit: `pinset x pnpm@11 -- pnpm --version` requires a valid project/global Node.js selection.
+`pinset.toml` stores selection intent and policy; `pinset.lock` stores exact versions and platform artifacts. Project configuration uses schema 4 while the runtime lock remains schema 3. Encrypted environments do not participate in runtime artifact resolution.
 
-Commit `pinset.toml` and `pinset.lock`. Selectors such as `latest`, `lts`, `stable`, or version prefixes remain visible in `pinset.toml`; their exact resolved versions are recorded in the lockfile. `pinset outdated` distinguishes a compatible lock refresh from a selector-changing upgrade, and `pinset update --dry-run` previews compatible lock changes.
+### 3. Run another version temporarily
 
-Schema 3 projects are strict by default: once `pinset.toml` exists, an undeclared tool does not inherit a global selection or use the system `PATH`. Opt in deliberately when needed:
+Without modifying project or global selections:
 
-```toml
-[policy]
-inherit-global = true
-system-fallback = false
-boundary = "git"
-# Optional, project-wide supply-chain policy:
-verification-strength = "checksum"
-minimum-release-age = "7d"
+```sh
+pinset x node@22 -- node --version
 ```
 
-The optional verification policy applies to every selected tool. Strength is ordered as `checksum < signed-checksum < provenance`; Pinset rejects a lock below the configured minimum and refuses to replace an existing lock with weaker evidence. Release age accepts positive `d`, `h`, `m`, or `s` durations and fails closed when an upstream does not publish a usable timestamp. Resolution stops at the nearest Git root by default; it crosses that boundary only when the parent configuration itself explicitly sets `boundary = "filesystem"`.
+### 4. Import traditional version files
 
-To migrate an existing repository, inspect traditional files locally first, then import and install their unambiguous selections:
+Pinset does not implicitly read `.nvmrc`, `.node-version`, `.tool-versions`, or similar files during normal resolution. Detect and import them explicitly during migration:
 
 ```sh
 pinset detect --json
 pinset import
 ```
 
-`detect` never uses the network or writes files. `import --no-install` writes the Pinset config and exact lock without downloading runtimes. Pinset scans from the working directory to the nearest Git repository root and does not modify or delete the source files.
+`detect` is read-only and offline. `import` does not delete or modify its source files.
 
-Audit the selected state before CI, packaging, or an offline handoff:
+## Project policy
+
+Projects are strict by default: undeclared tools do not inherit global selections or silently use system commands. Change that behavior explicitly in `pinset.toml` when required:
+
+```toml
+schema = 4
+project-id = "4c5652e4-0000-4000-8000-000000000000"
+
+[policy]
+inherit-global = false
+system-fallback = false
+boundary = "git"
+verification-strength = "checksum"
+minimum-release-age = "7d"
+
+[tools]
+node = "24"
+pnpm = "11"
+```
+
+Verification strength is ordered as `checksum < signed-checksum < provenance`. Pinset fails closed when upstream evidence is weaker than project policy or when required release-time metadata is unavailable.
+
+## Encrypted project environments
+
+Pinset 2.0 manages a deliberately limited layer of project-scoped string environment variables. It is not a general Secrets Vault. Every profile is a separate age ciphertext with its own recipients.
+
+### Initialize and run directly
 
 ```sh
+pinset migrate
+pinset env init --profile development --auto --recovery ~/pinset-development-recovery.age
+pinset env set DATABASE_URL --profile development
+pinset env list --profile development
+pinset trust add
+
+# The shim selects the runtime and injects the development profile
+node app.js
+```
+
+Important rules:
+
+- `env set` uses hidden input by default, keeping the value out of process arguments.
+- `env list` prints names only; revealing one value requires an interactive `env reveal`.
+- Without `auto-profile`, direct shims do not inject an environment automatically.
+- `PINSET_ENV_PROFILE=ci` explicitly selects another profile.
+- `PINSET_ENV_DISABLE=1` or `pinset exec --no-env` disables injection for one command.
+- Process and encrypted variables with the same name fail by default; `process-wins` and `encrypted-wins` are explicit alternatives.
+- Recipient, profile-path, automatic-profile, or collision-policy changes invalidate local trust. Ciphertext value changes do not.
+- Pinset never scans `.env` automatically and does not create a temporary plaintext `.env`.
+
+### Import an existing `.env`
+
+If a project already uses `.env`, explicitly migrate its variables into an encrypted profile:
+
+```sh
+pinset env import --from .env --profile development
+```
+
+The portable subset supports empty values, comments, single or double quotes, and quoted multiline values. Matching names update the target profile. `export`, interpolation, command substitution, and Shell expressions are rejected. Pinset does not discover or delete the source file; after verifying the migration, the user remains responsible for removing or otherwise protecting the plaintext `.env`.
+
+### Move to a new computer
+
+After cloning the project, install its runtimes, import the recovery identity, and trust the project again:
+
+```sh
+pinset install --locked
+pinset env identity import --from ~/pinset-development-recovery.age
+pinset trust add
+node app.js
+```
+
+Keep recovery files outside the repository and back them up securely. Linux or SSH environments without an available system keyring require an explicit passphrase-protected identity file; Pinset never falls back to a plaintext private identity.
+
+### GitHub Actions
+
+Store the age private identity as the repository secret `PINSET_IDENTITY`. The profile and `project-id` are not secret and may be committed in project configuration:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PINSET_IDENTITY: ${{ secrets.PINSET_IDENTITY }}
+      PINSET_ENV_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Future-Element/pinset@v2.0.0
+        with:
+          version: 2.0.0
+          install: "true"
+          trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
+      - run: pinset exec -- node app.js
+```
+
+Identity-selection variables are removed before the business process starts. Do not inject server secrets into Flutter, Web, or other builds that compile environment values into client artifacts.
+
+## Diagnose, repair, and update
+
+```sh
+# Explain final selection and real paths
+pinset current --explain
+pinset which node --explain
+pinset paths node
+pinset doctor --deep
+
+# Check locks, cache bytes, and installation ownership
 pinset lock audit --json
-pinset lock audit --global
+pinset cache verify
+
+# Repair a damaged installation with a matching ownership receipt
+pinset install node@24.0.0 --repair
+
+# Self-update checks never run implicitly in the background
+pinset self outdated
+pinset self update
 ```
 
-`lock audit` is always read-only and offline. It checks configuration/lock consistency, the current platform artifact, referenced cache bytes when present, install receipts, and receipt-backed ownership. It returns `0` when no action is required, `1` when the completed audit contains errors or warnings, and `2` only when the command itself cannot run. Findings include stable snake_case `reason_code` values and repair plans; Pinset never executes those plans automatically.
+`doctor --deep` and installation receipt checks validate layout, critical entries, and statistics. They do not claim cryptographic verification of every installed file.
 
-Discover available and installed versions:
+## Security boundary
 
-```sh
-pinset list node --available
-pinset list pnpm --available
-pinset list
-```
+Pinset protects reproducible resolution, download integrity, repository-at-rest ciphertext, and the local trust boundary. It does not promise protection against administrators, debuggers, malicious project code, or a compromised CI environment. A process that receives a secret can start other programs, so Pinset does not present per-subcommand secret restrictions as an isolation boundary.
 
-## Providers and platforms
+Version 2.0 intentionally excludes:
 
-| Provider | Commands | Windows x64 | Linux x64 | Linux ARM64 | macOS ARM64 |
-| --- | --- | :---: | :---: | :---: | :---: |
-| Node.js | `node`, `npm`, `npx`, `corepack` | ✓ | ✓ | ✓ | ✓ |
-| pnpm | `pnpm` | ✓ | ✓ | ✓ | ✓ |
-| Bun | `bun`, `bunx` | ✓ | ✓ | ✓ | ✓ |
-| Go | `go`, `gofmt` | ✓ | ✓ | ✓ | ✓ |
-| Python | `python`, `python3`, `pip`, `pip3` | ✓ | ✓ | ✓ | ✓ |
-| Java (Temurin) | `java`, `javac`, `jar`, and JDK tools | ✓ | ✓ | ✓ | ✓ |
-| Rust stable | `rustc`, `cargo`, `rustdoc`, `rustfmt`, `clippy-driver` | ✓ | ✓ | ✓ | ✓ |
-| .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
-| Flutter / bundled Dart | `flutter`, `dart` | ✓ | ✓ | — | ✓ |
-
-Flutter does not publish an official Linux ARM64 SDK archive that matches Pinset's install model, so Pinset returns an explicit unsupported-target error instead of falling back to x64. macOS Intel is not a Pinset v1.0 release target.
-
-All nine built-in Providers declare command layout, metadata resolution, installation, environment, traditional-file discovery, lock-audit support, verification methods, and release-time availability through one capability model. Node locks currently reach `signed-checksum` through embedded OpenPGP trust roots; pnpm and Bun reach it through npm registry ECDSA signatures. The other built-in Providers currently reach `checksum`. Minisign, Sigstore, GitHub Attestation, and SLSA are distinct recognized methods, but Pinset reports `provenance` only after a Provider actually verifies the corresponding bundle and identity policy.
-
-v1.8 adds a clear-signed declarative Registry preview and explicit Provider dependencies. Inspect the embedded manifest set or verify another clear-signed Registry file without activating it:
-
-```sh
-pinset provider list
-pinset provider verify registry/providers.json.asc --json
-```
-
-Registry verification is deliberately read-only. Unknown fields, arbitrary scripts/hooks, unsupported capabilities, missing dependencies, cycles, signer mismatch, and signature tampering fail closed. Only the nine Providers compiled into this Pinset release can install or route commands. pnpm declares Node.js as a dependency, so its composite `PATH` contains the project-selected Node.js runtime and does not inherit unrelated Providers.
+- AWS, Azure, or GCP KMS and OIDC-based dynamic key exchange;
+- background daemons, tasks, hooks, and service management;
+- arbitrary age plugins, arbitrary-code Providers, and general password-vault features;
+- Nix/Conda-style dependency solving, remote secret sync, and dynamic secret leases;
+- installation of external system components such as Android SDK, Visual Studio Build Tools, and Windows SDK.
 
 ## Command reference
 
-See the complete [English command reference](docs/commands.md) or [Chinese command reference](docs/commands.zh-CN.md). It documents every command and subcommand, state changes, JSON support, exit codes, and common failures.
+For complete arguments, state changes, JSON support, exit codes, and common failures, see:
 
-For product positioning and trade-offs, see the sourced [Pinset comparison (Chinese)](docs/comparison.zh-CN.md).
+- [English command reference](docs/commands.md)
+- [中文命令文档](docs/commands.zh-CN.md)
 
-## v1.9
+Or run:
 
-v1.9 delivers verified one-shot execution and maintained integration artifacts. The repository includes a checksum-verifying composite GitHub Action, Renovate preset, project/lock JSON Schemas, and a Dev Container example. Every release generates checksummed and attested Winget, Scoop, and Homebrew manifests from its actual archive hashes. See [Integrations and distribution](docs/integrations.md).
+```sh
+pinset --help
+pinset <command> --help
+```
 
-## Future Roadmap
+## Migration and upgrades
 
-The roadmap describes direction, not promised versions or dates.
+Preview an older project's migration to schema 4 before writing changes:
 
-| Version | Theme | Planned work |
-| --- | --- | --- |
-| Ongoing | Platforms and quality | Add platforms and architectures when upstreams publish suitable artifacts. Continue cross-platform CI, security audits, malicious-input regressions, signed tags, `SHA256SUMS`, SBOMs, and build-provenance verification. |
+```sh
+pinset migrate --dry-run
+pinset migrate
+```
 
-The roadmap preserves Pinset's explicit boundaries: traditional version files remain opt-in `detect` / `import` inputs; strict projects do not download and execute missing tools by default; and the core will not absorb tasks, hooks, `.env`, secrets, service management, Nix/Conda solving, or arbitrary-code plugins. These releases will continue using schema 3 and prefer backward-compatible optional fields.
+Migration reports project configuration, runtime lock, and legacy installation receipts separately. It does not create encrypted environment files. The 2.0 release line contains only `2.0.0-rc.1` and `2.0.0` milestones.
 
 ## Uninstall
 
-Remove runtimes through Pinset first when you want ownership and reference checks:
+Check references and ownership before removing a runtime:
 
 ```sh
-pinset uninstall node@22.0.0 --dry-run
-pinset uninstall node@22.0.0
+pinset uninstall node@24.0.0 --dry-run
+pinset uninstall node@24.0.0
 pinset prune --dry-run
 ```
 
-To remove Pinset itself, delete `pinset` and `pinset-shim` from the directory where you installed them, then remove the shell-profile line you added. Delete `PINSET_HOME` (normally `~/.local/share/pinset` on Unix) only if you also intend to remove Pinset-owned runtimes, caches, and global state. Project `pinset.toml`, `pinset.lock`, and `.venv` files are not removed automatically.
+To remove Pinset itself, delete the CLI, shim, and routes from the command directory, then remove the initialization line you added to the Shell profile. Delete `PINSET_HOME` only when you also intend to remove every managed runtime, cache entry, global selection, and local trust record. Project `pinset.toml`, `pinset.lock`, `pinset.env/*.age`, and `.venv` files are never removed automatically.
 
-## Contributing
+## Roadmap
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Security reports should follow [SECURITY.md](SECURITY.md).
+Future 2.x work may evaluate KMS/OIDC, broader platform artifacts, and stronger provenance while preserving Pinset's local-first, fail-closed boundary. The roadmap does not promise specific versions or dates.
 
-## License
+## Contributing and license
 
-Pinset is available under the [MIT License](LICENSE).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Report security issues according to [SECURITY.md](SECURITY.md).
+
+Pinset is licensed under the [MIT License](LICENSE).

@@ -43,7 +43,7 @@ npm-metadata = [
     "dep:semver",
     "dep:serde_json",
 ]
-project-write = ["dep:atomic-write-file", "dep:tempfile"]
+project-write = ["dep:atomic-write-file", "dep:tempfile", "dep:uuid"]
 project-discovery = ["dep:json5", "dep:serde_json", "dep:serde_yaml"]
 provider-registry = ["dep:hex", "dep:pgp", "dep:serde_json"]
 state-write = ["dep:atomic-write-file"]
@@ -73,6 +73,7 @@ tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 toml.workspace = true
 url = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 xz2 = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 

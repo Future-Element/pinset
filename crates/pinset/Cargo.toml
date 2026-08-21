@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 publish = false
+build = "build.rs"
 
 [[bin]]
 name = "pinset"
@@ -12,12 +13,24 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+flate2.workspace = true
 pinset-core = { path = "../pinset-core", features = ["dotnet-metadata", "flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-discovery", "project-write", "provider-registry", "python-metadata", "rust-metadata", "sources", "state-write"] }
+pinset-env = { path = "../pinset-env" }
+reqwest.workspace = true
+rpassword = "7.4.0"
+secrecy.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
 terminal_size.workspace = true
 toml.workspace = true
 unicode-width.workspace = true
+uuid.workspace = true
+zip.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

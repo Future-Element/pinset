@@ -74,6 +74,7 @@ pub fn install_locked_rust(
         } else {
             required_paths
         },
+        aliases: Vec::new(),
     };
     installer.install(&request)
 }

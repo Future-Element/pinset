@@ -26,27 +26,29 @@ jobs:
 
       - name: Validate tag and workspace version
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           workspace_version="$(
             python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
           )"
           release_version="${GITHUB_REF_NAME#v}"
-          valid_release=0
-          if [[ "${release_version}" == "${workspace_version}" ]]; then
-            valid_release=1
-          elif [[ "${release_version}" == "${workspace_version}-rc."* ]]; then
-            rc_number="${release_version#"${workspace_version}-rc."}"
-            if [[ "${rc_number}" =~ ^[0-9]+$ ]]; then
-              valid_release=1
-            fi
+          if [[ "${release_version}" != "${workspace_version}" && "${release_version}" != "${workspace_version}-rc.1" ]]; then
+            echo "release tag ${GITHUB_REF_NAME} must match v${workspace_version} or v${workspace_version}-rc.1" >&2
+            exit 1
           fi
-          if [[ "${valid_release}" != "1" ]]; then
-            echo "release tag ${GITHUB_REF_NAME} does not match workspace version v${workspace_version} or an rc tag" >&2
+          if [[ "${release_version}" == "2.0.0" ]] && ! gh release view v2.0.0-rc.1 >/dev/null 2>&1; then
+            echo "v2.0.0 requires the published v2.0.0-rc.1 acceptance release" >&2
             exit 1
           fi
           installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
           if [[ "${installer_version}" != "${workspace_version}" ]]; then
             echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
+            exit 1
+          fi
+          windows_installer_version="$(python3 -c 'import pathlib; lines=pathlib.Path("install.ps1").read_text().splitlines(); line=next((line for line in lines if "[string] $Version = " in line), ""); print(line.split(chr(39))[1] if line.count(chr(39)) >= 2 else "")')"
+          if [[ "${windows_installer_version}" != "${workspace_version}" ]]; then
+            echo "install.ps1 default ${windows_installer_version} does not match workspace version ${workspace_version}" >&2
             exit 1
           fi
           action_version="$(awk '/^  version:/{seen=1} seen && /^    default:/{print $2; exit}' action.yml)"
@@ -119,6 +121,7 @@ jobs:
           mkdir sbom
           cp crates/pinset/pinset-cli.cdx.json sbom/pinset-cli.cdx.json
           cp crates/pinset-core/pinset-core.cdx.json sbom/pinset-core.cdx.json
+          cp crates/pinset-env/pinset-env.cdx.json sbom/pinset-env.cdx.json
           cp crates/pinset-shim/pinset-shim.cdx.json sbom/pinset-shim.cdx.json
           for document in sbom/*.cdx.json; do
             jq -e '.bomFormat == "CycloneDX" and (.specVersion | length > 0)' "$document" >/dev/null
@@ -245,9 +248,28 @@ jobs:
         shell: bash
         run: |
           cp install.sh dist/install.sh
+          cp install.ps1 dist/install.ps1
           release_version="${GITHUB_REF_NAME#v}"
           if [[ "${release_version}" == *-* ]]; then
             sed -i "s/^DEFAULT_VERSION=\"[^\"]*\"$/DEFAULT_VERSION=\"${release_version}\"/" dist/install.sh
+            RELEASE_VERSION="${release_version}" python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path("dist/install.ps1")
+          content = path.read_text(encoding="utf-8")
+          updated, count = re.subn(
+              r"^    \[string\] \$Version = '[^']*'",
+              f"    [string] $Version = '{os.environ['RELEASE_VERSION']}'",
+              content,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
+              raise SystemExit("install.ps1 version declaration was not found exactly once")
+          path.write_text(updated, encoding="utf-8")
+          PY
           fi
           cp uninstall.sh dist/uninstall.sh
           cp uninstall.ps1 dist/uninstall.ps1
@@ -256,6 +278,7 @@ jobs:
             cd dist
             sha256sum \
               install.sh \
+              install.ps1 \
               uninstall.sh \
               uninstall.ps1 \
               pinset-linux-x86_64.tar.gz \
@@ -264,6 +287,7 @@ jobs:
               pinset-windows-x86_64.zip \
               pinset-cli.cdx.json \
               pinset-core.cdx.json \
+              pinset-env.cdx.json \
               pinset-shim.cdx.json \
               > SHA256SUMS
           )
@@ -286,11 +310,13 @@ jobs:
         with:
           subject-path: |
             dist/install.sh
+            dist/install.ps1
             dist/uninstall.sh
             dist/uninstall.ps1
             dist/SHA256SUMS
             dist/pinset-cli.cdx.json
             dist/pinset-core.cdx.json
+            dist/pinset-env.cdx.json
             dist/pinset-shim.cdx.json
             dist/pinset-winget.yaml
             dist/pinset-scoop.json
@@ -303,6 +329,7 @@ jobs:
         run: |
           assets=(
             dist/install.sh
+            dist/install.ps1
             dist/uninstall.sh
             dist/uninstall.ps1
             dist/pinset-linux-x86_64.tar.gz
@@ -311,6 +338,7 @@ jobs:
             dist/pinset-windows-x86_64.zip
             dist/pinset-cli.cdx.json
             dist/pinset-core.cdx.json
+            dist/pinset-env.cdx.json
             dist/pinset-shim.cdx.json
             dist/pinset-winget.yaml
             dist/pinset-scoop.json

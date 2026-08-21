@@ -288,7 +288,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install a locked or explicit version\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n  provider     Inspect and verify Provider manifests\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install or repair a runtime\n  paths        Explain Pinset and runtime paths\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  env          Manage encrypted project environments\n  trust        Manage local project trust\n  self         Check or update Pinset\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n  provider     Inspect and verify Provider manifests\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -318,7 +318,10 @@ impl Catalog {
                 "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|python|flutter|java|rust|dotnet> [--global] [--cwd <目录>]"
             }
             Some("install") => {
-                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<版本选择器>\n  pinset install [--locked] [--global] [--cwd <目录>]"
+                "安装指定运行时版本，或根据项目/全局锁文件安装全部工具；--repair 只修复所有权收据匹配的安装。\n\n用法：\n  pinset install <node|pnpm|bun|go|python|flutter|java|rust|dotnet>@<版本选择器> [--repair]\n  pinset install [--locked] [--global] [--cwd <目录>]"
+            }
+            Some("paths") => {
+                "显示 CLI、shim、数据目录、安装根与可选工具的真实安装路径。\n\n用法：pinset paths [工具] [--json]"
             }
             Some("which") => {
                 "显示实际执行的运行时命令路径。\n\n用法：pinset which <命令> [--cwd <目录>] [--json]"
@@ -355,6 +358,15 @@ impl Catalog {
             }
             Some("shim") => {
                 "查看、修复或迁移 Pinset Provider 命令路由。\n\n用法：\n  pinset shim path\n  pinset shim install [--provider <工具>] [--binary <文件>] [--dir <目录>] [命令...]\n  pinset shim migrate [--provider <工具>] [--dir <目录>]"
+            }
+            Some("env") => {
+                "管理按 profile 隔离的 age 加密项目环境变量。\n\n用法：pinset env <init|set|unset|list|reveal|import|export|recipient|identity> [参数...]"
+            }
+            Some("trust") => {
+                "管理直接 shim 自动注入所需的本机项目信任。\n\n用法：pinset trust <add|status|revoke> [参数...]"
+            }
+            Some("self") => {
+                "显式检查或安装经过 checksum 验证的 Pinset 版本。\n\n用法：pinset self <outdated|update> [参数...]"
             }
             Some("activate") => {
                 "输出启用 Pinset Provider 命令路由的 Shell 脚本。\n\n用法：pinset activate <bash|zsh|fish|powershell>"

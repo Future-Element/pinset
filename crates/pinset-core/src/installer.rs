@@ -89,6 +89,12 @@ pub struct ArtifactInstallSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallAlias {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallRequest {
     pub pinset_home: PathBuf,
     pub tool: String,
@@ -100,6 +106,7 @@ pub struct InstallRequest {
     pub required_paths: Vec<PathBuf>,
     pub base_artifacts: Vec<ArtifactInstallSpec>,
     pub executable_paths: Vec<PathBuf>,
+    pub aliases: Vec<InstallAlias>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,6 +272,7 @@ impl Installer {
         )?;
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
+        create_install_aliases(&staging_dir, &request.aliases)?;
         write_receipt(&staging_dir, request, &selected, &selected_bases)?;
 
         let final_parent = final_dir
@@ -968,10 +976,9 @@ impl Installer {
             }
             if let Some(previous_is_directory) =
                 seen.insert(archive_collision_key(&relative), is_directory)
+                && (!is_directory || !previous_is_directory)
             {
-                if !is_directory || !previous_is_directory {
-                    return Err(Error::DuplicateArchiveEntry { entry: entry_name });
-                }
+                return Err(Error::DuplicateArchiveEntry { entry: entry_name });
             }
             let output_path = destination.join(&relative);
             if is_directory {
@@ -1195,6 +1202,9 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
     if ensure_executable_paths(final_dir, &request.executable_paths).is_err() {
         return None;
     }
+    if validate_install_aliases(final_dir, &request.aliases).is_err() {
+        return None;
+    }
     Some(InstallOutcome {
         install_dir: final_dir.to_path_buf(),
         bytes_downloaded: 0,
@@ -1248,6 +1258,18 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     for path in &request.executable_paths {
         if !is_safe_relative(path) {
             return Err(Error::InvalidRequiredPath { path: path.clone() });
+        }
+    }
+    for alias in &request.aliases {
+        for path in [&alias.source, &alias.destination] {
+            if !is_safe_relative(path) {
+                return Err(Error::InvalidRequiredPath { path: path.clone() });
+            }
+        }
+        if alias.source == alias.destination {
+            return Err(Error::InvalidRequiredPath {
+                path: alias.destination.clone(),
+            });
         }
     }
     Ok(())
@@ -1440,6 +1462,60 @@ fn ensure_executable_paths(staging: &Path, executable_paths: &[PathBuf]) -> Resu
     Ok(())
 }
 
+fn create_install_aliases(staging: &Path, aliases: &[InstallAlias]) -> Result<()> {
+    for alias in aliases {
+        let source = staging.join(&alias.source);
+        let destination = staging.join(&alias.destination);
+        if !source.is_file() {
+            return Err(Error::RequiredPathMissing { path: source });
+        }
+        if destination.is_file() {
+            continue;
+        }
+        match fs::hard_link(&source, &destination) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Unsupported
+                        | io::ErrorKind::PermissionDenied
+                        | io::ErrorKind::Other
+                ) =>
+            {
+                fs::copy(&source, &destination).map_err(|source_error| {
+                    Error::CreateRuntimeAlias {
+                        source_path: source.clone(),
+                        destination: destination.clone(),
+                        source: source_error,
+                    }
+                })?;
+            }
+            Err(source_error) => {
+                return Err(Error::CreateRuntimeAlias {
+                    source_path: source,
+                    destination,
+                    source: source_error,
+                });
+            }
+        }
+    }
+    validate_install_aliases(staging, aliases)
+}
+
+fn validate_install_aliases(root: &Path, aliases: &[InstallAlias]) -> Result<()> {
+    for alias in aliases {
+        let source = root.join(&alias.source);
+        let destination = root.join(&alias.destination);
+        if !source.is_file() {
+            return Err(Error::RequiredPathMissing { path: source });
+        }
+        if !destination.is_file() {
+            return Err(Error::RequiredPathMissing { path: destination });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct InstallReceipt<'a> {
     schema: u32,
@@ -1458,6 +1534,11 @@ struct InstallReceipt<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     base_artifact_integrities: Vec<&'a str>,
     bytes_downloaded: u64,
+    install_root: String,
+    file_count: u64,
+    total_size: u64,
+    pinset_version: &'static str,
+    critical_entries: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1483,8 +1564,30 @@ fn write_receipt(
 ) -> Result<()> {
     let canonical_url = redacted_url(&request.artifact.canonical_url);
     let legacy_sha256 = selected.actual_integrity.strip_prefix("sha256:");
+    let (file_count, total_size) =
+        install_payload_statistics(staging).map_err(|source| Error::WriteInstallReceipt {
+            path: staging.to_path_buf(),
+            source,
+        })?;
+    let install_root = request
+        .pinset_home
+        .join("installs")
+        .join(&request.tool)
+        .join(&request.version)
+        .join(&request.target)
+        .display()
+        .to_string();
+    let mut critical_entries = request
+        .required_paths
+        .iter()
+        .chain(&request.executable_paths)
+        .chain(request.aliases.iter().map(|alias| &alias.destination))
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    critical_entries.sort();
+    critical_entries.dedup();
     let receipt = InstallReceipt {
-        schema: 2,
+        schema: 3,
         complete: true,
         tool: &request.tool,
         version: &request.version,
@@ -1505,6 +1608,11 @@ fn write_receipt(
                 .iter()
                 .map(|artifact| artifact.bytes_downloaded)
                 .sum::<u64>(),
+        install_root,
+        file_count,
+        total_size,
+        pinset_version: env!("CARGO_PKG_VERSION"),
+        critical_entries,
     };
     let serialized =
         toml::to_string(&receipt).map_err(|source| Error::SerializeInstallReceipt { source })?;
@@ -1520,6 +1628,29 @@ fn write_receipt(
     file.write_all(serialized.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|source| Error::WriteInstallReceipt { path, source })
+}
+
+pub fn install_payload_statistics(root: &Path) -> io::Result<(u64, u64)> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = 0;
+    let mut bytes = 0;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() && entry.file_name() != ".pinset-install.toml" {
+                files += 1;
+                bytes += metadata.len();
+            }
+        }
+    }
+    Ok((files, bytes))
 }
 
 #[cfg(test)]
@@ -1554,12 +1685,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_install_aliases_that_escape_the_staging_root() {
+        let root = tempdir().expect("root");
+        let mut request = request(
+            root.path(),
+            "https://example.invalid/artifact.zip".to_owned(),
+            sha256_hex(b"fixture"),
+        );
+        request.aliases.push(InstallAlias {
+            source: PathBuf::from("bin/node.exe"),
+            destination: PathBuf::from("../outside.exe"),
+        });
+        assert!(matches!(
+            validate_request(&request),
+            Err(Error::InvalidRequiredPath { .. })
+        ));
+    }
+
+    #[test]
     fn installs_verified_zip_atomically_from_local_http() {
         let archive = zip_bytes(&[("bin/node.exe", b"fake node")]);
         let (base_url, server) = serve_once(archive.clone(), archive.len());
         let url = format!("{base_url}?token=must-not-be-recorded");
         let root = tempdir().expect("temp root");
-        let request = request(root.path(), url, sha256_hex(&archive));
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.aliases = vec![InstallAlias {
+            source: PathBuf::from("bin/node.exe"),
+            destination: PathBuf::from("bin/node-alias.exe"),
+        }];
         let progress = Arc::new(Mutex::new(Vec::new()));
         let reported = Arc::clone(&progress);
 
@@ -1598,12 +1751,39 @@ mod tests {
             fs::read(outcome.install_dir.join("bin/node.exe")).expect("runtime"),
             b"fake node"
         );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("bin/node-alias.exe")).expect("runtime alias"),
+            b"fake node"
+        );
         let receipt = fs::read_to_string(outcome.install_dir.join(".pinset-install.toml"))
             .expect("install receipt");
         assert!(receipt.contains("artifact.zip"));
         assert!(receipt.contains("https://nodejs.org/dist/"));
         assert!(receipt.contains("selected_source = \"local-mirror\""));
         assert!(!receipt.contains("must-not-be-recorded"));
+        let receipt_value = toml::from_str::<toml::Value>(&receipt).expect("receipt TOML");
+        let (payload_files, payload_bytes) =
+            install_payload_statistics(&outcome.install_dir).expect("payload statistics");
+        assert_eq!(
+            receipt_value
+                .get("file_count")
+                .and_then(toml::Value::as_integer),
+            i64::try_from(payload_files).ok()
+        );
+        assert_eq!(
+            receipt_value
+                .get("total_size")
+                .and_then(toml::Value::as_integer),
+            i64::try_from(payload_bytes).ok()
+        );
+        assert!(
+            receipt_value
+                .get("critical_entries")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|entries| entries
+                    .iter()
+                    .any(|entry| { entry.as_str() == Some("bin/node-alias.exe") }))
+        );
         assert_eq!(outcome.bytes_downloaded, archive.len() as u64);
         assert_eq!(outcome.source_id, "local-mirror");
         let repeated = test_installer()
@@ -1611,6 +1791,12 @@ mod tests {
             .expect("identical install is idempotent");
         assert_eq!(repeated.install_dir, outcome.install_dir);
         assert_eq!(repeated.bytes_downloaded, 0);
+        fs::remove_file(outcome.install_dir.join("bin/node-alias.exe"))
+            .expect("remove required alias");
+        assert!(matches!(
+            test_installer().install(&request),
+            Err(Error::InstallAlreadyExists { .. })
+        ));
         assert_transaction_root_is_empty(root.path());
     }
 
@@ -1849,7 +2035,9 @@ mod tests {
         assert!(root.path().join("downloads/sha512").is_dir());
         let receipt =
             fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
-        assert!(receipt.contains("schema = 2"));
+        assert!(receipt.contains("schema = 3"));
+        assert!(receipt.contains("file_count ="));
+        assert!(receipt.contains("pinset_version ="));
         assert!(receipt.contains("artifact_integrity = \"sha512-"));
     }
 
@@ -2239,6 +2427,7 @@ mod tests {
             required_paths: vec![PathBuf::from("bin/node.exe")],
             base_artifacts: Vec::new(),
             executable_paths: Vec::new(),
+            aliases: Vec::new(),
         }
     }
 

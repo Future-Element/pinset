@@ -5,17 +5,25 @@
 //! Pinset shim.
 
 use std::{
+    collections::BTreeSet,
     env,
     ffi::OsString,
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self, Command, Stdio},
 };
+use zeroize::Zeroize;
+
+type EncryptedEnvironment = Option<(
+    EnvironmentCollision,
+    std::collections::BTreeMap<String, String>,
+)>;
 
 #[cfg(windows)]
 use std::ffi::OsStr;
 
 use pinset_core::{
-    CommandResolution, managed_runtime_arguments, path_with_selected_tools, pinset_home_from_env,
+    CommandResolution, EnvironmentCollision, decode_environment, find_optional_project_config,
+    load_project_config, managed_runtime_arguments, path_with_selected_tools, pinset_home_from_env,
     resolve_command_with_path, selected_runtime_environment, validate_managed_runtime_invocation,
 };
 
@@ -24,6 +32,10 @@ const SELECTED_TOOL_ENV: &str = "PINSET_SELECTED_TOOL";
 const SELECTED_VERSION_ENV: &str = "PINSET_SELECTED_VERSION";
 const SELECTION_SOURCE_ENV: &str = "PINSET_SELECTION_SOURCE";
 const CONFIG_PATH_ENV: &str = "PINSET_CONFIG_PATH";
+const IDENTITY_ENV: &str = "PINSET_IDENTITY";
+const ENV_PROFILE_ENV: &str = "PINSET_ENV_PROFILE";
+const ENV_DISABLE_ENV: &str = "PINSET_ENV_DISABLE";
+const IDENTITY_FILE_ENV: &str = "PINSET_IDENTITY_FILE";
 
 fn main() {
     match run() {
@@ -47,7 +59,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         &invocation.cwd,
         &home,
         path.as_deref(),
-        &[current_executable],
+        std::slice::from_ref(&current_executable),
     )?;
     reject_shim_directory_target(&resolution, &home)?;
     if resolution.source != pinset_core::SelectionSource::System {
@@ -76,9 +88,46 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
         .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
-    for variable in selected_runtime_environment(&resolution.tool, &invocation.cwd, &home) {
+    let runtime_environment =
+        selected_runtime_environment(&resolution.tool, &invocation.cwd, &home);
+    let mut occupied = env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .map(|name| name.to_ascii_uppercase())
+        .collect::<BTreeSet<_>>();
+    occupied.extend(
+        runtime_environment
+            .iter()
+            .map(|variable| variable.name.to_ascii_uppercase()),
+    );
+    for variable in runtime_environment {
         child.env(variable.name, variable.value);
     }
+    if let Some((collision, encrypted)) =
+        encrypted_environment(&invocation.cwd, &current_executable)?
+    {
+        for (name, mut value) in encrypted {
+            let exists = occupied.contains(&name.to_ascii_uppercase());
+            match (collision, exists) {
+                (EnvironmentCollision::Error, true) => {
+                    value.zeroize();
+                    return Err(format!("encrypted environment variable {name} collides with the process environment").into());
+                }
+                (EnvironmentCollision::ProcessWins, true) => {
+                    value.zeroize();
+                    continue;
+                }
+                _ => {
+                    child.env(&name, &value);
+                    value.zeroize();
+                    occupied.insert(name.to_ascii_uppercase());
+                }
+            }
+        }
+    }
+    child.env_remove(IDENTITY_ENV);
+    child.env_remove(ENV_PROFILE_ENV);
+    child.env_remove(ENV_DISABLE_ENV);
+    child.env_remove(IDENTITY_FILE_ENV);
     if resolution.tool == "python" {
         child.env_remove("PYTHONHOME");
         if resolution.source != pinset_core::SelectionSource::Project {
@@ -93,6 +142,67 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 
     let status = child.status()?;
     Ok(status.code().unwrap_or(1))
+}
+
+fn encrypted_environment(
+    cwd: &Path,
+    shim_executable: &Path,
+) -> Result<EncryptedEnvironment, Box<dyn std::error::Error>> {
+    if env::var_os(ENV_DISABLE_ENV).is_some_and(|value| value == "1") {
+        return Ok(None);
+    }
+    let Some(config_path) = find_optional_project_config(cwd)? else {
+        return Ok(None);
+    };
+    let config = load_project_config(&config_path)?;
+    let Some(environment) = config.environment else {
+        return Ok(None);
+    };
+    let explicit_profile = env::var(ENV_PROFILE_ENV).ok();
+    if explicit_profile.is_none() && environment.auto_profile.is_none() {
+        return Ok(None);
+    }
+    let directory = shim_executable
+        .parent()
+        .ok_or("pinset shim executable has no parent directory")?;
+    let cli = directory.join(if cfg!(windows) {
+        "pinset.exe"
+    } else {
+        "pinset"
+    });
+    if !cli.is_file() {
+        return Err(format!(
+            "matching Pinset CLI is missing next to the shim: {}",
+            cli.display()
+        )
+        .into());
+    }
+    let mut broker = Command::new(&cli);
+    broker
+        .arg("__env-resolve")
+        .arg("--cwd")
+        .arg(cwd)
+        .arg("--shim-version")
+        .arg(env!("CARGO_PKG_VERSION"))
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    if let Some(profile) = explicit_profile.as_deref() {
+        broker.arg("--profile").arg(profile);
+    }
+    let mut output = broker.output()?;
+    if !output.status.success() {
+        output.stdout.zeroize();
+        return Err(format!(
+            "Pinset environment broker failed with status {}",
+            output.status
+        )
+        .into());
+    }
+    let variables = decode_environment(&output.stdout);
+    output.stdout.zeroize();
+    let variables = variables?;
+    Ok(Some((environment.collision, variables)))
 }
 
 #[derive(Debug)]

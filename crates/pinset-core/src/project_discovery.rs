@@ -137,13 +137,13 @@ impl Scanner {
     ) -> io::Result<DiscoveryReport> {
         let mut normalized_by_tool = BTreeMap::<String, BTreeSet<String>>::new();
         for finding in &self.findings {
-            if finding.status == DiscoveryStatus::Ready {
-                if let Some(normalized) = &finding.normalized {
-                    normalized_by_tool
-                        .entry(finding.tool.clone())
-                        .or_default()
-                        .insert(normalized.clone());
-                }
+            if finding.status == DiscoveryStatus::Ready
+                && let Some(normalized) = &finding.normalized
+            {
+                normalized_by_tool
+                    .entry(finding.tool.clone())
+                    .or_default()
+                    .insert(normalized.clone());
             }
         }
         let conflicts = normalized_by_tool
@@ -546,29 +546,29 @@ impl Scanner {
             );
             return;
         }
-        if let Some(targets) = toolchain.get("targets") {
-            if !targets.as_array().is_some_and(|targets| targets.is_empty()) {
-                self.unsupported(
-                    "rust",
-                    path,
-                    Some("toolchain.targets"),
-                    "configured",
-                    "extra Rust targets are not supported",
-                );
-                return;
-            }
+        if let Some(targets) = toolchain.get("targets")
+            && !targets.as_array().is_some_and(|targets| targets.is_empty())
+        {
+            self.unsupported(
+                "rust",
+                path,
+                Some("toolchain.targets"),
+                "configured",
+                "extra Rust targets are not supported",
+            );
+            return;
         }
-        if let Some(profile) = toolchain.get("profile") {
-            if profile.as_str() != Some("default") {
-                self.unsupported(
-                    "rust",
-                    path,
-                    Some("toolchain.profile"),
-                    toml_scalar(profile),
-                    "only the default Rust profile is supported",
-                );
-                return;
-            }
+        if let Some(profile) = toolchain.get("profile")
+            && profile.as_str() != Some("default")
+        {
+            self.unsupported(
+                "rust",
+                path,
+                Some("toolchain.profile"),
+                toml_scalar(profile),
+                "only the default Rust profile is supported",
+            );
+            return;
         }
         if let Some(components) = toolchain.get("components") {
             let valid = components.as_array().is_some_and(|components| {

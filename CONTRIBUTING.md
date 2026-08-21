@@ -4,7 +4,7 @@
 
 ## 开发环境
 
-- Rust 1.88 或更高版本；
+- Rust 1.97 或更高版本；
 - Windows x64、Linux x64 或 macOS arm64；
 - Linux 构建 TAR.XZ 支持时需要常规 C toolchain、CMake 与 liblzma 开发包。
 

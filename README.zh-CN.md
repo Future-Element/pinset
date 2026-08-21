@@ -8,100 +8,136 @@
 
 Pinset 是一个行为可预测、理解项目边界的多语言运行时版本管理器。
 
-它通过统一的配置与锁文件模型管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter/Dart。传统版本文件只会由显式的 `detect` 与 `import` 迁移命令读取，不会成为日常运行时解析的隐式回退来源。
+它使用一份项目配置和一份精确锁文件管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 与 Flutter/Dart。进入项目后可以直接运行 `node`、`python`、`cargo`、`flutter` 等命令；Pinset shim 会选择项目锁定的运行时，并在项目受信任时注入选定的 age 加密环境 profile。
 
-## 核心特性
+```text
+pinset.toml  ──用户意图、项目策略、环境 profile
+     │
+     ├── pinset.lock ──精确版本、平台制品、完整性信息
+     │
+     └── Pinset shim ──直接路由命令并按策略注入环境
+```
 
-- 使用一个 CLI 管理全局默认版本与可复现的项目版本。
-- `pinset.toml` 保留用户请求的选择器，`pinset.lock` 记录精确版本和各平台制品。
-- 项目内默认严格路由，只有显式策略才允许继承全局版本或回退系统命令。
-- 通过 `current --explain`、`which --explain` 与 `doctor` 解释完整解析过程。
-- 通过一个轻量、与运行时无关的 shim 路由命令。
-- 使用统一的来源证明分级；在信任摘要或完整性值之前，先验证 Node.js OpenPGP 与 npm registry 签名。
-- Provider 完整性校验、安全解压、原子安装、带所有权检查的卸载，以及内容寻址下载缓存。
-- 原生支持英文和简体中文输出、自动化用 JSON schema 1 与 Shell 补全。
-- 支持项目所有的 Python `.venv`，无需激活 Shell 环境。
-- 支持只读检测和显式导入仓库内的传统版本配置。
-- 支持带稳定 reason code 的只读离线锁审计；修复计划只报告、不自动执行。
-- 支持经过验证的一次性执行，以及持续维护的 CI、编辑器、容器和包管理器集成。
+## 为什么使用 Pinset
 
-## 安装与升级
+- **一个项目模型**：多语言运行时共用 `pinset.toml` 和 `pinset.lock`，不需要为每种语言叠加一个版本管理器。
+- **可复现且可解释**：配置保留 `lts`、`stable`、版本前缀等选择意图，锁文件记录精确版本；`current --explain`、`which --explain` 和 `doctor` 解释最终选择。
+- **项目内直接使用**：完成一次 Shell 初始化后，项目中的 `node`、`pnpm`、`python`、`cargo` 等命令自动路由，无需每次添加 `pinset exec`。
+- **严格项目边界**：项目默认不继承全局版本，也不静默回退到系统 `PATH`；联网安装和传统版本文件导入都需要显式命令。
+- **安全安装**：Provider 执行完整性校验、安全解压和原子安装，并通过所有权收据支持审计、修复、卸载和清理。
+- **加密项目环境**：每个 profile 使用独立的 age 密文与 recipient；私钥保存在系统密钥库、口令保护的恢复文件或 CI Secret 中。
+- **适合自动化**：提供稳定的 JSON schema 1、reason code、退出码、Shell 补全、离线锁审计和 GitHub Composite Action。
+
+## 支持的 Provider
+
+| Provider | 主要命令 | Windows x64 | Linux x64 | Linux ARM64 | macOS ARM64 |
+| --- | --- | :---: | :---: | :---: | :---: |
+| Node.js | `node`、`npm`、`npx`、`corepack` | ✓ | ✓ | ✓ | ✓ |
+| pnpm | `pnpm` | ✓ | ✓ | ✓ | ✓ |
+| Bun | `bun`、`bunx` | ✓ | ✓ | ✓ | ✓ |
+| Go | `go`、`gofmt` | ✓ | ✓ | ✓ | ✓ |
+| Python | `python`、`python3`、`pip`、`pip3` | ✓ | ✓ | ✓ | ✓ |
+| Java（Temurin） | `java`、`javac`、`jar` 与 JDK 工具 | ✓ | ✓ | ✓ | ✓ |
+| Rust stable | `rustc`、`cargo`、`rustdoc`、`rustfmt`、Clippy | ✓ | ✓ | ✓ | ✓ |
+| .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
+| Flutter / 内置 Dart | `flutter`、`dart` | ✓ | ✓ | — | ✓ |
+
+Flutter 没有提供符合当前安装模型的官方 Linux ARM64 SDK 归档，因此 Pinset 会明确返回不支持，而不会下载 x64 制品。外部 Android SDK、Visual Studio Build Tools、Windows SDK 等系统依赖只由 `doctor` 诊断，不由 Pinset 安装。
+
+## 安装目录是怎样组织的
+
+安装目录中的 `node.cmd`、`cargo.cmd`、`flutter.cmd` 等文件只是很小的命令路由，不是完整 SDK。真实运行时按照 Provider、版本和平台分别保存在 `PINSET_HOME` 中：
+
+```text
+安装目录/
+├── pinset(.exe)           CLI
+├── pinset-shim(.exe)      轻量命令路由器
+├── node(.cmd)             路由到项目选择的 Node.js
+├── cargo(.cmd)            路由到项目选择的 Rust
+└── ...                    其他内置 Provider 命令
+
+PINSET_HOME/
+├── installs/
+│   ├── node/<版本>/<平台>/...
+│   ├── rust/<版本>/<平台>/...
+│   └── flutter/<版本>/<平台>/...
+├── downloads/             内容寻址下载缓存
+└── state/                 全局选择、信任记录等本机状态
+```
+
+因此命令都出现在同一个 PATH 目录是正常设计：这个目录负责稳定路由，SDK 本体仍彼此隔离。可以随时检查实际位置和安装内容：
+
+```sh
+pinset paths
+pinset paths flutter
+pinset list --long
+pinset doctor --deep
+```
+
+## 安装
 
 ### Linux 与 macOS
 
-安装脚本会下载匹配平台的 GitHub Release 归档，校验其在 `SHA256SUMS` 中的记录，并默认把 `pinset` 与 `pinset-shim` 安装到 `~/.local/bin`。
+安装器会下载与当前平台匹配的 GitHub Release，核对 `SHA256SUMS`，并默认安装到 `~/.local/bin`：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh
-```
-
-在当前 Shell 中，把该目录放到系统运行时目录之前：
-
-```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-再次运行同一安装脚本即可升级。也可以安装指定版本或使用其他绝对目录：
+安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 1.9.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.0.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
-### Windows
-
-从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 下载 `pinset-windows-x86_64.zip`，把 `pinset.exe` 与 `pinset-shim.exe` 解压到长期保留的目录，再把该目录放到用户 `PATH` 的靠前位置。
+### Windows PowerShell
 
 ```powershell
-$pinsetBin = 'C:\Tools\pinset'
-$env:PATH = "$pinsetBin;$env:PATH"
-pinset --version
+Invoke-WebRequest https://raw.githubusercontent.com/Future-Element/pinset/main/install.ps1 -OutFile install.ps1
+.\install.ps1
+Remove-Item .\install.ps1
 ```
 
-升级时，用新版 Release 归档中的两个二进制一起替换旧文件。Windows 与 WSL 的安装相互独立。
+指定版本：
 
-### 手动下载
+```powershell
+.\install.ps1 -Version 2.0.0
+```
 
-[Releases 页面](https://github.com/Future-Element/pinset/releases)会发布全部受支持归档、`SHA256SUMS`、SBOM 与构建来源证明。解压前请先验证归档摘要。
+Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
+
+也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载归档。Release 同时提供 checksum、SBOM 与构建来源证明。
 
 ## Shell 初始化
 
-Pinset 不会修改 Shell 配置文件。请自行加入对应初始化命令，使 Pinset 路由目录拥有更高优先级。
-
-### Bash
+Pinset 不会修改 Shell 配置文件。把对应命令加入自己的 Shell 配置，使 Pinset 的路由目录位于其他运行时管理器之前：
 
 ```sh
+# Bash
 eval "$(pinset activate bash)"
-```
 
-### Zsh
-
-```sh
+# Zsh
 eval "$(pinset activate zsh)"
 ```
 
-### Fish
-
 ```fish
+# Fish
 pinset activate fish | source
 ```
 
-### PowerShell
-
 ```powershell
+# PowerShell
 pinset activate powershell | Out-String | Invoke-Expression
 ```
 
-把对应命令加入 Shell 配置文件即可在后续会话中生效。如果其他运行时管理器或系统命令位于 `PATH` 更前面，请运行 `pinset doctor`。
-
-## Shell 补全
-
-按需生成补全脚本：
+如需补全：
 
 ```sh
-pinset completions bash > ~/.local/share/bash-completion/completions/pinset
-pinset completions zsh > "${fpath[1]}/_pinset"
-pinset completions fish > ~/.config/fish/completions/pinset.fish
+pinset completions bash
+pinset completions zsh
+pinset completions fish
 ```
 
 ```powershell
@@ -110,141 +146,232 @@ pinset completions powershell | Out-String | Invoke-Expression
 
 ## 快速开始
 
-设置 Pinset 项目之外使用的全局默认版本：
+### 1. 设置全局默认版本
+
+全局选择只在 Pinset 项目之外生效，或由项目策略显式继承：
 
 ```sh
 pinset global node@lts
 pinset global pnpm@latest
-pinset global go@1.25
 pinset current node
 ```
 
-为项目独立锁定版本：
+### 2. 创建项目并锁定运行时
 
 ```sh
 mkdir example && cd example
 pinset init
-pinset use node@22
-pinset use pnpm@10
+pinset use node@24
+pinset use pnpm@11
 pinset use python@3.14
 pinset install --locked
 pinset lock audit
-pinset exec -- node --version
 ```
 
-不修改项目或全局选择状态，临时验证并运行一个工具：
+提交生成的 `pinset.toml` 和 `pinset.lock`。项目成员 Clone 后只需要运行：
 
 ```sh
-pinset x node@24 -- node --version
+pinset install --locked
+node --version
+pnpm --version
+python --version
 ```
 
-解析出的归档仍会经过 checksum/签名验证，也可能缓存在 `PINSET_HOME` 或安装到其中；但不会写入 `pinset.toml`、`pinset.lock`、`global.toml` 或 `global.lock`。Provider 依赖仍保持显式：`pinset x pnpm@11 -- pnpm --version` 需要有效的项目/全局 Node.js 选择。
+`pinset.toml` 保存用户选择与策略，`pinset.lock` 保存精确版本和平台制品。项目配置使用 schema 4，运行时锁继续使用 schema 3；加密环境不会参与运行时制品解析。
 
-请提交 `pinset.toml` 和 `pinset.lock`。`latest`、`lts`、`stable` 或版本前缀等选择器会保留在 `pinset.toml`，锁文件则记录其精确解析版本。`pinset outdated` 会区分“兼容选择器内可更新”与“必须修改选择器才能升级”，`pinset update --dry-run` 可预览兼容的锁更新。
+### 3. 临时运行其他版本
 
-schema 3 项目默认严格：只要存在 `pinset.toml`，未声明的工具就不会继承全局选择，也不会使用系统 `PATH`。需要时必须明确选择：
+不修改项目或全局选择：
 
-```toml
-[policy]
-inherit-global = true
-system-fallback = false
-boundary = "git"
-# 可选的项目级供应链策略：
-verification-strength = "checksum"
-minimum-release-age = "7d"
+```sh
+pinset x node@22 -- node --version
 ```
 
-可选验证策略会应用到项目选择的每个工具，强度顺序为 `checksum < signed-checksum < provenance`。Pinset 会拒绝低于最低强度的锁，也不会用更弱证据静默替换已有锁。发布年龄支持正数 `d`、`h`、`m`、`s` 时长；上游没有提供可用时间时会失败关闭。默认解析边界仍是最近的 Git 根目录，只有父级配置明确设置 `boundary = "filesystem"` 才跨越该边界。
+### 4. 导入传统版本文件
 
-迁移现有仓库时，先在本地检查传统配置，再导入并安装其中无歧义的选择：
+Pinset 不会在日常解析中隐式读取 `.nvmrc`、`.node-version`、`.tool-versions` 等文件。迁移时需要显式检测和导入：
 
 ```sh
 pinset detect --json
 pinset import
 ```
 
-`detect` 不联网、也不写文件。`import --no-install` 会写入 Pinset 配置和精确锁，但不下载运行时。扫描范围从工作目录到最近的 Git 仓库根目录，并且不会修改或删除来源文件。
+`detect` 只读且不联网；`import` 不删除或修改来源文件。
 
-在 CI、制品打包或离线交接前审计当前选择状态：
+## 项目策略
+
+项目默认严格：未声明的工具不会继承全局选择，也不会静默使用系统命令。需要时在 `pinset.toml` 中显式调整：
+
+```toml
+schema = 4
+project-id = "4c5652e4-0000-4000-8000-000000000000"
+
+[policy]
+inherit-global = false
+system-fallback = false
+boundary = "git"
+verification-strength = "checksum"
+minimum-release-age = "7d"
+
+[tools]
+node = "24"
+pnpm = "11"
+```
+
+验证强度顺序为 `checksum < signed-checksum < provenance`。如果上游证据弱于项目要求，或无法取得发布年龄，Pinset 会失败关闭，不会静默降低策略。
+
+## 加密项目环境
+
+Pinset 2.0 管理项目范围、字符串类型的加密环境变量，但不定位为通用 Secrets Vault。每个 profile 是独立的 age 文件，并拥有独立 recipient。
+
+### 初始化与直接运行
 
 ```sh
+pinset migrate
+pinset env init --profile development --auto --recovery ~/pinset-development-recovery.age
+pinset env set DATABASE_URL --profile development
+pinset env list --profile development
+pinset trust add
+
+# shim 自动选择运行时并注入 development profile
+node app.js
+```
+
+重要规则：
+
+- `env set` 默认隐藏输入，变量值不会出现在命令参数中。
+- `env list` 只显示变量名；查看单个值需要交互式 `env reveal`。
+- 没有 `auto-profile` 时，直接 shim 不自动注入环境。
+- `PINSET_ENV_PROFILE=ci` 可显式选择 profile。
+- `PINSET_ENV_DISABLE=1` 或 `pinset exec --no-env` 可关闭单次注入。
+- 进程变量与密文变量同名时默认报错；也可显式使用 `process-wins` 或 `encrypted-wins`。
+- 修改 recipient、profile 路径、自动 profile 或冲突策略后必须重新信任；只修改密文值不需要。
+- 不会自动扫描 `.env`，也不会创建临时明文 `.env`。
+
+### 导入现有 `.env`
+
+如果项目已经使用 `.env`，可以显式把其中的变量迁移到某个加密 profile：
+
+```sh
+pinset env import --from .env --profile development
+```
+
+导入支持空值、注释、单/双引号和带引号多行值。同名变量会在目标 profile 中更新；`export`、变量插值、命令替换和 Shell 表达式会被拒绝。Pinset 不会自动查找或删除来源文件，确认迁移成功后仍需由用户自行处理原来的明文 `.env`。
+
+### 换电脑
+
+Clone 项目后，安装锁定运行时、导入恢复身份并重新信任：
+
+```sh
+pinset install --locked
+pinset env identity import --from ~/pinset-development-recovery.age
+pinset trust add
+node app.js
+```
+
+恢复文件必须保存在仓库外并妥善备份。Linux/SSH 环境没有可用系统密钥库时，必须显式使用口令保护的身份文件；Pinset 不会退化为明文私钥。
+
+### GitHub Actions
+
+将 age 私有身份文本保存为仓库 Secret `PINSET_IDENTITY`。profile 和 `project-id` 不是秘密，可以提交到项目配置：
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PINSET_IDENTITY: ${{ secrets.PINSET_IDENTITY }}
+      PINSET_ENV_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Future-Element/pinset@v2.0.0
+        with:
+          version: 2.0.0
+          install: "true"
+          trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
+      - run: pinset exec -- node app.js
+```
+
+身份变量会在业务进程启动前移除。不要把服务端秘密注入 Flutter、Web 或其他会把环境值编译进客户端制品的构建。
+
+## 诊断、修复与更新
+
+```sh
+# 查看最终解析和真实路径
+pinset current --explain
+pinset which node --explain
+pinset paths node
+pinset doctor --deep
+
+# 检查锁、缓存与安装所有权
 pinset lock audit --json
-pinset lock audit --global
+pinset cache verify
+
+# 修复具有匹配所有权收据的损坏安装
+pinset install node@24.0.0 --repair
+
+# 自更新不会在后台自动联网
+pinset self outdated
+pinset self update
 ```
 
-`lock audit` 始终只读、离线运行。它检查配置与锁是否一致、当前平台制品、存在时的相关缓存字节、安装收据及由收据证明的所有权。无需处理时返回 `0`；审计正常完成但包含错误或警告时返回 `1`；只有命令本身无法运行时才返回 `2`。每条发现都包含稳定的 snake_case `reason_code` 与修复计划，Pinset 不会自动执行修复计划。
+`doctor --deep` 和安装收据验证的是安装布局、关键入口和统计信息，不宣称对每个已安装文件进行密码学验证。
 
-查看可用版本与已安装版本：
+## 安全边界
 
-```sh
-pinset list node --available
-pinset list pnpm --available
-pinset list
-```
+Pinset 保护可复现解析、下载完整性、仓库中静态密文和本机信任边界，但不承诺抵御管理员、调试器、恶意项目代码或已经失陷的 CI。已经获得秘密的进程可以启动其他程序，因此 Pinset 不提供“按子命令限制秘密”的伪隔离。
 
-## Provider 与平台
+2.0 明确不包含：
 
-| Provider | 命令 | Windows x64 | Linux x64 | Linux ARM64 | macOS ARM64 |
-| --- | --- | :---: | :---: | :---: | :---: |
-| Node.js | `node`、`npm`、`npx`、`corepack` | ✓ | ✓ | ✓ | ✓ |
-| pnpm | `pnpm` | ✓ | ✓ | ✓ | ✓ |
-| Bun | `bun`、`bunx` | ✓ | ✓ | ✓ | ✓ |
-| Go | `go`、`gofmt` | ✓ | ✓ | ✓ | ✓ |
-| Python | `python`、`python3`、`pip`、`pip3` | ✓ | ✓ | ✓ | ✓ |
-| Java（Temurin） | `java`、`javac`、`jar` 与 JDK 工具 | ✓ | ✓ | ✓ | ✓ |
-| Rust stable | `rustc`、`cargo`、`rustdoc`、`rustfmt`、`clippy-driver` | ✓ | ✓ | ✓ | ✓ |
-| .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
-| Flutter / 内置 Dart | `flutter`、`dart` | ✓ | ✓ | — | ✓ |
-
-Flutter 没有发布符合 Pinset 安装模型的官方 Linux ARM64 SDK 归档，因此 Pinset 会返回明确的不支持目标错误，不会回退到 x64。macOS Intel 不是 Pinset v1.0 的发布目标。
-
-9 个内置 Provider 都通过同一 capability model 声明命令布局、元数据解析、安装、环境、传统文件发现、锁审计、验证方法与发布时间能力。Node 通过内嵌 OpenPGP 信任根达到 `signed-checksum`，pnpm 与 Bun 通过 npm registry ECDSA 签名达到该等级；其他内置 Provider 当前为 `checksum`。Minisign、Sigstore、GitHub Attestation 与 SLSA 是彼此独立的已识别方法，但只有 Provider 真正验证对应 bundle 和身份策略后，Pinset 才会报告 `provenance`。
-
-v1.8 新增 clear-signed 声明式 Registry 预览和显式 Provider 依赖。可以查看内置 manifest 集合，或只读验证另一个 clear-signed Registry 文件：
-
-```sh
-pinset provider list
-pinset provider verify registry/providers.json.asc --json
-```
-
-Registry 验证刻意保持只读。未知字段、任意脚本/hooks、不支持的 capability、依赖缺失、循环、签名者不匹配与签名篡改都会失败关闭。此版本仍只有编译进 Pinset 的 9 个 Provider 可以安装和路由命令。pnpm 显式依赖 Node.js，因此 composite `PATH` 会包含项目选择的 Node.js，而不会继承无关 Provider。
+- AWS、Azure、GCP KMS 或 OIDC 动态密钥交换；
+- 后台守护进程、任务、hooks 或服务管理；
+- 任意 age 插件、任意代码 Provider 或通用密码库；
+- Nix/Conda 风格依赖求解、远程秘密同步或动态租约；
+- Android SDK、Visual Studio Build Tools、Windows SDK 等外部系统组件安装。
 
 ## 命令文档
 
-请查阅完整的[中文命令文档](docs/commands.zh-CN.md)或[英文命令文档](docs/commands.md)。其中记录了每个命令及二级命令、状态修改、JSON 支持、退出码与常见错误。
+完整参数、状态修改、JSON 支持、退出码和常见错误请查阅：
 
-产品定位与取舍见带官方来源的 [Pinset 横向对比](docs/comparison.zh-CN.md)。
+- [中文命令文档](docs/commands.zh-CN.md)
+- [English command reference](docs/commands.md)
 
-## v1.9
+也可以运行：
 
-v1.9 交付经过验证的一次性执行和可维护的生态集成。仓库提供验证 checksum 的 composite GitHub Action、Renovate preset、项目/锁文件 JSON Schema 与 Dev Container 示例。每次 release 都会用真实归档哈希生成 Winget、Scoop、Homebrew manifest，并为它们提供 checksum 与构建证明。详见[集成与分发](docs/integrations.zh-CN.md)。
+```sh
+pinset --help
+pinset <命令> --help
+```
 
-## 未来规划
+## 迁移与升级
 
-路线图只表达方向，不承诺具体版本或发布日期。
+旧项目升级到 schema 4 前可以先预览：
 
-| 版本 | 主题 | 计划内容 |
-| --- | --- | --- |
-| 持续进行 | 平台与质量 | 在上游提供合适制品时扩展平台和架构；持续执行跨平台 CI、安全审计、恶意输入回归、签名标签、`SHA256SUMS`、SBOM 与构建来源证明验证。 |
+```sh
+pinset migrate --dry-run
+pinset migrate
+```
 
-路线图会保持 Pinset 的明确边界：传统版本文件仍只由 `detect` / `import` 显式读取；严格项目不默认自动下载并执行缺失工具；核心不加入任务、hooks、`.env`、Secrets、服务管理、Nix/Conda 求解或任意代码插件。上述路线继续使用 schema 3，并优先采用向后兼容的可选字段。
+迁移会分别报告项目配置、运行时锁和旧安装收据，不会自动创建加密环境文件。Pinset 只发布 `2.0.0-rc.1` 与 `2.0.0` 两个 2.0 发布节点。
 
 ## 卸载
 
-需要所有权与引用检查时，请先通过 Pinset 删除运行时：
+删除运行时前先检查引用和所有权：
 
 ```sh
-pinset uninstall node@22.0.0 --dry-run
-pinset uninstall node@22.0.0
+pinset uninstall node@24.0.0 --dry-run
+pinset uninstall node@24.0.0
 pinset prune --dry-run
 ```
 
-完整卸载 Pinset 时，请从安装目录删除 `pinset` 和 `pinset-shim`，再删除自己加入 Shell 配置文件的初始化行。仅当你也要删除 Pinset 所有的运行时、缓存和全局状态时，才删除 `PINSET_HOME`（Unix 通常为 `~/.local/share/pinset`）。项目内的 `pinset.toml`、`pinset.lock` 与 `.venv` 不会自动删除。
+完整卸载 Pinset 时，删除安装目录中的 CLI、shim 和路由命令，再删除自己加入 Shell 配置的初始化行。只有确定不再需要任何受管运行时、缓存、全局选择和本机信任时，才删除 `PINSET_HOME`。项目中的 `pinset.toml`、`pinset.lock`、`pinset.env/*.age` 与 `.venv` 不会自动删除。
 
-## 贡献
+## 未来规划
+
+后续 2.x 会在保持失败关闭和本地优先边界的前提下评估 KMS/OIDC、更广的平台制品和更强的来源证明。路线图不承诺具体版本或发布日期。
+
+## 贡献与许可证
 
 提交变更前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按照 [SECURITY.md](SECURITY.md) 报告。
-
-## 许可证
 
 Pinset 使用 [MIT License](LICENSE)。

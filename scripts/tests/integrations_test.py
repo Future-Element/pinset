@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static contract checks for v1.9 editor, CI, container, and distribution assets."""
+"""Static contract checks for v2.0 editor, CI, container, and distribution assets."""
 
 from __future__ import annotations
 
@@ -44,7 +44,15 @@ assert devcontainer["build"]["args"]["PINSET_VERSION"] == WORKSPACE_VERSION
 
 require_text(
     ROOT / "action.yml",
-    ("using: composite", "SHA256SUMS", "sha256sum", "Get-FileHash", "pinset install --locked"),
+    (
+        "using: composite",
+        "SHA256SUMS",
+        "sha256sum",
+        "Get-FileHash",
+        "pinset install --locked",
+        "trust-project-id",
+        "pinset trust add --project-id",
+    ),
 )
 action = (ROOT / "action.yml").read_text(encoding="utf-8")
 action_version = re.search(r"(?ms)^  version:\s*$.*?^    default: ([^\s]+)$", action)
@@ -55,12 +63,24 @@ require_text(
 )
 require_text(
     ROOT / ".github/workflows/release.yml",
-    ("generate_package_manifests.py", "dist/pinset-winget.yaml", "dist/pinset-scoop.json", "dist/pinset.rb"),
+    (
+        "generate_package_manifests.py",
+        "dist/pinset-winget.yaml",
+        "dist/pinset-scoop.json",
+        "dist/pinset.rb",
+        "dist/install.ps1",
+        "dist/pinset-env.cdx.json",
+    ),
 )
 require_text(
     ROOT / "examples/devcontainer/.devcontainer/Dockerfile",
-    ("ARG PINSET_VERSION=1.9.0", "SHA256SUMS", "sha256sum"),
+    (f"ARG PINSET_VERSION={WORKSPACE_VERSION}", "SHA256SUMS", "sha256sum"),
 )
+
+install_ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
+assert f"[string] $Version = '{WORKSPACE_VERSION}'" in install_ps1
+for required in ("Get-FileHash", "SHA256SUMS", "pinset-shim.exe", "shim install --all"):
+    assert required in install_ps1
 
 with tempfile.TemporaryDirectory() as temporary:
     temporary_path = pathlib.Path(temporary)
@@ -93,4 +113,4 @@ with tempfile.TemporaryDirectory() as temporary:
         (f'version "{WORKSPACE_VERSION}"', 'sha256 "' + "ab" * 32 + '"'),
     )
 
-print("v1.9 integration contracts passed")
+print("v2.0 integration contracts passed")
