@@ -279,3 +279,8 @@ pub use target::{current_target, current_target_for_tool};
 #[cfg(feature = "state-write")]
 pub use user_settings::save_user_settings;
 pub use user_settings::{UserSettings, load_user_settings, user_settings_path};
+
+pub fn pinset_version() -> &'static str {
+    let version = option_env!("PINSET_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    version.strip_prefix('v').unwrap_or(version)
+}

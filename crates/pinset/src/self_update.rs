@@ -22,7 +22,7 @@ struct Release {
 
 pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let latest = latest_release(prerelease)?;
-    let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
+    let current = Version::parse(pinset_core::pinset_version())?;
     let available = parse_tag(&latest.tag_name)?;
     let is_outdated = available > current;
     if json {
@@ -42,7 +42,7 @@ pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::
 }
 
 pub(crate) fn update(requested: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
+    let current = Version::parse(pinset_core::pinset_version())?;
     let version = match requested {
         Some(value) => Version::parse(value.trim_start_matches('v'))?,
         None => parse_tag(&latest_release(false)?.tag_name)?,
@@ -91,7 +91,7 @@ fn latest_release(prerelease: bool) -> Result<Release, Box<dyn std::error::Error
 
 fn client() -> Result<Client, reqwest::Error> {
     Client::builder()
-        .user_agent(format!("pinset/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("pinset/{}", pinset_core::pinset_version()))
         .build()
 }
 

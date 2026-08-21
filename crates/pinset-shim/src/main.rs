@@ -183,7 +183,7 @@ fn encrypted_environment(
         .arg("--cwd")
         .arg(cwd)
         .arg("--shim-version")
-        .arg(env!("CARGO_PKG_VERSION"))
+        .arg(pinset_core::pinset_version())
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
