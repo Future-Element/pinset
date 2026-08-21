@@ -618,17 +618,294 @@ v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖�
 | 退出码 | 密码学、schema、capability 与依赖验证全部通过为 `0`；否则为 `2`。 |
 | 关键错误 | 符号链接/非文件、输入超过 256 KiB、未签名或多重签名、签名者不匹配、内容篡改、未知字段/capability、依赖缺失或循环。 |
 
-## 稳定协议边界
+## 加密项目环境命令
 
-## Pinset 2.0 项目环境与维护命令
+Pinset 用相互独立的 [age](https://age-encryption.org/) 密文 profile 管理项目级字符串环境变量。公开 recipient 和密文文件应进入仓库；私有 identity 和恢复口令不应进入仓库。Pinset 不会自动读取 `.env`、生成临时明文文件、插值变量，也不是通用 Secrets Vault。
+
+第一台电脑的常规流程如下：
+
+```sh
+# 仅现有 schema 1–3 项目需要；新的 `pinset init` 项目已是 schema 4。
+pinset migrate
+
+# 创建 pinset.env/development.age、设备身份和已加密的恢复身份。
+pinset env init --profile development --auto \
+  --recovery ~/pinset-development-recovery.age
+pinset env set DATABASE_URL --profile development
+pinset env list --profile development
+pinset trust add
+
+# 直接 shim 选择运行时并注入已信任的 auto-profile。
+node app.js
+```
+
+提交 `pinset.toml` 和 `pinset.env/*.age`，但把恢复文件和 identity 文件留在仓库外。恢复文件和口令应分开备份；如果丢失所有匹配 identity，密文将无法恢复。
+
+Profile 名称限制为 1–64 位 ASCII 字母、数字、点、下划线或短横线。配置的密文路径必须位于规范化项目边界内，并解析为非符号链接普通文件。解密后 profile 数据上限为 1 MiB；继承环境加注入环境超过平台环境块限制时，Pinset 也会拒绝启动。
+
+### Profile 选择与注入
+
+对于 `--profile` 可选的命令，依次使用显式 `--profile`、`PINSET_ENV_PROFILE`、`[environment].auto-profile`。三者都没有时，Pinset 会要求指定 `--profile`。语法中必填 `--profile` 的命令不使用这个回退顺序。
+
+`node`、`python`、`cargo`、`flutter` 等直接 Provider 命令只在项目已信任，且 `PINSET_ENV_PROFILE` 或 `auto-profile` 选中 profile 时注入。`pinset exec --profile <名称> -- <命令>` 可显式选择。`PINSET_ENV_DISABLE=1` 和 `pinset exec --no-env -- <命令>` 可对单次启动禁用注入。
+
+`[environment].collision` 不区分变量名大小写，默认为 `error`：
+
+- `error`：加密变量名已存在于进程或运行时环境时，启动前报错。
+- `process-wins`：保留现有值，丢弃该名称的加密值。
+- `encrypted-wins`：用加密值替换现有值。
+
+`PINSET_IDENTITY`、`PINSET_IDENTITY_FILE`、`PINSET_ENV_PROFILE` 和 `PINSET_ENV_DISABLE` 会在业务进程启动前被移除。这可避免无意透传，但不是进程隔离：已获得秘密的进程仍可以把它传给其他程序。
+
+### `env init`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 创建一个空的加密 profile、一个设备 age X25519 identity，通常还会创建独立恢复 identity。 |
+| 语法与参数 | `pinset env init --profile <名称> [--auto] (--recovery <路径> | --no-recovery) [--identity-file <路径>] [--cwd <路径>]`。`--identity-file` 会把设备 identity 保存到口令保护文件，而非系统密钥库。 |
+| 修改状态 | **是。** 创建 `pinset.env/<profile>.age`、更新 schema 4 `pinset.toml`、保存设备 identity，并可能创建恢复文件。`--auto` 把该 profile 设为 `auto-profile`。 |
+| 示例 | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
+| JSON | 不支持。 |
+| 关键错误 | 项目不是 schema 4、profile/文件已存在、profile 名无效、密钥库不可用、路径不安全、恢复输出已存在或加密/写入失败。最后配置写入失败时会删除新密文；操作前面已创建的 identity 或恢复文件可能仍保留，需人工检查。 |
+
+只有在已有其他经过验证的 identity 备份方案时才使用 `--no-recovery`。在没有可用系统密钥库的 Linux/SSH 环境中，使用 `--identity-file <路径>`，后续交互命令通过 `PINSET_IDENTITY_FILE` 指向该受保护文件。
+
+### `env set`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 在 profile 中新增或替换一个加密变量。 |
+| 语法与参数 | `pinset env set <变量名> [--profile <名称>] [--stdin] [--cwd <路径>]`。不使用 `--stdin` 时，Pinset 通过隐藏终端输入读值；值永远不是位置参数。 |
+| 修改状态 | **是。** 解密、修改、使用新的 age 文件密钥材料重新加密，并在文件锁下原子替换密文。 |
+| 示例 | `pinset env set DATABASE_URL --profile development` |
+| JSON | 不支持。 |
+| 关键错误 | 没有选定/匹配 identity、变量名无效、输入失败、profile 畸形/超限、路径不安全或加密/写入失败。 |
+
+可移植变量名匹配 `[A-Za-z_][A-Za-z0-9_]*`。名称按 ASCII 大小写不敏感唯一；`PATH` 和所有 `PINSET_*` 名称为保留项。值可为空或多行，但不能包含 NUL。`--stdin` 读取完整标准输入并删除一个末尾换行；需确保输入生产者不会在自身参数、日志或文件中泄露该值。
+
+### `env unset`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 不区分大小写地匹配并删除一个变量。 |
+| 语法与参数 | `pinset env unset <变量名> [--profile <名称>] [--cwd <路径>]`。 |
+| 修改状态 | **是。** 即使报告该名称原本未设置，也会原子重新加密 profile。 |
+| 示例 | `pinset env unset LEGACY_TOKEN --profile development` |
+| JSON | 不支持。 |
+| 关键错误 | 名称无效、profile 或 identity 缺失、密文不安全/已损坏或写入失败。 |
+
+### `env list`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 列出一个 profile 的变量名，不向输出写入变量值。 |
+| 语法与参数 | `pinset env list [--profile <名称>] [--json] [--cwd <路径>]`。 |
+| 修改状态 | 否。profile 只在内存中解密。 |
+| 示例 | `pinset env list --profile ci --json` |
+| JSON | **支持。** 命令名为 `env.list`，包含 `profile` 和 `names`，永远不包含值。 |
+| 关键错误 | 没有选中 profile、没有匹配 identity、密文不安全/已损坏或 profile schema 不支持。 |
+
+### `env reveal`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 有意进行人工检查时，打印一个解密值。 |
+| 语法与参数 | `pinset env reveal <变量名> --profile <名称> [--cwd <路径>]`。标准输入和输出都必须是交互终端。 |
+| 修改状态 | 否。 |
+| 示例 | `pinset env reveal DATABASE_URL --profile development` |
+| JSON | 不支持。 |
+| 关键错误 | 重定向/非交互终端、变量未设置、没有匹配 identity 或密文无效。 |
+
+值会写到终端，可能留在滚动回溯中。日常检查应优先使用 `env list`。
+
+### `env import`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 把显式指定的明文 dotenv 文件导入一个加密 profile。 |
+| 语法与参数 | `pinset env import --from <路径> --profile <名称> [--cwd <路径>]`。 |
+| 修改状态 | **是。** 同名变量替换 profile 中的值，其他现有变量保留。不修改或删除来源文件。 |
+| 示例 | `pinset env import --from .env --profile development` |
+| JSON | 不支持。 |
+| 关键错误 | UTF-8/赋值/名称无效、变量名按大小写折叠后重复、`export`、插值、命令替换、Shell 表达式、不支持的转义、引号未闭合、identity 缺失或加密失败。 |
+
+可移植子集支持空行、`#` 注释、空值、无引号值、单/双引号、引号内多行值，以及双引号内的 `\n`、`\r`、`\t`、`\\` 和 `\"` 转义。它永远不执行输入。验证导入后，需自行删除或保护明文来源。
+
+### `env export`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 当目标系统无法使用 Pinset 注入时，有意把一个 profile 导出为明文 dotenv 文件。 |
+| 语法与参数 | `pinset env export --profile <名称> --format dotenv --output <路径> --allow-plaintext [--cwd <路径>]`。`dotenv` 是唯一格式。 |
+| 修改状态 | **是。** 创建新明文文件，永远不覆盖现有路径。 |
+| 示例 | `pinset env export --profile development --format dotenv --output ./local.env --allow-plaintext` |
+| JSON | 不支持。 |
+| 关键错误 | 缺少同意标志、输出已存在/不安全、权限收紧失败、identity 缺失或密文无效。 |
+
+输出会限制为当前用户可读（Unix 上为 `0600`，Windows 上为仅当前用户 ACL），但它仍是明文。不要提交，明确用途完成后应立即删除。
+
+### `env recipient add`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 允许另一个 age X25519 identity 解密某个 profile。 |
+| 语法与参数 | `pinset env recipient add <age1...> --profile <名称> [--cwd <路径>]`。 |
+| 修改状态 | **是。** 先用现有 identity 解密，再原子重新加密到去重后的新 recipient 集合，最后更新 `pinset.toml`。 |
+| 示例 | `pinset env recipient add age1example... --profile production` |
+| JSON | 不支持。 |
+| 关键错误 | recipient 无效、无现有匹配 identity、profile 未声明、密文不安全/已损坏或事务写入失败。 |
+
+### `env recipient remove`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 在证明当前解密权限后，从 profile 删除一个 recipient。 |
+| 语法与参数 | `pinset env recipient remove <age1...> --profile <名称> [--cwd <路径>]`。 |
+| 修改状态 | **是。** 以事务方式重新加密并更新配置；配置更新失败时恢复原密文。 |
+| 示例 | `pinset env recipient remove age1example... --profile production` |
+| JSON | 不支持。 |
+| 关键错误 | recipient 无效、尝试删除最后一个 recipient、无匹配 identity 或重新加密/配置失败。 |
+
+新增或删除 recipient 会改变受信任的环境策略。需同时提交 `pinset.toml` 和新密文，然后在每台电脑和 CI 中重新执行 `pinset trust add`。删除 recipient 可阻止该 identity 未来解密，但无法撤回之前已获取的明文。
+
+### `env recipient list`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 打印某个 profile 配置的公开 recipients。 |
+| 语法与参数 | `pinset env recipient list --profile <名称> [--cwd <路径>]`。 |
+| 修改状态 | 否。只读取已提交配置，不解密 profile。 |
+| 示例 | `pinset env recipient list --profile production` |
+| JSON | 不支持。 |
+| 关键错误 | 缺少项目/配置，或 profile 未声明。 |
+
+### `env identity create`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 生成一个额外 age X25519 identity，并打印其 ID 和公开 recipient。 |
+| 语法与参数 | `pinset env identity create [--output <路径>]`。没有 `--output` 时私有 identity 存入系统密钥库；指定后创建新的口令保护 identity 文件。 |
+| 修改状态 | **是。** 写入密钥库和本地 identity 元数据，或创建受保护的输出文件。 |
+| 示例 | `pinset env identity create` |
+| JSON | 不支持。打印的 `age1...` recipient 是公开信息；私有 identity 永远不打印。 |
+| 关键错误 | 密钥库不可用、输出已存在、口令确认不匹配、权限失败或密码学失败。 |
+
+把打印的 recipient 交给 `env recipient add`。仅创建 identity 不会自动获得现有 profile 的访问权。
+
+### `env identity import`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 把口令保护的恢复/备份 identity 还原到当前电脑的系统密钥库。 |
+| 语法与参数 | `pinset env identity import --from <路径>`。口令通过隐藏输入读取。 |
+| 修改状态 | **是。** 把解密 identity 加入密钥库和本地 identity 元数据；不修改来源备份。 |
+| 示例 | `pinset env identity import --from ~/pinset-development-recovery.age` |
+| JSON | 不支持。 |
+| 关键错误 | 口令错误、输入已损坏/不是 identity、密钥库不可用或元数据写入失败。 |
+
+新电脑 Clone 后，执行 `pinset install --locked`、导入匹配的恢复 identity、执行 `pinset trust add`，之后即可正常直接使用 shim。
+
+### `env identity list`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 列出已注册 identity 的 ID、公开 recipient 和存储后端，不包含私钥。 |
+| 语法与参数 | `pinset env identity list [--json]`。 |
+| 修改状态 | 否。 |
+| 示例 | `pinset env identity list --json` |
+| JSON | **支持。** 命令名为 `env.identity.list`。 |
+| 关键错误 | 本地 identity 元数据无效或无法读取。 |
+
+### `env identity backup`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 把一个密钥库 identity 备份为新的口令保护 age 文件。 |
+| 语法与参数 | `pinset env identity backup <id> --output <路径>`。会要求输入并确认新备份口令。 |
+| 修改状态 | **是。** 创建受保护输出，不覆盖现有文件。 |
+| 示例 | `pinset env identity backup 4c5652e4-... --output ~/pinset-device-backup.age` |
+| JSON | 不支持。 |
+| 关键错误 | ID 未知、密钥库访问失败、输出已存在、口令不匹配或加密/写入失败。 |
+
+### `env identity export`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 把密钥库 identity 导出为明文，主要用于受明确保护的 CI Secret。 |
+| 语法与参数 | `pinset env identity export <id> --output <路径> --allow-plaintext`。 |
+| 修改状态 | **是。** 创建新的仅当前用户可读明文文件，永远不覆盖。 |
+| 示例 | `pinset env identity export 4c5652e4-... --output ./ci-identity.txt --allow-plaintext` |
+| JSON | 不支持。 |
+| 关键错误 | 缺少同意标志、ID 未知、密钥库失败、输出已存在或权限收紧失败。 |
+
+把文件内容复制到 CI Secret 后应安全删除。永远不要提交该文件，也不要把私有 identity 作为命令行参数。
+
+### `trust add`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 批准当前规范化项目及其精确环境策略进行自动注入。 |
+| 语法与参数 | `pinset trust add [--project-id <id>] [--cwd <路径>]`。可选 ID 使自动化在检出的项目 `project-id` 不同时失败。 |
+| 修改状态 | **是。** 在 `PINSET_HOME/state/trust` 写入本地信任记录；不向仓库添加内容。 |
+| 示例 | `pinset trust add --project-id 4c5652e4-0000-4000-8000-000000000000` |
+| JSON | 不支持。 |
+| 关键错误 | 没有环境配置/`project-id`、期望 ID 不匹配、项目根不安全或信任存储写入失败。 |
+
+信任绑定规范化根路径、`project-id`、`auto-profile`、冲突策略、每个 profile 路径和每个 recipient。修改任意这些内容都必须重新信任；只修改加密变量值不需要。信任不代表项目代码安全。
+
+### `trust status`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 检查当前项目和环境策略是否匹配本地信任记录。 |
+| 语法与参数 | `pinset trust status [--cwd <路径>] [--json]`。 |
+| 修改状态 | 否。 |
+| 示例 | `pinset trust status --json` |
+| JSON | **支持。** 命令名为 `trust.status`，包含 `trusted`、reason `trusted`/`trust_missing`/`trust_changed` 和规范化 `root`。 |
+| 退出码 | 状态检查完成为 `0`，包括未信任状态；自动化应检查 JSON `trusted` 字段。 |
+| 关键错误 | 项目环境配置缺失/无效，或信任存储无法读取。 |
+
+### `trust revoke`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 删除当前电脑对某项目的自动注入批准。 |
+| 语法与参数 | `pinset trust revoke [--cwd <路径>]`。 |
+| 修改状态 | **是。** 只删除本地信任记录；密文、配置、identities 和已泄露值不变。 |
+| 示例 | `pinset trust revoke` |
+| JSON | 不支持。 |
+| 关键错误 | 项目发现或信任存储访问失败。对本来就未信任的项目撤销仍为成功，并报告原本无记录。 |
+
+### GitHub Actions identity 流程
+
+创建专用 identity，只把它的公开 recipient 加入 `ci` profile，并把私有 identity 文本存为 GitHub Actions Secret `PINSET_IDENTITY`。该 Secret 可以按行包含多个 identities。显式选择 profile，并固定预期的公开项目 ID：
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PINSET_IDENTITY: ${{ secrets.PINSET_IDENTITY }}
+      PINSET_ENV_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Future-Element/pinset@v2.0.0
+        with:
+          version: 2.0.0
+          install: "true"
+          trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
+      - run: pinset exec -- node app.js
+```
+
+Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动前移除 `PINSET_IDENTITY`。不要把服务端秘密注入 Flutter、Web、移动端或其他会把环境值编译进客户端制品的构建。
+
+## Pinset 2.0 维护命令
 
 `pinset paths [tool] [--json]` 会报告 CLI、相邻 shim、Pinset home、shim 目录、安装根，以及可选工具的已安装版本。`pinset list [tool] --long` 增加收据 schema、安装根、文件数量、总大小、关键入口与完整性状态。`pinset doctor --deep` 会重新扫描这些统计，但不宣称逐文件密码学验证。`pinset install <tool@精确版本> --repair` 只修复所有权收据与工具、版本、平台和目标目录全部匹配的安装。`pinset shim install --all` 注册所有内置 Provider 命令，但不下载运行时。
 
-`pinset env init --profile <名称> [--auto] --recovery <路径>` 创建独立 age profile 与设备身份；跳过恢复身份必须显式使用 `--no-recovery`，schema 1–3 项目必须先执行 `pinset migrate`。`env set`/`unset` 修改变量，`env list [--json]` 只列名称，`env reveal` 只能在交互终端显示一个值。import 只接受不可执行的 dotenv 子集；明文 export 必须指定新文件和 `--allow-plaintext`。recipient 变更会先解密并原子重新加密选定 profile。`env identity create|import|list|backup|export` 管理系统密钥库身份和显式的口令保护恢复文件。
-
-`pinset trust add [--project-id <id>]`、`trust status [--json]` 与 `trust revoke` 管理本地自动注入信任。信任绑定规范化项目根、项目 ID、完整环境配置和 recipients；只修改密文值不会使信任失效。`PINSET_ENV_PROFILE` 选择 profile，`PINSET_ENV_DISABLE=1` 关闭一次直接 shim 注入；`pinset exec --profile <名称>` 与 `pinset exec --no-env` 提供对应的显式方式。
-
 `pinset self outdated [--channel stable|prerelease] [--json]` 只在用户明确执行时检查固定官方仓库。`pinset self update [--version <版本>]` 验证平台、语义版本、归档结构与 `SHA256SUMS`，校验新 CLI 后成对替换 CLI/shim，并支持备份与回滚。普通命令和 `doctor` 不会后台检查更新。
+
+## 稳定协议边界
 
 Pinset v2.0 写入 schema 4 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–3 项目仍可读取，并通过显式迁移升级。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
 
