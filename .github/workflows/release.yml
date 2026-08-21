@@ -95,6 +95,7 @@ jobs:
           PY
 
       - name: Prepare pinned Rust toolchain
+        if: runner.os != 'Linux'
         run: rustup show active-toolchain
 
       - name: Restore Cargo registry cache
@@ -180,7 +181,23 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      - name: Build release binaries
+      - name: Build Linux release binaries on Debian 12
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env CARGO_HOME=/cargo \
+            --env HOME=/tmp \
+            --env PINSET_RELEASE_VERSION \
+            --volume "${HOME}/.cargo:/cargo" \
+            --volume "${PWD}:/workspace" \
+            --workdir /workspace \
+            docker.io/library/rust@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 \
+            cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Build native release binaries
+        if: runner.os != 'Linux'
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
 
       - name: Verify release version handshake
@@ -196,6 +213,16 @@ jobs:
             echo "release binary reported '${reported}', expected '${expected}'" >&2
             exit 1
           fi
+
+      - name: Verify Linux release compatibility baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            docker.io/library/debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 \
+            sh -c 'test "$(target/release/pinset --version)" = "pinset '"${GITHUB_REF_NAME#v}"'"'
 
       - name: Verify macOS release dependencies
         if: runner.os == 'macOS'
