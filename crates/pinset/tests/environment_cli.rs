@@ -97,7 +97,7 @@ fn broker(
     Command::new(env!("CARGO_BIN_EXE_pinset"))
         .args(["__env-resolve", "--cwd"])
         .arg(project)
-        .args(["--shim-version", env!("CARGO_PKG_VERSION")])
+        .args(["--shim-version", pinset_core::pinset_version()])
         .env("PINSET_HOME", home)
         .env("PINSET_IDENTITY", identity)
         .output()

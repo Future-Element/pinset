@@ -138,6 +138,8 @@ jobs:
   build:
     name: Build ${{ matrix.artifact }}
     needs: metadata
+    env:
+      PINSET_RELEASE_VERSION: ${{ github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -180,6 +182,20 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Verify release version handshake
+        shell: bash
+        run: |
+          binary="target/release/pinset"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            binary="${binary}.exe"
+          fi
+          expected="pinset ${GITHUB_REF_NAME#v}"
+          reported="$("${binary}" --version)"
+          if [[ "${reported}" != "${expected}" ]]; then
+            echo "release binary reported '${reported}', expected '${expected}'" >&2
+            exit 1
+          fi
 
       - name: Verify macOS release dependencies
         if: runner.os == 'macOS'

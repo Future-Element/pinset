@@ -1611,7 +1611,7 @@ fn write_receipt(
         install_root,
         file_count,
         total_size,
-        pinset_version: env!("CARGO_PKG_VERSION"),
+        pinset_version: crate::pinset_version(),
         critical_entries,
     };
     let serialized =

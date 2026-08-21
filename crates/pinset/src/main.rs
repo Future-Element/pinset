@@ -61,7 +61,7 @@ use crate::i18n::{Catalog, Language};
 #[derive(Debug, Parser)]
 #[command(
     name = "pinset",
-    version,
+    version = pinset_core::pinset_version(),
     about = "Predictable runtime version management for multilingual projects"
 )]
 struct Cli {
@@ -1294,10 +1294,10 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             profile,
             shim_version,
         } => {
-            if shim_version != env!("CARGO_PKG_VERSION") {
+            if shim_version != pinset_core::pinset_version() {
                 return Err(format!(
                     "Pinset CLI/shim version mismatch: CLI={} shim={shim_version}",
-                    env!("CARGO_PKG_VERSION")
+                    pinset_core::pinset_version()
                 )
                 .into());
             }
@@ -2922,8 +2922,10 @@ fn resolve_locked_tool(
     let provider = runtime_provider(tool).expect("validated provider");
     let mut locked = match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
-            let lockfile = node_metadata_client(&pinset_home()?)?
-                .resolve_lock(selector, &format!("pinset {}", env!("CARGO_PKG_VERSION")))?;
+            let lockfile = node_metadata_client(&pinset_home()?)?.resolve_lock(
+                selector,
+                &format!("pinset {}", pinset_core::pinset_version()),
+            )?;
             lockfile
                 .tool("node")
                 .expect("generated Node lock contains node")
@@ -2950,7 +2952,7 @@ fn resolve_locked_tool(
 fn new_lockfile() -> Lockfile {
     Lockfile {
         schema: pinset_core::LOCKFILE_SCHEMA,
-        generated_by: format!("pinset {}", env!("CARGO_PKG_VERSION")),
+        generated_by: format!("pinset {}", pinset_core::pinset_version()),
         tools: Vec::new(),
     }
 }
@@ -2975,7 +2977,7 @@ fn select_tool(
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
         let lock_path = global_lockfile_path(&home);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
-        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         lockfile.upsert_tool(locked_tool.clone())?;
         config.set_tool(&tool, &selector);
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
@@ -2990,7 +2992,7 @@ fn select_tool(
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
-        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         lockfile.upsert_tool(locked_tool.clone())?;
         project.set_tool(&tool, &selector);
         save_project_state(&config_path, &project, &lockfile)?;
@@ -3283,7 +3285,7 @@ fn run_project_import(
     }
 
     let mut lockfile = existing_lockfile.unwrap_or_else(new_lockfile);
-    lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+    lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
     for (tool, selector, locked_tool) in &resolved {
         if selector != &locked_tool.version {
             println!(
@@ -3419,7 +3421,7 @@ fn run_update(
     }
 
     if !dry_run {
-        lockfile.generated_by = format!("pinset {}", env!("CARGO_PKG_VERSION"));
+        lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         if global {
             let config = load_global_config(&config_path)?;
             save_global_state(&home, &config, &lockfile)?;
