@@ -6,7 +6,7 @@ inputs:
   version:
     description: Exact Pinset release version without the leading v.
     required: false
-    default: 2.0.0
+    default: 2.1.0
   install:
     description: Run pinset install --locked after Pinset is available.
     required: false

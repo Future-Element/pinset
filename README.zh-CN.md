@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.0.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.0.0
+.\install.ps1 -Version 2.1.0
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -151,8 +151,7 @@ pinset completions powershell | Out-String | Invoke-Expression
 全局选择只在 Pinset 项目之外生效，或由项目策略显式继承：
 
 ```sh
-pinset global node@lts
-pinset global pnpm@latest
+pinset global node@lts pnpm@latest
 pinset current node
 ```
 
@@ -161,9 +160,7 @@ pinset current node
 ```sh
 mkdir example && cd example
 pinset init
-pinset use node@24
-pinset use pnpm@11
-pinset use python@3.14
+pinset use node@24 pnpm@11 python@3.14 --no-install
 pinset install --locked
 pinset lock audit
 ```
@@ -284,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.0.0
+      - uses: Future-Element/pinset@v2.1.0
         with:
-          version: 2.0.0
+          version: 2.1.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -366,9 +363,27 @@ pinset prune --dry-run
 
 完整卸载 Pinset 时，删除安装目录中的 CLI、shim 和路由命令，再删除自己加入 Shell 配置的初始化行。只有确定不再需要任何受管运行时、缓存、全局选择和本机信任时，才删除 `PINSET_HOME`。项目中的 `pinset.toml`、`pinset.lock`、`pinset.env/*.age` 与 `.venv` 不会自动删除。
 
-## 未来规划
+## 当前版本与未来规划
 
-后续 2.x 会在保持失败关闭和本地优先边界的前提下评估 KMS/OIDC、更广的平台制品和更强的来源证明。路线图不承诺具体版本或发布日期。
+### v2.1：批量选择与安装
+
+Pinset 2.1 允许 `global` 和 `use` 接受可变长度的 `SELECTION...` 列表。一个批次可以包含 Pinset 任意不重复、且在最终作用域中满足声明依赖的内置 Provider 集合：Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter；Dart 仍由选中的 Flutter SDK 提供。下面只是示例，不是固定工具组合：
+
+```sh
+pinset global node@lts python@latest rust@stable
+pinset use java@lts dotnet@lts flutter@latest
+pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
+```
+
+- 公开语法为 `pinset global [SELECTION...] [--no-install]` 和 `pinset use <SELECTION...> [--no-install] [--global]`。`global` 保留无参数查看模式；`use` 至少需要一个选择，批次数量不固定。
+- `--no-install` 对整个批次生效。命令未提及的现有选择保持不变。
+- Pinset 先解析所有参数、拒绝重复 Provider，并在写入状态前解析完所有 selector。任一参数、元数据、策略或版本解析失败时，配置、锁文件和安装状态都不变。
+- 所有解析结果通过一次原子状态更新写入配置和锁文件。写入前使用完整的结果锁验证项目策略。
+- 状态提交后，Pinset 按 Provider 依赖顺序只执行一轮锁定安装。v2.1 不并发下载，以保证输出、共享依赖、缓存所有权和失败恢复具有确定性。
+- 如果状态提交后安装失败，已成功安装的运行时保持有效，完整请求状态仍保留在锁文件中。错误会提示使用 `pinset install --locked` 或 `pinset install --global --locked` 重试；Pinset 不会假装已完成的文件系统安装可以原子回滚。
+- 帮助、命令补全、中英文命令文档和测试同时覆盖单选择兼容性与多选择行为。`install <tool@精确版本>` 仍是单个显式选择命令；基于锁的 `install --locked` 会安装完整作用域。
+
+更后续的 2.x 会在保持失败关闭和本地优先边界的前提下评估 KMS/OIDC、更广的平台制品和更强的来源证明。路线图不承诺具体版本或发布日期。
 
 ## 贡献与许可证
 

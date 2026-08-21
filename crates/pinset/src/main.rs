@@ -97,19 +97,21 @@ enum Commands {
         #[arg(long)]
         no_install: bool,
     },
-    /// Show or set a default runtime version used outside projects.
+    /// Show or set default runtime versions used outside projects.
     Global {
-        /// Selection such as node@lts, pnpm@11, bun@1.3, go@1.25, python@3.14, java@21, rust@stable or dotnet@lts.
-        selection: Option<String>,
-        /// Update the global selection and lock without downloading the runtime.
-        #[arg(long, requires = "selection")]
+        /// Selections such as node@lts, python@3.14 and rust@stable.
+        #[arg(value_name = "SELECTION")]
+        selections: Vec<String>,
+        /// Update every global selection and the lock without downloading runtimes.
+        #[arg(long, requires = "selections")]
         no_install: bool,
     },
-    /// Select and lock a runtime version for the current project or globally.
+    /// Select and lock one or more runtime versions for the current project or globally.
     Use {
-        /// Selection such as node@24, pnpm@11, bun@1.3, go@1.25, python@3.14, java@lts, rust@1.97 or dotnet@10.
-        selection: String,
-        /// Update the selection and lock without downloading the runtime.
+        /// Selections such as node@24, python@3.14 and rust@1.97.
+        #[arg(value_name = "SELECTION", required = true, num_args = 1..)]
+        selections: Vec<String>,
+        /// Update every selection and the lock without downloading runtimes.
         #[arg(long)]
         no_install: bool,
         /// Save the selection under PINSET_HOME instead of pinset.toml.
@@ -1115,12 +1117,12 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             no_install,
         } => run_project_import(&effective_cwd(cwd)?, force, no_install, catalog)?,
         Commands::Global {
-            selection,
+            selections,
             no_install,
         } => {
-            if let Some(selection) = selection {
+            if !selections.is_empty() {
                 let cwd = env::current_dir()?;
-                select_tool(&selection, true, no_install, false, &cwd, catalog)?;
+                select_tools(&selections, true, no_install, &cwd, catalog)?;
                 print_project_override(&cwd, &pinset_home()?, catalog)?;
             } else {
                 print_global_current(catalog)?;
@@ -1128,12 +1130,12 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             }
         }
         Commands::Use {
-            selection,
+            selections,
             no_install,
             global,
         } => {
             let cwd = env::current_dir()?;
-            select_tool(&selection, global, no_install, false, &cwd, catalog)?
+            select_tools(&selections, global, no_install, &cwd, catalog)?
         }
         Commands::Unset { tool, global, cwd } => {
             require_provider(&tool)?;
@@ -2957,70 +2959,163 @@ fn new_lockfile() -> Lockfile {
     }
 }
 
-fn select_tool(
-    selection: &str,
+type ResolvedSelection = (String, String, LockedTool);
+
+fn select_tools(
+    selections: &[String],
     global: bool,
     no_install: bool,
-    initialize_project: bool,
     cwd: &Path,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (tool, selector) = parse_tool_selection(selection, catalog)?;
-    let locked_tool = resolve_locked_tool(&tool, &selector)?;
-    let version = locked_tool.version.clone();
-    if selector != version {
-        println!("{tool}@{selector} resolved to {tool}@{version}");
+    let resolved = resolve_tool_selection_batch(selections, catalog, resolve_locked_tool)?;
+    let home = pinset_home()?;
+    let (scope, lock_path) = save_resolved_selection_batch(&home, cwd, global, &resolved)?;
+
+    for (tool, selector, locked_tool) in &resolved {
+        if selector != &locked_tool.version {
+            println!(
+                "{tool}@{selector} resolved to {tool}@{}",
+                locked_tool.version
+            );
+        }
+        if tool == "node" {
+            println!(
+                "{}",
+                catalog.selected(
+                    scope,
+                    &locked_tool.version,
+                    locked_tool.artifacts.len(),
+                    &lock_path,
+                )
+            );
+        } else {
+            println!(
+                "selected {tool}@{} for {scope} ({} targets, lock {})",
+                locked_tool.version,
+                locked_tool.artifacts.len(),
+                lock_path.display()
+            );
+        }
     }
-    let (scope, lock_path) = if global {
-        let home = pinset_home()?;
-        let config_path = global_config_path(&home);
+
+    if !no_install {
+        let installation = if global {
+            install_global(&home, catalog)
+        } else {
+            install_project(cwd, catalog)
+        };
+        if let Err(error) = installation {
+            let localized = catalog.command_error(error.as_ref());
+            let detail = localized
+                .strip_prefix("error: ")
+                .or_else(|| localized.strip_prefix("错误："))
+                .unwrap_or(&localized);
+            let retry = if global {
+                "pinset install --global --locked"
+            } else {
+                "pinset install --locked"
+            };
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "{detail}; every requested selection and lock was saved successfully, retry with `{retry}`"
+                )
+                .into(),
+                Language::SimplifiedChinese => format!(
+                    "{detail}；所有请求的选择和锁已成功保存，请使用 `{retry}` 重试"
+                )
+                .into(),
+            });
+        }
+    } else {
+        for (tool, _, _) in &resolved {
+            if let Err(error) = register_provider_commands(&home, tool, catalog) {
+                eprintln!(
+                    "{}",
+                    catalog.shim_auto_registration_failed(&error.to_string())
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn save_resolved_selection_batch(
+    home: &Path,
+    cwd: &Path,
+    global: bool,
+    resolved: &[ResolvedSelection],
+) -> Result<(&'static str, PathBuf), Box<dyn std::error::Error>> {
+    if global {
+        let config_path = global_config_path(home);
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
-        let lock_path = global_lockfile_path(&home);
+        let lock_path = global_lockfile_path(home);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
-        lockfile.upsert_tool(locked_tool.clone())?;
-        config.set_tool(&tool, &selector);
-        validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
-        save_global_state(&home, &config, &lockfile)?;
-        ("global", lock_path)
+        apply_resolved_selections(&mut config.tools, &mut lockfile, resolved)?;
+        save_global_state(home, &config, &lockfile)?;
+        Ok(("global", lock_path))
     } else {
-        let config_path = match find_optional_project_config(cwd)? {
-            Some(path) => path,
-            None if initialize_project => create_project_config(cwd)?,
-            None => find_project_config(cwd)?,
-        };
+        let config_path = find_project_config(cwd)?;
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
-        lockfile.upsert_tool(locked_tool.clone())?;
-        project.set_tool(&tool, &selector);
+        apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
         save_project_state(&config_path, &project, &lockfile)?;
-        ("project", lock_path)
-    };
-    if tool == "node" {
-        println!(
-            "{}",
-            catalog.selected(scope, &version, locked_tool.artifacts.len(), &lock_path)
-        );
-    } else {
-        println!(
-            "selected {tool}@{version} for {scope} ({} targets, lock {})",
-            locked_tool.artifacts.len(),
-            lock_path.display()
-        );
+        Ok(("project", lock_path))
     }
-    if !no_install {
-        if global {
-            install_global(&pinset_home()?, catalog)?;
-        } else {
-            install_project(cwd, catalog)?;
+}
+
+fn parse_tool_selection_batch(
+    selections: &[String],
+    catalog: Catalog,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    let mut parsed = Vec::with_capacity(selections.len());
+    let mut seen = BTreeSet::new();
+    for selection in selections {
+        let (tool, selector) = parse_tool_selection(selection, catalog)?;
+        if !seen.insert(tool.clone()) {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "runtime provider {tool:?} appears more than once in the selection batch"
+                )
+                .into(),
+                Language::SimplifiedChinese => {
+                    format!("运行时 Provider {tool:?} 在批量选择中重复出现").into()
+                }
+            });
         }
-    } else if let Err(error) = register_provider_commands(&pinset_home()?, &tool, catalog) {
-        eprintln!(
-            "{}",
-            catalog.shim_auto_registration_failed(&error.to_string())
-        );
+        parsed.push((tool, selector));
+    }
+    Ok(parsed)
+}
+
+fn resolve_tool_selection_batch<F>(
+    selections: &[String],
+    catalog: Catalog,
+    mut resolver: F,
+) -> Result<Vec<ResolvedSelection>, Box<dyn std::error::Error>>
+where
+    F: FnMut(&str, &str) -> Result<LockedTool, Box<dyn std::error::Error>>,
+{
+    let parsed = parse_tool_selection_batch(selections, catalog)?;
+    let mut resolved = Vec::with_capacity(parsed.len());
+    for (tool, selector) in parsed {
+        let locked_tool = resolver(&tool, &selector)?;
+        resolved.push((tool, selector, locked_tool));
+    }
+    Ok(resolved)
+}
+
+fn apply_resolved_selections(
+    configured: &mut BTreeMap<String, String>,
+    lockfile: &mut Lockfile,
+    resolved: &[ResolvedSelection],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (tool, selector, locked_tool) in resolved {
+        lockfile.upsert_tool(locked_tool.clone())?;
+        configured.insert(tool.clone(), selector.clone());
     }
     Ok(())
 }
@@ -6443,6 +6538,332 @@ mod tests {
                 ..
             }) if selection == "node@24"
         ));
+    }
+
+    #[test]
+    fn parses_variable_length_global_and_project_selection_batches() {
+        let global = Cli::try_parse_from([
+            "pinset",
+            "global",
+            "node@lts",
+            "python@latest",
+            "rust@stable",
+            "--no-install",
+        ])
+        .expect("global batch");
+        assert!(matches!(
+            global.command,
+            Some(Commands::Global {
+                selections,
+                no_install: true,
+            }) if selections == ["node@lts", "python@latest", "rust@stable"]
+        ));
+
+        let project = Cli::try_parse_from([
+            "pinset",
+            "use",
+            "--global",
+            "java@lts",
+            "dotnet@lts",
+            "flutter@latest",
+        ])
+        .expect("project batch");
+        assert!(matches!(
+            project.command,
+            Some(Commands::Use {
+                selections,
+                global: true,
+                no_install: false,
+            }) if selections == ["java@lts", "dotnet@lts", "flutter@latest"]
+        ));
+
+        let inspection = Cli::try_parse_from(["pinset", "global"]).expect("global inspection");
+        assert!(matches!(
+            inspection.command,
+            Some(Commands::Global { selections, .. }) if selections.is_empty()
+        ));
+
+        let single = Cli::try_parse_from(["pinset", "use", "node@24", "--no-install"])
+            .expect("single-selection compatibility");
+        assert!(matches!(
+            single.command,
+            Some(Commands::Use {
+                selections,
+                no_install: true,
+                ..
+            }) if selections == ["node@24"]
+        ));
+
+        let missing = Cli::try_parse_from(["pinset", "use"]).expect_err("use requires a batch");
+        assert_eq!(missing.kind(), ErrorKind::MissingRequiredArgument);
+
+        let invalid_no_install = Cli::try_parse_from(["pinset", "global", "--no-install"])
+            .expect_err("global --no-install requires a selection");
+        assert_eq!(
+            invalid_no_install.kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_providers_before_resolving_any_batch_member() {
+        let selections = vec!["node@22".to_owned(), "node@24".to_owned()];
+        let mut calls = 0;
+        let error =
+            resolve_tool_selection_batch(&selections, Catalog::new(Language::English), |_, _| {
+                calls += 1;
+                unreachable!("duplicate validation must run before metadata resolution")
+            })
+            .expect_err("duplicate Node.js selection");
+
+        assert_eq!(calls, 0);
+        assert!(error.to_string().contains("appears more than once"));
+    }
+
+    #[test]
+    fn failed_batch_resolution_leaves_the_candidate_state_unchanged() {
+        let selections = vec![
+            "node@lts".to_owned(),
+            "python@latest".to_owned(),
+            "rust@stable".to_owned(),
+        ];
+        let mut configured = BTreeMap::from([("go".to_owned(), "1.25".to_owned())]);
+        let original = configured.clone();
+        let mut lockfile = new_lockfile();
+        let mut calls = 0;
+
+        let result = resolve_tool_selection_batch(
+            &selections,
+            Catalog::new(Language::English),
+            |tool, selector| {
+                calls += 1;
+                if tool == "python" {
+                    return Err("fixture metadata failure".into());
+                }
+                Ok(test_selection_lock(tool, selector, &format!("{calls}.0.0")))
+            },
+        );
+        if let Ok(resolved) = result {
+            apply_resolved_selections(&mut configured, &mut lockfile, &resolved)
+                .expect("apply resolved batch");
+        }
+
+        assert_eq!(calls, 2);
+        assert_eq!(configured, original);
+        assert!(lockfile.tools.is_empty());
+    }
+
+    #[test]
+    fn applies_a_complete_batch_once_and_preserves_unmentioned_selections() {
+        let mut configured = BTreeMap::from([("go".to_owned(), "1.25".to_owned())]);
+        let mut lockfile = new_lockfile();
+        let resolved = vec![
+            (
+                "node".to_owned(),
+                "lts".to_owned(),
+                test_selection_lock("node", "lts", "24.0.0"),
+            ),
+            (
+                "python".to_owned(),
+                "latest".to_owned(),
+                test_selection_lock("python", "latest", "3.14.0"),
+            ),
+            (
+                "rust".to_owned(),
+                "stable".to_owned(),
+                test_selection_lock("rust", "stable", "1.97.0"),
+            ),
+        ];
+
+        apply_resolved_selections(&mut configured, &mut lockfile, &resolved)
+            .expect("apply complete batch");
+
+        assert_eq!(configured["go"], "1.25");
+        assert_eq!(configured["node"], "lts");
+        assert_eq!(configured["python"], "latest");
+        assert_eq!(configured["rust"], "stable");
+        assert_eq!(lockfile.tool("node").unwrap().version, "24.0.0");
+        assert_eq!(lockfile.tool("python").unwrap().version, "3.14.0");
+        assert_eq!(lockfile.tool("rust").unwrap().version, "1.97.0");
+    }
+
+    #[test]
+    fn saves_complete_project_and_global_batches() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir_all(&project).expect("project directory");
+        let project_path = project.join(pinset_core::PROJECT_CONFIG_FILENAME);
+        save_project_config(
+            &project_path,
+            &ProjectConfig {
+                schema: PROJECT_CONFIG_SCHEMA,
+                project_id: Some(uuid::Uuid::new_v4().to_string()),
+                policy: Default::default(),
+                tools: BTreeMap::new(),
+                environment: None,
+            },
+        )
+        .expect("empty project config");
+
+        let project_batch = vec![
+            (
+                "node".to_owned(),
+                "lts".to_owned(),
+                persistable_selection_lock("node", "lts", "24.0.0"),
+            ),
+            (
+                "go".to_owned(),
+                "latest".to_owned(),
+                persistable_selection_lock("go", "latest", "1.25.1"),
+            ),
+        ];
+        let (scope, saved_lock_path) =
+            save_resolved_selection_batch(&home, &project, false, &project_batch)
+                .expect("save project batch");
+        assert_eq!(scope, "project");
+        assert_eq!(saved_lock_path, project.join("pinset.lock"));
+        let saved_project = load_project_config(&project_path).expect("saved project config");
+        let saved_project_lock = load_lockfile(&saved_lock_path).expect("saved project lock");
+        assert_eq!(saved_project.tools["node"], "lts");
+        assert_eq!(saved_project.tools["go"], "latest");
+        assert_eq!(saved_project_lock.tool("node").unwrap().version, "24.0.0");
+        assert_eq!(saved_project_lock.tool("go").unwrap().version, "1.25.1");
+
+        let global_batch = vec![
+            (
+                "node".to_owned(),
+                "lts".to_owned(),
+                persistable_selection_lock("node", "lts", "24.0.0"),
+            ),
+            (
+                "go".to_owned(),
+                "latest".to_owned(),
+                persistable_selection_lock("go", "latest", "1.25.1"),
+            ),
+        ];
+        let (scope, saved_lock_path) =
+            save_resolved_selection_batch(&home, &project, true, &global_batch)
+                .expect("save global batch");
+        assert_eq!(scope, "global");
+        assert_eq!(saved_lock_path, global_lockfile_path(&home));
+        let saved_global = load_global_config(&global_config_path(&home)).expect("global config");
+        let saved_global_lock = load_lockfile(&saved_lock_path).expect("global lock");
+        assert_eq!(saved_global.tools.len(), 2);
+        assert_eq!(saved_global.tools["node"], "lts");
+        assert_eq!(saved_global.tools["go"], "latest");
+        assert_eq!(saved_global_lock.tools.len(), 2);
+    }
+
+    fn persistable_selection_lock(tool: &str, requested: &str, version: &str) -> LockedTool {
+        match tool {
+            "node" => {
+                let artifacts = pinset_core::MVP_NODE_TARGETS
+                    .into_iter()
+                    .map(|target| {
+                        let plan = pinset_core::plan_node_artifact(
+                            &pinset_core::SourceConfig::default(),
+                            version,
+                            target,
+                        )
+                        .expect("Node artifact plan");
+                        pinset_core::LockedArtifact {
+                            target: target.to_owned(),
+                            canonical_url: plan.canonical_url,
+                            artifact_path: plan.artifact_path,
+                            sha256: "ab".repeat(32),
+                            integrity: None,
+                            format: match plan.format {
+                                pinset_core::NodeArchiveFormat::Zip => {
+                                    pinset_core::LockedArtifactFormat::Zip
+                                }
+                                pinset_core::NodeArchiveFormat::TarXz => {
+                                    pinset_core::LockedArtifactFormat::TarXz
+                                }
+                            },
+                            archive_root: plan.archive_root,
+                            verification: "nodejs-openpgp-sha256".to_owned(),
+                            overlays: Vec::new(),
+                        }
+                    })
+                    .collect();
+                let mut lockfile = Lockfile::new_node(
+                    "pinset batch selection test".to_owned(),
+                    version.to_owned(),
+                    "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+                    "official".to_owned(),
+                    artifacts,
+                );
+                let mut locked = lockfile.tools.remove(0);
+                locked.requested = requested.to_owned();
+                locked
+            }
+            "go" => {
+                let artifacts = pinset_core::GO_TARGETS
+                    .into_iter()
+                    .map(|target| {
+                        let plan = pinset_core::plan_go_artifact(
+                            &pinset_core::SourceConfig::default(),
+                            version,
+                            target,
+                        )
+                        .expect("Go artifact plan");
+                        pinset_core::LockedArtifact {
+                            target: target.to_owned(),
+                            canonical_url: plan.canonical_url,
+                            artifact_path: plan.artifact_path,
+                            sha256: "cd".repeat(32),
+                            integrity: None,
+                            format: match plan.format {
+                                pinset_core::GoArchiveFormat::Zip => {
+                                    pinset_core::LockedArtifactFormat::Zip
+                                }
+                                pinset_core::GoArchiveFormat::TarGz => {
+                                    pinset_core::LockedArtifactFormat::TarGz
+                                }
+                            },
+                            archive_root: plan.archive_root,
+                            verification: "go-download-json-sha256".to_owned(),
+                            overlays: Vec::new(),
+                        }
+                    })
+                    .collect();
+                LockedTool {
+                    name: tool.to_owned(),
+                    requested: requested.to_owned(),
+                    version: version.to_owned(),
+                    provider: "go-official".to_owned(),
+                    released_at: None,
+                    metadata: BTreeMap::new(),
+                    artifacts,
+                }
+            }
+            other => panic!("unsupported persistable test tool {other}"),
+        }
+    }
+
+    fn test_selection_lock(tool: &str, requested: &str, version: &str) -> LockedTool {
+        let provider = match tool {
+            "node" => "nodejs-official",
+            "pnpm" => "pnpm-npm",
+            "bun" => "bun-npm",
+            "go" => "go-official",
+            "flutter" => "flutter-official",
+            "python" => "python-build-standalone",
+            "java" => "adoptium-temurin",
+            "rust" => "rust-official",
+            "dotnet" => "microsoft-dotnet-sdk",
+            other => panic!("unsupported test tool {other}"),
+        };
+        LockedTool {
+            name: tool.to_owned(),
+            requested: requested.to_owned(),
+            version: version.to_owned(),
+            provider: provider.to_owned(),
+            released_at: None,
+            metadata: BTreeMap::new(),
+            artifacts: Vec::new(),
+        }
     }
 
     #[test]

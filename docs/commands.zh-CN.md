@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v2.0 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v2.1 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -91,25 +91,25 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 查看全局选择，或设置一个全局默认版本。 |
-| 语法与参数 | `pinset global [<tool>@<selector>] [--no-install]`。`--no-install` 必须与选择表达式一起使用。 |
-| 修改状态 | 不带选择表达式：**否**。带选择表达式：**是**，写入全局配置和锁；除非指定 `--no-install`，否则同时安装。 |
-| 示例 | `pinset global node@lts` |
+| 用途 | 查看全局选择，或批量设置任意组合的全局默认运行时。 |
+| 语法与参数 | `pinset global [<tool>@<selector>...] [--no-install]`。不带选择时仍是只读查看；`--no-install` 至少需要一个选择。每个 Provider 在同一批次只能出现一次。 |
+| 修改状态 | 不带选择：**否**。带选择：**是。** Pinset 先解析完整批次，再执行一次配置/锁更新，保留未提及的选择；除非使用 `--no-install`，之后只执行一轮锁定安装。 |
+| 示例 | `pinset global node@lts python@latest rust@stable` |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；Pinset 失败为 `2`。 |
-| 关键错误 | Provider 不支持、选择器无效、元数据不可用、清单不受信任、下载/完整性失败或目标平台不支持。 |
+| 关键错误 | Provider 重复/不支持、选择器无效、元数据不可用、清单不受信任、依赖/策略失败、下载/完整性失败或目标平台不支持。状态提交前失败不修改选择；安装失败保留完整新锁，并报告全局锁定安装重试命令。 |
 
 ### `use`
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 为最近项目解析并锁定一个运行时，或写入全局作用域。 |
-| 语法与参数 | `pinset use <tool>@<selector> [--no-install] [--global]`。 |
-| 修改状态 | **是。** 写入所选作用域的配置和锁；除非指定 `--no-install`，否则同时安装。 |
-| 示例 | `pinset use pnpm@10` |
+| 用途 | 为最近项目解析并锁定一个或多个运行时，或写入全局作用域。 |
+| 语法与参数 | `pinset use <tool>@<selector>... [--no-install] [--global]`。至少需要一个选择，每个 Provider 只能出现一次。 |
+| 修改状态 | **是。** 先解析所有选择，再执行一次作用域配置/锁更新，保留未提及的选择；除非使用 `--no-install`，之后只按依赖顺序执行一轮锁定安装。 |
+| 示例 | `pinset use java@lts dotnet@lts flutter@latest` |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；Pinset 失败为 `2`。 |
-| 关键错误 | 缺少项目配置、选择器无效、元数据/签名失败、平台不支持或安装失败。 |
+| 关键错误 | 缺少项目配置、Provider 重复、选择器无效、元数据/签名、依赖/项目策略失败、平台不支持或安装失败。状态提交前失败不修改选择；安装失败保留完整新锁，并报告锁定安装重试命令。 |
 
 ### `unset`
 
@@ -889,9 +889,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.0.0
+      - uses: Future-Element/pinset@v2.1.0
         with:
-          version: 2.0.0
+          version: 2.1.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

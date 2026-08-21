@@ -165,6 +165,46 @@ fn global_command_without_state_is_read_only_and_actionable() {
 }
 
 #[test]
+fn invalid_selection_batches_fail_before_creating_global_state() {
+    let root = tempdir().expect("temporary root");
+    let workspace = root.path().join("workspace");
+    let home = root.path().join("home");
+    fs::create_dir(&workspace).expect("workspace");
+
+    let duplicate = pinset(
+        &workspace,
+        &home,
+        &["global", "node@22", "node@24", "--no-install"],
+    );
+    assert!(!duplicate.status.success());
+    assert!(
+        String::from_utf8_lossy(&duplicate.stderr).contains("appears more than once"),
+        "stderr: {}",
+        String::from_utf8_lossy(&duplicate.stderr)
+    );
+    assert!(
+        !home.exists(),
+        "duplicate batch must not create global state"
+    );
+
+    let unsupported = pinset(
+        &workspace,
+        &home,
+        &["global", "node@24", "unknown@latest", "--no-install"],
+    );
+    assert!(!unsupported.status.success());
+    assert!(
+        String::from_utf8_lossy(&unsupported.stderr).contains("is not available"),
+        "stderr: {}",
+        String::from_utf8_lossy(&unsupported.stderr)
+    );
+    assert!(
+        !home.exists(),
+        "unsupported batch member must fail before metadata resolution or state writes"
+    );
+}
+
+#[test]
 fn shim_path_is_read_only_and_install_keeps_explicit_safe_overrides() {
     let root = tempdir().expect("temporary root");
     let workspace = root.path().join("workspace");

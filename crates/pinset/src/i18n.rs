@@ -288,7 +288,7 @@ impl Catalog {
     pub fn top_level_help(self) -> &'static str {
         match self.language {
             Language::English => {
-                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or set the global default\n  use          Select and lock a project version\n  unset        Clear a project or global selection\n  install      Install or repair a runtime\n  paths        Explain Pinset and runtime paths\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  env          Manage encrypted project environments\n  trust        Manage local project trust\n  self         Check or update Pinset\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n  provider     Inspect and verify Provider manifests\n\nRun `pinset <command> --help` for command details."
+                "Pinset manages predictable runtime versions.\n\nUsage: pinset [--lang <en|zh-CN>] <COMMAND>\n\nCommands:\n  init         Create project configuration\n  detect       Detect traditional version files\n  import       Import traditional version selections\n  global       Show or batch-set global defaults\n  use          Select and lock project runtimes\n  unset        Clear a project or global selection\n  install      Install or repair a runtime\n  paths        Explain Pinset and runtime paths\n  uninstall    Safely uninstall an exact version\n  prune        Remove unused managed versions\n  outdated     Check selected versions for updates\n  current      Show the effective selection\n  list         List installed or available versions\n  lock         Audit lock integrity and ownership\n  cache        Inspect, verify or clean the download cache\n  which        Show the resolved command path\n  exec         Run with the selected version\n  doctor       Diagnose configuration and PATH\n  venv         Manage the project Python environment\n  shim         Repair or migrate command shims\n  env          Manage encrypted project environments\n  trust        Manage local project trust\n  self         Check or update Pinset\n  activate     Enable provider command routing in a shell\n  completions  Generate shell completion\n  source       Manage download sources\n  provider     Inspect and verify Provider manifests\n\nRun `pinset <command> --help` for command details."
             }
             Language::SimplifiedChinese => {
                 "Pinset 用于统一管理可复现的运行时版本。\n\n用法：pinset [--lang <en|zh-CN>] <命令>\n\n执行 `pinset <命令> --help` 查看命令详情。"
@@ -309,10 +309,10 @@ impl Catalog {
                 "将可安全映射的传统运行时版本选择导入 Pinset 配置和锁文件。\n\n用法：pinset import [--cwd <目录>] [--force] [--no-install]"
             }
             Some("global") => {
-                "查看或设置项目之外使用的全局默认运行时。\n\n用法：pinset global [node@lts|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@lts|rust@stable|dotnet@lts] [--no-install]"
+                "查看或批量设置项目之外使用的全局默认运行时。\n\n用法：pinset global [<工具>@<选择器>...] [--no-install]"
             }
             Some("use") => {
-                "选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本。\n\n用法：pinset use <node@24|pnpm@11|bun@1.3|go@1.25|python@3.14|flutter@3.47|java@21|rust@1.97|dotnet@10> [--global] [--no-install]"
+                "批量选择并锁定 Node.js、pnpm、Bun、Go、Python、Flutter、Java、Rust 或 .NET SDK 版本。\n\n用法：pinset use <工具>@<选择器> [<工具>@<选择器>...] [--global] [--no-install]"
             }
             Some("unset") => {
                 "清除项目或全局运行时选择，不卸载运行时。\n\n用法：pinset unset <node|pnpm|bun|go|python|flutter|java|rust|dotnet> [--global] [--cwd <目录>]"

@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.97"
-version = "2.0.0"
+version = "2.1.0"
 authors = ["Future Element"]
 
 [workspace.dependencies]
