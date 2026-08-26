@@ -1,8 +1,8 @@
 //! Runtime-independent command router used by every Provider command.
 //!
-//! INVARIANT: resolution excludes this executable and the managed shim directory, while a depth
-//! marker protects the remaining process boundary. A routed runtime must never resolve back to a
-//! Pinset shim.
+//! INVARIANT: resolution excludes this executable and the managed shim directory, while an
+//! invocation chain rejects actual command cycles without blocking legitimate cross-Provider
+//! calls. A routed runtime must never resolve back to a Pinset shim.
 
 use std::{
     collections::BTreeSet,
@@ -27,7 +27,8 @@ use pinset_core::{
     resolve_command_with_path, selected_runtime_environment, validate_managed_runtime_invocation,
 };
 
-const SHIM_DEPTH_ENV: &str = "PINSET_SHIM_DEPTH";
+const SHIM_CHAIN_ENV: &str = "PINSET_SHIM_CHAIN";
+const MAX_SHIM_CHAIN_LENGTH: usize = 32;
 const SELECTED_TOOL_ENV: &str = "PINSET_SELECTED_TOOL";
 const SELECTED_VERSION_ENV: &str = "PINSET_SELECTED_VERSION";
 const SELECTION_SOURCE_ENV: &str = "PINSET_SELECTION_SOURCE";
@@ -48,9 +49,8 @@ fn main() {
 }
 
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
-    ensure_not_recursive()?;
-
     let invocation = Invocation::parse()?;
+    let shim_chain = extend_shim_chain(&invocation.command)?;
     let home = pinset_home_from_env()?;
     let current_executable = env::current_exe()?;
     let path = env::var_os("PATH");
@@ -84,7 +84,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let mut child = command_for_runtime(&resolution.executable, &runtime_arguments);
     child
         .env("PATH", runtime_path)
-        .env(SHIM_DEPTH_ENV, "1")
+        .env(SHIM_CHAIN_ENV, shim_chain)
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
         .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
@@ -279,13 +279,27 @@ fn command_name(path: &Path) -> Option<String> {
     Some(stem.to_ascii_lowercase())
 }
 
-fn ensure_not_recursive() -> Result<(), String> {
-    if env::var_os(SHIM_DEPTH_ENV).is_some() {
+fn extend_shim_chain(command: &str) -> Result<String, String> {
+    let inherited = env::var(SHIM_CHAIN_ENV).unwrap_or_default();
+    let mut chain = inherited
+        .split(',')
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if chain.iter().any(|entry| entry == command) {
+        chain.push(command.to_owned());
         return Err(format!(
-            "recursive shim invocation detected via {SHIM_DEPTH_ENV}"
+            "recursive shim invocation detected: {}",
+            chain.join(" -> ")
         ));
     }
-    Ok(())
+    if chain.len() >= MAX_SHIM_CHAIN_LENGTH {
+        return Err(format!(
+            "shim invocation chain exceeds {MAX_SHIM_CHAIN_LENGTH} entries via {SHIM_CHAIN_ENV}"
+        ));
+    }
+    chain.push(command.to_owned());
+    Ok(chain.join(","))
 }
 
 fn reject_shim_directory_target(resolution: &CommandResolution, home: &Path) -> Result<(), String> {
