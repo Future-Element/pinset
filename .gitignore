@@ -4,3 +4,7 @@
 *.part
 .DS_Store
 Thumbs.db
+/website/node_modules/
+/website/.next/
+/website/out/
+/website/tsconfig.tsbuildinfo

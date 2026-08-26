@@ -1,0 +1,6 @@
+/opengraph-image
+  Content-Type: image/png
+  Cache-Control: public, max-age=86400
+
+https://pinset-r3g.pages.dev/*
+  X-Robots-Tag: noindex
