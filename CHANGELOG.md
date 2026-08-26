@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.1 - 2026-08-26
+
+- Include every installed Provider selected by the active project configuration—or by global configuration when no project applies—in routed runtime `PATH`, so package-manager scripts can invoke locked peer runtimes such as `pnpm -> bun` without falling back to a Pinset shim.
+- Replace the blanket shim-depth guard with a bounded command-chain guard that permits legitimate cross-Provider calls while still rejecting real command cycles.
+
+No configuration or lock schema migration is required.
+
 ## 2.1.0 - 2026-08-21
 
 - Allow `pinset global` and `pinset use` to accept a variable-length batch of selections across any supported, non-duplicate Provider set whose dependencies are satisfied.

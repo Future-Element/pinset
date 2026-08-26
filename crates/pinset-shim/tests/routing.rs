@@ -73,19 +73,53 @@ fn executes_fake_node_selected_by_global_config_without_a_project() {
 }
 
 #[test]
-fn rejects_recursive_shim_invocation() {
+fn rejects_a_command_already_present_in_the_shim_chain() {
     let output = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
         .args(["--as", "node"])
-        .env("PINSET_SHIM_DEPTH", "1")
+        .env("PINSET_SHIM_CHAIN", "pnpm,node")
         .output()
         .expect("run shim");
 
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("recursive shim invocation"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("recursive shim invocation detected: pnpm -> node -> node"),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn executes_another_selected_provider_from_a_managed_pnpm_process() {
+    let root = tempdir().expect("temp directory");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir_all(&project).expect("project");
+    fs::write(
+        project.join("pinset.toml"),
+        "schema = 1\n[tools]\nbun = \"1.3.14\"\nnode = \"24.0.0\"\npnpm = \"11.22.0\"\n",
+    )
+    .expect("project config");
+    create_fake_node(&home, "24.0.0");
+    create_fake_pnpm(&home, "11.22.0");
+    create_fake_bun(&home, "1.3.14");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
+        .args(["--as", "pnpm", "--cwd"])
+        .arg(&project)
+        .args(["--", "dev"])
+        .env("PINSET_HOME", &home)
+        .output()
+        .expect("run pnpm shim");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("bun:dev"), "stdout: {stdout}");
+    assert!(stdout.contains("chain=pnpm"), "stdout: {stdout}");
 }
 
 #[test]
@@ -283,6 +317,51 @@ fn create_fake_node(home: &Path, version: &str) -> PathBuf {
         fs::set_permissions(&executable, permissions).expect("fake node permissions");
         executable
     }
+}
+
+fn create_fake_pnpm(home: &Path, version: &str) {
+    let directory = home
+        .join("installs/pnpm")
+        .join(version)
+        .join(pinset_core::current_target_for_tool("pnpm"));
+    fs::create_dir_all(&directory).expect("pnpm command directory");
+
+    #[cfg(windows)]
+    fs::write(directory.join("pnpm.cmd"), "@echo off\r\nbun %*\r\n").expect("fake pnpm");
+
+    #[cfg(not(windows))]
+    write_executable(&directory.join("pnpm"), "#!/bin/sh\nexec bun \"$@\"\n");
+}
+
+fn create_fake_bun(home: &Path, version: &str) {
+    let directory = home
+        .join("installs/bun")
+        .join(version)
+        .join(pinset_core::current_target_for_tool("bun"))
+        .join("bin");
+    fs::create_dir_all(&directory).expect("Bun command directory");
+
+    #[cfg(windows)]
+    fs::write(
+        directory.join("bun.cmd"),
+        "@echo off\r\necho bun:%*\r\necho chain=%PINSET_SHIM_CHAIN%\r\n",
+    )
+    .expect("fake Bun");
+
+    #[cfg(not(windows))]
+    write_executable(
+        &directory.join("bun"),
+        "#!/bin/sh\nprintf 'bun:%s\\nchain=%s\\n' \"$*\" \"$PINSET_SHIM_CHAIN\"\n",
+    );
+}
+
+#[cfg(not(windows))]
+fn write_executable(path: &Path, content: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::write(path, content).expect("fake executable");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("fake executable permissions");
 }
 
 fn create_fake_flutter(home: &Path, version: &str) {

@@ -5,6 +5,7 @@
 //! currently executing shim are excluded from system fallback to prevent recursive routing.
 
 use std::{
+    collections::BTreeMap,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -17,7 +18,7 @@ use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
     find_project_context, global_config_path, is_managed_command_shim, load_optional_global_config,
     load_project_config, load_project_python_environment, project_python_command_candidates,
-    provider_dependency_order, runtime_provider, runtime_provider_for_command,
+    provider_dependency_order, runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "lockfile")]
 use crate::{
@@ -552,6 +553,39 @@ pub fn path_with_selected_tools(
             entries.push(command_dir);
         }
     }
+    let configured_tools = effective_configured_tools(cwd, pinset_home)?;
+    for provider in runtime_providers()
+        .iter()
+        .filter(|provider| configured_tools.contains_key(provider.tool))
+    {
+        if provider.tool == tool {
+            continue;
+        }
+        let Ok(selection) = resolve_tool_selection(provider.tool, cwd, pinset_home) else {
+            continue;
+        };
+        let install_dir = pinset_home
+            .join("installs")
+            .join(provider.tool)
+            .join(&selection.version)
+            .join(current_target_for_tool(provider.tool));
+        let command_dir =
+            if provider.tool == "python" && selection.source == SelectionSource::Project {
+                let Ok(environment) = load_project_python_environment(
+                    &selection.config_path,
+                    &selection.version,
+                    &current_target_for_tool("python"),
+                ) else {
+                    continue;
+                };
+                environment.command_directory
+            } else {
+                runtime_command_directory(provider.tool, &install_dir)
+            };
+        if command_dir.is_dir() && !entries.iter().any(|entry| paths_equal(entry, &command_dir)) {
+            entries.push(command_dir);
+        }
+    }
     if let Some(inherited) = env::var_os("PATH") {
         for entry in env::split_paths(&inherited) {
             if !paths_equal(&entry, &shim_dir)
@@ -562,6 +596,20 @@ pub fn path_with_selected_tools(
         }
     }
     env::join_paths(entries).map_err(|source| Error::RuntimePathJoin { source })
+}
+
+fn effective_configured_tools(cwd: &Path, pinset_home: &Path) -> Result<BTreeMap<String, String>> {
+    let context = find_project_context(cwd)?;
+    if let Some(config_path) = context.config_path {
+        let config = load_project_config(&config_path)?;
+        return Ok(config.tools);
+    }
+
+    Ok(
+        load_optional_global_config(&global_config_path(pinset_home))?
+            .map(|config| config.tools)
+            .unwrap_or_default(),
+    )
 }
 
 pub fn selected_runtime_environment(
@@ -818,6 +866,44 @@ mod tests {
         assert_eq!(resolution.source, SelectionSource::Project);
         assert_eq!(resolution.executable, executable);
         assert_eq!(resolution.selection_path, Some(project.join("pinset.toml")));
+    }
+
+    #[test]
+    fn selected_tool_path_includes_other_project_providers() {
+        let root = tempdir().expect("temp directory");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 1\n[tools]\nbun = \"1.3.14\"\nnode = \"24.0.0\"\npnpm = \"11.22.0\"\npython = \"3.13.0\"\n",
+        )
+        .expect("project config");
+
+        let pnpm_install_dir = home
+            .join("installs/pnpm/11.22.0")
+            .join(current_target_for_tool("pnpm"));
+        let node_install_dir = home
+            .join("installs/node/24.0.0")
+            .join(current_target_for_tool("node"));
+        let bun_install_dir = home
+            .join("installs/bun/1.3.14")
+            .join(current_target_for_tool("bun"));
+        let pnpm_dir = runtime_command_directory("pnpm", &pnpm_install_dir);
+        let node_dir = runtime_command_directory("node", &node_install_dir);
+        let bun_dir = runtime_command_directory("bun", &bun_install_dir);
+        for directory in [&pnpm_dir, &node_dir, &bun_dir] {
+            fs::create_dir_all(directory).expect("runtime command directory");
+        }
+        let pnpm = pnpm_dir.join(if cfg!(windows) { "pnpm.exe" } else { "pnpm" });
+        fs::write(&pnpm, b"fake pnpm").expect("pnpm executable");
+
+        let path = path_with_selected_tools("pnpm", &pnpm, &project, &home)
+            .expect("selected provider PATH");
+        let entries = env::split_paths(&path).collect::<Vec<_>>();
+        assert_eq!(entries[0], pnpm_dir);
+        assert_eq!(entries[1], node_dir);
+        assert_eq!(entries[2], bun_dir);
     }
 
     #[test]
