@@ -36,7 +36,7 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
     "@type": "SoftwareApplication",
     "@id": softwareId,
     name: siteConfig.name,
-    alternateName: "Pinset Runtime Manager",
+    alternateName: siteConfig.alternateName,
     url: siteUrl,
     applicationCategory: "DeveloperApplication",
     operatingSystem: "Windows, Linux, macOS",
@@ -47,20 +47,21 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
     author: { "@id": organizationId },
     publisher: { "@id": organizationId },
   };
+  const website = {
+    "@type": "WebSite",
+    "@id": websiteId,
+    name: siteConfig.name,
+    alternateName: siteConfig.alternateName,
+    url: `${siteUrl}/`,
+    inLanguage: ["zh-CN", "en"],
+    publisher: { "@id": organizationId },
+  };
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": zh
       ? [
+          website,
           organization,
-          {
-            "@type": "WebSite",
-            "@id": websiteId,
-            name: siteConfig.name,
-            alternateName: ["Pinset Runtime Manager", "pinset.future-element.com"],
-            url: siteUrl,
-            inLanguage: ["zh-CN", "en"],
-            publisher: { "@id": organizationId },
-          },
           software,
         ]
       : [

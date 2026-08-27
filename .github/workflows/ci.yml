@@ -339,6 +339,9 @@ jobs:
       - name: Build production website
         run: pnpm build
 
+      - name: Validate site-name and canonical SEO signals
+        run: pnpm validate:seo
+
       - name: Reject development origins in static output
         shell: bash
         run: if grep -R --exclude='404.html' --exclude='_not-found*' --exclude-dir='_not-found' "http://localhost:3000" out; then exit 1; fi

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CommandIndexPage } from "@/components/command-index-page";
 import { getCommandGroups } from "@/lib/commands";
 import { openGraphImage, twitterImage } from "@/lib/metadata";
-import { languageAlternates } from "@/lib/site";
+import { languageAlternates, siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "命令参考",
@@ -13,6 +13,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
+    siteName: siteConfig.name,
     url: "/docs/commands",
     title: "Pinset 2.1 命令参考",
     description: "Pinset 2.1 完整 CLI 命令参考：语法、参数、状态修改、JSON、退出码与错误。",

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { CommandPage } from "@/components/command-page";
 import { getCommand, getCommandDocs, getCommandGroups } from "@/lib/commands";
 import { openGraphImage, twitterImage } from "@/lib/metadata";
-import { languageAlternates } from "@/lib/site";
+import { languageAlternates, siteConfig } from "@/lib/site";
 
 export function generateStaticParams() {
   return getCommandDocs("zh-CN").map(({ slug }) => ({ slug }));
@@ -22,6 +22,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     },
     openGraph: {
       type: "article",
+      siteName: siteConfig.name,
       title: `pinset ${command.title}`,
       description: command.description,
       url: `/docs/commands/${slug}`,

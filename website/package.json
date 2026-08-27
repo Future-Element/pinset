@@ -1,11 +1,12 @@
 {
   "name": "pinset-website",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "validate:seo": "node scripts/validate-seo.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "deploy:cloudflare": "next build && wrangler pages deploy out --project-name pinset"
