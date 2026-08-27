@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.3 - 2026-08-27
+
+- Strengthen the documentation site's Google site-name signals by keeping the Pinset brand identity and canonical subdomain consistent across exported pages.
+- Validate site-name, Open Graph, and canonical metadata during website CI and release preflight.
+
 ## 2.1.2 - 2026-08-27
 
 - Make inherited global Providers and peer runtime environment roots available to managed child processes.

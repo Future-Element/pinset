@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CommandIndexPage } from "@/components/command-index-page";
 import { getCommandGroups } from "@/lib/commands";
 import { openGraphImage, twitterImage } from "@/lib/metadata";
-import { languageAlternates } from "@/lib/site";
+import { languageAlternates, siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Command reference",
@@ -13,6 +13,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
+    siteName: siteConfig.name,
     locale: "en_US",
     url: "/en/docs/commands",
     title: "Pinset 2.1 command reference",
