@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.1.1
+.\install.ps1 -Version 2.1.2
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -281,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.1
+      - uses: Future-Element/pinset@v2.1.2
         with:
-          version: 2.1.1
+          version: 2.1.2
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -378,7 +378,7 @@ pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
 - Public syntax is `pinset global [SELECTION...] [--no-install]` and `pinset use <SELECTION...> [--no-install] [--global]`. `global` keeps its no-argument inspection mode; `use` requires at least one selection. There is no fixed batch size.
 - `--no-install` applies to the complete batch. Existing selections not named by the command remain unchanged.
 - Every argument is parsed, duplicate Providers are rejected, and every selector is resolved before Pinset writes state. A parse, metadata, policy, or resolution failure leaves configuration, lockfiles, and installations unchanged.
-- All resolved selections are committed to configuration and the lockfile in one atomic state update. Project policy is validated against the complete resulting lock before the write.
+- All resolved selections are committed under a cross-process state lock. Each file replacement is atomic, the complete resulting lock is validated before writing, and concurrent commands re-read state after acquiring the lock so unrelated selections are preserved. A process or machine failure between the two file replacements still fails closed and can be repaired by retrying the state command.
 - After the state commit, Pinset performs one locked installation pass in Provider dependency order. Downloads are not run concurrently in v2.1, so output, shared dependencies, cache ownership, and failure recovery stay deterministic.
 - If installation fails after the state commit, successfully installed runtimes remain valid and the complete requested state remains locked. The error directs the user to retry with `pinset install --locked` or `pinset install --global --locked`; Pinset does not pretend that already completed filesystem installations can be rolled back atomically.
 - Help, completions, English/Chinese command references, and tests cover single-selection compatibility and multi-selection behavior. `install <tool@exact-version>` remains a single explicit-selection command; lock-based `install --locked` installs the complete scope.

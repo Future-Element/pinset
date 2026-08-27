@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.1.1
+.\install.ps1 -Version 2.1.2
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -281,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.1
+      - uses: Future-Element/pinset@v2.1.2
         with:
-          version: 2.1.1
+          version: 2.1.2
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -378,7 +378,7 @@ pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
 - 公开语法为 `pinset global [SELECTION...] [--no-install]` 和 `pinset use <SELECTION...> [--no-install] [--global]`。`global` 保留无参数查看模式；`use` 至少需要一个选择，批次数量不固定。
 - `--no-install` 对整个批次生效。命令未提及的现有选择保持不变。
 - Pinset 先解析所有参数、拒绝重复 Provider，并在写入状态前解析完所有 selector。任一参数、元数据、策略或版本解析失败时，配置、锁文件和安装状态都不变。
-- 所有解析结果通过一次原子状态更新写入配置和锁文件。写入前使用完整的结果锁验证项目策略。
+- 所有解析结果都在跨进程状态锁下提交。每个文件替换本身是原子的，写入前会验证完整的新锁，并发命令会在取得锁后重新读取状态，因此不会丢失无关选择。若进程或机器恰好在两个文件替换之间中断，Pinset 仍会失败关闭，可通过重试状态命令修复。
 - 状态提交后，Pinset 按 Provider 依赖顺序只执行一轮锁定安装。v2.1 不并发下载，以保证输出、共享依赖、缓存所有权和失败恢复具有确定性。
 - 如果状态提交后安装失败，已成功安装的运行时保持有效，完整请求状态仍保留在锁文件中。错误会提示使用 `pinset install --locked` 或 `pinset install --global --locked` 重试；Pinset 不会假装已完成的文件系统安装可以原子回滚。
 - 帮助、命令补全、中英文命令文档和测试同时覆盖单选择兼容性与多选择行为。`install <tool@精确版本>` 仍是单个显式选择命令；基于锁的 `install --locked` 会安装完整作用域。

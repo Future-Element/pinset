@@ -56,6 +56,11 @@ jobs:
             echo "action.yml default ${action_version} does not match workspace version ${workspace_version}" >&2
             exit 1
           fi
+          website_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("website/package.json").read_text())["version"])')"
+          if [[ "${website_version}" != "${workspace_version}" ]]; then
+            echo "website/package.json version ${website_version} does not match workspace version ${workspace_version}" >&2
+            exit 1
+          fi
 
       - name: Require a recent successful release preflight
         shell: bash
@@ -389,8 +394,8 @@ jobs:
             dist/SHA256SUMS
           )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
-            exit 0
+            echo "Release ${GITHUB_REF_NAME} already exists; stable release assets are immutable and will not be replaced" >&2
+            exit 1
           fi
 
           release_flags=()

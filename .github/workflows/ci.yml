@@ -32,6 +32,7 @@ jobs:
       validation_required: ${{ steps.classify.outputs.validation_required }}
       code_changed: ${{ steps.classify.outputs.code_changed }}
       cargo_changed: ${{ steps.classify.outputs.cargo_changed }}
+      website_changed: ${{ steps.classify.outputs.website_changed }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +52,7 @@ jobs:
           validation_required=true
           code_changed=true
           cargo_changed=true
+          website_changed=true
 
           if [[ "${EVENT_NAME}" == "pull_request" && "${IS_DRAFT}" == "true" ]]; then
             validation_required=false
@@ -75,6 +77,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             code_changed=false
             cargo_changed=true
+            website_changed=false
           elif [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             if [[ -n "${BASE_SHA}" && "${BASE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
               changed_files="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
@@ -84,11 +87,12 @@ jobs:
 
             code_changed=false
             cargo_changed=false
+            website_changed=false
             while IFS= read -r changed_file; do
               [[ -z "${changed_file}" ]] && continue
 
               case "${changed_file}" in
-                *.md|docs/*|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*)
+                *.md|docs/*|website/*|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*)
                   ;;
                 *)
                   code_changed=true
@@ -100,6 +104,12 @@ jobs:
                   cargo_changed=true
                   ;;
               esac
+
+              case "${changed_file}" in
+                website/*|docs/commands.md|docs/commands.zh-CN.md|.github/workflows/ci.yml|.github/workflows/release-preflight.yml|.github/workflows/release.yml)
+                  website_changed=true
+                  ;;
+              esac
             done <<< "${changed_files}"
           fi
 
@@ -107,11 +117,13 @@ jobs:
             echo "validation_required=${validation_required}"
             echo "code_changed=${code_changed}"
             echo "cargo_changed=${cargo_changed}"
+            echo "website_changed=${website_changed}"
           } >> "${GITHUB_OUTPUT}"
 
           echo "validation_required=${validation_required}"
           echo "code_changed=${code_changed}"
           echo "cargo_changed=${cargo_changed}"
+          echo "website_changed=${website_changed}"
 
   security:
     name: Audit Rust dependencies
@@ -296,6 +308,41 @@ jobs:
       - name: Link development binaries
         run: cargo build --locked -p pinset-cli -p pinset-shim
 
+  website:
+    name: Validate documentation website
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.validation_required == 'true' &&
+        needs.changes.outputs.website_changed == 'true'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    env:
+      NEXT_PUBLIC_SITE_URL: https://pinset.future-element.com
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@10.15.0
+
+      - name: Install locked website dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check website
+        run: pnpm typecheck
+
+      - name: Build production website
+        run: pnpm build
+
+      - name: Reject development origins in static output
+        shell: bash
+        run: if grep -R --exclude='404.html' --exclude='_not-found*' --exclude-dir='_not-found' "http://localhost:3000" out; then exit 1; fi
+
   gate:
     name: CI Gate
     needs:
@@ -303,6 +350,7 @@ jobs:
       - security
       - quality
       - build
+      - website
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -315,6 +363,8 @@ jobs:
           CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
+          WEBSITE_CHANGED: ${{ needs.changes.outputs.website_changed }}
+          WEBSITE_RESULT: ${{ needs.website.result }}
           VALIDATION_REQUIRED: ${{ needs.changes.outputs.validation_required }}
         run: |
           if [[ "${CHANGES_RESULT}" != "success" ]]; then
@@ -327,6 +377,10 @@ jobs:
           fi
           if [[ "${SECURITY_RESULT}" != "success" && "${SECURITY_RESULT}" != "skipped" ]]; then
             echo "Dependency audit failed: ${SECURITY_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${WEBSITE_CHANGED}" == "true" && "${WEBSITE_RESULT}" != "success" ]]; then
+            echo "Documentation website validation failed: ${WEBSITE_RESULT}" >&2
             exit 1
           fi
           if [[ "${CODE_CHANGED}" != "true" ]]; then

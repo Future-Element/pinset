@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, GlobalConfig, ProjectConfig, Result, find_optional_project_config, global_config_path,
-    load_optional_global_config, load_project_config, runtime_provider, runtime_providers,
+    load_optional_global_config, load_project_config, registered_project_configs, runtime_provider,
+    runtime_providers,
 };
 
 #[cfg(feature = "lockfile")]
@@ -213,27 +214,7 @@ pub fn find_tool_version_references(
     tool: &str,
     version: &str,
 ) -> Result<Vec<ToolVersionReference>> {
-    validate_tool_and_version(tool, version)?;
-    let mut references = Vec::new();
-    if let Some(path) = find_optional_project_config(cwd)? {
-        let config = load_project_config(&path)?;
-        if project_config_selects_version(&path, &config, tool, version)? {
-            references.push(ToolVersionReference {
-                scope: "project",
-                path,
-            });
-        }
-    }
-    let path = global_config_path(pinset_home);
-    if let Some(config) = load_optional_global_config(&path)?
-        && global_config_selects_version(pinset_home, &path, &config, tool, version)?
-    {
-        references.push(ToolVersionReference {
-            scope: "global",
-            path,
-        });
-    }
-    Ok(references)
+    find_tool_version_references_in_projects(pinset_home, &[cwd.to_path_buf()], tool, version)
 }
 
 pub fn find_tool_version_references_in_projects(
@@ -256,6 +237,18 @@ pub fn find_tool_version_references_in_projects(
         if project_config_selects_version(&path, &config, tool, version)? {
             references.push(ToolVersionReference {
                 scope: "project",
+                path,
+            });
+        }
+    }
+    for path in registered_project_configs(pinset_home)? {
+        if !seen_paths.insert(path.clone()) {
+            continue;
+        }
+        let config = load_project_config(&path)?;
+        if project_config_selects_version(&path, &config, tool, version)? {
+            references.push(ToolVersionReference {
+                scope: "registered-project",
                 path,
             });
         }
@@ -644,5 +637,35 @@ mod tests {
         assert_eq!(plan.candidates[0].version, "10.0.0");
         assert_eq!(plan.protected.len(), 2);
         assert!(plan.bytes > 0);
+    }
+
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn prune_plan_protects_registered_projects_without_explicit_roots() {
+        let home = tempfile::tempdir().expect("home");
+        let current = tempfile::tempdir().expect("current project");
+        let registered = tempfile::tempdir().expect("registered project");
+        let config_path = registered.path().join("pinset.toml");
+        fs::write(&config_path, "schema = 2\n[tools]\nbun = \"1.3.14\"\n")
+            .expect("registered project config");
+        crate::register_project_config(home.path(), &config_path).expect("register project");
+        let directory = home.path().join("installs/bun/1.3.14/linux-x86_64");
+        fs::create_dir_all(&directory).expect("install directory");
+        fs::write(
+            directory.join(".pinset-install.toml"),
+            "schema = 2\ncomplete = true\ntool = \"bun\"\nversion = \"1.3.14\"\ntarget = \"linux-x86_64\"\n",
+        )
+        .expect("receipt");
+
+        let plan = plan_prune_tool_versions(home.path(), &[current.path().to_path_buf()])
+            .expect("prune plan");
+
+        assert!(plan.candidates.is_empty());
+        assert_eq!(plan.protected.len(), 1);
+        assert_eq!(plan.protected[0].references[0].scope, "registered-project");
+        assert_eq!(
+            plan.protected[0].references[0].path,
+            fs::canonicalize(config_path).unwrap()
+        );
     }
 }

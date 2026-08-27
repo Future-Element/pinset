@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.2 - 2026-08-27
+
+- Make inherited global Providers and peer runtime environment roots available to managed child processes.
+- Preserve ordinary system-PATH passthrough for unselected Providers even when their managed Provider metadata declares dependencies.
+- Serialize project/global state mutations across processes, preserve concurrent batch updates, and register known projects for safer uninstall/prune reference checks.
+- Harden Windows batch argument forwarding and self-update locking, timeout, result reporting, and release-asset immutability.
+- Validate the documentation website and its release version in CI and release preflight.
+
 ## 2.1.1 - 2026-08-26
 
 - Include every installed Provider selected by the active project configuration—or by global configuration when no project applies—in routed runtime `PATH`, so package-manager scripts can invoke locked peer runtimes such as `pnpm -> bun` without falling back to a Pinset shim.

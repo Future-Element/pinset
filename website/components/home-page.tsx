@@ -40,7 +40,7 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
     url: siteUrl,
     applicationCategory: "DeveloperApplication",
     operatingSystem: "Windows, Linux, macOS",
-    softwareVersion: "2.1.1",
+    softwareVersion: siteConfig.version,
     license: "https://opensource.org/license/mit",
     codeRepository: siteConfig.repository,
     description: zh ? siteConfig.descriptionZh : siteConfig.descriptionEn,

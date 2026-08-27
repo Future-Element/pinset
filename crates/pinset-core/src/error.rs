@@ -108,6 +108,44 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[cfg(any(feature = "project-write", feature = "state-write"))]
+    #[error("failed to create state write-lock directory {path}: {source}")]
+    CreateStateWriteLockDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(any(feature = "project-write", feature = "state-write"))]
+    #[error("failed to open state write lock {path}: {source}")]
+    OpenStateWriteLock {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(any(feature = "project-write", feature = "state-write"))]
+    #[error("failed to acquire state write lock {path}: {source}")]
+    AcquireStateWriteLock {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(all(
+        feature = "lockfile",
+        any(feature = "project-write", feature = "state-write")
+    ))]
+    #[error(
+        "failed to commit {scope} config/lock state at {path}: {commit_error}; lock rollback also failed: {rollback_error}"
+    )]
+    StateCommitRollbackFailed {
+        scope: &'static str,
+        path: PathBuf,
+        commit_error: String,
+        rollback_error: String,
+    },
+
     #[cfg(feature = "lockfile")]
     #[error("failed to read lockfile {path}: {source}")]
     ReadLockfile {
@@ -185,6 +223,32 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[cfg(feature = "project-write")]
+    #[error("failed to create project registry directory {path}: {source}")]
+    CreateProjectRegistryDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "project-write")]
+    #[error("failed to write project registry record {path}: {source}")]
+    WriteProjectRegistry {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to read project registry {path}: {source}")]
+    ReadProjectRegistry {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("invalid project registry record {path}: {reason}")]
+    InvalidProjectRegistry { path: PathBuf, reason: String },
+
     #[error("command \"{command}\" is not handled by the Spike A shim")]
     UnsupportedCommand { command: String },
 
@@ -219,6 +283,11 @@ pub enum Error {
         command: String,
         searched: String,
     },
+
+    #[error(
+        "refusing to pass argument {index} to Windows batch runtime {path}: cmd.exe metacharacters cannot be forwarded safely"
+    )]
+    UnsafeWindowsBatchArgument { path: PathBuf, index: usize },
 
     #[error("runtime executable has no parent directory: {path}")]
     RuntimeCommandDirectoryMissing { path: PathBuf },

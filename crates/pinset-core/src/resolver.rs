@@ -375,7 +375,7 @@ fn selection_from_config(
             },
             source: std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "schema 3 selections require a lockfile",
+                format!("schema {config_schema} selections require a lockfile"),
             ),
         });
     };
@@ -520,37 +520,43 @@ pub fn path_with_selected_tools(
         .to_path_buf();
     let shim_dir = pinset_home.join("shims");
     let mut entries = vec![selected_dir.clone()];
-    for provider in provider_dependency_order(tool)? {
-        if provider.tool == tool {
-            continue;
-        }
-        let selection = resolve_tool_selection(provider.tool, cwd, pinset_home).map_err(|_| {
-            Error::ProviderDependencyMissing {
-                tool: tool.to_owned(),
-                dependency: provider.tool.to_owned(),
+    // Provider dependencies are a managed-selection contract. A command resolved from the
+    // system PATH must retain ordinary system toolchain behavior instead of requiring Pinset
+    // selections for that Provider's declared dependencies.
+    if resolve_tool_selection(tool, cwd, pinset_home).is_ok() {
+        for provider in provider_dependency_order(tool)? {
+            if provider.tool == tool {
+                continue;
             }
-        })?;
-        let install_dir = pinset_home
-            .join("installs")
-            .join(provider.tool)
-            .join(&selection.version)
-            .join(current_target_for_tool(provider.tool));
-        let command_dir =
-            if provider.tool == "python" && selection.source == SelectionSource::Project {
-                load_project_python_environment(
-                    &selection.config_path,
-                    &selection.version,
-                    &current_target_for_tool("python"),
-                )?
-                .command_directory
-            } else {
-                runtime_command_directory(provider.tool, &install_dir)
-            };
-        if command_dir.is_dir()
-            && !paths_equal(&command_dir, &selected_dir)
-            && !entries.iter().any(|entry| paths_equal(entry, &command_dir))
-        {
-            entries.push(command_dir);
+            let selection =
+                resolve_tool_selection(provider.tool, cwd, pinset_home).map_err(|_| {
+                    Error::ProviderDependencyMissing {
+                        tool: tool.to_owned(),
+                        dependency: provider.tool.to_owned(),
+                    }
+                })?;
+            let install_dir = pinset_home
+                .join("installs")
+                .join(provider.tool)
+                .join(&selection.version)
+                .join(current_target_for_tool(provider.tool));
+            let command_dir =
+                if provider.tool == "python" && selection.source == SelectionSource::Project {
+                    load_project_python_environment(
+                        &selection.config_path,
+                        &selection.version,
+                        &current_target_for_tool("python"),
+                    )?
+                    .command_directory
+                } else {
+                    runtime_command_directory(provider.tool, &install_dir)
+                };
+            if command_dir.is_dir()
+                && !paths_equal(&command_dir, &selected_dir)
+                && !entries.iter().any(|entry| paths_equal(entry, &command_dir))
+            {
+                entries.push(command_dir);
+            }
         }
     }
     let configured_tools = effective_configured_tools(cwd, pinset_home)?;
@@ -602,7 +608,15 @@ fn effective_configured_tools(cwd: &Path, pinset_home: &Path) -> Result<BTreeMap
     let context = find_project_context(cwd)?;
     if let Some(config_path) = context.config_path {
         let config = load_project_config(&config_path)?;
-        return Ok(config.tools);
+        if !config.policy.inherit_global {
+            return Ok(config.tools);
+        }
+
+        let mut tools = load_optional_global_config(&global_config_path(pinset_home))?
+            .map(|config| config.tools)
+            .unwrap_or_default();
+        tools.extend(config.tools);
+        return Ok(tools);
     }
 
     Ok(
@@ -618,9 +632,22 @@ pub fn selected_runtime_environment(
     pinset_home: &Path,
 ) -> Vec<RuntimeEnvironmentVariable> {
     let mut variables = Vec::new();
-    let Ok(providers) = provider_dependency_order(tool) else {
+    let Ok(mut providers) = provider_dependency_order(tool) else {
         return variables;
     };
+    if let Ok(configured_tools) = effective_configured_tools(cwd, pinset_home) {
+        for provider in runtime_providers()
+            .iter()
+            .filter(|provider| configured_tools.contains_key(provider.tool))
+        {
+            if !providers
+                .iter()
+                .any(|existing| existing.tool == provider.tool)
+            {
+                providers.push(provider);
+            }
+        }
+    }
     for provider in providers {
         if provider.capabilities.environment == RuntimeEnvironmentKind::None {
             continue;
@@ -774,6 +801,35 @@ pub fn managed_runtime_arguments(
     resolved
 }
 
+pub fn validate_windows_batch_arguments(executable: &Path, arguments: &[OsString]) -> Result<()> {
+    if !cfg!(windows)
+        || !executable.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
+    {
+        return Ok(());
+    }
+
+    for (index, argument) in arguments.iter().enumerate() {
+        let Some(argument) = argument.to_str() else {
+            return Err(Error::UnsafeWindowsBatchArgument {
+                path: executable.to_path_buf(),
+                index: index + 1,
+            });
+        };
+        if argument
+            .chars()
+            .any(|character| "&|<>()@^%!\"\r\n".contains(character))
+        {
+            return Err(Error::UnsafeWindowsBatchArgument {
+                path: executable.to_path_buf(),
+                index: index + 1,
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn runtime_command_dir(install_dir: &Path) -> PathBuf {
     runtime_command_directory("node", install_dir)
@@ -904,6 +960,161 @@ mod tests {
         assert_eq!(entries[0], pnpm_dir);
         assert_eq!(entries[1], node_dir);
         assert_eq!(entries[2], bun_dir);
+    }
+
+    #[test]
+    fn selected_tool_path_includes_inherited_global_providers() {
+        let root = tempdir().expect("temp directory");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 1\n[policy]\ninherit-global = true\n[tools]\nnode = \"24.0.0\"\npnpm = \"11.22.0\"\n",
+        )
+        .expect("project config");
+        let global_path = global_config_path(&home);
+        fs::create_dir_all(global_path.parent().expect("global state directory"))
+            .expect("global state directory");
+        fs::write(&global_path, "schema = 1\n[tools]\nbun = \"1.3.14\"\n").expect("global config");
+
+        let pnpm_install_dir = home
+            .join("installs/pnpm/11.22.0")
+            .join(current_target_for_tool("pnpm"));
+        let node_install_dir = home
+            .join("installs/node/24.0.0")
+            .join(current_target_for_tool("node"));
+        let bun_install_dir = home
+            .join("installs/bun/1.3.14")
+            .join(current_target_for_tool("bun"));
+        let pnpm_dir = runtime_command_directory("pnpm", &pnpm_install_dir);
+        let node_dir = runtime_command_directory("node", &node_install_dir);
+        let bun_dir = runtime_command_directory("bun", &bun_install_dir);
+        for directory in [&pnpm_dir, &node_dir, &bun_dir] {
+            fs::create_dir_all(directory).expect("runtime command directory");
+        }
+        let pnpm = pnpm_dir.join(if cfg!(windows) { "pnpm.exe" } else { "pnpm" });
+        fs::write(&pnpm, b"fake pnpm").expect("pnpm executable");
+
+        let path = path_with_selected_tools("pnpm", &pnpm, &project, &home)
+            .expect("selected provider PATH");
+        let entries = env::split_paths(&path).collect::<Vec<_>>();
+        assert_eq!(entries[0], pnpm_dir);
+        assert_eq!(entries[1], node_dir);
+        assert_eq!(entries[2], bun_dir);
+    }
+
+    #[test]
+    fn selected_tool_path_and_environment_cover_every_configured_provider_capability() {
+        let root = tempdir().expect("temp directory");
+        let workspace = root.path().join("workspace");
+        let home = root.path().join("home");
+        fs::create_dir_all(&workspace).expect("workspace");
+        let global_path = global_config_path(&home);
+        fs::create_dir_all(global_path.parent().expect("global state directory"))
+            .expect("global state directory");
+        let mut config = String::from("schema = 1\n[tools]\n");
+        for provider in runtime_providers() {
+            config.push_str(&format!("{} = \"1.0.0\"\n", provider.tool));
+        }
+        fs::write(&global_path, config).expect("global config");
+
+        let mut provider_directories = Vec::new();
+        for provider in runtime_providers() {
+            let install_dir = home
+                .join("installs")
+                .join(provider.tool)
+                .join("1.0.0")
+                .join(current_target_for_tool(provider.tool));
+            let command_dir = runtime_command_directory(provider.tool, &install_dir);
+            fs::create_dir_all(&command_dir).expect("provider command directory");
+            provider_directories.push((provider.tool, install_dir, command_dir));
+        }
+        let node_dir = provider_directories
+            .iter()
+            .find(|(tool, _, _)| *tool == "node")
+            .map(|(_, _, directory)| directory.clone())
+            .expect("Node command directory");
+        let node = node_dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+        fs::write(&node, b"fake node").expect("Node executable");
+
+        let path =
+            path_with_selected_tools("node", &node, &workspace, &home).expect("all-provider PATH");
+        let entries = env::split_paths(&path).collect::<Vec<_>>();
+        for (tool, _, expected) in &provider_directories {
+            let matches = entries
+                .iter()
+                .filter(|entry| paths_equal(entry, expected))
+                .count();
+            assert_eq!(
+                matches, 1,
+                "Provider {tool} command directory must appear exactly once in PATH: {entries:?}"
+            );
+        }
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !paths_equal(entry, &home.join("shims"))),
+            "managed child PATH must not point back to Pinset shims"
+        );
+
+        let variables = selected_runtime_environment("node", &workspace, &home);
+        for (tool, install_dir, _) in &provider_directories {
+            let expected = match *tool {
+                "go" => Some(RuntimeEnvironmentVariable {
+                    name: "GOROOT",
+                    value: install_dir.as_os_str().to_owned(),
+                }),
+                "flutter" => Some(RuntimeEnvironmentVariable {
+                    name: "FLUTTER_ROOT",
+                    value: install_dir.as_os_str().to_owned(),
+                }),
+                "java" => Some(RuntimeEnvironmentVariable {
+                    name: "JAVA_HOME",
+                    value: java_home_for_install(install_dir).into_os_string(),
+                }),
+                "dotnet" => Some(RuntimeEnvironmentVariable {
+                    name: "DOTNET_ROOT",
+                    value: install_dir.as_os_str().to_owned(),
+                }),
+                _ => None,
+            };
+            if let Some(expected) = expected {
+                assert!(
+                    variables.contains(&expected),
+                    "Provider {tool} environment missing {expected:?}: {variables:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn selected_runtime_environment_includes_peer_provider_roots() {
+        let root = tempdir().expect("temp directory");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        fs::create_dir_all(&project).expect("project");
+        fs::write(
+            project.join("pinset.toml"),
+            "schema = 1\n[tools]\njava = \"21.0.0\"\nnode = \"24.0.0\"\npnpm = \"11.22.0\"\n",
+        )
+        .expect("project config");
+        let java_install_dir = home
+            .join("installs")
+            .join("java")
+            .join("21.0.0")
+            .join(current_target_for_tool("java"));
+        fs::create_dir_all(&java_install_dir).expect("Java install directory");
+
+        let variables = selected_runtime_environment("pnpm", &project, &home);
+        let expected = RuntimeEnvironmentVariable {
+            name: "JAVA_HOME",
+            value: java_home_for_install(&java_install_dir).into_os_string(),
+        };
+        assert!(
+            variables.contains(&expected),
+            "expected {expected:?}; resolved environment variables: {variables:?}"
+        );
     }
 
     #[test]
