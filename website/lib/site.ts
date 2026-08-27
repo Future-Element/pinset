@@ -1,8 +1,10 @@
-export const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+import packageJson from "../package.json";
+
+export const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://pinset.future-element.com").replace(/\/$/, "");
 
 export const siteConfig = {
   name: "Pinset",
-  version: "2.1",
+  version: packageJson.version,
   repository: "https://github.com/Future-Element/pinset",
   organization: {
     name: "Future Element",

@@ -1,8 +1,9 @@
 use std::{
     fs,
     io::{Cursor, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use reqwest::blocking::Client;
@@ -20,7 +21,16 @@ struct Release {
     draft: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct SelfUpdateResult {
+    status: String,
+    version: String,
+    #[serde(default)]
+    message: String,
+}
+
 pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    report_previous_result()?;
     let latest = latest_release(prerelease)?;
     let current = Version::parse(pinset_core::pinset_version())?;
     let available = parse_tag(&latest.tag_name)?;
@@ -42,6 +52,9 @@ pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::
 }
 
 pub(crate) fn update(requested: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_core::pinset_home()?;
+    let _update_lock = pinset_core::acquire_self_update_lock(&home)?;
+    report_previous_result_at(&self_update_result_path(&home))?;
     let current = Version::parse(pinset_core::pinset_version())?;
     let version = match requested {
         Some(value) => Version::parse(value.trim_start_matches('v'))?,
@@ -64,7 +77,12 @@ pub(crate) fn update(requested: Option<&str>) -> Result<(), Box<dyn std::error::
         return Err(format!("SHA-256 mismatch for {archive}").into());
     }
     let (cli_bytes, shim_bytes) = extract_pair(archive, &bytes)?;
-    publish(version, &cli_bytes, &shim_bytes)
+    publish(
+        version,
+        &cli_bytes,
+        &shim_bytes,
+        &self_update_result_path(&home),
+    )
 }
 
 fn latest_release(prerelease: bool) -> Result<Release, Box<dyn std::error::Error>> {
@@ -92,6 +110,7 @@ fn latest_release(prerelease: bool) -> Result<Release, Box<dyn std::error::Error
 fn client() -> Result<Client, reqwest::Error> {
     Client::builder()
         .user_agent(format!("pinset/{}", pinset_core::pinset_version()))
+        .timeout(Duration::from_secs(60))
         .build()
 }
 
@@ -218,7 +237,10 @@ fn publish(
     version: Version,
     cli_bytes: &[u8],
     shim_bytes: &[u8],
+    result_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(windows))]
+    let _ = result_path;
     let current = std::env::current_exe()?;
     let directory = current
         .parent()
@@ -240,8 +262,9 @@ fn publish(
             "self update requires pinset and pinset-shim in the same installation directory".into(),
         );
     }
-    let new_cli = directory.join(format!(".{cli_name}.{version}.new"));
-    let new_shim = directory.join(format!(".{shim_name}.{version}.new"));
+    let process_id = std::process::id();
+    let new_cli = directory.join(format!(".{cli_name}.{version}.{process_id}.new"));
+    let new_shim = directory.join(format!(".{shim_name}.{version}.{process_id}.new"));
     write_new(&new_cli, cli_bytes)?;
     write_new(&new_shim, shim_bytes)?;
     let output = Command::new(&new_cli).arg("--version").output()?;
@@ -254,7 +277,7 @@ fn publish(
         return Err("downloaded Pinset binary failed its version handshake".into());
     }
     #[cfg(windows)]
-    return publish_windows(&version, &cli, &shim, &new_cli, &new_shim);
+    return publish_windows(&version, &cli, &shim, &new_cli, &new_shim, result_path);
     #[cfg(not(windows))]
     publish_unix(&version, &cli, &shim, &new_cli, &new_shim)
 }
@@ -310,6 +333,8 @@ fn publish_unix(
         fs::rename(shim_backup, shim)?;
         return Err("updated Pinset failed validation and was rolled back".into());
     }
+    let _ = fs::remove_file(cli_backup);
+    let _ = fs::remove_file(shim_backup);
     println!("updated Pinset to {version}");
     Ok(())
 }
@@ -321,18 +346,21 @@ fn publish_windows(
     shim: &Path,
     new_cli: &Path,
     new_shim: &Path,
+    result_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::windows::process::CommandExt;
     let helper = cli
         .parent()
         .unwrap()
         .join(format!(".pinset-update-{}.ps1", std::process::id()));
-    let script = r#"param([int]$OldPid,[string]$Cli,[string]$Shim,[string]$NewCli,[string]$NewShim)
+    let script = r#"param([int]$OldPid,[string]$Cli,[string]$Shim,[string]$NewCli,[string]$NewShim,[string]$Result,[string]$Version)
 $ErrorActionPreference='Stop'; Wait-Process -Id $OldPid -ErrorAction SilentlyContinue
 $cliBak="$Cli.bak"; $shimBak="$Shim.bak"
-try { Move-Item -LiteralPath $Cli -Destination $cliBak -Force; Move-Item -LiteralPath $NewCli -Destination $Cli -Force; Move-Item -LiteralPath $Shim -Destination $shimBak -Force; Move-Item -LiteralPath $NewShim -Destination $Shim -Force; & $Cli --version; if ($LASTEXITCODE -ne 0) { throw 'version validation failed' } }
-catch { Remove-Item -LiteralPath $Cli,$Shim -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath $cliBak -Destination $Cli -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath $shimBak -Destination $Shim -Force -ErrorAction SilentlyContinue }
-finally { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue }
+$record=@{status='failed';version=$Version;message='update helper did not complete'}
+Remove-Item -LiteralPath $cliBak,$shimBak -Force -ErrorAction SilentlyContinue
+try { Move-Item -LiteralPath $Cli -Destination $cliBak; Move-Item -LiteralPath $NewCli -Destination $Cli; Move-Item -LiteralPath $Shim -Destination $shimBak; Move-Item -LiteralPath $NewShim -Destination $Shim; & $Cli --version | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'version validation failed' }; Remove-Item -LiteralPath $cliBak,$shimBak -Force -ErrorAction SilentlyContinue; $record=@{status='success';version=$Version;message=''} }
+catch { $record.message=$_.Exception.Message; try { if (Test-Path -LiteralPath $cliBak) { Remove-Item -LiteralPath $Cli -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath $cliBak -Destination $Cli -Force } } catch { $record.message += "; CLI rollback failed: $($_.Exception.Message)" }; try { if (Test-Path -LiteralPath $shimBak) { Remove-Item -LiteralPath $Shim -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath $shimBak -Destination $Shim -Force } } catch { $record.message += "; shim rollback failed: $($_.Exception.Message)" } }
+finally { $json=$record | ConvertTo-Json -Compress; [IO.File]::WriteAllText($Result,$json,(New-Object Text.UTF8Encoding($false))); Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue }
 "#;
     write_new(&helper, script.as_bytes())?;
     Command::new("powershell.exe")
@@ -354,10 +382,45 @@ finally { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyCo
         .arg(new_cli)
         .arg("-NewShim")
         .arg(new_shim)
+        .arg("-Result")
+        .arg(result_path)
+        .arg("-Version")
+        .arg(version.to_string())
         .creation_flags(0x08000000)
         .spawn()?;
     println!("Pinset {version} was verified; replacement will finish after this process exits");
     Ok(())
+}
+
+fn report_previous_result() -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_core::pinset_home()?;
+    report_previous_result_at(&self_update_result_path(&home))
+}
+
+fn report_previous_result_at(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let result: SelfUpdateResult = serde_json::from_str(content.trim_start_matches('\u{feff}'))?;
+    fs::remove_file(path)?;
+    if result.status == "success" {
+        eprintln!(
+            "previous Windows self update completed: Pinset {}",
+            result.version
+        );
+    } else {
+        eprintln!(
+            "warning: previous Windows self update to {} failed and was rolled back: {}",
+            result.version, result.message
+        );
+    }
+    Ok(())
+}
+
+fn self_update_result_path(pinset_home: &Path) -> PathBuf {
+    pinset_core::global_state_dir(pinset_home).join("self-update-result.json")
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {

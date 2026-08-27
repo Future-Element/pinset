@@ -20,7 +20,7 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
     description: command.description,
     inLanguage: locale,
     isPartOf: { "@type": "WebSite", name: siteConfig.name },
-    about: { "@type": "SoftwareApplication", name: siteConfig.name, softwareVersion: "2.1.1" },
+    about: { "@type": "SoftwareApplication", name: siteConfig.name, softwareVersion: siteConfig.version },
   };
 
   return (

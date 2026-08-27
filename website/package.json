@@ -1,7 +1,8 @@
 {
   "name": "pinset-website",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": true,
+  "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

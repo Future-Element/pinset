@@ -18,6 +18,7 @@
 
 - 项目选择：`pinset.toml` 与 `pinset.lock`。
 - 全局选择：`PINSET_HOME/state/global.toml` 与 `global.lock`。
+- 已知项目保护记录：`PINSET_HOME/state/projects`。项目执行 `use`、`import` 或锁定安装时会登记规范化配置路径，使 `uninstall` 与 `prune` 能保护当前工作树之外的选择。
 - 本机设置、源、下载缓存、安装和收据：位于 `PINSET_HOME`。
 - `--cwd <path>` 从指定路径开始查找项目。
 - `--dry-run` 只报告计划中的破坏性操作，不执行修改。
@@ -238,19 +239,19 @@
 | 示例 | `pinset uninstall node@22.0.0 --dry-run --json` |
 | JSON | **支持**；命令名为 `uninstall`。 |
 | 退出码 | 完成计划/删除为 `0`；保护机制阻止或验证失败为 `2`。 |
-| 关键错误 | 版本不精确、运行时仍被选择引用、收据缺失/无效、路径不安全或安装不归 Pinset 所有。`--force` 只绕过选择引用，不绕过所有权检查。 |
+| 关键错误 | 当前项目、全局、显式提供或本机已登记项目仍引用该运行时，收据缺失/无效、路径不安全或安装不归 Pinset 所有。`--force` 只绕过选择引用，不绕过所有权检查。从未被本机 Pinset 使用过的项目无法自动发现。 |
 
 ### `prune`
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 删除未被全局或所提供项目选择保护的已安装版本。 |
+| 用途 | 删除未被全局、所提供项目或本机已登记项目选择保护的已安装版本。 |
 | 语法与参数 | `pinset prune [--cwd <path>] [--project <path>]... [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改。 |
 | 示例 | `pinset prune --project ./app --project ../service --dry-run` |
 | JSON | **支持**；命令名为 `prune`。 |
 | 退出码 | 完成计划/删除为 `0`；无法验证引用或所有权为 `2`。 |
-| 关键错误 | 项目锁无效、安装路径不安全、收据缺失或文件系统失败。 |
+| 关键错误 | 项目/登记状态无效、安装路径不安全、收据缺失或文件系统失败。从未被本机 Pinset 使用过的项目仍需通过 `--project` 提供。 |
 
 ### `exec`
 
@@ -889,9 +890,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.1
+      - uses: Future-Element/pinset@v2.1.2
         with:
-          version: 2.1.1
+          version: 2.1.2
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -904,6 +905,8 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 `pinset paths [tool] [--json]` 会报告 CLI、相邻 shim、Pinset home、shim 目录、安装根，以及可选工具的已安装版本。`pinset list [tool] --long` 增加收据 schema、安装根、文件数量、总大小、关键入口与完整性状态。`pinset doctor --deep` 会重新扫描这些统计，但不宣称逐文件密码学验证。`pinset install <tool@精确版本> --repair` 只修复所有权收据与工具、版本、平台和目标目录全部匹配的安装。`pinset shim install --all` 注册所有内置 Provider 命令，但不下载运行时。
 
 `pinset self outdated [--channel stable|prerelease] [--json]` 只在用户明确执行时检查固定官方仓库。`pinset self update [--version <版本>]` 验证平台、语义版本、归档结构与 `SHA256SUMS`，校验新 CLI 后成对替换 CLI/shim，并支持备份与回滚。普通命令和 `doctor` 不会后台检查更新。
+
+自更新使用跨进程锁和 60 秒 HTTP 超时。Windows 中运行中的可执行文件不能替换自身，因此替换仍由异步辅助进程完成；辅助进程会把成功或回滚结果写入 `PINSET_HOME/state`，下一次执行 `self outdated` 或 `self update` 时会报告。Windows `.cmd`/`.bat` 运行时回退会拒绝包含 `cmd.exe` 元字符的参数，避免被 shell 二次解释；受管 `.exe` 运行时不受影响。
 
 ## 稳定协议边界
 

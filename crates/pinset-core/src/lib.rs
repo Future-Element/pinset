@@ -60,6 +60,7 @@ mod npm_metadata;
 mod npm_runtime;
 #[cfg(feature = "project-discovery")]
 mod project_discovery;
+mod project_registry;
 mod provenance;
 #[cfg(feature = "provider-registry")]
 mod provider_registry;
@@ -86,11 +87,11 @@ mod rust_runtime;
 mod shim_install;
 #[cfg(feature = "sources")]
 mod source_config;
+#[cfg(any(feature = "project-write", feature = "state-write"))]
+mod state_write_lock;
 mod target;
 mod user_settings;
 
-#[cfg(all(feature = "project-write", feature = "lockfile"))]
-pub use config::save_project_state;
 #[cfg(feature = "lockfile")]
 pub use config::validate_project_lock_policy;
 pub use config::{
@@ -100,6 +101,8 @@ pub use config::{
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+pub use config::{save_project_state, save_project_state_locked};
 #[cfg(feature = "dotnet-metadata")]
 pub use dotnet_metadata::{DotnetMetadataClient, DotnetRelease};
 #[cfg(feature = "dotnet-provider")]
@@ -137,13 +140,13 @@ pub use flutter_provider::{
 pub use flutter_runtime::install_locked_flutter;
 #[cfg(feature = "state-write")]
 pub use global_state::save_global_config;
-#[cfg(all(feature = "state-write", feature = "lockfile"))]
-pub use global_state::save_global_state;
 pub use global_state::{
     GLOBAL_CONFIG_FILENAME, GLOBAL_LOCKFILE_FILENAME, GLOBAL_STATE_SCHEMA, GlobalConfig,
     global_config_path, global_lockfile_path, global_state_dir, load_global_config,
     load_optional_global_config,
 };
+#[cfg(all(feature = "state-write", feature = "lockfile"))]
+pub use global_state::{save_global_state, save_global_state_locked};
 #[cfg(feature = "go-metadata")]
 pub use go_metadata::{GoMetadataClient, GoRelease};
 #[cfg(feature = "go-provider")]
@@ -205,6 +208,9 @@ pub use npm_runtime::install_locked_npm_tool;
 pub use project_discovery::{
     DiscoveryFinding, DiscoveryKind, DiscoveryReport, DiscoveryStatus, scan_project_sources,
 };
+#[cfg(feature = "project-write")]
+pub use project_registry::register_project_config;
+pub use project_registry::registered_project_configs;
 pub use provenance::{
     MinimumReleaseAge, VerificationMethod, VerificationStrength, tool_verification_strength,
     valid_release_time, validate_tool_policy, validate_verification_transition,
@@ -241,7 +247,7 @@ pub use resolver::{
     resolve_command, resolve_command_with_path, resolve_from_env, resolve_project_python_command,
     resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
     runtime_environment_for_install, selected_runtime_environment,
-    validate_managed_runtime_invocation,
+    validate_managed_runtime_invocation, validate_windows_batch_arguments,
 };
 pub use runtime_lifecycle::{
     InstalledToolVersion, ProtectedToolVersion, PruneToolCandidate, PruneToolPlan,
@@ -275,6 +281,10 @@ pub use source_config::{
     ResolvedArtifactSource, SUPPORTED_SOURCE_PROVIDERS, SourceConfig, SourceKind, SourceView,
     load_source_config, save_source_config, source_config_path,
 };
+#[cfg(feature = "project-write")]
+pub use state_write_lock::acquire_project_state_write_lock;
+#[cfg(feature = "state-write")]
+pub use state_write_lock::{acquire_global_state_write_lock, acquire_self_update_lock};
 pub use target::{current_target, current_target_for_tool};
 #[cfg(feature = "state-write")]
 pub use user_settings::save_user_settings;

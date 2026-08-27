@@ -18,6 +18,7 @@ The global `--lang <en|zh-CN>` option selects output language for one invocation
 
 - Project selection: `pinset.toml` and `pinset.lock`.
 - Global selection: `PINSET_HOME/state/global.toml` and `global.lock`.
+- Known-project protection records: `PINSET_HOME/state/projects`. Project `use`, `import`, and locked installation register the canonical config path so `uninstall` and `prune` can protect selections outside the current working tree.
 - Local machine settings, sources, download cache, installations, and receipts: under `PINSET_HOME`.
 - `--cwd <path>` starts project discovery at that path.
 - `--dry-run` reports a planned destructive operation without applying it.
@@ -238,19 +239,19 @@ Stable reason codes are grouped as follows:
 | Example | `pinset uninstall node@22.0.0 --dry-run --json` |
 | JSON | **Yes**; command name `uninstall`. |
 | Exit | `0` for a completed plan/removal; `2` when protection blocks it or validation fails. |
-| Key errors | Non-exact version, selected runtime still referenced, missing/invalid receipt, unsafe path, or non-owned installation. `--force` bypasses selection references, not ownership checks. |
+| Key errors | Non-exact version, selected runtime still referenced by the current, global, explicitly supplied, or locally registered project state, missing/invalid receipt, unsafe path, or non-owned installation. `--force` bypasses selection references, not ownership checks. Projects never used by this Pinset installation cannot be discovered automatically. |
 
 ### `prune`
 
 | Field | Description |
 | --- | --- |
-| Purpose | Remove installed versions not protected by global or supplied project selections. |
+| Purpose | Remove installed versions not protected by global, supplied, or locally registered project selections. |
 | Syntax and arguments | `pinset prune [--cwd <path>] [--project <path>]... [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`. |
 | Example | `pinset prune --project ./app --project ../service --dry-run` |
 | JSON | **Yes**; command name `prune`. |
 | Exit | `0` for a completed plan/removal; `2` if references or ownership cannot be validated. |
-| Key errors | Invalid project lock, unsafe installation path, missing receipt, or filesystem failure. |
+| Key errors | Invalid project/registry state, unsafe installation path, missing receipt, or filesystem failure. Projects never used by this Pinset installation must still be supplied with `--project`. |
 
 ### `exec`
 
@@ -889,9 +890,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.1
+      - uses: Future-Element/pinset@v2.1.2
         with:
-          version: 2.1.1
+          version: 2.1.2
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -904,6 +905,8 @@ The Action input is not a secret and does not persist the identity. Pinset remov
 `pinset paths [tool] [--json]` reports the CLI, adjacent shim, Pinset home, shim directory, installation root, and an optional tool's installed versions. `pinset list [tool] --long` adds receipt schema, installation root, file count, total size, critical entries, and integrity status. `pinset doctor --deep` rescans these statistics; it does not claim per-file cryptographic verification. `pinset install <tool@exact-version> --repair` repairs only an installation whose ownership receipt matches the requested tool, version, platform, and target directory. `pinset shim install --all` registers every built-in Provider command without downloading a runtime.
 
 `pinset self outdated [--channel stable|prerelease] [--json]` performs an explicit check against the fixed official repository. `pinset self update [--version <version>]` verifies platform, semantic version, archive structure, and `SHA256SUMS`, validates the new CLI, and replaces the CLI and shim as a pair with backup and rollback. Ordinary commands and `doctor` never check for updates in the background.
+
+Self updates use a cross-process lock and a 60-second HTTP timeout. Windows replacement remains asynchronous because a running executable cannot replace itself; the helper records success or rollback under `PINSET_HOME/state`, and the next `self outdated` or `self update` reports that result. Windows `.cmd`/`.bat` runtime fallbacks reject arguments containing `cmd.exe` metacharacters rather than risk shell reinterpretation; managed `.exe` runtimes are unaffected.
 
 ## Stable protocol boundary
 

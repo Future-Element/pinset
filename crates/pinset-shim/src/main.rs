@@ -18,16 +18,15 @@ type EncryptedEnvironment = Option<(
     std::collections::BTreeMap<String, String>,
 )>;
 
-#[cfg(windows)]
-use std::ffi::OsStr;
-
 use pinset_core::{
     CommandResolution, EnvironmentCollision, decode_environment, find_optional_project_config,
     load_project_config, managed_runtime_arguments, path_with_selected_tools, pinset_home_from_env,
     resolve_command_with_path, selected_runtime_environment, validate_managed_runtime_invocation,
+    validate_windows_batch_arguments,
 };
 
 const SHIM_CHAIN_ENV: &str = "PINSET_SHIM_CHAIN";
+const SHIM_OWNER_ENV: &str = "PINSET_SHIM_OWNER";
 const MAX_SHIM_CHAIN_LENGTH: usize = 32;
 const SELECTED_TOOL_ENV: &str = "PINSET_SELECTED_TOOL";
 const SELECTED_VERSION_ENV: &str = "PINSET_SELECTED_VERSION";
@@ -50,9 +49,10 @@ fn main() {
 
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let invocation = Invocation::parse()?;
-    let shim_chain = extend_shim_chain(&invocation.command)?;
     let home = pinset_home_from_env()?;
     let current_executable = env::current_exe()?;
+    let shim_owner = shim_owner(&current_executable);
+    let shim_chain = extend_shim_chain(&invocation.command, &shim_owner)?;
     let path = env::var_os("PATH");
     let resolution = resolve_command_with_path(
         &invocation.command,
@@ -74,6 +74,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     } else {
         managed_runtime_arguments(&resolution.tool, &invocation.command, &invocation.arguments)
     };
+    validate_windows_batch_arguments(&resolution.executable, &runtime_arguments)?;
 
     let runtime_path = path_with_selected_tools(
         &resolution.tool,
@@ -85,6 +86,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     child
         .env("PATH", runtime_path)
         .env(SHIM_CHAIN_ENV, shim_chain)
+        .env(SHIM_OWNER_ENV, shim_owner)
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
         .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
@@ -279,8 +281,12 @@ fn command_name(path: &Path) -> Option<String> {
     Some(stem.to_ascii_lowercase())
 }
 
-fn extend_shim_chain(command: &str) -> Result<String, String> {
-    let inherited = env::var(SHIM_CHAIN_ENV).unwrap_or_default();
+fn extend_shim_chain(command: &str, owner: &str) -> Result<String, String> {
+    let inherited = if env::var(SHIM_OWNER_ENV).is_ok_and(|value| value == owner) {
+        env::var(SHIM_CHAIN_ENV).unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mut chain = inherited
         .split(',')
         .filter(|entry| !entry.is_empty())
@@ -302,6 +308,17 @@ fn extend_shim_chain(command: &str) -> Result<String, String> {
     Ok(chain.join(","))
 }
 
+fn shim_owner(executable: &Path) -> String {
+    let path = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_path_buf());
+    if cfg!(windows) {
+        path.to_string_lossy().to_ascii_lowercase()
+    } else {
+        path.to_string_lossy().into_owned()
+    }
+}
+
 fn reject_shim_directory_target(resolution: &CommandResolution, home: &Path) -> Result<(), String> {
     let shims = home.join("shims");
     if resolution.executable.starts_with(&shims) {
@@ -314,19 +331,6 @@ fn reject_shim_directory_target(resolution: &CommandResolution, home: &Path) -> 
 }
 
 fn command_for_runtime(executable: &Path, arguments: &[OsString]) -> Command {
-    #[cfg(windows)]
-    {
-        let extension = executable
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
-        if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
-            let mut command = Command::new("cmd.exe");
-            command.arg("/D").arg("/C").arg(executable).args(arguments);
-            return command;
-        }
-    }
-
     let mut command = Command::new(executable);
     command.args(arguments);
     command

@@ -72,6 +72,22 @@ require_text(
         "dist/pinset-env.cdx.json",
     ),
 )
+release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+assert "--clobber" not in release_workflow
+assert "stable release assets are immutable" in release_workflow
+require_text(
+    ROOT / ".github/workflows/ci.yml",
+    (
+        "Validate documentation website",
+        "pnpm install --frozen-lockfile",
+        "pnpm typecheck",
+        "pnpm build",
+        "http://localhost:3000",
+    ),
+)
+website_package = json.loads((ROOT / "website/package.json").read_text(encoding="utf-8"))
+assert website_package["version"] == WORKSPACE_VERSION
+assert website_package["packageManager"] == "pnpm@10.15.0"
 require_text(
     ROOT / "examples/devcontainer/.devcontainer/Dockerfile",
     (f"ARG PINSET_VERSION={WORKSPACE_VERSION}", "SHA256SUMS", "sha256sum"),

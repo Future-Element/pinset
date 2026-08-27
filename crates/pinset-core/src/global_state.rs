@@ -6,7 +6,7 @@ use std::{
 };
 
 #[cfg(feature = "state-write")]
-use std::{io::Write, sync::Mutex};
+use std::io::Write;
 
 #[cfg(feature = "state-write")]
 use atomic_write_file::AtomicWriteFile;
@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 #[cfg(all(feature = "state-write", feature = "lockfile"))]
-use crate::{Lockfile, save_lockfile, validate_lock_matches_tools};
+use crate::{
+    Lockfile, acquire_global_state_write_lock, load_optional_lockfile, save_lockfile,
+    validate_lock_matches_tools,
+};
 
 pub const GLOBAL_STATE_SCHEMA: u32 = 3;
 pub const GLOBAL_CONFIG_FILENAME: &str = "global.toml";
 pub const GLOBAL_LOCKFILE_FILENAME: &str = "global.lock";
-
-#[cfg(feature = "state-write")]
-static GLOBAL_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,10 +141,20 @@ pub fn save_global_state(
     let config_path = global_config_path(pinset_home);
     crate::validate_provider_selections(&config.tools)?;
     validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+    let _guard = acquire_global_state_write_lock(pinset_home)?;
+    save_global_state_locked(pinset_home, config, lockfile)
+}
 
-    let _guard = GLOBAL_STATE_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+#[cfg(all(feature = "state-write", feature = "lockfile"))]
+pub fn save_global_state_locked(
+    pinset_home: &Path,
+    config: &GlobalConfig,
+    lockfile: &Lockfile,
+) -> Result<()> {
+    let config_path = global_config_path(pinset_home);
+    crate::validate_provider_selections(&config.tools)?;
+    validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+
     let state_dir = global_state_dir(pinset_home);
     fs::create_dir_all(&state_dir).map_err(|source| Error::CreateGlobalStateDirectory {
         path: state_dir,
@@ -153,8 +163,36 @@ pub fn save_global_state(
 
     // Commit the lock first. If the second atomic write is interrupted, the previous
     // selection remains active and lock-dependent operations fail until this is retried.
-    save_lockfile(&global_lockfile_path(pinset_home), lockfile)?;
-    save_global_config(&config_path, config)
+    let lock_path = global_lockfile_path(pinset_home);
+    let previous_lock = load_optional_lockfile(&lock_path)?;
+    save_lockfile(&lock_path, lockfile)?;
+    if let Err(commit_error) = save_global_config(&config_path, config) {
+        if let Err(rollback_error) = restore_previous_lock(&lock_path, previous_lock.as_ref()) {
+            return Err(Error::StateCommitRollbackFailed {
+                scope: "global",
+                path: config_path,
+                commit_error: commit_error.to_string(),
+                rollback_error: rollback_error.to_string(),
+            });
+        }
+        return Err(commit_error);
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "state-write", feature = "lockfile"))]
+fn restore_previous_lock(path: &Path, previous: Option<&Lockfile>) -> Result<()> {
+    if let Some(previous) = previous {
+        return save_lockfile(path, previous);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::WriteLockfile {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -5,26 +5,23 @@ use std::{
 };
 
 #[cfg(feature = "project-write")]
-use std::io::Write;
-#[cfg(all(feature = "project-write", feature = "lockfile"))]
-use std::sync::Mutex;
-
-#[cfg(feature = "project-write")]
 use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "project-write")]
+use std::io::Write;
 
 use crate::{Error, MinimumReleaseAge, Result, VerificationStrength};
 
 #[cfg(feature = "lockfile")]
 use crate::Lockfile;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
-use crate::{lockfile_path, save_lockfile, validate_lock_matches_tools};
+use crate::{
+    acquire_project_state_write_lock, load_optional_lockfile, lockfile_path,
+    register_project_config, save_lockfile, validate_lock_matches_tools,
+};
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
 pub const PROJECT_CONFIG_SCHEMA: u32 = 4;
-#[cfg(all(feature = "project-write", feature = "lockfile"))]
-static PROJECT_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
@@ -385,18 +382,60 @@ fn valid_project_id(value: &str) -> bool {
 }
 
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
-pub fn save_project_state(path: &Path, config: &ProjectConfig, lockfile: &Lockfile) -> Result<()> {
+pub fn save_project_state(
+    pinset_home: &Path,
+    path: &Path,
+    config: &ProjectConfig,
+    lockfile: &Lockfile,
+) -> Result<()> {
+    let _guard = acquire_project_state_write_lock(pinset_home, path)?;
+    save_project_state_locked(pinset_home, path, config, lockfile)
+}
+
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+pub fn save_project_state_locked(
+    pinset_home: &Path,
+    path: &Path,
+    config: &ProjectConfig,
+    lockfile: &Lockfile,
+) -> Result<()> {
     crate::validate_provider_selections(&config.tools)?;
     validate_lock_matches_tools(lockfile, &config.tools, path)?;
     validate_project_lock_policy(config, lockfile, std::time::SystemTime::now())?;
-    let _guard = PROJECT_STATE_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    register_project_config(pinset_home, path)?;
 
     // Commit the lock first. If the second atomic write is interrupted, the previous
     // selection remains active and lock-dependent operations fail until this is retried.
-    save_lockfile(&lockfile_path(path), lockfile)?;
-    save_project_config(path, config)
+    let lock_path = lockfile_path(path);
+    let previous_lock = load_optional_lockfile(&lock_path)?;
+    save_lockfile(&lock_path, lockfile)?;
+    if let Err(commit_error) = save_project_config(path, config) {
+        if let Err(rollback_error) = restore_previous_lock(&lock_path, previous_lock.as_ref()) {
+            return Err(Error::StateCommitRollbackFailed {
+                scope: "project",
+                path: path.to_path_buf(),
+                commit_error: commit_error.to_string(),
+                rollback_error: rollback_error.to_string(),
+            });
+        }
+        return Err(commit_error);
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "project-write", feature = "lockfile"))]
+fn restore_previous_lock(path: &Path, previous: Option<&Lockfile>) -> Result<()> {
+    if let Some(previous) = previous {
+        return save_lockfile(path, previous);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::WriteLockfile {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 #[cfg(feature = "lockfile")]
@@ -653,7 +692,8 @@ mod tests {
             tools: Vec::new(),
         };
 
-        save_project_state(&config_path, &config, &lockfile).expect("save project state");
+        save_project_state(root.path(), &config_path, &config, &lockfile)
+            .expect("save project state");
 
         assert_eq!(load_project_config(&config_path).expect("config"), config);
         assert_eq!(

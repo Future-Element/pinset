@@ -14,9 +14,6 @@ mod environment;
 mod i18n;
 mod self_update;
 
-#[cfg(windows)]
-use std::ffi::OsStr;
-
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
     ArtifactIntegrity, DiscoveryReport, DiscoveryStatus, DotnetMetadataClient,
@@ -25,7 +22,8 @@ use pinset_core::{
     LockAuditSeverity, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient,
     PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient, RuntimeInstallKind,
     RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
-    SourceView, audit_global_lock, audit_project_lock, clean_download_cache, command_tool,
+    SourceView, acquire_global_state_write_lock, acquire_project_state_write_lock,
+    audit_global_lock, audit_project_lock, clean_download_cache, command_tool,
     create_project_config, create_project_python_environment, current_target_for_tool,
     download_cache_info, ensure_shims, find_optional_project_config, find_project_config,
     find_project_context, global_config_path, global_lockfile_path, import_download_cache,
@@ -37,18 +35,18 @@ use pinset_core::{
     load_optional_lockfile, load_project_config, load_project_python_environment,
     load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
     path_with_selected_tools, pinset_home, plan_prune_tool_versions, plan_uninstall_tool_version,
-    project_python_environment_path, provider_dependency_order, repair_download_cache,
-    resolve_command, resolve_project_python_command, resolve_tool_selection,
+    project_python_environment_path, provider_dependency_order, register_project_config,
+    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
     runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
-    runtime_provider, save_global_config, save_global_state, save_lockfile, save_project_config,
-    save_project_state, save_source_config, save_user_settings, scan_project_sources,
+    runtime_provider, save_global_config, save_global_state_locked, save_project_config,
+    save_project_state_locked, save_source_config, save_user_settings, scan_project_sources,
     selected_runtime_environment, source_config_path, uninstall_node_version,
     uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
     validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
     validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
     validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
     validate_lock_matches_tools, validate_managed_runtime_invocation, validate_project_lock_policy,
-    verify_download_cache,
+    validate_windows_batch_arguments, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -3047,22 +3045,24 @@ fn save_resolved_selection_batch(
     resolved: &[ResolvedSelection],
 ) -> Result<(&'static str, PathBuf), Box<dyn std::error::Error>> {
     if global {
+        let _guard = acquire_global_state_write_lock(home)?;
         let config_path = global_config_path(home);
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
         let lock_path = global_lockfile_path(home);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut config.tools, &mut lockfile, resolved)?;
-        save_global_state(home, &config, &lockfile)?;
+        save_global_state_locked(home, &config, &lockfile)?;
         Ok(("global", lock_path))
     } else {
         let config_path = find_project_config(cwd)?;
+        let _guard = acquire_project_state_write_lock(home, &config_path)?;
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
         let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
-        save_project_state(&config_path, &project, &lockfile)?;
+        save_project_state_locked(home, &config_path, &project, &lockfile)?;
         Ok(("project", lock_path))
     }
 }
@@ -3280,70 +3280,8 @@ fn run_project_import(
     }
 
     let config_path = report.target_config.clone();
-    let config_exists = match fs::symlink_metadata(&config_path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            return Err(match catalog.language() {
-                Language::English => format!(
-                    "refusing to import into unsafe project configuration path {}",
-                    config_path.display()
-                )
-                .into(),
-                Language::SimplifiedChinese => {
-                    format!("拒绝导入到不安全的项目配置路径 {}", config_path.display()).into()
-                }
-            });
-        }
-        Ok(_) => true,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-        Err(error) => return Err(error.into()),
-    };
-    let mut project = if config_exists {
-        load_project_config(&config_path)?
-    } else {
-        ProjectConfig {
-            schema: PROJECT_CONFIG_SCHEMA,
-            project_id: Some(uuid::Uuid::new_v4().to_string()),
-            policy: Default::default(),
-            tools: BTreeMap::new(),
-            environment: None,
-        }
-    };
     let lock_path = lockfile_path(&config_path);
-    let existing_lockfile = match fs::symlink_metadata(&lock_path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            return Err(match catalog.language() {
-                Language::English => format!(
-                    "refusing to import with unsafe lock path {}",
-                    lock_path.display()
-                )
-                .into(),
-                Language::SimplifiedChinese => {
-                    format!("拒绝使用不安全的锁文件路径 {} 导入", lock_path.display()).into()
-                }
-            });
-        }
-        Ok(_) => Some(load_lockfile(&lock_path)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    match &existing_lockfile {
-        Some(lockfile) => validate_lock_matches_tools(lockfile, &project.tools, &config_path)?,
-        None if !project.tools.is_empty() => {
-            return Err(match catalog.language() {
-                Language::English => format!(
-                    "existing project configuration {} has selections but no pinset.lock",
-                    config_path.display()
-                )
-                .into(),
-                Language::SimplifiedChinese => format!(
-                    "现有项目配置 {} 包含版本选择，但缺少 pinset.lock",
-                    config_path.display()
-                )
-                .into(),
-            });
-        }
-        None => {}
-    }
+    let (project, _) = load_project_import_state(&config_path, catalog)?;
 
     let selections = report
         .findings
@@ -3362,22 +3300,12 @@ fn run_project_import(
         resolved.push((tool, selector, locked_tool));
     }
 
-    if !force
-        && let Some((tool, existing, imported)) = import_replacement_conflict(&project, &resolved)
-    {
-        return Err(match catalog.language() {
-            Language::English => format!(
-                "{} already selects {tool}@{existing}; importing {tool}@{imported} requires --force",
-                config_path.display(),
-            )
-            .into(),
-            Language::SimplifiedChinese => format!(
-                "{} 已选择 {tool}@{existing}；导入 {tool}@{imported} 需要 --force",
-                config_path.display(),
-            )
-            .into(),
-        });
-    }
+    reject_import_replacement_conflict(&config_path, &project, &resolved, force, catalog)?;
+
+    let home = pinset_home()?;
+    let _guard = acquire_project_state_write_lock(&home, &config_path)?;
+    let (mut project, existing_lockfile) = load_project_import_state(&config_path, catalog)?;
+    reject_import_replacement_conflict(&config_path, &project, &resolved, force, catalog)?;
 
     let mut lockfile = existing_lockfile.unwrap_or_else(new_lockfile);
     lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
@@ -3391,7 +3319,8 @@ fn run_project_import(
         project.set_tool(tool, selector);
         lockfile.upsert_tool(locked_tool.clone())?;
     }
-    save_project_state(&config_path, &project, &lockfile)?;
+    save_project_state_locked(&home, &config_path, &project, &lockfile)?;
+    drop(_guard);
 
     match catalog.language() {
         Language::English => println!(
@@ -3441,6 +3370,104 @@ fn run_project_import(
     Ok(())
 }
 
+fn load_project_import_state(
+    config_path: &Path,
+    catalog: Catalog,
+) -> Result<(ProjectConfig, Option<Lockfile>), Box<dyn std::error::Error>> {
+    let config_exists = match fs::symlink_metadata(config_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "refusing to import into unsafe project configuration path {}",
+                    config_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => {
+                    format!("拒绝导入到不安全的项目配置路径 {}", config_path.display()).into()
+                }
+            });
+        }
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    let project = if config_exists {
+        load_project_config(config_path)?
+    } else {
+        ProjectConfig {
+            schema: PROJECT_CONFIG_SCHEMA,
+            project_id: Some(uuid::Uuid::new_v4().to_string()),
+            policy: Default::default(),
+            tools: BTreeMap::new(),
+            environment: None,
+        }
+    };
+    let lock_path = lockfile_path(config_path);
+    let lockfile = match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "refusing to import with unsafe lock path {}",
+                    lock_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => {
+                    format!("拒绝使用不安全的锁文件路径 {} 导入", lock_path.display()).into()
+                }
+            });
+        }
+        Ok(_) => Some(load_lockfile(&lock_path)?),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    match &lockfile {
+        Some(lockfile) => validate_lock_matches_tools(lockfile, &project.tools, config_path)?,
+        None if !project.tools.is_empty() => {
+            return Err(match catalog.language() {
+                Language::English => format!(
+                    "existing project configuration {} has selections but no pinset.lock",
+                    config_path.display()
+                )
+                .into(),
+                Language::SimplifiedChinese => format!(
+                    "现有项目配置 {} 包含版本选择，但缺少 pinset.lock",
+                    config_path.display()
+                )
+                .into(),
+            });
+        }
+        None => {}
+    }
+    Ok((project, lockfile))
+}
+
+fn reject_import_replacement_conflict(
+    config_path: &Path,
+    project: &ProjectConfig,
+    resolved: &[ResolvedSelection],
+    force: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if force {
+        return Ok(());
+    }
+    let Some((tool, existing, imported)) = import_replacement_conflict(project, resolved) else {
+        return Ok(());
+    };
+    Err(match catalog.language() {
+        Language::English => format!(
+            "{} already selects {tool}@{existing}; importing {tool}@{imported} requires --force",
+            config_path.display(),
+        )
+        .into(),
+        Language::SimplifiedChinese => format!(
+            "{} 已选择 {tool}@{existing}；导入 {tool}@{imported} 需要 --force",
+            config_path.display(),
+        )
+        .into(),
+    })
+}
+
 fn import_replacement_conflict(
     project: &ProjectConfig,
     resolved: &[(String, String, LockedTool)],
@@ -3464,14 +3491,29 @@ fn run_update(
     }
     let home = pinset_home()?;
     let cwd = effective_cwd(cwd)?;
+    let selected_config_path = if global {
+        global_config_path(&home)
+    } else {
+        find_project_config(&cwd)?
+    };
+    let _write_guard = if dry_run {
+        None
+    } else if global {
+        Some(acquire_global_state_write_lock(&home)?)
+    } else {
+        Some(acquire_project_state_write_lock(
+            &home,
+            &selected_config_path,
+        )?)
+    };
     let (scope, config_path, tools, mut lockfile) = if global {
-        let config_path = global_config_path(&home);
+        let config_path = selected_config_path;
         let config = load_global_config(&config_path)?;
         let lockfile = load_lockfile(&global_lockfile_path(&home))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
         ("global", config_path, config.tools, lockfile)
     } else {
-        let config_path = find_project_config(&cwd)?;
+        let config_path = selected_config_path;
         let config = load_project_config(&config_path)?;
         let lockfile = load_lockfile(&lockfile_path(&config_path))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
@@ -3519,10 +3561,10 @@ fn run_update(
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         if global {
             let config = load_global_config(&config_path)?;
-            save_global_state(&home, &config, &lockfile)?;
+            save_global_state_locked(&home, &config, &lockfile)?;
         } else {
             let config = load_project_config(&config_path)?;
-            save_project_state(&config_path, &config, &lockfile)?;
+            save_project_state_locked(&home, &config_path, &config, &lockfile)?;
         }
     }
 
@@ -3556,9 +3598,14 @@ fn run_migrate(
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = effective_cwd(cwd)?;
+    let home = pinset_home()?;
     let (scope, config_path, lock_path, config_schema, lock_schema) = if global {
-        let home = pinset_home()?;
         let config_path = global_config_path(&home);
+        let _guard = if dry_run {
+            None
+        } else {
+            Some(acquire_global_state_write_lock(&home)?)
+        };
         let lock_path = global_lockfile_path(&home);
         let config = load_global_config(&config_path)?;
         let lockfile = load_optional_lockfile(&lock_path)?;
@@ -3574,7 +3621,7 @@ fn run_migrate(
         );
         if !dry_run {
             if let Some(lockfile) = &lockfile {
-                save_global_state(&home, &config, lockfile)?;
+                save_global_state_locked(&home, &config, lockfile)?;
             } else {
                 save_global_config(&config_path, &config)?;
             }
@@ -3582,6 +3629,11 @@ fn run_migrate(
         report
     } else {
         let config_path = find_project_config(&cwd)?;
+        let _guard = if dry_run {
+            None
+        } else {
+            Some(acquire_project_state_write_lock(&home, &config_path)?)
+        };
         let lock_path = lockfile_path(&config_path);
         let config = load_project_config(&config_path)?;
         let lockfile = load_optional_lockfile(&lock_path)?;
@@ -3597,7 +3649,7 @@ fn run_migrate(
         );
         if !dry_run {
             if let Some(lockfile) = &lockfile {
-                save_project_state(&config_path, &config, lockfile)?;
+                save_project_state_locked(&home, &config_path, &config, lockfile)?;
             } else {
                 save_project_config(&config_path, &config)?;
             }
@@ -3609,7 +3661,7 @@ fn run_migrate(
     } else {
         PROJECT_CONFIG_SCHEMA
     };
-    let receipt_upgrade_needed = legacy_receipt_count(&pinset_home()?)?;
+    let receipt_upgrade_needed = legacy_receipt_count(&home)?;
     let report = MigrationReport {
         scope,
         config: config_path,
@@ -3685,6 +3737,7 @@ fn unset_tool(
     if global {
         let home = pinset_home()?;
         let config_path = global_config_path(&home);
+        let _guard = acquire_global_state_write_lock(&home)?;
         let Some(mut config) = load_optional_global_config(&config_path)? else {
             println!(
                 "{}",
@@ -3700,11 +3753,17 @@ fn unset_tool(
             return Ok(());
         }
         let lock_path = global_lockfile_path(&home);
-        if lock_path.is_file() {
-            load_lockfile(&lock_path)?;
+        if let Some(mut lockfile) = load_optional_lockfile(&lock_path)? {
+            lockfile.remove_tool(tool);
+            lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
+            let remove_empty_lock = lockfile.tools.is_empty();
+            save_global_state_locked(&home, &config, &lockfile)?;
+            if remove_empty_lock {
+                fs::remove_file(&lock_path)?;
+            }
+        } else {
+            save_global_config(&config_path, &config)?;
         }
-        save_global_config(&config_path, &config)?;
-        remove_tool_from_lock(&lock_path, tool)?;
         println!(
             "{}",
             catalog.selection_unset("global", tool, &config_path, true)
@@ -3713,6 +3772,8 @@ fn unset_tool(
     }
 
     let config_path = find_project_config(cwd)?;
+    let home = pinset_home()?;
+    let _guard = acquire_project_state_write_lock(&home, &config_path)?;
     let mut config = load_project_config(&config_path)?;
     if config.tools.remove(tool).is_none() {
         println!(
@@ -3722,29 +3783,21 @@ fn unset_tool(
         return Ok(());
     }
     let lock_path = lockfile_path(&config_path);
-    if lock_path.is_file() {
-        load_lockfile(&lock_path)?;
+    if let Some(mut lockfile) = load_optional_lockfile(&lock_path)? {
+        lockfile.remove_tool(tool);
+        lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
+        let remove_empty_lock = lockfile.tools.is_empty();
+        save_project_state_locked(&home, &config_path, &config, &lockfile)?;
+        if remove_empty_lock {
+            fs::remove_file(&lock_path)?;
+        }
+    } else {
+        save_project_config(&config_path, &config)?;
     }
-    save_project_config(&config_path, &config)?;
-    remove_tool_from_lock(&lock_path, tool)?;
     println!(
         "{}",
         catalog.selection_unset("project", tool, &config_path, true)
     );
-    Ok(())
-}
-
-fn remove_tool_from_lock(path: &Path, tool: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let mut lockfile = load_lockfile(path)?;
-    lockfile.remove_tool(tool);
-    if lockfile.tools.is_empty() {
-        fs::remove_file(path)?;
-    } else {
-        save_lockfile(path, &lockfile)?;
-    }
     Ok(())
 }
 
@@ -3863,7 +3916,9 @@ fn install_project_with_venv(
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
     let policy_lock = load_lockfile(&lock_path)?;
+    validate_lock_matches_tools(&policy_lock, &project.tools, &config_path)?;
     validate_project_lock_policy(&project, &policy_lock, std::time::SystemTime::now())?;
+    register_project_config(&home, &config_path)?;
     install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
     if let Some(requested) = project.tools.get("python") {
         let distribution = selected_version_from_lock(
@@ -4578,6 +4633,7 @@ fn execute_selected(
     } else {
         managed_runtime_arguments(&tool, command_name, &command[1..])
     };
+    validate_windows_batch_arguments(&executable, &runtime_arguments)?;
     let mut child = command_for_runtime(&executable);
     child
         .args(runtime_arguments)
@@ -4724,18 +4780,6 @@ fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
 }
 
 fn command_for_runtime(executable: &Path) -> Command {
-    #[cfg(windows)]
-    {
-        let extension = executable
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
-        if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
-            let mut command = Command::new("cmd.exe");
-            command.arg("/D").arg("/C").arg(executable);
-            return command;
-        }
-    }
     Command::new(executable)
 }
 
@@ -6753,6 +6797,60 @@ mod tests {
         assert_eq!(saved_global.tools["node"], "lts");
         assert_eq!(saved_global.tools["go"], "latest");
         assert_eq!(saved_global_lock.tools.len(), 2);
+    }
+
+    #[test]
+    fn concurrent_project_batches_preserve_both_updates() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = std::sync::Arc::new(root.path().join("home"));
+        let project = std::sync::Arc::new(root.path().join("project"));
+        fs::create_dir_all(project.as_ref()).expect("project directory");
+        let project_path = project.join(pinset_core::PROJECT_CONFIG_FILENAME);
+        save_project_config(
+            &project_path,
+            &ProjectConfig {
+                schema: PROJECT_CONFIG_SCHEMA,
+                project_id: Some(uuid::Uuid::new_v4().to_string()),
+                policy: Default::default(),
+                tools: BTreeMap::new(),
+                environment: None,
+            },
+        )
+        .expect("empty project config");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut threads = Vec::new();
+        for batch in [
+            vec![(
+                "node".to_owned(),
+                "lts".to_owned(),
+                persistable_selection_lock("node", "lts", "24.0.0"),
+            )],
+            vec![(
+                "go".to_owned(),
+                "latest".to_owned(),
+                persistable_selection_lock("go", "latest", "1.25.1"),
+            )],
+        ] {
+            let home = std::sync::Arc::clone(&home);
+            let project = std::sync::Arc::clone(&project);
+            let barrier = std::sync::Arc::clone(&barrier);
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                save_resolved_selection_batch(&home, &project, false, &batch)
+                    .expect("save concurrent batch");
+            }));
+        }
+        barrier.wait();
+        for thread in threads {
+            thread.join().expect("batch thread");
+        }
+
+        let config = load_project_config(&project_path).expect("project config");
+        let lockfile = load_lockfile(&project.join("pinset.lock")).expect("project lock");
+        assert_eq!(config.tools["node"], "lts");
+        assert_eq!(config.tools["go"], "latest");
+        assert_eq!(lockfile.tool("node").unwrap().version, "24.0.0");
+        assert_eq!(lockfile.tool("go").unwrap().version, "1.25.1");
     }
 
     fn persistable_selection_lock(tool: &str, requested: &str, version: &str) -> LockedTool {
