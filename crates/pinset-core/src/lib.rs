@@ -181,9 +181,9 @@ pub use lock_audit::{
 pub use lockfile::{
     LOCKFILE_FILENAME, LOCKFILE_SCHEMA, LockedArtifact, LockedArtifactFormat,
     LockedArtifactOverlay, LockedTool, Lockfile, MVP_NODE_TARGETS, load_lockfile,
-    load_lockfile_for_target_refresh, load_optional_lockfile, lockfile_path, save_lockfile,
-    validate_lock_matches_project, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools,
+    load_lockfile_for_provider_refresh, load_lockfile_for_target_refresh, load_optional_lockfile,
+    lockfile_path, save_lockfile, validate_lock_matches_project, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools,
 };
 #[cfg(feature = "node-provider")]
 pub use node_lifecycle::{
