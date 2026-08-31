@@ -31,22 +31,22 @@ use pinset_core::{
     install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
     install_locked_python, install_locked_rust, install_payload_statistics,
     is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
-    list_installed_tool_versions, load_global_config, load_lockfile, load_optional_global_config,
-    load_optional_lockfile, load_project_config, load_project_python_environment,
-    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments,
-    path_with_selected_tools, pinset_home, plan_prune_tool_versions, plan_uninstall_tool_version,
-    project_python_environment_path, provider_dependency_order, register_project_config,
-    repair_download_cache, resolve_command, resolve_project_python_command, resolve_tool_selection,
-    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
-    runtime_provider, save_global_config, save_global_state_locked, save_project_config,
-    save_project_state_locked, save_source_config, save_user_settings, scan_project_sources,
-    selected_runtime_environment, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
-    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
-    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
-    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tools, validate_managed_runtime_invocation, validate_project_lock_policy,
-    validate_windows_batch_arguments, verify_download_cache,
+    list_installed_tool_versions, load_global_config, load_lockfile,
+    load_lockfile_for_target_refresh, load_optional_global_config, load_optional_lockfile,
+    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
+    lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
+    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
+    provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
+    save_source_config, save_user_settings, scan_project_sources, selected_runtime_environment,
+    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
+    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
+    validate_project_lock_policy, validate_windows_batch_arguments, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -3044,12 +3044,31 @@ fn save_resolved_selection_batch(
     global: bool,
     resolved: &[ResolvedSelection],
 ) -> Result<(&'static str, PathBuf), Box<dyn std::error::Error>> {
+    save_resolved_selection_batch_with(home, cwd, global, resolved, resolve_locked_tool)
+}
+
+fn save_resolved_selection_batch_with<F>(
+    home: &Path,
+    cwd: &Path,
+    global: bool,
+    resolved: &[ResolvedSelection],
+    mut resolver: F,
+) -> Result<(&'static str, PathBuf), Box<dyn std::error::Error>>
+where
+    F: FnMut(&str, &str) -> Result<LockedTool, Box<dyn std::error::Error>>,
+{
     if global {
         let _guard = acquire_global_state_write_lock(home)?;
         let config_path = global_config_path(home);
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
         let lock_path = global_lockfile_path(home);
-        let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
+        let (mut lockfile, requires_target_refresh) =
+            load_optional_lockfile_for_target_refresh(&lock_path)?
+                .unwrap_or_else(|| (new_lockfile(), false));
+        if requires_target_refresh {
+            validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+            refresh_legacy_npm_target_records(&mut lockfile, resolved, &mut resolver)?;
+        }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut config.tools, &mut lockfile, resolved)?;
         save_global_state_locked(home, &config, &lockfile)?;
@@ -3059,12 +3078,61 @@ fn save_resolved_selection_batch(
         let _guard = acquire_project_state_write_lock(home, &config_path)?;
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
-        let mut lockfile = load_optional_lockfile(&lock_path)?.unwrap_or_else(new_lockfile);
+        let (mut lockfile, requires_target_refresh) =
+            load_optional_lockfile_for_target_refresh(&lock_path)?
+                .unwrap_or_else(|| (new_lockfile(), false));
+        if requires_target_refresh {
+            validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
+            refresh_legacy_npm_target_records(&mut lockfile, resolved, &mut resolver)?;
+        }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
         save_project_state_locked(home, &config_path, &project, &lockfile)?;
         Ok(("project", lock_path))
     }
+}
+
+fn load_optional_lockfile_for_target_refresh(
+    path: &Path,
+) -> Result<Option<(Lockfile, bool)>, Box<dyn std::error::Error>> {
+    match load_lockfile_for_target_refresh(path) {
+        Ok(lockfile) => Ok(Some(lockfile)),
+        Err(Error::ReadLockfile { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn refresh_legacy_npm_target_records<F>(
+    lockfile: &mut Lockfile,
+    resolved: &[ResolvedSelection],
+    resolver: &mut F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut(&str, &str) -> Result<LockedTool, Box<dyn std::error::Error>>,
+{
+    let explicitly_resolved = resolved
+        .iter()
+        .map(|(tool, _, _)| tool.as_str())
+        .collect::<BTreeSet<_>>();
+    for tool in ["pnpm", "bun"] {
+        if explicitly_resolved.contains(tool) {
+            continue;
+        }
+        let Some((requested, version)) = lockfile.tool(tool).and_then(|locked| {
+            locked
+                .artifact("linux-aarch64")
+                .is_none()
+                .then(|| (locked.requested.clone(), locked.version.clone()))
+        }) else {
+            continue;
+        };
+        let mut refreshed = resolver(tool, &version)?;
+        refreshed.requested = requested;
+        lockfile.upsert_tool(refreshed)?;
+    }
+    Ok(())
 }
 
 fn parse_tool_selection_batch(
@@ -6800,6 +6868,82 @@ mod tests {
     }
 
     #[test]
+    fn repairs_pre_v1_npm_target_matrix_before_adding_a_global_selection() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir_all(&project).expect("project directory");
+
+        let mut config = GlobalConfig::default();
+        config.set_tool("bun", "1.3.14");
+        config.set_tool("node", "24.0.0");
+        config.set_tool("pnpm", "11.21.0");
+        save_global_config(&global_config_path(&home), &config).expect("legacy global config");
+
+        let mut bun = persistable_selection_lock("bun", "1.3.14", "1.3.14");
+        bun.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        let mut pnpm = persistable_selection_lock("pnpm", "11.21.0", "11.21.0");
+        pnpm.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        let legacy_lock = Lockfile {
+            schema: 2,
+            generated_by: "pinset 0.9.0".to_owned(),
+            tools: vec![
+                bun,
+                persistable_selection_lock("node", "24.0.0", "24.0.0"),
+                pnpm,
+            ],
+        };
+        fs::write(
+            global_lockfile_path(&home),
+            toml::to_string_pretty(&legacy_lock).expect("legacy lock TOML"),
+        )
+        .expect("legacy global lock");
+
+        let resolved = vec![(
+            "go".to_owned(),
+            "latest".to_owned(),
+            persistable_selection_lock("go", "latest", "1.25.1"),
+        )];
+        let mut refreshed = Vec::new();
+        save_resolved_selection_batch_with(&home, &project, true, &resolved, |tool, version| {
+            refreshed.push((tool.to_owned(), version.to_owned()));
+            Ok(persistable_selection_lock(tool, version, version))
+        })
+        .expect("repair legacy npm targets and save Go selection");
+
+        assert_eq!(
+            refreshed,
+            [
+                ("pnpm".to_owned(), "11.21.0".to_owned()),
+                ("bun".to_owned(), "1.3.14".to_owned()),
+            ]
+        );
+        let saved_config =
+            load_global_config(&global_config_path(&home)).expect("saved global config");
+        assert_eq!(saved_config.tools["bun"], "1.3.14");
+        assert_eq!(saved_config.tools["node"], "24.0.0");
+        assert_eq!(saved_config.tools["pnpm"], "11.21.0");
+        assert_eq!(saved_config.tools["go"], "latest");
+        let saved_lock =
+            load_lockfile(&global_lockfile_path(&home)).expect("strictly valid refreshed lock");
+        assert!(
+            saved_lock
+                .tool("bun")
+                .and_then(|tool| tool.artifact("linux-aarch64"))
+                .is_some()
+        );
+        assert!(
+            saved_lock
+                .tool("pnpm")
+                .and_then(|tool| tool.artifact("linux-aarch64"))
+                .is_some()
+        );
+        assert_eq!(saved_lock.tool("go").unwrap().requested, "latest");
+    }
+
+    #[test]
     fn concurrent_project_batches_preserve_both_updates() {
         let root = tempfile::tempdir().expect("temporary root");
         let home = std::sync::Arc::new(root.path().join("home"));
@@ -6895,6 +7039,58 @@ mod tests {
                 let mut locked = lockfile.tools.remove(0);
                 locked.requested = requested.to_owned();
                 locked
+            }
+            "pnpm" | "bun" => {
+                let targets = if tool == "pnpm" {
+                    pinset_core::PNPM_TARGETS
+                } else {
+                    pinset_core::BUN_TARGETS
+                };
+                let artifacts = targets
+                    .iter()
+                    .map(|target| {
+                        let package_base =
+                            target.package.rsplit('/').next().expect("npm package name");
+                        let artifact_path =
+                            format!("{}/-/{package_base}-{version}.tgz", target.package);
+                        let overlays = (tool == "pnpm")
+                            .then(|| {
+                                let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
+                                pinset_core::LockedArtifactOverlay {
+                                    canonical_url: format!(
+                                        "https://registry.npmjs.org/{artifact_path}"
+                                    ),
+                                    artifact_path,
+                                    integrity: format!("sha512:{}", "ef".repeat(64)),
+                                    format: pinset_core::LockedArtifactFormat::TarGz,
+                                    archive_root: "package".to_owned(),
+                                    verification: "npm-registry-signature-sha512".to_owned(),
+                                }
+                            })
+                            .into_iter()
+                            .collect();
+                        pinset_core::LockedArtifact {
+                            target: target.target.to_owned(),
+                            canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
+                            artifact_path,
+                            sha256: String::new(),
+                            integrity: Some(format!("sha512:{}", "ab".repeat(64))),
+                            format: pinset_core::LockedArtifactFormat::TarGz,
+                            archive_root: "package".to_owned(),
+                            verification: "npm-registry-signature-sha512".to_owned(),
+                            overlays,
+                        }
+                    })
+                    .collect();
+                LockedTool {
+                    name: tool.to_owned(),
+                    requested: requested.to_owned(),
+                    version: version.to_owned(),
+                    provider: format!("{tool}-npm"),
+                    released_at: None,
+                    metadata: BTreeMap::new(),
+                    artifacts,
+                }
             }
             "go" => {
                 let artifacts = pinset_core::GO_TARGETS

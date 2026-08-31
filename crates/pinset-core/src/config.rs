@@ -16,8 +16,8 @@ use crate::{Error, MinimumReleaseAge, Result, VerificationStrength};
 use crate::Lockfile;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 use crate::{
-    acquire_project_state_write_lock, load_optional_lockfile, lockfile_path,
-    register_project_config, save_lockfile, validate_lock_matches_tools,
+    acquire_project_state_write_lock, lockfile_path, register_project_config, save_lockfile,
+    validate_lock_matches_tools,
 };
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
@@ -407,10 +407,19 @@ pub fn save_project_state_locked(
     // Commit the lock first. If the second atomic write is interrupted, the previous
     // selection remains active and lock-dependent operations fail until this is retried.
     let lock_path = lockfile_path(path);
-    let previous_lock = load_optional_lockfile(&lock_path)?;
+    let previous_lock = match fs::read(&lock_path) {
+        Ok(content) => Some(content),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => {
+            return Err(Error::ReadLockfile {
+                path: lock_path,
+                source,
+            });
+        }
+    };
     save_lockfile(&lock_path, lockfile)?;
     if let Err(commit_error) = save_project_config(path, config) {
-        if let Err(rollback_error) = restore_previous_lock(&lock_path, previous_lock.as_ref()) {
+        if let Err(rollback_error) = restore_previous_lock(&lock_path, previous_lock.as_deref()) {
             return Err(Error::StateCommitRollbackFailed {
                 scope: "project",
                 path: path.to_path_buf(),
@@ -424,9 +433,22 @@ pub fn save_project_state_locked(
 }
 
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
-fn restore_previous_lock(path: &Path, previous: Option<&Lockfile>) -> Result<()> {
+fn restore_previous_lock(path: &Path, previous: Option<&[u8]>) -> Result<()> {
     if let Some(previous) = previous {
-        return save_lockfile(path, previous);
+        let mut file =
+            AtomicWriteFile::options()
+                .open(path)
+                .map_err(|source| Error::WriteLockfile {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+        return file
+            .write_all(previous)
+            .and_then(|()| file.commit())
+            .map_err(|source| Error::WriteLockfile {
+                path: path.to_path_buf(),
+                source,
+            });
     }
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
