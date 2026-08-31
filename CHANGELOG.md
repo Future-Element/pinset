@@ -5,6 +5,7 @@
 - Repair pre-1.0 pnpm and Bun locks that predate Linux ARM64 target coverage when a project or global selection is next changed.
 - Preserve existing selectors and exact resolved versions while rebuilding only the missing npm Provider target records from verified official metadata.
 - Keep ordinary lock reads strict, reject corrupted existing artifacts during repair, and preserve the previous lock bytes exactly if a paired configuration write must roll back.
+- Refresh the yanked `chacha20` transitive dependency to its maintained compatible release.
 
 No configuration or lock schema migration is required. The compatibility repair is limited to the historical missing `linux-aarch64` pnpm/Bun artifact and runs only during an explicit `pinset use` or `pinset global` state change.
 
