@@ -190,6 +190,35 @@ pub fn lockfile_path(project_config_path: &Path) -> PathBuf {
 }
 
 pub fn load_lockfile(path: &Path) -> Result<Lockfile> {
+    let lockfile = parse_lockfile(path)?;
+    validate_lockfile(&lockfile)?;
+    Ok(lockfile)
+}
+
+/// Loads a lockfile for a state-changing command that can refresh the historical
+/// pnpm/Bun target matrix before saving it again.
+///
+/// The relaxed result must never be used for installation or command resolution.
+/// Every artifact that is present is still validated strictly; the only tolerated
+/// gap is the Linux ARM64 artifact added to the pnpm/Bun matrix in Pinset 1.0.
+pub fn load_lockfile_for_target_refresh(path: &Path) -> Result<(Lockfile, bool)> {
+    let lockfile = parse_lockfile(path)?;
+    match validate_lockfile(&lockfile) {
+        Ok(()) => Ok((lockfile, false)),
+        Err(strict_error) => {
+            validate_lockfile_with_npm_target_policy(
+                &lockfile,
+                NpmTargetPolicy::AllowLegacyLinuxArm64Gap,
+            )?;
+            if !lockfile.tools.iter().any(has_legacy_npm_target_gap) {
+                return Err(strict_error);
+            }
+            Ok((lockfile, true))
+        }
+    }
+}
+
+fn parse_lockfile(path: &Path) -> Result<Lockfile> {
     let content = fs::read_to_string(path).map_err(|source| Error::ReadLockfile {
         path: path.to_path_buf(),
         source,
@@ -198,7 +227,6 @@ pub fn load_lockfile(path: &Path) -> Result<Lockfile> {
         path: path.to_path_buf(),
         source,
     })?;
-    validate_lockfile(&lockfile)?;
     Ok(lockfile)
 }
 
@@ -297,7 +325,20 @@ pub fn validate_lock_matches_tools(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NpmTargetPolicy {
+    Current,
+    AllowLegacyLinuxArm64Gap,
+}
+
 fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
+    validate_lockfile_with_npm_target_policy(lockfile, NpmTargetPolicy::Current)
+}
+
+fn validate_lockfile_with_npm_target_policy(
+    lockfile: &Lockfile,
+    npm_target_policy: NpmTargetPolicy,
+) -> Result<()> {
     if !matches!(lockfile.schema, 1 | 2 | LOCKFILE_SCHEMA) {
         return Err(Error::UnsupportedLockfileSchema {
             actual: lockfile.schema,
@@ -315,7 +356,7 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
                 reason: format!("duplicate tool {}", tool.name),
             });
         }
-        validate_locked_tool(tool)?;
+        validate_locked_tool_with_npm_target_policy(tool, npm_target_policy)?;
         if lockfile.schema < LOCKFILE_SCHEMA && tool.requested != tool.version {
             return Err(Error::InvalidLockfile {
                 reason: format!(
@@ -333,7 +374,15 @@ fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
+    validate_locked_tool_with_npm_target_policy(tool, NpmTargetPolicy::Current)
+}
+
+fn validate_locked_tool_with_npm_target_policy(
+    tool: &LockedTool,
+    npm_target_policy: NpmTargetPolicy,
+) -> Result<()> {
     if tool
         .released_at
         .as_deref()
@@ -493,13 +542,21 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         }
     } else {
         for (target, _) in npm_tool_targets(&tool.name) {
+            if npm_target_policy == NpmTargetPolicy::AllowLegacyLinuxArm64Gap
+                && *target == "linux-aarch64"
+            {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing {} artifact for {target}", tool.name),
                 });
             }
         }
-        if targets.len() != npm_tool_targets(&tool.name).len() {
+        if targets.len() != npm_tool_targets(&tool.name).len()
+            && !(npm_target_policy == NpmTargetPolicy::AllowLegacyLinuxArm64Gap
+                && has_legacy_npm_target_gap(tool))
+        {
             return Err(Error::InvalidLockfile {
                 reason: format!("{} lock contains an unsupported artifact target", tool.name),
             });
@@ -511,6 +568,12 @@ fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn has_legacy_npm_target_gap(tool: &LockedTool) -> bool {
+    matches!(tool.name.as_str(), "pnpm" | "bun")
+        && tool.artifact("linux-aarch64").is_none()
+        && tool.artifacts.len() + 1 == npm_tool_targets(&tool.name).len()
 }
 
 fn validate_node_metadata(tool: &LockedTool) -> Result<()> {
@@ -1203,6 +1266,41 @@ mod tests {
     }
 
     #[test]
+    fn target_refresh_loader_only_accepts_the_historical_npm_linux_arm64_gap() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(LOCKFILE_FILENAME);
+        let legacy = Lockfile {
+            schema: 2,
+            generated_by: "pinset 0.9.0".to_owned(),
+            tools: vec![
+                locked_npm_tool("bun", "1.3.14", false),
+                locked_npm_tool("pnpm", "11.21.0", false),
+            ],
+        };
+        fs::write(&path, toml::to_string_pretty(&legacy).expect("legacy TOML"))
+            .expect("legacy lockfile");
+
+        let strict = load_lockfile(&path).expect_err("strict loader rejects the old matrix");
+        assert!(strict.to_string().contains("linux-aarch64"));
+        let (loaded, requires_refresh) =
+            load_lockfile_for_target_refresh(&path).expect("refresh loader accepts old matrix");
+        assert!(requires_refresh);
+        assert_eq!(loaded.tools, legacy.tools);
+
+        let mut corrupted = legacy;
+        corrupted.tools[0].artifacts[0].canonical_url =
+            "https://example.invalid/bun.tgz".to_owned();
+        fs::write(
+            &path,
+            toml::to_string_pretty(&corrupted).expect("corrupt TOML"),
+        )
+        .expect("corrupt lockfile");
+        let error = load_lockfile_for_target_refresh(&path)
+            .expect_err("refresh loader still validates every present artifact");
+        assert!(error.to_string().contains("invalid npm artifact identity"));
+    }
+
+    #[test]
     fn schema_three_separates_requested_selector_from_resolved_version() {
         let artifacts = MVP_NODE_TARGETS
             .into_iter()
@@ -1746,9 +1844,39 @@ mod tests {
     }
 
     fn locked_pnpm_artifact(version: &str, with_overlay: bool) -> LockedArtifact {
-        let artifact_path = format!("@pnpm/linux-x64/-/linux-x64-{version}.tgz");
+        locked_npm_artifact("pnpm", version, "linux-x86_64", with_overlay)
+    }
+
+    fn locked_npm_tool(tool: &str, version: &str, include_linux_arm64: bool) -> LockedTool {
+        LockedTool {
+            name: tool.to_owned(),
+            requested: version.to_owned(),
+            version: version.to_owned(),
+            provider: format!("{tool}-npm"),
+            released_at: None,
+            metadata: BTreeMap::new(),
+            artifacts: npm_tool_targets(tool)
+                .iter()
+                .filter(|(target, _)| include_linux_arm64 || *target != "linux-aarch64")
+                .map(|(target, _)| locked_npm_artifact(tool, version, target, tool == "pnpm"))
+                .collect(),
+        }
+    }
+
+    fn locked_npm_artifact(
+        tool: &str,
+        version: &str,
+        target: &str,
+        with_overlay: bool,
+    ) -> LockedArtifact {
+        let package = npm_tool_targets(tool)
+            .iter()
+            .find_map(|(candidate, package)| (*candidate == target).then_some(*package))
+            .expect("known npm target");
+        let package_base = package.rsplit('/').next().expect("npm package");
+        let artifact_path = format!("{package}/-/{package_base}-{version}.tgz");
         LockedArtifact {
-            target: "linux-x86_64".to_owned(),
+            target: target.to_owned(),
             canonical_url: format!("https://registry.npmjs.org/{artifact_path}"),
             artifact_path,
             sha256: String::new(),
@@ -1756,7 +1884,7 @@ mod tests {
             format: LockedArtifactFormat::TarGz,
             archive_root: "package".to_owned(),
             verification: "npm-registry-signature-sha512".to_owned(),
-            overlays: with_overlay
+            overlays: (tool == "pnpm" && with_overlay)
                 .then(|| {
                     let artifact_path = format!("@pnpm/exe/-/exe-{version}.tgz");
                     LockedArtifactOverlay {
