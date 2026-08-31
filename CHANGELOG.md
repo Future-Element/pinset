@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.6 - 2026-08-31
+
+- Check and migrate a safely recognized incompatible global lock before `pinset self update` downloads a release.
+- Classify the historical Node.js HTTPS checksum as checksum-strength so its OpenPGP upgrade passes anti-downgrade validation.
+- Document `pinset migrate --global` as the explicit repair command and keep unknown or corrupted lock shapes fail-closed.
+
+No configuration or lock schema migration is required. The compatibility migration re-resolves selected pre-1.0 Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK records at their existing exact versions. Flutter is unchanged.
+
 ## 2.1.5 - 2026-08-31
 
 - Repair every exact pre-1.0 Provider target matrix expanded for Linux ARM64: Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK.

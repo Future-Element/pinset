@@ -35,7 +35,15 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
 
     let executed = pinset(&project, &home, &["exec", "--", "pytest", "tests/unit"]);
     assert_success_contains(&executed, "fake-pytest tests/unit");
-    assert_success_contains(&executed, &format!("VIRTUAL_ENV={}", environment.display()));
+    assert_success_contains(
+        &executed,
+        &format!(
+            "VIRTUAL_ENV={}",
+            fs::canonicalize(&environment)
+                .expect("canonical environment")
+                .display()
+        ),
+    );
     assert_success_contains(&executed, "PYTHONHOME=");
     assert!(!String::from_utf8_lossy(&executed.stdout).contains("PYTHONHOME=must-be-removed"));
 
@@ -45,7 +53,10 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
     assert_eq!(report["data"]["python_environment"]["status"], "ok");
     assert_eq!(
         report["data"]["python_environment"]["path"],
-        environment.display().to_string()
+        fs::canonicalize(&environment)
+            .expect("canonical environment")
+            .display()
+            .to_string()
     );
 }
 

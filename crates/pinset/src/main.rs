@@ -1369,7 +1369,18 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             SelfCommands::Outdated { channel, json } => {
                 self_update::outdated(matches!(channel, SelfChannel::Prerelease), json)?;
             }
-            SelfCommands::Update { version } => self_update::update(version.as_deref())?,
+            SelfCommands::Update { version } => {
+                self_update::update(version.as_deref(), || {
+                    let migrated = migrate_global_lock_for_self_update()?;
+                    if !migrated.is_empty() {
+                        println!(
+                            "migrated global.lock compatibility records: {}",
+                            migrated.join(", ")
+                        );
+                    }
+                    Ok(())
+                })?;
+            }
         },
     }
 
@@ -3159,6 +3170,43 @@ where
         lockfile.upsert_tool(refreshed)?;
     }
     Ok(())
+}
+
+fn migrate_global_lock_for_self_update() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    migrate_global_lock_for_self_update_with(&home, resolve_locked_tool)
+}
+
+fn migrate_global_lock_for_self_update_with<F>(
+    home: &Path,
+    mut resolver: F,
+) -> Result<Vec<String>, Box<dyn std::error::Error>>
+where
+    F: FnMut(&str, &str) -> Result<LockedTool, Box<dyn std::error::Error>>,
+{
+    let _guard = acquire_global_state_write_lock(home)?;
+    let lock_path = global_lockfile_path(home);
+    let Some((mut lockfile, legacy_target_tools)) =
+        load_optional_lockfile_for_target_refresh(&lock_path)?
+    else {
+        return Ok(Vec::new());
+    };
+    if legacy_target_tools.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let config_path = global_config_path(home);
+    let config = load_global_config(&config_path)?;
+    validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+    refresh_legacy_target_records(
+        &mut lockfile,
+        &legacy_target_tools,
+        &BTreeSet::new(),
+        &mut resolver,
+    )?;
+    lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
+    save_global_state_locked(home, &config, &lockfile)?;
+    Ok(legacy_target_tools)
 }
 
 fn parse_tool_selection_batch(
@@ -7196,6 +7244,79 @@ mod tests {
         assert_eq!(java.requested, "21");
         assert_eq!(java.version, "21.0.8+9");
         assert!(java.artifact("linux-aarch64").is_some());
+    }
+
+    #[test]
+    fn self_update_migrates_an_incompatible_global_lock_before_updating() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let mut config = GlobalConfig::default();
+        config.set_tool("bun", "1.3.14");
+        config.set_tool("node", "24.19.0");
+        save_global_config(&global_config_path(&home), &config).expect("global config");
+
+        let mut bun = persistable_selection_lock("bun", "1.3.14", "1.3.14");
+        bun.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        let mut node = persistable_selection_lock("node", "24.19.0", "24.19.0");
+        node.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        node.metadata.clear();
+        for artifact in &mut node.artifacts {
+            artifact.verification = "nodejs-shasums-https".to_owned();
+        }
+        let legacy_lock = Lockfile {
+            schema: 2,
+            generated_by: "pinset 0.9.0".to_owned(),
+            tools: vec![bun, node],
+        };
+        fs::write(
+            global_lockfile_path(&home),
+            toml::to_string_pretty(&legacy_lock).expect("legacy lock TOML"),
+        )
+        .expect("legacy global lock");
+
+        let mut resolved_selectors = Vec::new();
+        let migrated = migrate_global_lock_for_self_update_with(&home, |tool, selector| {
+            resolved_selectors.push((tool.to_owned(), selector.to_owned()));
+            Ok(persistable_selection_lock(tool, selector, selector))
+        })
+        .expect("self-update compatibility migration");
+
+        assert_eq!(migrated, ["bun", "node"]);
+        assert_eq!(
+            resolved_selectors,
+            [
+                ("bun".to_owned(), "1.3.14".to_owned()),
+                ("node".to_owned(), "24.19.0".to_owned()),
+            ]
+        );
+        let lockfile =
+            load_lockfile(&global_lockfile_path(&home)).expect("strictly valid global lock");
+        let bun = lockfile.tool("bun").expect("migrated Bun lock");
+        assert_eq!(bun.requested, "1.3.14");
+        assert_eq!(bun.version, "1.3.14");
+        assert!(bun.artifact("linux-aarch64").is_some());
+        let node = lockfile.tool("node").expect("migrated Node lock");
+        assert_eq!(node.requested, "24.19.0");
+        assert_eq!(node.version, "24.19.0");
+        assert!(node.artifact("linux-aarch64").is_some());
+        assert!(
+            node.artifacts
+                .iter()
+                .all(|artifact| { artifact.verification == "nodejs-openpgp-sha256" })
+        );
+    }
+
+    #[test]
+    fn self_update_global_lock_migration_is_a_noop_without_global_state() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let migrated = migrate_global_lock_for_self_update_with(&home, |_, _| {
+            panic!("a missing lock must not resolve Provider metadata")
+        })
+        .expect("missing global state is compatible");
+        assert!(migrated.is_empty());
     }
 
     #[test]

@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.5
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.6
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.1.5
+.\install.ps1 -Version 2.1.6
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -281,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.5
+      - uses: Future-Element/pinset@v2.1.6
         with:
-          version: 2.1.5
+          version: 2.1.6
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -310,7 +310,12 @@ pinset install node@24.0.0 --repair
 # 自更新不会在后台自动联网
 pinset self outdated
 pinset self update
+
+# 必要时显式迁移不兼容的旧全局锁
+pinset migrate --global
 ```
+
+`self update` 会在下载前检查 `PINSET_HOME/state/global.lock`，并按原精确版本安全迁移 Node.js、pnpm、Bun、Go、Python、Java、Rust 与 .NET SDK 的已知 pre-1.0 记录。Flutter 的目标矩阵未变化。未知或损坏的锁结构会被拒绝，不会猜测迁移。
 
 `doctor --deep` 和安装收据验证的是安装布局、关键入口和统计信息，不宣称对每个已安装文件进行密码学验证。
 

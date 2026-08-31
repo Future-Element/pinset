@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.5
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.6
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.1.5
+.\install.ps1 -Version 2.1.6
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -281,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.5
+      - uses: Future-Element/pinset@v2.1.6
         with:
-          version: 2.1.5
+          version: 2.1.6
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -310,7 +310,12 @@ pinset install node@24.0.0 --repair
 # Self-update checks never run implicitly in the background
 pinset self outdated
 pinset self update
+
+# Explicitly migrate an incompatible legacy global lock when needed
+pinset migrate --global
 ```
+
+`self update` checks `PINSET_HOME/state/global.lock` before downloading and safely migrates known pre-1.0 records for Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK at their existing exact versions. Flutter's target matrix is unchanged. Unknown or corrupted lock shapes are rejected instead of guessed.
 
 `doctor --deep` and installation receipt checks validate layout, critical entries, and statistics. They do not claim cryptographic verification of every installed file.
 

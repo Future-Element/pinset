@@ -162,7 +162,8 @@ pub fn verification_method(value: &str) -> Option<VerificationMethod> {
         "sigstore-bundle-sha256" => Some(VerificationMethod::SigstoreBundle),
         "github-attestation-sha256" => Some(VerificationMethod::GitHubAttestation),
         "slsa-provenance-v1-sha256" => Some(VerificationMethod::SlsaProvenance),
-        "go-download-json-sha256"
+        "nodejs-shasums-https"
+        | "go-download-json-sha256"
         | "flutter-release-json-sha256"
         | "python-build-standalone-versions-sha256"
         | "adoptium-api-sha256"
@@ -415,6 +416,11 @@ mod tests {
     #[test]
     fn classifies_existing_and_future_verification_methods() {
         assert_eq!(
+            verification_method("nodejs-shasums-https-source:legacy-mirror")
+                .map(VerificationMethod::strength),
+            Some(VerificationStrength::Checksum)
+        );
+        assert_eq!(
             verification_method("nodejs-openpgp-sha256-source:mirror")
                 .map(VerificationMethod::strength),
             Some(VerificationStrength::SignedChecksum)
@@ -438,6 +444,14 @@ mod tests {
             validate_verification_transition(&previous, &next),
             Err(Error::VerificationDowngrade { .. })
         ));
+    }
+
+    #[test]
+    fn permits_migrating_legacy_node_checksums_to_openpgp() {
+        let previous = locked_tool("nodejs-shasums-https", None);
+        let next = locked_tool("nodejs-openpgp-sha256", None);
+        validate_verification_transition(&previous, &next)
+            .expect("the historical Node method upgrades to a signed checksum");
     }
 
     #[test]

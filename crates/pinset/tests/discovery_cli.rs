@@ -29,7 +29,11 @@ fn detect_emits_a_stable_json_report_without_writes() {
     assert_eq!(value["data"]["can_import"], true);
     assert_eq!(
         value["data"]["target_config"],
-        project.join("pinset.toml").display().to_string()
+        fs::canonicalize(&project)
+            .expect("canonical project")
+            .join("pinset.toml")
+            .display()
+            .to_string()
     );
     let findings = value["data"]["findings"].as_array().expect("findings");
     assert!(findings.iter().any(|finding| {

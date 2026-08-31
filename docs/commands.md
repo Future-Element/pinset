@@ -202,7 +202,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite schema 1–3 project configuration as schema 4 while retaining schema 3 runtime locks, without re-resolving versions. |
+| Purpose | Validate and rewrite schema 1–3 project configuration as schema 4 while retaining schema 3 runtime locks. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -890,9 +890,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.5
+      - uses: Future-Element/pinset@v2.1.6
         with:
-          version: 2.1.5
+          version: 2.1.6
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -904,7 +904,7 @@ The Action input is not a secret and does not persist the identity. Pinset remov
 
 `pinset paths [tool] [--json]` reports the CLI, adjacent shim, Pinset home, shim directory, installation root, and an optional tool's installed versions. `pinset list [tool] --long` adds receipt schema, installation root, file count, total size, critical entries, and integrity status. `pinset doctor --deep` rescans these statistics; it does not claim per-file cryptographic verification. `pinset install <tool@exact-version> --repair` repairs only an installation whose ownership receipt matches the requested tool, version, platform, and target directory. `pinset shim install --all` registers every built-in Provider command without downloading a runtime.
 
-`pinset self outdated [--channel stable|prerelease] [--json]` performs an explicit check against the fixed official repository. `pinset self update [--version <version>]` verifies platform, semantic version, archive structure, and `SHA256SUMS`, validates the new CLI, and replaces the CLI and shim as a pair with backup and rollback. Ordinary commands and `doctor` never check for updates in the background.
+`pinset self outdated [--channel stable|prerelease] [--json]` performs an explicit check against the fixed official repository. Before downloading an update, `pinset self update [--version <version>]` checks the global `global.lock` and automatically migrates safely recognized pre-1.0 Provider records at their existing exact versions. Compatibility migration covers the old Linux ARM64 target gaps in Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK, and upgrades the historical Node.js HTTPS-checksum record to the current OpenPGP-authenticated record. Flutter's target matrix did not change. It then verifies platform, semantic version, archive structure, and `SHA256SUMS`, validates the new CLI, and replaces the CLI and shim as a pair with backup and rollback. If automatic migration cannot be completed, repair it explicitly with `pinset migrate --global`. Ordinary commands and `doctor` never check for updates in the background.
 
 Self updates use a cross-process lock and a 60-second HTTP timeout. Windows replacement remains asynchronous because a running executable cannot replace itself; the helper records success or rollback under `PINSET_HOME/state`, and the next `self outdated` or `self update` reports that result. Windows `.cmd`/`.bat` runtime fallbacks reject arguments containing `cmd.exe` metacharacters rather than risk shell reinterpretation; managed `.exe` runtimes are unaffected.
 

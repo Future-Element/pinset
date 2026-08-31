@@ -51,10 +51,17 @@ pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-pub(crate) fn update(requested: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn update<F>(
+    requested: Option<&str>,
+    migrate_global_lock: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+{
     let home = pinset_core::pinset_home()?;
     let _update_lock = pinset_core::acquire_self_update_lock(&home)?;
     report_previous_result_at(&self_update_result_path(&home))?;
+    migrate_global_lock()?;
     let current = Version::parse(pinset_core::pinset_version())?;
     let version = match requested {
         Some(value) => Version::parse(value.trim_start_matches('v'))?,
