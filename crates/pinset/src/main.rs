@@ -32,7 +32,7 @@ use pinset_core::{
     install_locked_python, install_locked_rust, install_payload_statistics,
     is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
     list_installed_tool_versions, load_global_config, load_lockfile,
-    load_lockfile_for_target_refresh, load_optional_global_config, load_optional_lockfile,
+    load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
     load_project_config, load_project_python_environment, load_source_config, load_user_settings,
     lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
     plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
@@ -1480,6 +1480,7 @@ struct MigrationReport {
     to_lock_schema: u32,
     config_changed: bool,
     lock_changed: bool,
+    target_refresh_tools: Vec<String>,
     receipt_upgrade_needed: usize,
     changed: bool,
     dry_run: bool,
@@ -2958,6 +2959,8 @@ fn new_lockfile() -> Lockfile {
 }
 
 type ResolvedSelection = (String, String, LockedTool);
+type RefreshableLockfile = (Lockfile, Vec<String>);
+type ProjectImportState = (ProjectConfig, Option<Lockfile>, Vec<String>);
 
 fn select_tools(
     selections: &[String],
@@ -3062,12 +3065,21 @@ where
         let config_path = global_config_path(home);
         let mut config = load_optional_global_config(&config_path)?.unwrap_or_default();
         let lock_path = global_lockfile_path(home);
-        let (mut lockfile, requires_target_refresh) =
+        let (mut lockfile, legacy_target_tools) =
             load_optional_lockfile_for_target_refresh(&lock_path)?
-                .unwrap_or_else(|| (new_lockfile(), false));
-        if requires_target_refresh {
+                .unwrap_or_else(|| (new_lockfile(), Vec::new()));
+        if !legacy_target_tools.is_empty() {
             validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
-            refresh_legacy_npm_target_records(&mut lockfile, resolved, &mut resolver)?;
+            let explicitly_replaced = resolved
+                .iter()
+                .map(|(tool, _, _)| tool.clone())
+                .collect::<BTreeSet<_>>();
+            refresh_legacy_target_records(
+                &mut lockfile,
+                &legacy_target_tools,
+                &explicitly_replaced,
+                &mut resolver,
+            )?;
         }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut config.tools, &mut lockfile, resolved)?;
@@ -3078,12 +3090,21 @@ where
         let _guard = acquire_project_state_write_lock(home, &config_path)?;
         let mut project = load_project_config(&config_path)?;
         let lock_path = lockfile_path(&config_path);
-        let (mut lockfile, requires_target_refresh) =
+        let (mut lockfile, legacy_target_tools) =
             load_optional_lockfile_for_target_refresh(&lock_path)?
-                .unwrap_or_else(|| (new_lockfile(), false));
-        if requires_target_refresh {
+                .unwrap_or_else(|| (new_lockfile(), Vec::new()));
+        if !legacy_target_tools.is_empty() {
             validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
-            refresh_legacy_npm_target_records(&mut lockfile, resolved, &mut resolver)?;
+            let explicitly_replaced = resolved
+                .iter()
+                .map(|(tool, _, _)| tool.clone())
+                .collect::<BTreeSet<_>>();
+            refresh_legacy_target_records(
+                &mut lockfile,
+                &legacy_target_tools,
+                &explicitly_replaced,
+                &mut resolver,
+            )?;
         }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
@@ -3094,8 +3115,8 @@ where
 
 fn load_optional_lockfile_for_target_refresh(
     path: &Path,
-) -> Result<Option<(Lockfile, bool)>, Box<dyn std::error::Error>> {
-    match load_lockfile_for_target_refresh(path) {
+) -> Result<Option<RefreshableLockfile>, Box<dyn std::error::Error>> {
+    match load_lockfile_for_provider_refresh(path) {
         Ok(lockfile) => Ok(Some(lockfile)),
         Err(Error::ReadLockfile { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
             Ok(None)
@@ -3104,31 +3125,36 @@ fn load_optional_lockfile_for_target_refresh(
     }
 }
 
-fn refresh_legacy_npm_target_records<F>(
+fn refresh_legacy_target_records<F>(
     lockfile: &mut Lockfile,
-    resolved: &[ResolvedSelection],
+    legacy_target_tools: &[String],
+    explicitly_replaced: &BTreeSet<String>,
     resolver: &mut F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     F: FnMut(&str, &str) -> Result<LockedTool, Box<dyn std::error::Error>>,
 {
-    let explicitly_resolved = resolved
-        .iter()
-        .map(|(tool, _, _)| tool.as_str())
-        .collect::<BTreeSet<_>>();
-    for tool in ["pnpm", "bun"] {
-        if explicitly_resolved.contains(tool) {
+    for tool in legacy_target_tools {
+        if explicitly_replaced.contains(tool) {
             continue;
         }
-        let Some((requested, version)) = lockfile.tool(tool).and_then(|locked| {
-            locked
-                .artifact("linux-aarch64")
-                .is_none()
-                .then(|| (locked.requested.clone(), locked.version.clone()))
-        }) else {
-            continue;
-        };
-        let mut refreshed = resolver(tool, &version)?;
+        let locked = lockfile
+            .tool(tool)
+            .ok_or_else(|| format!("legacy target refresh cannot find locked provider {tool:?}"))?;
+        let requested = locked.requested.clone();
+        let version = locked.version.clone();
+        let mut refreshed = resolver(tool, &version).map_err(|error| {
+            format!(
+                "failed to refresh pre-1.0 {tool}@{version} target matrix; state was not changed: {error}"
+            )
+        })?;
+        if refreshed.version != version {
+            return Err(format!(
+                "legacy target refresh for {tool}@{version} resolved unexpected version {}",
+                refreshed.version
+            )
+            .into());
+        }
         refreshed.requested = requested;
         lockfile.upsert_tool(refreshed)?;
     }
@@ -3349,7 +3375,7 @@ fn run_project_import(
 
     let config_path = report.target_config.clone();
     let lock_path = lockfile_path(&config_path);
-    let (project, _) = load_project_import_state(&config_path, catalog)?;
+    let (project, _, _) = load_project_import_state(&config_path, catalog)?;
 
     let selections = report
         .findings
@@ -3372,10 +3398,22 @@ fn run_project_import(
 
     let home = pinset_home()?;
     let _guard = acquire_project_state_write_lock(&home, &config_path)?;
-    let (mut project, existing_lockfile) = load_project_import_state(&config_path, catalog)?;
+    let (mut project, existing_lockfile, legacy_target_tools) =
+        load_project_import_state(&config_path, catalog)?;
     reject_import_replacement_conflict(&config_path, &project, &resolved, force, catalog)?;
 
     let mut lockfile = existing_lockfile.unwrap_or_else(new_lockfile);
+    let explicitly_replaced = resolved
+        .iter()
+        .map(|(tool, _, _)| tool.clone())
+        .collect::<BTreeSet<_>>();
+    let mut resolver = resolve_locked_tool;
+    refresh_legacy_target_records(
+        &mut lockfile,
+        &legacy_target_tools,
+        &explicitly_replaced,
+        &mut resolver,
+    )?;
     lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
     for (tool, selector, locked_tool) in &resolved {
         if selector != &locked_tool.version {
@@ -3441,7 +3479,7 @@ fn run_project_import(
 fn load_project_import_state(
     config_path: &Path,
     catalog: Catalog,
-) -> Result<(ProjectConfig, Option<Lockfile>), Box<dyn std::error::Error>> {
+) -> Result<ProjectImportState, Box<dyn std::error::Error>> {
     let config_exists = match fs::symlink_metadata(config_path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(match catalog.language() {
@@ -3484,12 +3522,12 @@ fn load_project_import_state(
                 }
             });
         }
-        Ok(_) => Some(load_lockfile(&lock_path)?),
+        Ok(_) => Some(load_lockfile_for_provider_refresh(&lock_path)?),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
     match &lockfile {
-        Some(lockfile) => validate_lock_matches_tools(lockfile, &project.tools, config_path)?,
+        Some((lockfile, _)) => validate_lock_matches_tools(lockfile, &project.tools, config_path)?,
         None if !project.tools.is_empty() => {
             return Err(match catalog.language() {
                 Language::English => format!(
@@ -3506,7 +3544,10 @@ fn load_project_import_state(
         }
         None => {}
     }
-    Ok((project, lockfile))
+    let (lockfile, legacy_target_tools) = lockfile
+        .map(|(lockfile, tools)| (Some(lockfile), tools))
+        .unwrap_or_else(|| (None, Vec::new()));
+    Ok((project, lockfile, legacy_target_tools))
 }
 
 fn reject_import_replacement_conflict(
@@ -3574,19 +3615,47 @@ fn run_update(
             &selected_config_path,
         )?)
     };
-    let (scope, config_path, tools, mut lockfile) = if global {
+    let (scope, config_path, tools, mut lockfile, legacy_target_tools) = if global {
         let config_path = selected_config_path;
         let config = load_global_config(&config_path)?;
-        let lockfile = load_lockfile(&global_lockfile_path(&home))?;
+        let (lockfile, legacy_target_tools) =
+            load_lockfile_for_provider_refresh(&global_lockfile_path(&home))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
-        ("global", config_path, config.tools, lockfile)
+        (
+            "global",
+            config_path,
+            config.tools,
+            lockfile,
+            legacy_target_tools,
+        )
     } else {
         let config_path = selected_config_path;
         let config = load_project_config(&config_path)?;
-        let lockfile = load_lockfile(&lockfile_path(&config_path))?;
+        let (lockfile, legacy_target_tools) =
+            load_lockfile_for_provider_refresh(&lockfile_path(&config_path))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
-        ("project", config_path, config.tools, lockfile)
+        (
+            "project",
+            config_path,
+            config.tools,
+            lockfile,
+            legacy_target_tools,
+        )
     };
+
+    if !legacy_target_tools.is_empty() {
+        let explicitly_replaced = tools
+            .keys()
+            .filter(|selected_tool| tool.is_none_or(|tool| tool == selected_tool.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        refresh_legacy_target_records(
+            &mut lockfile,
+            &legacy_target_tools,
+            &explicitly_replaced,
+            &mut resolve_locked_tool,
+        )?;
+    }
 
     let mut reports = Vec::new();
     for (selected_tool, requested) in &tools {
@@ -3667,69 +3736,100 @@ fn run_migrate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = effective_cwd(cwd)?;
     let home = pinset_home()?;
-    let (scope, config_path, lock_path, config_schema, lock_schema) = if global {
-        let config_path = global_config_path(&home);
-        let _guard = if dry_run {
-            None
-        } else {
-            Some(acquire_global_state_write_lock(&home)?)
-        };
-        let lock_path = global_lockfile_path(&home);
-        let config = load_global_config(&config_path)?;
-        let lockfile = load_optional_lockfile(&lock_path)?;
-        if let Some(lockfile) = &lockfile {
-            validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
-        }
-        let report = (
-            "global",
-            config_path.clone(),
-            lock_path.clone(),
-            config.schema,
-            lockfile.as_ref().map(|lockfile| lockfile.schema),
-        );
-        if !dry_run {
-            if let Some(lockfile) = &lockfile {
-                save_global_state_locked(&home, &config, lockfile)?;
+    let (scope, config_path, lock_path, config_schema, lock_schema, target_refresh_tools) =
+        if global {
+            let config_path = global_config_path(&home);
+            let _guard = if dry_run {
+                None
             } else {
-                save_global_config(&config_path, &config)?;
+                Some(acquire_global_state_write_lock(&home)?)
+            };
+            let lock_path = global_lockfile_path(&home);
+            let config = load_global_config(&config_path)?;
+            let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
+            if let Some((lockfile, _)) = &lockfile {
+                validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
             }
-        }
-        report
-    } else {
-        let config_path = find_project_config(&cwd)?;
-        let _guard = if dry_run {
-            None
+            let target_refresh_tools = lockfile
+                .as_ref()
+                .map(|(_, tools)| tools.clone())
+                .unwrap_or_default();
+            let report = (
+                "global",
+                config_path.clone(),
+                lock_path.clone(),
+                config.schema,
+                lockfile.as_ref().map(|(lockfile, _)| lockfile.schema),
+                target_refresh_tools.clone(),
+            );
+            if !dry_run {
+                if let Some((mut lockfile, legacy_target_tools)) = lockfile {
+                    let mut resolver = resolve_locked_tool;
+                    refresh_legacy_target_records(
+                        &mut lockfile,
+                        &legacy_target_tools,
+                        &BTreeSet::new(),
+                        &mut resolver,
+                    )?;
+                    lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
+                    save_global_state_locked(&home, &config, &lockfile)?;
+                } else {
+                    save_global_config(&config_path, &config)?;
+                }
+            }
+            report
         } else {
-            Some(acquire_project_state_write_lock(&home, &config_path)?)
-        };
-        let lock_path = lockfile_path(&config_path);
-        let config = load_project_config(&config_path)?;
-        let lockfile = load_optional_lockfile(&lock_path)?;
-        if let Some(lockfile) = &lockfile {
-            validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
-        }
-        let report = (
-            "project",
-            config_path.clone(),
-            lock_path.clone(),
-            config.schema,
-            lockfile.as_ref().map(|lockfile| lockfile.schema),
-        );
-        if !dry_run {
-            if let Some(lockfile) = &lockfile {
-                save_project_state_locked(&home, &config_path, &config, lockfile)?;
+            let config_path = find_project_config(&cwd)?;
+            let _guard = if dry_run {
+                None
             } else {
-                save_project_config(&config_path, &config)?;
+                Some(acquire_project_state_write_lock(&home, &config_path)?)
+            };
+            let lock_path = lockfile_path(&config_path);
+            let config = load_project_config(&config_path)?;
+            let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
+            if let Some((lockfile, _)) = &lockfile {
+                validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
             }
-        }
-        report
-    };
+            let target_refresh_tools = lockfile
+                .as_ref()
+                .map(|(_, tools)| tools.clone())
+                .unwrap_or_default();
+            let report = (
+                "project",
+                config_path.clone(),
+                lock_path.clone(),
+                config.schema,
+                lockfile.as_ref().map(|(lockfile, _)| lockfile.schema),
+                target_refresh_tools.clone(),
+            );
+            if !dry_run {
+                if let Some((mut lockfile, legacy_target_tools)) = lockfile {
+                    let mut resolver = resolve_locked_tool;
+                    refresh_legacy_target_records(
+                        &mut lockfile,
+                        &legacy_target_tools,
+                        &BTreeSet::new(),
+                        &mut resolver,
+                    )?;
+                    lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
+                    save_project_state_locked(&home, &config_path, &config, &lockfile)?;
+                } else {
+                    save_project_config(&config_path, &config)?;
+                }
+            }
+            report
+        };
     let to_config_schema = if global {
         pinset_core::GLOBAL_STATE_SCHEMA
     } else {
         PROJECT_CONFIG_SCHEMA
     };
     let receipt_upgrade_needed = legacy_receipt_count(&home)?;
+    let config_changed = config_schema != to_config_schema;
+    let lock_changed = lock_schema.is_some_and(|schema| schema != pinset_core::LOCKFILE_SCHEMA)
+        || !target_refresh_tools.is_empty();
+    let changed = config_changed || lock_changed || receipt_upgrade_needed > 0;
     let report = MigrationReport {
         scope,
         config: config_path,
@@ -3738,12 +3838,11 @@ fn run_migrate(
         from_lock_schema: lock_schema,
         to_config_schema,
         to_lock_schema: pinset_core::LOCKFILE_SCHEMA,
-        config_changed: config_schema != to_config_schema,
-        lock_changed: lock_schema.is_some_and(|schema| schema != pinset_core::LOCKFILE_SCHEMA),
+        config_changed,
+        lock_changed,
+        target_refresh_tools,
         receipt_upgrade_needed,
-        changed: config_schema != to_config_schema
-            || lock_schema.is_some_and(|schema| schema != pinset_core::LOCKFILE_SCHEMA)
-            || receipt_upgrade_needed > 0,
+        changed,
         dry_run,
     };
     if json {
@@ -3764,6 +3863,12 @@ fn run_migrate(
             println!(
                 "{} legacy installation receipt(s) require `pinset install <tool@version> --repair` or reinstall",
                 report.receipt_upgrade_needed
+            );
+        }
+        if !report.target_refresh_tools.is_empty() {
+            println!(
+                "refreshed pre-1.0 target matrices: {}",
+                report.target_refresh_tools.join(", ")
             );
         }
     } else {
@@ -3813,7 +3918,7 @@ fn unset_tool(
             );
             return Ok(());
         };
-        if config.tools.remove(tool).is_none() {
+        if !config.tools.contains_key(tool) {
             println!(
                 "{}",
                 catalog.selection_unset("global", tool, &config_path, false)
@@ -3821,8 +3926,24 @@ fn unset_tool(
             return Ok(());
         }
         let lock_path = global_lockfile_path(&home);
-        if let Some(mut lockfile) = load_optional_lockfile(&lock_path)? {
+        let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
+        if let Some((lockfile, _)) = &lockfile {
+            validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+        }
+        config.tools.remove(tool);
+        if let Some((mut lockfile, legacy_target_tools)) = lockfile {
             lockfile.remove_tool(tool);
+            let remaining_legacy = legacy_target_tools
+                .into_iter()
+                .filter(|legacy| legacy != tool)
+                .collect::<Vec<_>>();
+            let mut resolver = resolve_locked_tool;
+            refresh_legacy_target_records(
+                &mut lockfile,
+                &remaining_legacy,
+                &BTreeSet::new(),
+                &mut resolver,
+            )?;
             lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
             let remove_empty_lock = lockfile.tools.is_empty();
             save_global_state_locked(&home, &config, &lockfile)?;
@@ -3843,7 +3964,7 @@ fn unset_tool(
     let home = pinset_home()?;
     let _guard = acquire_project_state_write_lock(&home, &config_path)?;
     let mut config = load_project_config(&config_path)?;
-    if config.tools.remove(tool).is_none() {
+    if !config.tools.contains_key(tool) {
         println!(
             "{}",
             catalog.selection_unset("project", tool, &config_path, false)
@@ -3851,8 +3972,24 @@ fn unset_tool(
         return Ok(());
     }
     let lock_path = lockfile_path(&config_path);
-    if let Some(mut lockfile) = load_optional_lockfile(&lock_path)? {
+    let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
+    if let Some((lockfile, _)) = &lockfile {
+        validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+    }
+    config.tools.remove(tool);
+    if let Some((mut lockfile, legacy_target_tools)) = lockfile {
         lockfile.remove_tool(tool);
+        let remaining_legacy = legacy_target_tools
+            .into_iter()
+            .filter(|legacy| legacy != tool)
+            .collect::<Vec<_>>();
+        let mut resolver = resolve_locked_tool;
+        refresh_legacy_target_records(
+            &mut lockfile,
+            &remaining_legacy,
+            &BTreeSet::new(),
+            &mut resolver,
+        )?;
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         let remove_empty_lock = lockfile.tools.is_empty();
         save_project_state_locked(&home, &config_path, &config, &lockfile)?;
@@ -6868,7 +7005,7 @@ mod tests {
     }
 
     #[test]
-    fn repairs_pre_v1_npm_target_matrix_before_adding_a_global_selection() {
+    fn repairs_all_pre_v1_target_matrices_before_adding_a_global_selection() {
         let root = tempfile::tempdir().expect("temporary root");
         let home = root.path().join("home");
         let project = root.path().join("project");
@@ -6876,6 +7013,7 @@ mod tests {
 
         let mut config = GlobalConfig::default();
         config.set_tool("bun", "1.3.14");
+        config.set_tool("java", "21.0.8+9");
         config.set_tool("node", "24.0.0");
         config.set_tool("pnpm", "11.21.0");
         save_global_config(&global_config_path(&home), &config).expect("legacy global config");
@@ -6886,11 +7024,16 @@ mod tests {
         let mut pnpm = persistable_selection_lock("pnpm", "11.21.0", "11.21.0");
         pnpm.artifacts
             .retain(|artifact| artifact.target != "linux-aarch64");
+        let mut java = persistable_selection_lock("java", "21.0.8+9", "21.0.8+9");
+        java.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        java.metadata.remove("signature_link.linux-aarch64");
         let legacy_lock = Lockfile {
             schema: 2,
             generated_by: "pinset 0.9.0".to_owned(),
             tools: vec![
                 bun,
+                java,
                 persistable_selection_lock("node", "24.0.0", "24.0.0"),
                 pnpm,
             ],
@@ -6911,23 +7054,31 @@ mod tests {
             refreshed.push((tool.to_owned(), version.to_owned()));
             Ok(persistable_selection_lock(tool, version, version))
         })
-        .expect("repair legacy npm targets and save Go selection");
+        .expect("repair all legacy targets and save Go selection");
 
         assert_eq!(
             refreshed,
             [
-                ("pnpm".to_owned(), "11.21.0".to_owned()),
                 ("bun".to_owned(), "1.3.14".to_owned()),
+                ("java".to_owned(), "21.0.8+9".to_owned()),
+                ("pnpm".to_owned(), "11.21.0".to_owned()),
             ]
         );
         let saved_config =
             load_global_config(&global_config_path(&home)).expect("saved global config");
         assert_eq!(saved_config.tools["bun"], "1.3.14");
+        assert_eq!(saved_config.tools["java"], "21.0.8+9");
         assert_eq!(saved_config.tools["node"], "24.0.0");
         assert_eq!(saved_config.tools["pnpm"], "11.21.0");
         assert_eq!(saved_config.tools["go"], "latest");
         let saved_lock =
             load_lockfile(&global_lockfile_path(&home)).expect("strictly valid refreshed lock");
+        assert!(
+            saved_lock
+                .tool("java")
+                .and_then(|tool| tool.artifact("linux-aarch64"))
+                .is_some()
+        );
         assert!(
             saved_lock
                 .tool("bun")
@@ -6941,6 +7092,110 @@ mod tests {
                 .is_some()
         );
         assert_eq!(saved_lock.tool("go").unwrap().requested, "latest");
+    }
+
+    #[test]
+    fn legacy_target_refresh_failure_preserves_global_state_byte_for_byte() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir_all(&project).expect("project directory");
+
+        let mut config = GlobalConfig::default();
+        config.set_tool("bun", "1.3.14");
+        config.set_tool("java", "21.0.8+9");
+        let config_path = global_config_path(&home);
+        save_global_config(&config_path, &config).expect("legacy global config");
+
+        let mut bun = persistable_selection_lock("bun", "1.3.14", "1.3.14");
+        bun.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        let mut java = persistable_selection_lock("java", "21.0.8+9", "21.0.8+9");
+        java.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        java.metadata.remove("signature_link.linux-aarch64");
+        let legacy_lock = Lockfile {
+            schema: 2,
+            generated_by: "pinset 0.9.0".to_owned(),
+            tools: vec![bun, java],
+        };
+        let lock_path = global_lockfile_path(&home);
+        fs::write(
+            &lock_path,
+            toml::to_string_pretty(&legacy_lock).expect("legacy lock TOML"),
+        )
+        .expect("legacy global lock");
+        let original_config = fs::read(&config_path).expect("original config bytes");
+        let original_lock = fs::read(&lock_path).expect("original lock bytes");
+
+        let resolved = vec![(
+            "go".to_owned(),
+            "latest".to_owned(),
+            persistable_selection_lock("go", "latest", "1.25.1"),
+        )];
+        let error = save_resolved_selection_batch_with(
+            &home,
+            &project,
+            true,
+            &resolved,
+            |tool, version| {
+                if tool == "java" {
+                    return Err("fixture Java metadata outage".into());
+                }
+                Ok(persistable_selection_lock(tool, version, version))
+            },
+        )
+        .expect_err("refresh failure must abort the batch");
+
+        assert!(error.to_string().contains("fixture Java metadata outage"));
+        assert_eq!(
+            fs::read(&config_path).expect("config after failure"),
+            original_config
+        );
+        assert_eq!(
+            fs::read(&lock_path).expect("lock after failure"),
+            original_lock
+        );
+    }
+
+    #[test]
+    fn legacy_target_refresh_preserves_requested_selector_and_exact_version() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let path = root.path().join("pinset.lock");
+        let mut java = persistable_selection_lock("java", "21", "21.0.8+9");
+        java.artifacts
+            .retain(|artifact| artifact.target != "linux-aarch64");
+        java.metadata.remove("signature_link.linux-aarch64");
+        let legacy_lock = Lockfile {
+            schema: pinset_core::LOCKFILE_SCHEMA,
+            generated_by: "pinset 2.1.4".to_owned(),
+            tools: vec![java],
+        };
+        fs::write(
+            &path,
+            toml::to_string_pretty(&legacy_lock).expect("legacy lock TOML"),
+        )
+        .expect("legacy lockfile");
+
+        let (mut lockfile, legacy_target_tools) =
+            load_lockfile_for_provider_refresh(&path).expect("legacy schema 3 lock");
+        let mut seen_selector = None;
+        refresh_legacy_target_records(
+            &mut lockfile,
+            &legacy_target_tools,
+            &BTreeSet::new(),
+            &mut |tool, selector| {
+                seen_selector = Some(selector.to_owned());
+                Ok(persistable_selection_lock(tool, selector, selector))
+            },
+        )
+        .expect("refresh exact Java version");
+
+        let java = lockfile.tool("java").expect("refreshed Java lock");
+        assert_eq!(seen_selector.as_deref(), Some("21.0.8+9"));
+        assert_eq!(java.requested, "21");
+        assert_eq!(java.version, "21.0.8+9");
+        assert!(java.artifact("linux-aarch64").is_some());
     }
 
     #[test]
@@ -7129,6 +7384,83 @@ mod tests {
                     provider: "go-official".to_owned(),
                     released_at: None,
                     metadata: BTreeMap::new(),
+                    artifacts,
+                }
+            }
+            "java" => {
+                assert_eq!(version, "21.0.8+9", "Java fixture version");
+                let release_name = format!("jdk-{version}");
+                let artifacts = pinset_core::JAVA_TARGETS
+                    .into_iter()
+                    .map(|target| {
+                        let (os, arch, extension) = match target {
+                            "windows-x86_64" => ("windows", "x64", "zip"),
+                            "linux-x86_64" => ("linux", "x64", "tar.gz"),
+                            "linux-aarch64" => ("linux", "aarch64", "tar.gz"),
+                            "macos-x86_64" => ("mac", "x64", "tar.gz"),
+                            "macos-aarch64" => ("mac", "aarch64", "tar.gz"),
+                            _ => unreachable!("known Java target"),
+                        };
+                        let package = format!(
+                            "OpenJDK21U-jdk_{arch}_{os}_hotspot_21.0.8_9.{extension}"
+                        );
+                        let canonical_url = format!(
+                            "https://github.com/adoptium/temurin21-binaries/releases/download/{}/{}",
+                            release_name.replace('+', "%2B"),
+                            package
+                        );
+                        let plan = pinset_core::plan_java_artifact(
+                            version,
+                            &release_name,
+                            target,
+                            &package,
+                            &canonical_url,
+                        )
+                        .expect("Java artifact plan");
+                        pinset_core::LockedArtifact {
+                            target: target.to_owned(),
+                            canonical_url: plan.canonical_url,
+                            artifact_path: plan.artifact_path,
+                            sha256: "ab".repeat(32),
+                            integrity: None,
+                            format: match plan.format {
+                                pinset_core::JavaArchiveFormat::Zip => {
+                                    pinset_core::LockedArtifactFormat::Zip
+                                }
+                                pinset_core::JavaArchiveFormat::TarGz => {
+                                    pinset_core::LockedArtifactFormat::TarGz
+                                }
+                            },
+                            archive_root: plan.archive_root,
+                            verification: "adoptium-api-sha256".to_owned(),
+                            overlays: Vec::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let mut metadata = BTreeMap::from([
+                    ("distribution".to_owned(), "eclipse-temurin".to_owned()),
+                    ("vendor".to_owned(), "eclipse".to_owned()),
+                    ("image_type".to_owned(), "jdk".to_owned()),
+                    ("jvm_impl".to_owned(), "hotspot".to_owned()),
+                    ("heap_size".to_owned(), "normal".to_owned()),
+                    ("release_type".to_owned(), "ga".to_owned()),
+                    ("feature_version".to_owned(), "21".to_owned()),
+                    ("release_name".to_owned(), release_name),
+                    ("openjdk_version".to_owned(), "21.0.8+9-LTS".to_owned()),
+                ]);
+                for artifact in &artifacts {
+                    metadata.insert(
+                        format!("signature_link.{}", artifact.target),
+                        format!("{}.sig", artifact.canonical_url),
+                    );
+                }
+                LockedTool {
+                    name: tool.to_owned(),
+                    requested: requested.to_owned(),
+                    version: version.to_owned(),
+                    provider: "adoptium-temurin".to_owned(),
+                    released_at: None,
+                    metadata,
                     artifacts,
                 }
             }

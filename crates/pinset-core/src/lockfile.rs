@@ -196,26 +196,41 @@ pub fn load_lockfile(path: &Path) -> Result<Lockfile> {
 }
 
 /// Loads a lockfile for a state-changing command that can refresh the historical
-/// pnpm/Bun target matrix before saving it again.
+/// pre-1.0 target matrices before saving it again.
 ///
 /// The relaxed result must never be used for installation or command resolution.
 /// Every artifact that is present is still validated strictly; the only tolerated
-/// gap is the Linux ARM64 artifact added to the pnpm/Bun matrix in Pinset 1.0.
-pub fn load_lockfile_for_target_refresh(path: &Path) -> Result<(Lockfile, bool)> {
+/// gaps are the exact provider matrices shipped before Linux ARM64 support was
+/// added in Pinset 1.0.
+pub fn load_lockfile_for_provider_refresh(path: &Path) -> Result<(Lockfile, Vec<String>)> {
     let lockfile = parse_lockfile(path)?;
     match validate_lockfile(&lockfile) {
-        Ok(()) => Ok((lockfile, false)),
+        Ok(()) => Ok((lockfile, Vec::new())),
         Err(strict_error) => {
-            validate_lockfile_with_npm_target_policy(
+            validate_lockfile_with_target_policy(
                 &lockfile,
-                NpmTargetPolicy::AllowLegacyLinuxArm64Gap,
+                TargetMatrixPolicy::AllowPreV1LinuxArm64Matrices,
             )?;
-            if !lockfile.tools.iter().any(has_legacy_npm_target_gap) {
+            let mut refresh_tools = lockfile
+                .tools
+                .iter()
+                .filter(|tool| has_pre_v1_target_matrix(tool))
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>();
+            refresh_tools.sort();
+            if refresh_tools.is_empty() {
                 return Err(strict_error);
             }
-            Ok((lockfile, true))
+            Ok((lockfile, refresh_tools))
         }
     }
+}
+
+/// Backwards-compatible target-refresh loader retained for callers that only
+/// need to know whether any historical provider matrix requires repair.
+pub fn load_lockfile_for_target_refresh(path: &Path) -> Result<(Lockfile, bool)> {
+    let (lockfile, refresh_tools) = load_lockfile_for_provider_refresh(path)?;
+    Ok((lockfile, !refresh_tools.is_empty()))
 }
 
 fn parse_lockfile(path: &Path) -> Result<Lockfile> {
@@ -326,18 +341,18 @@ pub fn validate_lock_matches_tools(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NpmTargetPolicy {
+enum TargetMatrixPolicy {
     Current,
-    AllowLegacyLinuxArm64Gap,
+    AllowPreV1LinuxArm64Matrices,
 }
 
 fn validate_lockfile(lockfile: &Lockfile) -> Result<()> {
-    validate_lockfile_with_npm_target_policy(lockfile, NpmTargetPolicy::Current)
+    validate_lockfile_with_target_policy(lockfile, TargetMatrixPolicy::Current)
 }
 
-fn validate_lockfile_with_npm_target_policy(
+fn validate_lockfile_with_target_policy(
     lockfile: &Lockfile,
-    npm_target_policy: NpmTargetPolicy,
+    target_policy: TargetMatrixPolicy,
 ) -> Result<()> {
     if !matches!(lockfile.schema, 1 | 2 | LOCKFILE_SCHEMA) {
         return Err(Error::UnsupportedLockfileSchema {
@@ -356,7 +371,7 @@ fn validate_lockfile_with_npm_target_policy(
                 reason: format!("duplicate tool {}", tool.name),
             });
         }
-        validate_locked_tool_with_npm_target_policy(tool, npm_target_policy)?;
+        validate_locked_tool_with_target_policy(tool, target_policy)?;
         if lockfile.schema < LOCKFILE_SCHEMA && tool.requested != tool.version {
             return Err(Error::InvalidLockfile {
                 reason: format!(
@@ -376,13 +391,15 @@ fn validate_lockfile_with_npm_target_policy(
 
 #[cfg(test)]
 fn validate_locked_tool(tool: &LockedTool) -> Result<()> {
-    validate_locked_tool_with_npm_target_policy(tool, NpmTargetPolicy::Current)
+    validate_locked_tool_with_target_policy(tool, TargetMatrixPolicy::Current)
 }
 
-fn validate_locked_tool_with_npm_target_policy(
+fn validate_locked_tool_with_target_policy(
     tool: &LockedTool,
-    npm_target_policy: NpmTargetPolicy,
+    target_policy: TargetMatrixPolicy,
 ) -> Result<()> {
+    let pre_v1_target_matrix = target_policy == TargetMatrixPolicy::AllowPreV1LinuxArm64Matrices
+        && has_pre_v1_target_matrix(tool);
     if tool
         .released_at
         .as_deref()
@@ -437,7 +454,7 @@ fn validate_locked_tool_with_npm_target_policy(
             });
         }
         match tool.name.as_str() {
-            "node" => validate_locked_node_artifact(&tool.version, artifact)?,
+            "node" => validate_locked_node_artifact(&tool.version, artifact, pre_v1_target_matrix)?,
             "go" => validate_locked_go_artifact(&tool.version, artifact)?,
             "flutter" => validate_locked_flutter_artifact(&tool.version, artifact)?,
             "java" => validate_locked_java_artifact(tool, artifact)?,
@@ -449,8 +466,19 @@ fn validate_locked_tool_with_npm_target_policy(
         }
     }
     if tool.name == "node" {
-        validate_node_metadata(tool)?;
+        if pre_v1_target_matrix {
+            if !tool.metadata.is_empty() {
+                return Err(Error::InvalidLockfile {
+                    reason: "pre-1.0 Node lock cannot contain provider metadata".to_owned(),
+                });
+            }
+        } else {
+            validate_node_metadata(tool)?;
+        }
         for target in MVP_NODE_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing Node MVP artifact for {target}"),
@@ -459,13 +487,16 @@ fn validate_locked_tool_with_npm_target_policy(
         }
     } else if tool.name == "go" {
         for target in GO_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing Go artifact for {target}"),
                 });
             }
         }
-        if targets.len() != GO_TARGETS.len() {
+        if targets.len() != GO_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: "Go lock contains an unsupported artifact target".to_owned(),
             });
@@ -487,13 +518,16 @@ fn validate_locked_tool_with_npm_target_policy(
     } else if tool.name == "python" {
         validate_python_metadata(tool)?;
         for target in PYTHON_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing Python artifact for {target}"),
                 });
             }
         }
-        if targets.len() != PYTHON_TARGETS.len() {
+        if targets.len() != PYTHON_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: "Python lock contains an unsupported artifact target".to_owned(),
             });
@@ -501,13 +535,16 @@ fn validate_locked_tool_with_npm_target_policy(
     } else if tool.name == "java" {
         validate_java_metadata(tool)?;
         for target in JAVA_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing Java artifact for {target}"),
                 });
             }
         }
-        if targets.len() != JAVA_TARGETS.len() {
+        if targets.len() != JAVA_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: "Java lock contains an unsupported artifact target".to_owned(),
             });
@@ -515,13 +552,16 @@ fn validate_locked_tool_with_npm_target_policy(
     } else if tool.name == "rust" {
         validate_rust_metadata(tool)?;
         for target in RUST_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing Rust artifact for {target}"),
                 });
             }
         }
-        if targets.len() != RUST_TARGETS.len() {
+        if targets.len() != RUST_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: "Rust lock contains an unsupported artifact target".to_owned(),
             });
@@ -529,22 +569,23 @@ fn validate_locked_tool_with_npm_target_policy(
     } else if tool.name == "dotnet" {
         validate_dotnet_metadata(tool)?;
         for target in DOTNET_TARGETS {
+            if pre_v1_target_matrix && target == "linux-aarch64" {
+                continue;
+            }
             if !targets.contains(target) {
                 return Err(Error::InvalidLockfile {
                     reason: format!("missing .NET SDK artifact for {target}"),
                 });
             }
         }
-        if targets.len() != DOTNET_TARGETS.len() {
+        if targets.len() != DOTNET_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: ".NET SDK lock contains an unsupported artifact target".to_owned(),
             });
         }
     } else {
         for (target, _) in npm_tool_targets(&tool.name) {
-            if npm_target_policy == NpmTargetPolicy::AllowLegacyLinuxArm64Gap
-                && *target == "linux-aarch64"
-            {
+            if pre_v1_target_matrix && *target == "linux-aarch64" {
                 continue;
             }
             if !targets.contains(target) {
@@ -553,10 +594,7 @@ fn validate_locked_tool_with_npm_target_policy(
                 });
             }
         }
-        if targets.len() != npm_tool_targets(&tool.name).len()
-            && !(npm_target_policy == NpmTargetPolicy::AllowLegacyLinuxArm64Gap
-                && has_legacy_npm_target_gap(tool))
-        {
+        if targets.len() != npm_tool_targets(&tool.name).len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: format!("{} lock contains an unsupported artifact target", tool.name),
             });
@@ -570,10 +608,40 @@ fn validate_locked_tool_with_npm_target_policy(
     Ok(())
 }
 
-fn has_legacy_npm_target_gap(tool: &LockedTool) -> bool {
-    matches!(tool.name.as_str(), "pnpm" | "bun")
-        && tool.artifact("linux-aarch64").is_none()
-        && tool.artifacts.len() + 1 == npm_tool_targets(&tool.name).len()
+const PRE_V1_NODE_TARGETS: &[&str] = &[
+    "windows-x86_64",
+    "macos-aarch64",
+    "macos-x86_64",
+    "linux-x86_64",
+];
+const PRE_V1_PNPM_TARGETS: &[&str] = &["windows-x86_64", "linux-x86_64", "macos-aarch64"];
+const PRE_V1_BUN_TARGETS: &[&str] = &[
+    "windows-x86_64-avx2",
+    "windows-x86_64-baseline",
+    "linux-x86_64-avx2",
+    "linux-x86_64-baseline",
+    "macos-aarch64",
+];
+const PRE_V1_STANDARD_TARGETS: &[&str] = &[
+    "windows-x86_64",
+    "macos-aarch64",
+    "macos-x86_64",
+    "linux-x86_64",
+];
+
+fn has_pre_v1_target_matrix(tool: &LockedTool) -> bool {
+    let expected = match tool.name.as_str() {
+        "node" => PRE_V1_NODE_TARGETS,
+        "pnpm" => PRE_V1_PNPM_TARGETS,
+        "bun" => PRE_V1_BUN_TARGETS,
+        "go" | "python" | "java" | "rust" | "dotnet" => PRE_V1_STANDARD_TARGETS,
+        _ => return false,
+    };
+    tool.artifacts.len() == expected.len()
+        && tool
+            .artifacts
+            .iter()
+            .all(|artifact| expected.contains(&artifact.target.as_str()))
 }
 
 fn validate_node_metadata(tool: &LockedTool) -> Result<()> {
@@ -872,7 +940,11 @@ fn validate_locked_go_artifact(version: &str, artifact: &LockedArtifact) -> Resu
     Ok(())
 }
 
-fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
+fn validate_locked_node_artifact(
+    version: &str,
+    artifact: &LockedArtifact,
+    allow_pre_v1_verification: bool,
+) -> Result<()> {
     let plan = plan_node_artifact(&SourceConfig::default(), version, &artifact.target)?;
     let expected_format = match plan.format {
         NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
@@ -895,11 +967,16 @@ fn validate_locked_node_artifact(version: &str, artifact: &LockedArtifact) -> Re
             reason: format!("invalid SHA-256 for {}", artifact.target),
         });
     }
-    if artifact.verification != "nodejs-openpgp-sha256"
-        && !artifact
+    let current_verification = artifact.verification == "nodejs-openpgp-sha256"
+        || artifact
             .verification
-            .starts_with("nodejs-openpgp-sha256-source:")
-    {
+            .starts_with("nodejs-openpgp-sha256-source:");
+    let pre_v1_verification = allow_pre_v1_verification
+        && (artifact.verification == "nodejs-shasums-https"
+            || artifact
+                .verification
+                .starts_with("nodejs-shasums-https-source:"));
+    if !current_verification && !pre_v1_verification {
         return Err(Error::InvalidLockfile {
             reason: format!(
                 "unsupported Node verification for {}; regenerate this pre-1.0 lock with `pinset use node@<selector>`",
@@ -1266,7 +1343,7 @@ mod tests {
     }
 
     #[test]
-    fn target_refresh_loader_only_accepts_the_historical_npm_linux_arm64_gap() {
+    fn target_refresh_loader_accepts_only_known_pre_v1_provider_matrices() {
         let root = tempdir().expect("temp directory");
         let path = root.path().join(LOCKFILE_FILENAME);
         let legacy = Lockfile {
@@ -1282,10 +1359,14 @@ mod tests {
 
         let strict = load_lockfile(&path).expect_err("strict loader rejects the old matrix");
         assert!(strict.to_string().contains("linux-aarch64"));
-        let (loaded, requires_refresh) =
-            load_lockfile_for_target_refresh(&path).expect("refresh loader accepts old matrix");
-        assert!(requires_refresh);
+        let (loaded, refresh_tools) =
+            load_lockfile_for_provider_refresh(&path).expect("refresh loader accepts old matrix");
+        assert_eq!(refresh_tools, ["bun", "pnpm"]);
         assert_eq!(loaded.tools, legacy.tools);
+
+        let (_, requires_refresh) = load_lockfile_for_target_refresh(&path)
+            .expect("compatibility loader accepts old matrix");
+        assert!(requires_refresh);
 
         let mut corrupted = legacy;
         corrupted.tools[0].artifacts[0].canonical_url =
@@ -1295,9 +1376,44 @@ mod tests {
             toml::to_string_pretty(&corrupted).expect("corrupt TOML"),
         )
         .expect("corrupt lockfile");
-        let error = load_lockfile_for_target_refresh(&path)
+        let error = load_lockfile_for_provider_refresh(&path)
             .expect_err("refresh loader still validates every present artifact");
         assert!(error.to_string().contains("invalid npm artifact identity"));
+    }
+
+    #[test]
+    fn target_refresh_loader_detects_every_provider_expanded_in_v1() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(LOCKFILE_FILENAME);
+
+        for name in [
+            "node", "pnpm", "bun", "go", "python", "java", "rust", "dotnet",
+        ] {
+            let mut tool = locked_current_provider_tool(name);
+            tool.artifacts
+                .retain(|artifact| artifact.target != "linux-aarch64");
+            if name == "node" {
+                tool.metadata.clear();
+                for artifact in &mut tool.artifacts {
+                    artifact.verification = "nodejs-shasums-https".to_owned();
+                }
+            } else if name == "java" {
+                tool.metadata.remove("signature_link.linux-aarch64");
+            }
+            let legacy = Lockfile {
+                schema: 2,
+                generated_by: "pinset 0.9.0".to_owned(),
+                tools: vec![tool],
+            };
+            fs::write(&path, toml::to_string_pretty(&legacy).expect("legacy TOML"))
+                .expect("legacy lockfile");
+
+            load_lockfile(&path).expect_err("strict loader rejects the old matrix");
+            let (loaded, refresh_tools) = load_lockfile_for_provider_refresh(&path)
+                .unwrap_or_else(|error| panic!("refresh loader rejected {name}: {error}"));
+            assert_eq!(refresh_tools, [name]);
+            assert_eq!(loaded.tools, legacy.tools);
+        }
     }
 
     #[test]
@@ -1707,6 +1823,125 @@ mod tests {
             released_at: None,
             metadata: BTreeMap::new(),
             artifacts: vec![artifact],
+        }
+    }
+
+    fn locked_current_provider_tool(name: &str) -> LockedTool {
+        match name {
+            "node" => Lockfile::new_node(
+                "pinset test".to_owned(),
+                "24.0.0".to_owned(),
+                "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
+                "official".to_owned(),
+                MVP_NODE_TARGETS.into_iter().map(locked_artifact).collect(),
+            )
+            .tools
+            .remove(0),
+            "pnpm" => locked_npm_tool("pnpm", "11.21.0", true),
+            "bun" => locked_npm_tool("bun", "1.3.14", true),
+            "go" => LockedTool {
+                name: "go".to_owned(),
+                requested: "1.25.1".to_owned(),
+                version: "1.25.1".to_owned(),
+                provider: "go-official".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::new(),
+                artifacts: GO_TARGETS
+                    .into_iter()
+                    .map(|target| locked_go_artifact("1.25.1", target))
+                    .collect(),
+            },
+            "python" => LockedTool {
+                name: "python".to_owned(),
+                requested: "3.14.7+20260807".to_owned(),
+                version: "3.14.7+20260807".to_owned(),
+                provider: "python-build-standalone".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::from([
+                    ("build_id".to_owned(), "20260807".to_owned()),
+                    (
+                        "distribution".to_owned(),
+                        "astral-sh/python-build-standalone".to_owned(),
+                    ),
+                    ("python_version".to_owned(), "3.14.7".to_owned()),
+                    ("variant".to_owned(), PYTHON_VARIANT.to_owned()),
+                ]),
+                artifacts: PYTHON_TARGETS
+                    .into_iter()
+                    .map(|target| locked_python_artifact("3.14.7+20260807", target))
+                    .collect(),
+            },
+            "java" => {
+                let version = "21.0.8+9";
+                let release_name = "jdk-21.0.8+9";
+                let artifacts = JAVA_TARGETS
+                    .into_iter()
+                    .map(|target| locked_java_artifact(version, release_name, target))
+                    .collect::<Vec<_>>();
+                let mut metadata = BTreeMap::from([
+                    ("distribution".to_owned(), "eclipse-temurin".to_owned()),
+                    ("vendor".to_owned(), "eclipse".to_owned()),
+                    ("image_type".to_owned(), "jdk".to_owned()),
+                    ("jvm_impl".to_owned(), "hotspot".to_owned()),
+                    ("heap_size".to_owned(), "normal".to_owned()),
+                    ("release_type".to_owned(), "ga".to_owned()),
+                    ("feature_version".to_owned(), "21".to_owned()),
+                    ("release_name".to_owned(), release_name.to_owned()),
+                    ("openjdk_version".to_owned(), "21.0.8+9-LTS".to_owned()),
+                ]);
+                for artifact in &artifacts {
+                    metadata.insert(
+                        format!("signature_link.{}", artifact.target),
+                        format!("{}.sig", artifact.canonical_url),
+                    );
+                }
+                LockedTool {
+                    name: "java".to_owned(),
+                    requested: version.to_owned(),
+                    version: version.to_owned(),
+                    provider: "adoptium-temurin".to_owned(),
+                    released_at: None,
+                    metadata,
+                    artifacts,
+                }
+            }
+            "rust" => LockedTool {
+                name: "rust".to_owned(),
+                requested: "1.97.1".to_owned(),
+                version: "1.97.1".to_owned(),
+                provider: "rust-official".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::from([
+                    ("channel".to_owned(), "stable".to_owned()),
+                    ("components".to_owned(), RUST_COMPONENTS.to_owned()),
+                    ("manifest_date".to_owned(), "2026-07-16".to_owned()),
+                    ("manifest_sha256".to_owned(), "ab".repeat(32)),
+                    ("profile".to_owned(), RUST_PROFILE.to_owned()),
+                ]),
+                artifacts: RUST_TARGETS
+                    .into_iter()
+                    .map(|target| locked_rust_artifact("1.97.1", "2026-07-16", target))
+                    .collect(),
+            },
+            "dotnet" => LockedTool {
+                name: "dotnet".to_owned(),
+                requested: "10.0.400".to_owned(),
+                version: "10.0.400".to_owned(),
+                provider: "microsoft-dotnet-sdk".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::from([
+                    ("channel".to_owned(), "10.0".to_owned()),
+                    ("release_date".to_owned(), "2026-08-11".to_owned()),
+                    ("release_type".to_owned(), "lts".to_owned()),
+                    ("release_version".to_owned(), "10.0.14".to_owned()),
+                    ("support_phase".to_owned(), "active".to_owned()),
+                ]),
+                artifacts: DOTNET_TARGETS
+                    .into_iter()
+                    .map(|target| locked_dotnet_artifact("10.0.400", target))
+                    .collect(),
+            },
+            other => panic!("unsupported provider fixture {other}"),
         }
     }
 

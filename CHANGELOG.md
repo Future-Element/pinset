@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.5 - 2026-08-31
+
+- Repair every exact pre-1.0 Provider target matrix expanded for Linux ARM64: Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK.
+- Re-resolve each affected Provider at its existing exact version, preserve its requested selector, and upgrade legacy Node.js locks to the current OpenPGP-authenticated metadata contract.
+- Apply the shared compatibility migration to project/global selection, update, migrate, unset, and project-import state changes while keeping install, execution, and other ordinary lock reads strict.
+- Reject unknown or corrupted target gaps, validate all existing artifacts before migration, and leave configuration and lock bytes unchanged when any Provider refresh fails.
+
+No configuration or lock schema migration is required. Flutter is unchanged because its supported target matrix did not add Linux ARM64. Existing unselected installations and their receipts are preserved; only selected lock records are rebuilt during an explicit state-changing command or `pinset migrate`.
+
 ## 2.1.4 - 2026-08-31
 
 - Repair pre-1.0 pnpm and Bun locks that predate Linux ARM64 target coverage when a project or global selection is next changed.
