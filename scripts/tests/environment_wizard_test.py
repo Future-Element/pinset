@@ -113,6 +113,9 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
     environment.update(PINSET_HOME=str(root / "home"), PINSET_LANG="en")
     subprocess.run([str(binary), "init"], cwd=project, env=environment, check=True,
                    stdout=subprocess.DEVNULL)
+    config_path = project / "pinset.toml"
+    config_path.write_text(config_path.read_text().replace(
+        "system-fallback = false", "system-fallback = true"))
     identity = root / "identity.age"
     recovery = root / "recovery.age"
     # These passphrases protect disposable test identities only.
@@ -165,6 +168,26 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
                        env=environment, check=True, stdout=subprocess.DEVNULL)
         subprocess.run([str(binary), "--", *probe], cwd=project,
                        env=environment, check=True)
+        system = root / "system"
+        system.mkdir()
+        if os.name == "nt":
+            (system / "node.cmd").write_text("@echo off\necho %APP_WIZARD_VALUE%\n")
+        else:
+            fake_node = system / "node"
+            fake_node.write_text('#!/bin/sh\nprintf "%s\\n" "$APP_WIZARD_VALUE"\n')
+            fake_node.chmod(0o755)
+        shim_environment = environment | {"PATH": str(system)}
+        shim = binary.with_name("pinset-shim.exe" if os.name == "nt" else "pinset-shim")
+        injected = subprocess.check_output(
+            [str(shim), "--as", "node", "--cwd", str(project)],
+            cwd=project, env=shim_environment, text=True,
+        )
+        assert injected.strip() == "wizard-variable-fixture"
+        rejected = subprocess.run(
+            [str(binary), "__env-resolve", "--cwd", str(project), "--shim-version", "0.0.0"],
+            cwd=project, env=environment, capture_output=True,
+        )
+        assert rejected.returncode != 0 and not rejected.stdout
         print("System keyring identity reuse and environment injection passed")
 
 print("Interactive environment initialization and short execution passed")

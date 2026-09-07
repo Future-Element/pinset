@@ -1,0 +1,67 @@
+name: Verify published release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published immutable release tag
+        required: true
+        type: string
+      commit:
+        description: Expected full source commit SHA
+        required: true
+        type: string
+      previous:
+        description: Earlier published version for self-update acceptance (without v)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.archive }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            archive: pinset-linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            archive: pinset-linux-aarch64.tar.gz
+          - os: macos-15
+            archive: pinset-macos-aarch64.tar.gz
+          - os: windows-2025
+            archive: pinset-windows-x86_64.zip
+    steps:
+      - name: Check out verification scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare native terminal and credential-store acceptance
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            python -m pip install --only-binary=:all: pywinpty==3.0.5
+          elif [[ "${RUNNER_OS}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y gnome-keyring dbus-x11
+          fi
+
+      - name: Verify hosted assets and native installation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+          PREVIOUS_VERSION: ${{ inputs.previous }}
+          RELEASE_ARCHIVE: ${{ matrix.archive }}
+        run: |
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            dbus-run-session -- sh -c 'printf "%s" "disposable-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets; python3 scripts/verify_published_release.py "$RELEASE_TAG" "$RELEASE_COMMIT" "$RELEASE_ARCHIVE" "$PREVIOUS_VERSION"'
+          else
+            python scripts/verify_published_release.py "${RELEASE_TAG}" "${RELEASE_COMMIT}" "${RELEASE_ARCHIVE}" "${PREVIOUS_VERSION}"
+          fi
