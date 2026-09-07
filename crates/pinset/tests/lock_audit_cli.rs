@@ -115,8 +115,8 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
 
 fn write_project(project: &Path, version: &str) {
     let config = ProjectConfig {
-        schema: 3,
-        project_id: None,
+        schema: 5,
+        project_id: Some("4c5652e4-0000-4000-8000-000000000007".to_owned()),
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), version.to_owned())]),
         tasks: BTreeMap::new(),

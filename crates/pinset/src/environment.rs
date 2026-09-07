@@ -8,8 +8,8 @@ use std::{
 use clap::Subcommand;
 use pinset_core::{
     EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, ProjectConfig,
-    ProjectEnvironment, encode_environment, find_project_config,
-    load_project_config, pinset_home, save_project_config, validate_environment_variable_value,
+    ProjectEnvironment, encode_environment, find_project_config, load_project_config, pinset_home,
+    save_project_config, validate_environment_variable_value,
 };
 use pinset_env::{
     EnvironmentDocument, backup_identity, generate_identity, import_identity, list_identities,
