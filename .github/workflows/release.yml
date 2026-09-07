@@ -33,10 +33,7 @@ jobs:
             python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
           )"
           release_version="${GITHUB_REF_NAME#v}"
-          if [[ "${release_version}" != "${workspace_version}" && "${release_version}" != "${workspace_version}-rc.1" ]]; then
-            echo "release tag ${GITHUB_REF_NAME} must match v${workspace_version} or v${workspace_version}-rc.1" >&2
-            exit 1
-          fi
+          python3 scripts/validate_release_version.py "${workspace_version}" "${GITHUB_REF_NAME}"
           if [[ "${release_version}" == "2.0.0" ]] && ! gh release view v2.0.0-rc.1 >/dev/null 2>&1; then
             echo "v2.0.0 requires the published v2.0.0-rc.1 acceptance release" >&2
             exit 1

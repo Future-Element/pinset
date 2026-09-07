@@ -388,7 +388,40 @@ pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
 - If installation fails after the state commit, successfully installed runtimes remain valid and the complete requested state remains locked. The error directs the user to retry with `pinset install --locked` or `pinset install --global --locked`; Pinset does not pretend that already completed filesystem installations can be rolled back atomically.
 - Help, completions, English/Chinese command references, and tests cover single-selection compatibility and multi-selection behavior. `install <tool@exact-version>` remains a single explicit-selection command; lock-based `install --locked` installs the complete scope.
 
-Later 2.x work may evaluate KMS/OIDC, broader platform artifacts, and stronger provenance while preserving Pinset's local-first, fail-closed boundary. The roadmap does not promise specific versions or dates.
+### v2.2 development: shorter commands and local environments
+
+The source tree targets **2.2.0 (unreleased)**. Installation examples above continue to reference the released 2.1.6. In a 2.2 build:
+
+```sh
+pinset env init
+pinset env use dev
+pinset env set DATABASE_URL
+pinset -- pnpm dev
+pinset -e test -- pnpm test
+pinset -C ./another-project -- pnpm dev
+pinset env reset
+```
+
+`env use` stores a machine-local preference per project/worktree without changing shared defaults; CI ignores it. `env share/unshare/members` simplify recipient management. Existing `exec`, trust requirements, and project/lock formats remain compatible. See the [command reference](docs/commands.md#short-execution-22) for selection precedence, noninteractive setup, and execution boundaries. Named tasks are not part of 2.2.
+
+### Future directions
+
+Pinset's next steps focus on making project environments easier to prepare, use, compare, and upgrade. The features and command forms below are planned and are not available in the current release.
+
+After 2.2, version 2.3 will add named tasks such as `pinset run dev`, task-bound profiles, and variable contracts. Existing commands and script interfaces remain compatible.
+
+| Direction | Planned capabilities |
+| --- | --- |
+| Environment diagnostics and comparison | Unified status and checks, shareable reports without secret values, local/CI comparisons, and repair previews. |
+| Deeper language support | Rust components, compilation targets, and date-pinned nightly toolchains; Java distributions and JDK/JRE selection; named Python environments. |
+| Workspaces and multiple projects | Explicit members, shared tool defaults with member overrides, batch installation and checks, and tool-reference visibility. |
+| Offline delivery and caching | Artifact prefetching, verified offline bundles, explicit offline installation, broader mirror support, concurrent downloads, and CI caching. |
+| Environment variable contracts | Required variables, types, descriptions, configuration defaults, and structural profile comparison. |
+| Candidate upgrades and recovery | Prepare candidate locks, test with candidate toolchains, apply verified selections, and restore previous toolchain configuration. |
+| A constrained Provider ecosystem | Declarative Providers for development CLIs, explicit source trust, manifest validation, and contributor tooling. |
+| Tasks and editor integration | Lightweight project tasks, followed by VS Code integration for toolchain status, environment selection, diagnostics, and task execution. |
+
+Planned compatible releases are 2.3 tasks/contracts, 2.4 diagnostics/CI, 2.5 offline delivery, 2.6 Rust/tool identity, 2.7 Java/Python, 2.8 workspaces, 2.9 candidate upgrades/recovery, 2.10 Providers, and 2.11 editor integration. These are delivery targets without promised dates. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
 
 ## Contributing and license
 

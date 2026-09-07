@@ -84,7 +84,7 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <article className="docPage homePage">
         <header className="docHeader">
-          <div className="versionPill"><span /> Pinset 2.1</div>
+          <div className="versionPill"><span /> Pinset {siteConfig.version}</div>
           <h1>
             <span>Pinset</span>
             <small>{zh ? "多语言运行时版本管理器" : "Polyglot Runtime Version Manager"}</small>

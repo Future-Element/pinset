@@ -34,14 +34,14 @@ use pinset_core::{
     list_installed_tool_versions, load_global_config, load_lockfile,
     load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
     load_project_config, load_project_python_environment, load_source_config, load_user_settings,
-    lockfile_path, managed_runtime_arguments, path_with_selected_tools, pinset_home,
-    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
-    provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
+    lockfile_path, managed_runtime_arguments, pinset_home, plan_prune_tool_versions,
+    plan_uninstall_tool_version, project_python_environment_path, provider_dependency_order,
+    register_project_config, repair_download_cache, resolve_command,
     resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
     runtime_command_directory, runtime_environment_for_install, runtime_provider,
     save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
-    save_source_config, save_user_settings, scan_project_sources, selected_runtime_environment,
-    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
+    save_source_config, save_user_settings, scan_project_sources, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path,
     validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
     validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
     validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
@@ -66,6 +66,18 @@ struct Cli {
     /// UI language for this command. Without a subcommand, save it as the default.
     #[arg(long, global = true, value_name = "LANG")]
     lang: Option<Language>,
+    /// Project directory for this invocation.
+    #[arg(short = 'C', long)]
+    cwd: Option<PathBuf>,
+    /// Environment profile for this invocation.
+    #[arg(short = 'e', long, conflicts_with = "no_env")]
+    profile: Option<String>,
+    /// Skip project variable injection, retaining the selected toolchain.
+    #[arg(long)]
+    no_env: bool,
+    /// Execute a command after -- without changing project selections.
+    #[arg(last = true, num_args = 1.., allow_hyphen_values = true, value_name = "COMMAND")]
+    execute: Vec<OsString>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -325,7 +337,7 @@ enum Commands {
     /// Manage encrypted, profile-scoped project environment variables.
     Env {
         #[command(subcommand)]
-        command: EnvCommands,
+        command: Option<EnvCommands>,
     },
     /// Manage explicit local trust for automatic encrypted environment injection.
     Trust {
@@ -589,7 +601,7 @@ impl Commands {
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
-            Self::Env { command } => command.json_command(),
+            Self::Env { command } => command.as_ref().and_then(EnvCommands::json_command),
             Self::Trust { command } => command.json_command(),
             Self::SelfManage { command } => command.json_command(),
             _ => None,
@@ -721,6 +733,10 @@ fn print_json_failure(
 }
 
 fn requested_json_command(arguments: &[OsString]) -> Option<String> {
+    let arguments = &arguments[..arguments
+        .iter()
+        .position(|value| value == "--")
+        .unwrap_or(arguments.len())];
     if !arguments.iter().any(|value| value == "--json") {
         return None;
     }
@@ -1082,6 +1098,39 @@ fn main_exit_code() -> i32 {
 }
 
 fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
+    if let Some(cwd) = &cli.cwd {
+        env::set_current_dir(cwd)?;
+    }
+    if !cli.execute.is_empty() {
+        if cli.profile.is_some() {
+            find_project_config(&env::current_dir()?)?;
+        }
+        return execute_selected(
+            &env::current_dir()?,
+            &cli.execute,
+            false,
+            cli.profile.as_deref(),
+            cli.no_env,
+            true,
+            catalog,
+        );
+    }
+    if cli.profile.is_some()
+        && !matches!(
+            cli.command,
+            Some(Commands::Env { .. } | Commands::Exec { .. } | Commands::X { .. })
+        )
+    {
+        return Err("-e/--profile requires env, exec, x, or a command after --".into());
+    }
+    if cli.no_env
+        && !matches!(
+            cli.command,
+            Some(Commands::Exec { .. } | Commands::X { .. })
+        )
+    {
+        return Err("--no-env requires exec, x, or a command after --".into());
+    }
     let Some(command) = cli.command else {
         if let Some(language) = cli.lang {
             let home = pinset_home()?;
@@ -1264,7 +1313,19 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             command,
         } => {
             let cwd = effective_cwd(cwd)?;
-            return execute_selected(&cwd, &command, false, profile.as_deref(), no_env, catalog);
+            let profile = profile.as_deref().or(cli.profile.as_deref());
+            if profile.is_some() && (no_env || cli.no_env) {
+                return Err("--profile conflicts with --no-env".into());
+            }
+            return execute_selected(
+                &cwd,
+                &command,
+                false,
+                profile,
+                no_env || cli.no_env,
+                false,
+                catalog,
+            );
         }
         Commands::X {
             selection,
@@ -1275,7 +1336,15 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             let mut selected_command = Vec::with_capacity(command.len() + 1);
             selected_command.push(OsString::from(selection));
             selected_command.extend(command);
-            return execute_selected(&cwd, &selected_command, true, None, false, catalog);
+            return execute_selected(
+                &cwd,
+                &selected_command,
+                true,
+                cli.profile.as_deref(),
+                cli.no_env,
+                false,
+                catalog,
+            );
         }
         Commands::Doctor { cwd, deep, json } => {
             let cwd = effective_cwd(cwd)?;
@@ -1287,7 +1356,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             }
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
-        Commands::Env { command } => environment::run_env_command(command)?,
+        Commands::Env { command } => environment::run_env_command(command, cli.profile.as_deref())?,
         Commands::Trust { command } => environment::run_trust_command(command)?,
         Commands::InternalEnvResolve {
             cwd,
@@ -2689,7 +2758,8 @@ const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
 const COMPLETION_PROVIDER_COMMANDS: &str = "list verify";
-const COMPLETION_ENV_COMMANDS: &str = "init set unset list reveal import export recipient identity";
+const COMPLETION_ENV_COMMANDS: &str =
+    "init use reset set unset list reveal import export share unshare members recipient identity";
 const COMPLETION_TRUST_COMMANDS: &str = "add status revoke";
 const COMPLETION_SELF_COMMANDS: &str = "outdated update";
 
@@ -2716,7 +2786,7 @@ fn completion_script(shell: ActivationShell) -> String {
     current="${COMP_WORDS[COMP_CWORD]}"
     command="${COMP_WORDS[1]}"
     if (( COMP_CWORD == 1 )); then
-        values="__COMMANDS__ --help --version --lang"
+        values="__COMMANDS__ -C --cwd -e --profile --no-env --help --version --lang"
     else
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
@@ -2758,7 +2828,7 @@ _pinset_completion() {
     local command values
     command="$words[2]"
     if (( CURRENT == 2 )); then
-        values="__COMMANDS__ --help --version --lang"
+        values="__COMMANDS__ -C --cwd -e --profile --no-env --help --version --lang"
     else
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
@@ -2795,7 +2865,7 @@ _pinset_completion() {
 compdef _pinset_completion pinset"#
         }
         ActivationShell::Fish => {
-            r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__'
+            r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__ -C --cwd -e --profile --no-env'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
@@ -2852,7 +2922,7 @@ complete -c pinset -f -a '--help --lang'"#
         { $_ -in @('activate', 'completions') } { '__SHELLS__ --lang --help' -split ' ' }
         'source' { '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help' -split ' ' }
         'provider' { '__PROVIDER_COMMANDS__ --json --lang --help' -split ' ' }
-        default { '__COMMANDS__ --help --version --lang' -split ' ' }
+        default { '__COMMANDS__ -C --cwd -e --profile --no-env --help --version --lang' -split ' ' }
     }
     $values |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -4791,12 +4861,16 @@ fn execute_selected(
     install_ephemeral: bool,
     environment_profile: Option<&str>,
     no_environment: bool,
+    allow_external: bool,
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let (ephemeral_selection, mut command) = command
         .first()
         .and_then(|value| value.to_str())
         .filter(|value| {
+            if allow_external {
+                return false;
+            }
             value.split_once('@').is_some_and(|(tool, selector)| {
                 !selector.is_empty() && runtime_provider(tool).is_some()
             })
@@ -4863,7 +4937,9 @@ fn execute_selected(
                 environment,
             )
         } else {
-            let resolution = if command_tool(command_name).is_some() {
+            let resolution = if allow_external {
+                pinset_core::resolve_execution_command(command_name, cwd, &home)?
+            } else if command_tool(command_name).is_some() {
                 resolve_command(command_name, cwd, &home)?
             } else {
                 resolve_project_python_command(command_name, cwd, &home)?
@@ -4877,7 +4953,7 @@ fn execute_selected(
                 Vec::new(),
             )
         };
-    let runtime_path = path_with_selected_tools(&tool, &executable, cwd, &home)?;
+    let execution = pinset_core::execution_context(&tool, &executable, cwd, &home)?;
     if source != "system" {
         validate_managed_runtime_invocation(&tool, command_name, &command[1..])?;
     }
@@ -4891,11 +4967,14 @@ fn execute_selected(
     child
         .args(runtime_arguments)
         .current_dir(cwd)
-        .env("PATH", runtime_path)
+        .env("PATH", execution.path)
         .env("PINSET_SELECTED_TOOL", &tool)
         .env("PINSET_SELECTED_VERSION", &version)
         .env("PINSET_SELECTION_SOURCE", source);
-    let runtime_environment = selected_runtime_environment(&tool, cwd, &home);
+    for name in execution.remove_environment {
+        child.env_remove(name);
+    }
+    let runtime_environment = execution.environment;
     let mut occupied_environment = env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
         .map(|name| name.to_ascii_uppercase())

@@ -26,6 +26,7 @@ jobs:
           workspace_version="$(
             python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
           )"
+          python3 scripts/validate_release_version.py "${workspace_version}" "v${workspace_version}-rc.10"
           installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
           if [[ "${installer_version}" != "${workspace_version}" ]]; then
             echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
@@ -209,8 +210,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-24.04
+            artifact: pinset-linux-x86_64
           - os: ubuntu-24.04-arm
             artifact: pinset-linux-aarch64
+          - os: windows-2025
+            artifact: pinset-windows-x86_64
           - os: macos-15
             artifact: pinset-macos-aarch64
     runs-on: ${{ matrix.os }}
@@ -234,6 +239,31 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked -p pinset-cli -p pinset-shim
+
+      - name: Prepare native terminal and credential-store acceptance
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            python -m pip install --only-binary=:all: pywinpty==3.0.5
+          elif [[ "${RUNNER_OS}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y gnome-keyring dbus-x11
+          fi
+
+      - name: Validate native execution and local environments
+        shell: bash
+        run: |
+          cargo test --release --locked -p pinset-cli --test short_execution_cli --test python_cli
+          cargo test --release --locked -p pinset-shim
+          suffix=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi
+          PINSET_TEST_SHIM="${GITHUB_WORKSPACE}/target/release/pinset-shim${suffix}" \
+            cargo test --release --locked -p pinset-cli --test short_execution_cli paired_shim_uses -- --ignored
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            dbus-run-session -- sh -c 'printf "%s" "disposable-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets; python3 scripts/tests/environment_wizard_test.py target/release/pinset --keyring'
+          else
+            python scripts/tests/environment_wizard_test.py "target/release/pinset${suffix}" --keyring
+          fi
 
       - name: Verify macOS release dependencies
         if: runner.os == 'macOS'

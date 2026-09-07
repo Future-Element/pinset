@@ -68,6 +68,100 @@ pub struct RuntimeEnvironmentVariable {
     pub value: OsString,
 }
 
+/// The same runtime PATH and variables are used by explicit execution and direct shims.
+#[derive(Debug)]
+pub struct ExecutionContext {
+    pub path: OsString,
+    pub environment: Vec<RuntimeEnvironmentVariable>,
+    pub remove_environment: Vec<&'static str>,
+}
+
+pub fn execution_context(
+    tool: &str,
+    executable: &Path,
+    cwd: &Path,
+    home: &Path,
+) -> Result<ExecutionContext> {
+    let environment = selected_runtime_environment(tool, cwd, home);
+    let remove_environment = if environment
+        .iter()
+        .any(|variable| variable.name == "VIRTUAL_ENV")
+    {
+        vec!["PYTHONHOME"]
+    } else {
+        Vec::new()
+    };
+    Ok(ExecutionContext {
+        path: path_with_selected_tools(tool, executable, cwd, home)?,
+        environment,
+        remove_environment,
+    })
+}
+
+/// Explicit execution may use arbitrary commands, while declared runtime failures stay closed.
+pub fn resolve_execution_command(
+    command: &str,
+    cwd: &Path,
+    home: &Path,
+) -> Result<CommandResolution> {
+    if command_tool(command).is_some() {
+        return resolve_command(command, cwd, home);
+    }
+    let configured = effective_configured_tools(cwd, home)?;
+    for provider in runtime_providers()
+        .iter()
+        .filter(|provider| configured.contains_key(provider.tool))
+    {
+        resolve_command(provider.commands[0], cwd, home)?;
+    }
+    let command_path = Path::new(command);
+    let explicit_path = command_path.is_absolute() || command_path.components().count() > 1;
+    if !explicit_path && configured.contains_key("python") {
+        match resolve_project_python_command(command, cwd, home) {
+            Ok(resolution) => return Ok(resolution),
+            Err(
+                Error::RuntimeCommandNotFound { .. }
+                | Error::PythonEnvironmentSelectionMissing { .. },
+            ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let excluded = sibling_shim_executable().into_iter().collect::<Vec<_>>();
+    let path = env::var_os("PATH");
+    let executable = if explicit_path {
+        let candidate = if command_path.is_absolute() {
+            command_path.to_path_buf()
+        } else {
+            cwd.join(command_path)
+        };
+        let candidate = fs::canonicalize(&candidate).unwrap_or(candidate);
+        (is_executable_file(&candidate)
+            && !excluded
+                .iter()
+                .any(|shim| same_executable(&candidate, shim, command)))
+        .then_some(candidate)
+    } else {
+        find_system_commands(command, cwd, home, path.as_deref(), &excluded)
+            .into_iter()
+            .next()
+    }
+    .ok_or_else(|| Error::CommandSelectionNotFound {
+        command: command.to_owned(),
+        searched: path
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    })?;
+    Ok(CommandResolution {
+        command: command.to_owned(),
+        tool: String::new(),
+        requested: None,
+        version: "unknown".into(),
+        source: SelectionSource::System,
+        selection_path: find_project_context(cwd)?.config_path,
+        executable,
+    })
+}
+
 pub fn command_tool(command: &str) -> Option<&'static str> {
     runtime_provider_for_command(command).map(|provider| provider.tool)
 }
@@ -519,7 +613,11 @@ pub fn path_with_selected_tools(
         })?
         .to_path_buf();
     let shim_dir = pinset_home.join("shims");
-    let mut entries = vec![selected_dir.clone()];
+    let mut entries = if tool.is_empty() {
+        Vec::new()
+    } else {
+        vec![selected_dir.clone()]
+    };
     // Provider dependencies are a managed-selection contract. A command resolved from the
     // system PATH must retain ordinary system toolchain behavior instead of requiring Pinset
     // selections for that Provider's declared dependencies.
@@ -632,8 +730,13 @@ pub fn selected_runtime_environment(
     pinset_home: &Path,
 ) -> Vec<RuntimeEnvironmentVariable> {
     let mut variables = Vec::new();
-    let Ok(mut providers) = provider_dependency_order(tool) else {
-        return variables;
+    let mut providers = if tool.is_empty() {
+        Vec::new()
+    } else {
+        let Ok(providers) = provider_dependency_order(tool) else {
+            return variables;
+        };
+        providers
     };
     if let Ok(configured_tools) = effective_configured_tools(cwd, pinset_home) {
         for provider in runtime_providers()

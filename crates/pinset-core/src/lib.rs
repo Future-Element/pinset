@@ -12,6 +12,8 @@ mod dotnet_runtime;
 #[cfg(feature = "installer")]
 mod download_cache;
 mod environment_protocol;
+#[cfg(feature = "environment-selection")]
+mod environment_selection;
 mod error;
 #[cfg(feature = "flutter-metadata")]
 mod flutter_metadata;
@@ -124,6 +126,10 @@ pub use download_cache::{
     repair_download_cache, verify_download_cache,
 };
 pub use environment_protocol::{decode_environment, encode_environment};
+#[cfg(feature = "project-write")]
+pub use environment_selection::save_local_environment;
+#[cfg(feature = "environment-selection")]
+pub use environment_selection::{EnvironmentSelection, environment_selection, select_environment};
 pub use error::{Error, Result};
 #[cfg(feature = "flutter-metadata")]
 pub use flutter_metadata::{FlutterMetadataClient, FlutterRelease};
@@ -242,13 +248,14 @@ pub use python_venv::{
     project_python_command_candidates, project_python_environment_path,
 };
 pub use resolver::{
-    CommandResolution, RuntimeEnvironmentVariable, SelectionSource, ToolSelection, command_tool,
-    find_system_commands, java_home_for_install, managed_runtime_arguments,
-    path_with_selected_runtime, path_with_selected_tools, pinset_home, pinset_home_from_env,
-    resolve_command, resolve_command_with_path, resolve_from_env, resolve_project_python_command,
-    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
-    runtime_environment_for_install, selected_runtime_environment,
-    validate_managed_runtime_invocation, validate_windows_batch_arguments,
+    CommandResolution, ExecutionContext, RuntimeEnvironmentVariable, SelectionSource,
+    ToolSelection, command_tool, execution_context, find_system_commands, java_home_for_install,
+    managed_runtime_arguments, path_with_selected_runtime, path_with_selected_tools, pinset_home,
+    pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_execution_command,
+    resolve_from_env, resolve_project_python_command, resolve_tool_selection,
+    runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
+    selected_runtime_environment, validate_managed_runtime_invocation,
+    validate_windows_batch_arguments,
 };
 pub use runtime_lifecycle::{
     InstalledToolVersion, ProtectedToolVersion, PruneToolCandidate, PruneToolPlan,

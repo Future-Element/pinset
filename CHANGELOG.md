@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0 - Unreleased
+
+- Add `pinset [-C <directory>] [-e <profile> | --no-env] -- <command> [arguments...]` for managed tools, project Python commands, and explicit external programs. Preserve the existing `exec` and `x` contracts.
+- Share runtime PATH, runtime variables, and profile selection between CLI execution and shims. Remember machine-local project profiles with `env use`; clear them with `env reset` or `env use --reset`. Bind preferences to canonical project paths and project IDs, and ignore local preferences in CI.
+- Add an interactive `env init` workflow, stored identity reuse, current environment display, and `env share`, `env unshare`, and `env members` shortcuts.
+- Update bilingual help, command references, completions, and native CI coverage. Accept any positive `rc.N` release candidate whose base matches the workspace version.
+
+No project configuration or lock schema change is required. Tasks and variable contracts remain planned for 2.3. Release acceptance and publication are separate from this unreleased development entry.
+
 ## 2.1.6 - 2026-08-31
 
 - Check and migrate a safely recognized incompatible global lock before `pinset self update` downloads a release.

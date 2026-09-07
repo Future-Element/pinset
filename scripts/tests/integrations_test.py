@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import ast
 import pathlib
 import re
 import subprocess
@@ -13,9 +14,12 @@ import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+for script in ("scripts/verify_published_release.py", "scripts/tests/environment_wizard_test.py"):
+    ast.parse((ROOT / script).read_text(encoding="utf-8"), filename=script)
 WORKSPACE_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"][
     "package"
 ]["version"]
+subprocess.run([sys.executable, str(ROOT / "scripts/tests/release_version_test.py")], check=True)
 ARCHIVES = (
     "pinset-linux-x86_64.tar.gz",
     "pinset-linux-aarch64.tar.gz",

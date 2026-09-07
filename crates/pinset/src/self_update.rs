@@ -475,6 +475,9 @@ mod tests {
 
     #[test]
     fn self_update_rejects_unknown_platform_shapes_and_downgrades_by_semver() {
+        assert!(parse_tag("v2.9.0").unwrap() < parse_tag("v2.10.0").unwrap());
+        assert!(parse_tag("v2.2.0-rc.2").unwrap() < parse_tag("v2.2.0-rc.10").unwrap());
+        assert!(parse_tag("v2.2.0-rc.10").unwrap() < parse_tag("v2.2.0").unwrap());
         assert!(Version::parse("1.9.0").unwrap() < Version::parse("2.0.0-rc.1").unwrap());
         assert_eq!(parse_tag("v2.0.0-rc.1").unwrap().to_string(), "2.0.0-rc.1");
     }
