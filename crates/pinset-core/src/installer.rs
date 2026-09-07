@@ -180,6 +180,7 @@ pub struct Installer {
     limits: InstallLimits,
     progress_reporter: Option<Arc<dyn Fn(DownloadProgressEvent) + Send + Sync>>,
     offline: bool,
+    install_identity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -213,6 +214,7 @@ impl Installer {
             limits,
             progress_reporter: None,
             offline: false,
+            install_identity: None,
         })
     }
 
@@ -226,6 +228,11 @@ impl Installer {
 
     pub fn with_offline(mut self, offline: bool) -> Self {
         self.offline = offline;
+        self
+    }
+
+    pub fn with_install_identity(mut self, identity: String) -> Self {
+        self.install_identity = Some(identity);
         self
     }
 
@@ -243,15 +250,17 @@ impl Installer {
 
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
         validate_request(request)?;
-        let _install_lock = acquire_install_lock(request)?;
+        let install_identity = self.install_identity.as_deref().unwrap_or(&request.version);
+        validate_segment("install identity", install_identity)?;
+        let _install_lock = acquire_install_lock(request, install_identity)?;
         let final_dir = request
             .pinset_home
             .join("installs")
             .join(&request.tool)
-            .join(&request.version)
+            .join(install_identity)
             .join(&request.target);
         if final_dir.exists() {
-            return existing_install_outcome(&final_dir, request)
+            return existing_install_outcome(&final_dir, request, install_identity)
                 .ok_or(Error::InstallAlreadyExists { path: final_dir });
         }
 
@@ -300,7 +309,13 @@ impl Installer {
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
         create_install_aliases(&staging_dir, &request.aliases)?;
-        write_receipt(&staging_dir, request, &selected, &selected_bases)?;
+        write_receipt(
+            &staging_dir,
+            request,
+            install_identity,
+            &selected,
+            &selected_bases,
+        )?;
 
         let final_parent = final_dir
             .parent()
@@ -1172,8 +1187,8 @@ fn create_pending_archive_symlinks(
     Ok(())
 }
 
-fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
-    let identity = format!("{}\0{}\0{}", request.tool, request.version, request.target);
+fn acquire_install_lock(request: &InstallRequest, install_identity: &str) -> Result<InstallLock> {
+    let identity = format!("{}\0{}\0{}", request.tool, install_identity, request.target);
     let name = hex::encode(Sha256::digest(identity.as_bytes()));
     let directory = request.pinset_home.join("locks").join("installs");
     fs::create_dir_all(&directory).map_err(|source| Error::OpenInstallLock {
@@ -1195,7 +1210,11 @@ fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
     Ok(InstallLock { file })
 }
 
-fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Option<InstallOutcome> {
+fn existing_install_outcome(
+    final_dir: &Path,
+    request: &InstallRequest,
+    install_identity: &str,
+) -> Option<InstallOutcome> {
     let content = fs::read_to_string(final_dir.join(".pinset-install.toml")).ok()?;
     let receipt: ExistingInstallReceipt = toml::from_str(&content).ok()?;
     let receipt_integrity = receipt
@@ -1216,8 +1235,15 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
         })
         .collect::<Option<Vec<_>>>()?;
     if !receipt.complete
+        || !matches!(receipt.schema, 1..=4)
+        || (receipt.schema == 4 && receipt.install_identity.is_none())
         || receipt.tool != request.tool
         || receipt.version != request.version
+        || receipt
+            .install_identity
+            .as_deref()
+            .unwrap_or(&receipt.version)
+            != install_identity
         || receipt.target != request.target
         || receipt_integrity != expected_integrity
         || receipt.base_artifact_integrities != expected_base_integrities
@@ -1555,6 +1581,7 @@ struct InstallReceipt<'a> {
     complete: bool,
     tool: &'a str,
     version: &'a str,
+    install_identity: &'a str,
     target: &'a str,
     canonical_url: &'a str,
     selected_source: &'a str,
@@ -1576,9 +1603,13 @@ struct InstallReceipt<'a> {
 
 #[derive(Deserialize)]
 struct ExistingInstallReceipt {
+    #[serde(default = "legacy_install_receipt_schema")]
+    schema: u32,
     complete: bool,
     tool: String,
     version: String,
+    #[serde(default)]
+    install_identity: Option<String>,
     target: String,
     selected_source: String,
     #[serde(default)]
@@ -1589,9 +1620,14 @@ struct ExistingInstallReceipt {
     base_artifact_integrities: Vec<String>,
 }
 
+fn legacy_install_receipt_schema() -> u32 {
+    1
+}
+
 fn write_receipt(
     staging: &Path,
     request: &InstallRequest,
+    install_identity: &str,
     selected: &SelectedArtifact,
     selected_bases: &[SelectedArtifact],
 ) -> Result<()> {
@@ -1606,7 +1642,7 @@ fn write_receipt(
         .pinset_home
         .join("installs")
         .join(&request.tool)
-        .join(&request.version)
+        .join(install_identity)
         .join(&request.target)
         .display()
         .to_string();
@@ -1620,10 +1656,11 @@ fn write_receipt(
     critical_entries.sort();
     critical_entries.dedup();
     let receipt = InstallReceipt {
-        schema: 3,
+        schema: 4,
         complete: true,
         tool: &request.tool,
         version: &request.version,
+        install_identity,
         target: &request.target,
         canonical_url: &canonical_url,
         selected_source: &selected.source_id,
@@ -2068,7 +2105,7 @@ mod tests {
         assert!(root.path().join("downloads/sha512").is_dir());
         let receipt =
             fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
-        assert!(receipt.contains("schema = 3"));
+        assert!(receipt.contains("schema = 4"));
         assert!(receipt.contains("file_count ="));
         assert!(receipt.contains("pinset_version ="));
         assert!(receipt.contains("artifact_integrity = \"sha512-"));

@@ -75,6 +75,7 @@ fn write_project(project: &Path, hash: &str) {
         project_id: Some("565652e4-0000-4000-8000-000000000025".to_owned()),
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), "24.0.0".to_owned())]),
+        tool_options: Default::default(),
         tasks: BTreeMap::new(),
         environment: None,
     };
@@ -99,6 +100,7 @@ fn write_project(project: &Path, hash: &str) {
                 ),
                 ("manifest_source".to_owned(), "official".to_owned()),
             ]),
+            options: Default::default(),
             artifacts: MVP_NODE_TARGETS
                 .into_iter()
                 .map(|target| {

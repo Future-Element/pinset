@@ -47,6 +47,7 @@ pub struct ToolSelection {
     pub tool: String,
     pub requested: String,
     pub version: String,
+    pub installation_version: String,
     pub source: SelectionSource,
     pub config_path: PathBuf,
 }
@@ -251,6 +252,7 @@ pub fn resolve_command_with_path(
         Err(error) => return Err(error),
     };
     let version = selection.version.clone();
+    let installation_version = selection.installation_version.clone();
 
     if tool == "python" && selection.source == SelectionSource::Project {
         let target = current_target_for_tool(tool);
@@ -285,7 +287,7 @@ pub fn resolve_command_with_path(
     let install_dir = pinset_home
         .join("installs")
         .join(tool)
-        .join(&version)
+        .join(&installation_version)
         .join(current_target_for_tool(tool));
     let candidates = runtime_command_candidates(tool, command, &install_dir);
     let executable = candidates
@@ -363,6 +365,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
                 tool,
                 requested,
                 config.schema,
+                config.tool_options.get(tool),
                 SelectionSource::Project,
                 config_path,
                 lockfile_for_project(config_path),
@@ -386,6 +389,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
                 tool,
                 requested,
                 global.schema,
+                None,
                 SelectionSource::Global,
                 &global_path,
                 lockfile_for_global(pinset_home),
@@ -408,6 +412,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
             tool,
             requested,
             config.schema,
+            None,
             SelectionSource::Global,
             &global_path,
             lockfile_for_global(pinset_home),
@@ -446,17 +451,28 @@ fn selection_from_config(
     tool: &str,
     requested: &str,
     config_schema: u32,
+    configured_options: Option<&crate::ToolOptions>,
     source: SelectionSource,
     config_path: &Path,
     lockfile: Result<Option<crate::Lockfile>>,
 ) -> Result<ToolSelection> {
     let lockfile = lockfile?;
-    let version = if let Some(lockfile) = lockfile {
-        validate_lock_matches_tool(&lockfile, tool, requested, config_path)?
-            .version
-            .clone()
+    let (version, installation_version) = if let Some(lockfile) = lockfile {
+        let locked = validate_lock_matches_tool(&lockfile, tool, requested, config_path)?;
+        let expected_options = configured_options
+            .map(crate::ToolOptions::lock_options)
+            .unwrap_or_default();
+        if locked.options != expected_options {
+            return Err(Error::LockfileMismatch {
+                selection_path: config_path.to_path_buf(),
+                tool: tool.to_owned(),
+                configured: format!("{requested} with structured options"),
+                locked: format!("{} with different structured options", locked.version),
+            });
+        }
+        (locked.version.clone(), locked.installation_version())
     } else if config_schema < crate::PROJECT_CONFIG_SCHEMA {
-        requested.to_owned()
+        (requested.to_owned(), requested.to_owned())
     } else {
         return Err(Error::ReadLockfile {
             path: if source == SelectionSource::Project {
@@ -477,6 +493,7 @@ fn selection_from_config(
         tool: tool.to_owned(),
         requested: requested.to_owned(),
         version,
+        installation_version,
         source,
         config_path: config_path.to_path_buf(),
     })
@@ -487,6 +504,7 @@ fn selection_from_config(
     tool: &str,
     requested: &str,
     _config_schema: u32,
+    _configured_options: Option<&crate::ToolOptions>,
     source: SelectionSource,
     config_path: &Path,
     _lockfile: (),
@@ -495,6 +513,7 @@ fn selection_from_config(
         tool: tool.to_owned(),
         requested: requested.to_owned(),
         version: requested.to_owned(),
+        installation_version: requested.to_owned(),
         source,
         config_path: config_path.to_path_buf(),
     })
@@ -636,7 +655,7 @@ pub fn path_with_selected_tools(
             let install_dir = pinset_home
                 .join("installs")
                 .join(provider.tool)
-                .join(&selection.version)
+                .join(&selection.installation_version)
                 .join(current_target_for_tool(provider.tool));
             let command_dir =
                 if provider.tool == "python" && selection.source == SelectionSource::Project {
@@ -671,7 +690,7 @@ pub fn path_with_selected_tools(
         let install_dir = pinset_home
             .join("installs")
             .join(provider.tool)
-            .join(&selection.version)
+            .join(&selection.installation_version)
             .join(current_target_for_tool(provider.tool));
         let command_dir =
             if provider.tool == "python" && selection.source == SelectionSource::Project {
@@ -761,7 +780,7 @@ pub fn selected_runtime_environment(
         let install_dir = pinset_home
             .join("installs")
             .join(provider.tool)
-            .join(&selection.version)
+            .join(&selection.installation_version)
             .join(current_target_for_tool(provider.tool));
         if provider.capabilities.environment == RuntimeEnvironmentKind::Python {
             if selection.source == SelectionSource::Project

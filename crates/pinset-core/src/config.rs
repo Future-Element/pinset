@@ -36,10 +36,63 @@ pub struct ProjectConfig {
     pub policy: ProjectPolicy,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+    /// Identity-affecting options for a configured tool. Plain string selections remain valid.
+    #[serde(
+        default,
+        rename = "tool-options",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub tool_options: BTreeMap<String, ToolOptions>,
     #[serde(default)]
     pub tasks: BTreeMap<String, ProjectTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ToolOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+}
+
+impl ToolOptions {
+    pub fn lock_options(&self) -> BTreeMap<String, String> {
+        let mut options = BTreeMap::new();
+        if let Some(value) = &self.profile {
+            options.insert("profile".to_owned(), value.clone());
+        }
+        if !self.components.is_empty() {
+            let mut values = self.components.clone();
+            values.sort();
+            options.insert("components".to_owned(), values.join(","));
+        }
+        if !self.targets.is_empty() {
+            let mut values = self.targets.clone();
+            values.sort();
+            options.insert("targets".to_owned(), values.join(","));
+        }
+        if let Some(value) = &self.date {
+            options.insert("date".to_owned(), value.clone());
+        }
+        if let Some(value) = &self.distribution {
+            options.insert("distribution".to_owned(), value.clone());
+        }
+        if let Some(value) = &self.package {
+            options.insert("package".to_owned(), value.clone());
+        }
+        options
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -359,6 +412,7 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             reason: "tasks require schema 5; run `pinset migrate`".to_owned(),
         });
     }
+    validate_tool_options(config)?;
     if config.schema < 4 {
         if config.project_id.is_some() || config.environment.is_some() {
             return Err(Error::InvalidProjectConfig {
@@ -497,6 +551,93 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             return Err(Error::InvalidProjectConfig {
                 reason: format!("task {name} references undeclared profile {profile}"),
             });
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_options(config: &ProjectConfig) -> Result<()> {
+    for (tool, options) in &config.tool_options {
+        if !config.tools.contains_key(tool) {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("tool-options.{tool} requires tools.{tool}"),
+            });
+        }
+        for values in [&options.components, &options.targets] {
+            let unique = values.iter().collect::<std::collections::BTreeSet<_>>();
+            if unique.len() != values.len() || values.iter().any(|value| value.trim().is_empty()) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("tool-options.{tool} contains empty or duplicate values"),
+                });
+            }
+        }
+        match tool.as_str() {
+            "rust" => {
+                if options
+                    .profile
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "minimal" | "default" | "complete"))
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust profile must be minimal, default or complete".to_owned(),
+                    });
+                }
+                if options.distribution.is_some() || options.package.is_some() {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust tool options do not accept distribution or package"
+                            .to_owned(),
+                    });
+                }
+                if options.date.as_deref().is_some_and(|date| {
+                    let bytes = date.as_bytes();
+                    bytes.len() != 10
+                        || bytes[4] != b'-'
+                        || bytes[7] != b'-'
+                        || bytes
+                            .iter()
+                            .enumerate()
+                            .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
+                }) {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust nightly date must use YYYY-MM-DD".to_owned(),
+                    });
+                }
+            }
+            "java" => {
+                if options
+                    .distribution
+                    .as_deref()
+                    .is_some_and(|value| value != "temurin")
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java distribution must be temurin".to_owned(),
+                    });
+                }
+                if options
+                    .package
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "jdk" | "jre"))
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java package must be jdk or jre".to_owned(),
+                    });
+                }
+                if options.profile.is_some()
+                    || options.date.is_some()
+                    || !options.components.is_empty()
+                    || !options.targets.is_empty()
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java tool options accept only distribution and package".to_owned(),
+                    });
+                }
+            }
+            _ if options != &ToolOptions::default() => {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("tool-options.{tool} is not supported"),
+                });
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -907,6 +1048,39 @@ default = "unsafe"
         ));
     }
 
+    #[test]
+    fn schema_five_accepts_structured_rust_options_and_canonicalizes_identity_fields() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000026"
+
+[tools]
+rust = "nightly"
+
+[tool-options.rust]
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+date = "2026-07-16"
+"#,
+        )
+        .expect("structured Rust config");
+
+        let config = load_project_config(&path).expect("valid structured Rust config");
+        assert_eq!(
+            config.tool_options["rust"].lock_options(),
+            BTreeMap::from([
+                ("components".to_owned(), "clippy,rustfmt".to_owned()),
+                ("date".to_owned(), "2026-07-16".to_owned()),
+                ("profile".to_owned(), "minimal".to_owned()),
+                ("targets".to_owned(), "wasm32-unknown-unknown".to_owned()),
+            ])
+        );
+    }
+
     #[cfg(feature = "project-write")]
     #[test]
     fn atomically_creates_a_minimal_project_config() {
@@ -1005,6 +1179,7 @@ default = "unsafe"
             project_id: Some("4c5652e4-0000-4000-8000-000000000006".to_owned()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
             environment: None,
         };
@@ -1060,6 +1235,7 @@ default = "unsafe"
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
             environment: None,
         };

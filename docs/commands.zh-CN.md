@@ -2,13 +2,28 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v2.2 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset 当前开发版本的命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 4 与 5 项目配置会保留这个请求选择器，schema 3 锁文件记录精确解析版本。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。项目配置保留请求选择器，锁 schema 4 记录精确解析版本、选项与平台制品。
+
+schema 5 项目可以在不改变字符串选择器的情况下声明结构化选项：
+
+```toml
+[tools]
+rust = "nightly"
+
+[tool-options.rust]
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+date = "2026-07-16"
+```
+
+Rust 支持 `minimal`、`default`、`complete` profile。`components` 在所选 profile 上增加经过验证的组件，`targets` 安装额外的 `rust-std` 编译目标。固定 nightly 可以使用 `rust = "nightly"` 配合 `date`，也可以使用 `rust = "nightly-YYYY-MM-DD"`；不带日期的浮动 nightly 会被拒绝。不同选项集合使用不同安装身份，没有结构化选项的项目继续使用原版本目录。
 
 支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
@@ -78,7 +93,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 3 `pinset.lock`。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 4 `pinset.lock`。 |
 | 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
 | 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
@@ -202,7 +217,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时保持运行时锁为 schema 3；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
+| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时把运行时锁写为 schema 4；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -1016,6 +1031,6 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 ## 稳定协议边界
 
-Pinset v2.3 写入 schema 5 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–4 项目仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+当前开发版本写入 schema 5 项目配置，以及 schema 4 全局配置/运行时锁。schema 1–4 项目和 schema 1–3 锁仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
 
 v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

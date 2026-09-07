@@ -143,6 +143,7 @@ impl FlutterMetadataClient {
             provider: "flutter-official".to_owned(),
             released_at: release.release_date,
             metadata,
+            options: BTreeMap::new(),
             artifacts,
         })
     }

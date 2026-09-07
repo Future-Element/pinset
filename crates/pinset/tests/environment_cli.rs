@@ -36,6 +36,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
             project_id: Some(project_id.to_owned()),
             policy: Default::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
             environment: Some(environment.clone()),
         },
@@ -83,6 +84,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
         project_id: Some(project_id.to_owned()),
         policy: Default::default(),
         tools: BTreeMap::new(),
+        tool_options: Default::default(),
         tasks: BTreeMap::new(),
         environment: Some(changed),
     };
@@ -164,6 +166,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
             project_id: Some(project_id.to_owned()),
             policy: Default::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
             environment: Some(environment.clone()),
         },

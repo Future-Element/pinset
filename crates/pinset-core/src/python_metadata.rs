@@ -133,6 +133,7 @@ impl PythonMetadataClient {
             provider: "python-build-standalone".to_owned(),
             released_at: Some(release.date),
             metadata,
+            options: Default::default(),
             artifacts,
         })
     }

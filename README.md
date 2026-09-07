@@ -176,7 +176,7 @@ pnpm --version
 python --version
 ```
 
-`pinset.toml` stores selection intent, tasks, environment contracts, and policy; `pinset.lock` stores exact versions and platform artifacts. Project configuration uses schema 5 while the runtime lock remains schema 3. Encrypted environments do not participate in runtime artifact resolution.
+`pinset.toml` stores selection intent, structured tool options, tasks, environment contracts, and policy; `pinset.lock` stores exact versions, options, and platform artifacts. Project configuration uses schema 5 and the current development lock uses schema 4. Older locks remain readable until an explicit migration. Encrypted environments do not participate in runtime artifact resolution.
 
 ### 3. Run another version temporarily
 

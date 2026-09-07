@@ -99,7 +99,7 @@ pub use config::validate_project_lock_policy;
 pub use config::{
     EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType,
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
-    ProjectEnvironment, ProjectPolicy, ProjectTask, find_optional_project_config,
+    ProjectEnvironment, ProjectPolicy, ProjectTask, ToolOptions, find_optional_project_config,
     find_project_config, find_project_context, load_project_config,
     validate_environment_variable_value,
 };
@@ -191,7 +191,7 @@ pub use lockfile::{
     LockedArtifactOverlay, LockedTool, Lockfile, MVP_NODE_TARGETS, load_lockfile,
     load_lockfile_for_provider_refresh, load_lockfile_for_target_refresh, load_optional_lockfile,
     lockfile_path, save_lockfile, validate_lock_matches_project, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools,
+    validate_lock_matches_tool, validate_lock_matches_tool_options, validate_lock_matches_tools,
 };
 #[cfg(feature = "node-provider")]
 pub use node_lifecycle::{
@@ -278,7 +278,8 @@ pub use rust_metadata::{RustMetadataClient, RustRelease};
 #[cfg(feature = "rust-provider")]
 pub use rust_provider::{
     RUST_COMPONENTS, RUST_PROFILE, RUST_TARGETS, RustArchiveFormat, RustArtifactPlan, RustVersion,
-    plan_rust_artifact, rust_target_triple, validate_exact_rust_version,
+    plan_rust_artifact, plan_rust_nightly_artifact, rust_target_triple,
+    validate_exact_rust_version,
 };
 #[cfg(all(feature = "installer", feature = "rust-provider", feature = "lockfile"))]
 pub use rust_runtime::install_locked_rust;

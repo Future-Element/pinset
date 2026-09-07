@@ -47,8 +47,9 @@ use pinset_core::{
     validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
     validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
     validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
-    validate_project_lock_policy, validate_windows_batch_arguments, verify_download_cache,
+    validate_lock_matches_tool, validate_lock_matches_tool_options, validate_lock_matches_tools,
+    validate_managed_runtime_invocation, validate_project_lock_policy,
+    validate_windows_batch_arguments, verify_download_cache,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -237,7 +238,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Upgrade project configuration to schema 5 and runtime lock data to schema 3.
+    /// Upgrade project configuration to schema 5 and runtime lock data to schema 4.
     Migrate {
         /// Migrate the global selection state instead of a project.
         #[arg(long, conflicts_with = "cwd")]
@@ -1781,7 +1782,7 @@ fn current_report(
             let install_dir = home
                 .join("installs")
                 .join(provider.tool)
-                .join(&selection.version)
+                .join(&selection.installation_version)
                 .join(current_target_for_tool(provider.tool));
             Ok(CurrentReport {
                 command: command.to_owned(),
@@ -2243,9 +2244,16 @@ fn installation_receipt_status(
         .get("pinset_version")
         .and_then(toml::Value::as_str)
         .map(str::to_owned);
+    let receipt_identity = receipt
+        .get("install_identity")
+        .and_then(toml::Value::as_str);
     let identity_matches = receipt.get("complete").and_then(toml::Value::as_bool) == Some(true)
         && receipt.get("tool").and_then(toml::Value::as_str) == Some(installed.tool.as_str())
-        && receipt.get("version").and_then(toml::Value::as_str) == Some(installed.version.as_str())
+        && receipt
+            .get("install_identity")
+            .and_then(toml::Value::as_str)
+            .or_else(|| receipt.get("version").and_then(toml::Value::as_str))
+            == Some(installed.version.as_str())
         && receipt.get("target").and_then(toml::Value::as_str) == Some(target);
     if !identity_matches {
         return ("mismatch", Some(schema), installed_by);
@@ -2253,7 +2261,7 @@ fn installation_receipt_status(
     if matches!(schema, 1 | 2) {
         return ("legacy", Some(schema), installed_by);
     }
-    if schema != 3 {
+    if !matches!(schema, 3 | 4) || (schema == 4 && receipt_identity.is_none()) {
         return ("unsupported", Some(schema), installed_by);
     }
 
@@ -2935,6 +2943,7 @@ fn prefetch_project_artifacts(
     let lock_path = lockfile_path(&config_path);
     let lock = load_lockfile(&lock_path)?;
     validate_lock_matches_tools(&lock, &config.tools, &config_path)?;
+    validate_lock_matches_tool_options(&lock, &config.tool_options, &config_path)?;
     let sources = load_source_config(&source_config_path(&home))?;
     let items = locked_prefetch_items(&lock, &sources)?;
     let total = items.len();
@@ -3387,6 +3396,14 @@ fn resolve_locked_tool(
     tool: &str,
     selector: &str,
 ) -> Result<LockedTool, Box<dyn std::error::Error>> {
+    resolve_locked_tool_with_options(tool, selector, None)
+}
+
+fn resolve_locked_tool_with_options(
+    tool: &str,
+    selector: &str,
+    options: Option<&pinset_core::ToolOptions>,
+) -> Result<LockedTool, Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("validated provider");
     let mut locked = match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
@@ -3410,7 +3427,9 @@ fn resolve_locked_tool(
         }
         RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
         RuntimeMetadataKind::Java => JavaMetadataClient::official()?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Rust => RustMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Rust => {
+            RustMetadataClient::official()?.resolve_tool_with_options(selector, options)?
+        }
         RuntimeMetadataKind::Dotnet => DotnetMetadataClient::official()?.resolve_tool(selector)?,
     };
     locked.requested = selector.to_owned();
@@ -4009,6 +4028,7 @@ fn load_project_import_state(
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: Default::default(),
             tools: BTreeMap::new(),
+            tool_options: BTreeMap::new(),
             tasks: BTreeMap::new(),
             environment: None,
         }
@@ -4120,7 +4140,7 @@ fn run_update(
             &selected_config_path,
         )?)
     };
-    let (scope, config_path, tools, mut lockfile, legacy_target_tools) = if global {
+    let (scope, config_path, tools, tool_options, mut lockfile, legacy_target_tools) = if global {
         let config_path = selected_config_path;
         let config = load_global_config(&config_path)?;
         let (lockfile, legacy_target_tools) =
@@ -4130,6 +4150,7 @@ fn run_update(
             "global",
             config_path,
             config.tools,
+            BTreeMap::new(),
             lockfile,
             legacy_target_tools,
         )
@@ -4143,6 +4164,7 @@ fn run_update(
             "project",
             config_path,
             config.tools,
+            config.tool_options,
             lockfile,
             legacy_target_tools,
         )
@@ -4167,18 +4189,26 @@ fn run_update(
         if tool.is_some_and(|tool| tool != selected_tool) {
             continue;
         }
-        let previous = lockfile
+        let previous_tool = lockfile
             .tool(selected_tool)
-            .expect("validated lock contains configured tool")
-            .version
-            .clone();
-        let resolved = resolve_locked_tool(selected_tool, requested)?;
+            .expect("validated lock contains configured tool");
+        let previous = previous_tool.version.clone();
+        let previous_options = previous_tool.options.clone();
+        let mut resolved = resolve_locked_tool_with_options(
+            selected_tool,
+            requested,
+            tool_options.get(selected_tool),
+        )?;
+        resolved.options = tool_options
+            .get(selected_tool)
+            .map(pinset_core::ToolOptions::lock_options)
+            .unwrap_or_default();
         let report = UpdateReport {
             scope,
             config: config_path.clone(),
             tool: selected_tool.clone(),
             requested: requested.clone(),
-            changed: previous != resolved.version,
+            changed: previous != resolved.version || previous_options != resolved.options,
             previous,
             resolved: resolved.version.clone(),
         };
@@ -4639,6 +4669,7 @@ fn install_project_with_venv(
     let home = pinset_home()?;
     let policy_lock = load_lockfile(&lock_path)?;
     validate_lock_matches_tools(&policy_lock, &project.tools, &config_path)?;
+    validate_lock_matches_tool_options(&policy_lock, &project.tool_options, &config_path)?;
     validate_project_lock_policy(&project, &policy_lock, std::time::SystemTime::now())?;
     register_project_config(&home, &config_path)?;
     install_locked_selection(
@@ -4827,6 +4858,7 @@ fn install_tool_from_lock(
         })?;
     let installer = Installer::new(InstallLimits::for_tool(tool))?
         .with_offline(offline)
+        .with_install_identity(locked_tool.installation_version())
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
     let provider = runtime_provider(tool).expect("locked tool provider exists");
@@ -6850,7 +6882,7 @@ fn repair_tool_selection(
     let install_dir = home
         .join("installs")
         .join(&tool)
-        .join(&locked_tool.version)
+        .join(locked_tool.installation_version())
         .join(&target);
     if !install_dir.is_dir() {
         return Err(format!(
@@ -6861,15 +6893,22 @@ fn repair_tool_selection(
     }
     let receipt_path = install_dir.join(".pinset-install.toml");
     let receipt: toml::Value = toml::from_str(&fs::read_to_string(&receipt_path)?)?;
+    let receipt_schema = receipt
+        .get("schema")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or_default();
+    let receipt_install_identity = receipt
+        .get("install_identity")
+        .and_then(toml::Value::as_str);
     let owned = receipt.get("complete").and_then(toml::Value::as_bool) == Some(true)
         && receipt.get("tool").and_then(toml::Value::as_str) == Some(tool.as_str())
         && receipt.get("version").and_then(toml::Value::as_str)
             == Some(locked_tool.version.as_str())
+        && receipt_install_identity.unwrap_or(&locked_tool.version)
+            == locked_tool.installation_version()
         && receipt.get("target").and_then(toml::Value::as_str) == Some(target.as_str())
-        && receipt
-            .get("schema")
-            .and_then(toml::Value::as_integer)
-            .is_some_and(|schema| matches!(schema, 1..=3));
+        && matches!(receipt_schema, 1..=4)
+        && (receipt_schema < 4 || receipt_install_identity.is_some());
     if !owned {
         return Err(
             "refusing to repair an installation without a matching Pinset ownership receipt".into(),
@@ -7151,7 +7190,7 @@ mod tests {
         fs::write(
             install_dir.join(".pinset-install.toml"),
             format!(
-                "complete = true\ntool = \"node\"\nversion = \"24.0.0\"\ntarget = \"{target}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
+                "schema = 3\ncomplete = true\ntool = \"node\"\nversion = \"24.0.0\"\ntarget = \"{target}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
                 "ab".repeat(32)
             ),
         )
@@ -7164,6 +7203,7 @@ mod tests {
             provider: "nodejs".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: pinset_core::MVP_NODE_TARGETS
                 .into_iter()
                 .map(|target| {
@@ -7224,6 +7264,7 @@ mod tests {
             provider: "pnpm-npm".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         };
 
@@ -7409,6 +7450,7 @@ mod tests {
                 ("go".to_owned(), "1.24.0".to_owned()),
                 ("node".to_owned(), "22.0.0".to_owned()),
             ]),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
             environment: None,
         };
@@ -7419,6 +7461,7 @@ mod tests {
             provider: "nodejs-official".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         };
 
@@ -7622,6 +7665,7 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tool_options: Default::default(),
                 tasks: BTreeMap::new(),
                 environment: None,
             },
@@ -7958,6 +8002,7 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tool_options: Default::default(),
                 tasks: BTreeMap::new(),
                 environment: None,
             },
@@ -8091,6 +8136,7 @@ mod tests {
                     provider: format!("{tool}-npm"),
                     released_at: None,
                     metadata: BTreeMap::new(),
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -8131,6 +8177,7 @@ mod tests {
                     provider: "go-official".to_owned(),
                     released_at: None,
                     metadata: BTreeMap::new(),
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -8208,6 +8255,7 @@ mod tests {
                     provider: "adoptium-temurin".to_owned(),
                     released_at: None,
                     metadata,
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -8235,6 +8283,7 @@ mod tests {
             provider: provider.to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         }
     }

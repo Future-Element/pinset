@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema", "generated_by", "tool"],
   "properties": {
-    "schema": { "const": 3 },
+    "schema": { "const": 4 },
     "generated_by": { "type": "string", "pattern": "^pinset " },
     "tool": {
       "type": "array",
@@ -38,6 +38,10 @@
         "provider": { "type": "string", "minLength": 1 },
         "released-at": { "type": "string", "format": "date-time" },
         "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "options": {
           "type": "object",
           "additionalProperties": { "type": "string" }
         },

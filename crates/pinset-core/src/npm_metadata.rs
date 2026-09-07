@@ -322,6 +322,7 @@ impl NpmMetadataClient {
             provider: format!("{tool}-npm"),
             released_at,
             metadata: std::collections::BTreeMap::new(),
+            options: Default::default(),
             artifacts,
         })
     }

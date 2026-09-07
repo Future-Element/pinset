@@ -130,6 +130,37 @@ pub fn validate_exact_rust_version(version: &str) -> Result<()> {
     RustVersion::parse(version).map(|_| ())
 }
 
+pub fn plan_rust_nightly_artifact(
+    version: &str,
+    date: &str,
+    target: &str,
+    canonical_url: &str,
+) -> Result<RustArtifactPlan> {
+    RustVersion::parse(version)?;
+    validate_release_date(date)?;
+    let triple = rust_target_triple(target)?;
+    let archive_name = format!("rust-nightly-{triple}.tar.xz");
+    let expected_url = format!("https://static.rust-lang.org/dist/{date}/{archive_name}");
+    let url = Url::parse(canonical_url).map_err(|source| Error::InvalidRustArtifact {
+        reason: format!("invalid nightly archive URL: {source}"),
+    })?;
+    if url.as_str() != expected_url {
+        return Err(Error::InvalidRustArtifact {
+            reason: format!("nightly archive URL must be {expected_url}"),
+        });
+    }
+    Ok(RustArtifactPlan {
+        version: version.to_owned(),
+        target: target.to_owned(),
+        triple,
+        date: date.to_owned(),
+        artifact_path: format!("dist/{date}/{archive_name}"),
+        archive_root: format!("rust-nightly-{triple}"),
+        format: RustArchiveFormat::TarXz,
+        canonical_url: url.to_string(),
+    })
+}
+
 pub fn rust_target_triple(target: &str) -> Result<&'static str> {
     match target {
         "windows-x86_64" => Ok("x86_64-pc-windows-msvc"),

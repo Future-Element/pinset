@@ -64,6 +64,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
         project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), "24".to_owned())]),
+        tool_options: Default::default(),
         tasks: BTreeMap::new(),
         environment: None,
     };
@@ -780,7 +781,7 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert_eq!(preview["data"]["from_config_schema"], 2);
     assert_eq!(preview["data"]["from_lock_schema"], 2);
     assert_eq!(preview["data"]["to_config_schema"], 5);
-    assert_eq!(preview["data"]["to_lock_schema"], 3);
+    assert_eq!(preview["data"]["to_lock_schema"], 4);
     assert!(
         fs::read_to_string(&config_path)
             .expect("unchanged config")
@@ -802,7 +803,7 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert!(
         fs::read_to_string(lock_path)
             .expect("migrated lock")
-            .starts_with("schema = 3")
+            .starts_with("schema = 4")
     );
 }
 
@@ -840,6 +841,7 @@ fn write_project(project: &Path, configured_version: &str, locked_version: &str)
         project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
+        tool_options: Default::default(),
         tasks: BTreeMap::new(),
         environment: None,
     };

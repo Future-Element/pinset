@@ -64,7 +64,7 @@ fn named_tasks_preserve_arguments_cwd_and_exit_status_without_path_fallback() {
         "powershell.exe",
         "-NoProfile",
         "-Command",
-        "Write-Output ('arg=' + $args[0])",
+        "& { param([string]$value) Write-Output ('arg=' + $value) }",
     ]);
     #[cfg(not(windows))]
     let argument_task = task(["sh", "-c", "printf 'arg=%s\\n' \"$1\"", "probe"]);
@@ -88,6 +88,7 @@ fn named_tasks_preserve_arguments_cwd_and_exit_status_without_path_fallback() {
             ..ProjectPolicy::default()
         },
         tools: BTreeMap::new(),
+        tool_options: Default::default(),
         tasks: BTreeMap::from([
             ("args".to_owned(), argument_task),
             ("cwd".to_owned(), cwd_task),

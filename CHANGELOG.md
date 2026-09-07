@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add portable `status` and strict `check` diagnostics, redacted report schema 1, saved-report comparison, repair previews, and verified GitHub Action cache restores.
+- Add concurrent `cache prefetch`, verified offline bundle export/import, and an explicit offline locked-install mode that reports all missing artifacts before changing installation state.
+- Add schema 5 `[tool-options]`, lock schema 4 option identities, and installation receipt schema 4 so one exact release can coexist with different verified tool configurations.
+- Add Rust profiles, extra components, extra compilation targets, and fixed-date nightly toolchains. Rust artifacts and target overlays remain bound to the official v2 manifest and SHA-256 identities.
+
+Project configuration remains schema 5. Runtime locks migrate explicitly to schema 4; schema 1-3 locks remain readable. Installations without structured options retain their historical version-only directory identity, and receipt schemas 1-3 remain readable.
+
 ## 2.3.0 - 2026-09-07
 
 - Add schema 5 project tasks with argument-array commands, optional project-relative working directories, environment profiles, descriptions, and appended arguments through `pinset run <task> -- <arguments...>`.

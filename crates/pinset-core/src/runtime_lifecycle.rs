@@ -205,7 +205,10 @@ fn locked_config_selects_version(
         None if legacy_without_lock => return Ok(requested == version),
         None => load_lockfile(lock_path)?,
     };
-    Ok(validate_lock_matches_tool(&lockfile, tool, requested, config_path)?.version == version)
+    Ok(
+        validate_lock_matches_tool(&lockfile, tool, requested, config_path)?.installation_version()
+            == version,
+    )
 }
 
 pub fn find_tool_version_references(
@@ -436,6 +439,8 @@ struct InstallReceiptIdentity {
     complete: bool,
     tool: String,
     version: String,
+    #[serde(default)]
+    install_identity: Option<String>,
     target: String,
 }
 
@@ -453,10 +458,15 @@ fn has_matching_complete_receipt(
     };
     // Legacy schema 1 receipts remain readable, but every identity field must still agree with
     // the directory being inspected before the directory is considered Pinset-owned.
-    matches!(receipt.schema, 1..=3)
+    matches!(receipt.schema, 1..=4)
+        && (receipt.schema < 4 || receipt.install_identity.is_some())
         && receipt.complete
         && receipt.tool == tool
-        && receipt.version == version
+        && receipt
+            .install_identity
+            .as_deref()
+            .unwrap_or(&receipt.version)
+            == version
         && receipt.target == target
 }
 
@@ -554,6 +564,30 @@ mod tests {
         let installed = list_installed_tool_versions(home.path(), "bun").expect("installed");
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].version, "1.3.14");
+    }
+
+    #[test]
+    fn lists_schema_four_structured_install_identities() {
+        let home = tempfile::tempdir().expect("home");
+        let identity = "1.97.1--0123456789ab";
+        let directory = home
+            .path()
+            .join("installs")
+            .join("rust")
+            .join(identity)
+            .join("linux-x86_64");
+        fs::create_dir_all(&directory).expect("directory");
+        fs::write(
+            directory.join(".pinset-install.toml"),
+            format!(
+                "schema = 4\ncomplete = true\ntool = \"rust\"\nversion = \"1.97.1\"\ninstall_identity = \"{identity}\"\ntarget = \"linux-x86_64\"\n"
+            ),
+        )
+        .expect("receipt");
+
+        let installed = list_installed_tool_versions(home.path(), "rust").expect("installed");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].version, identity);
     }
 
     #[test]

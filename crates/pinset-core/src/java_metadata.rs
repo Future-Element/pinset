@@ -209,6 +209,7 @@ impl JavaMetadataClient {
             provider: "adoptium-temurin".to_owned(),
             released_at: Some(release.date),
             metadata,
+            options: BTreeMap::new(),
             artifacts,
         })
     }
