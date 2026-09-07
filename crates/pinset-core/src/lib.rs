@@ -167,7 +167,7 @@ pub use go_runtime::install_locked_go;
 pub use installer::{
     ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
     DownloadProgressEvent, InstallAlias, InstallLimits, InstallOutcome, InstallRequest, Installer,
-    install_payload_statistics, sha256_hex,
+    PrefetchOutcome, install_payload_statistics, sha256_hex,
 };
 #[cfg(any(feature = "installer", feature = "lockfile", feature = "npm-metadata"))]
 pub use integrity::{ArtifactIntegrity, IntegrityAlgorithm};

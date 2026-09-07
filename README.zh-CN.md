@@ -330,6 +330,10 @@ pinset check --repair-preview
 # 检查锁、缓存与安装所有权
 pinset lock audit --json
 pinset cache verify
+pinset cache prefetch --jobs 4
+pinset bundle export --output project.pinset-bundle.tar.gz
+pinset bundle import project.pinset-bundle.tar.gz
+pinset install --locked --offline
 
 # 修复具有匹配所有权收据的损坏安装
 pinset install node@24.0.0 --repair

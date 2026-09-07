@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pinset.future-element.com/schemas/bundle-manifest-v1.json",
+  "title": "Pinset offline bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "target", "lock_sha256", "artifacts"],
+  "properties": {
+    "schema": { "const": 1 },
+    "target": { "type": "string", "minLength": 1 },
+    "lock_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "integrity", "path", "bytes"],
+        "properties": {
+          "tool": { "type": "string", "minLength": 1 },
+          "integrity": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "pattern": "^artifacts/(sha256|sha512)/[0-9a-f]+\\.archive$" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

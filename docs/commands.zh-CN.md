@@ -129,7 +129,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 安装一个显式精确运行时，或安装项目/全局锁中的全部目标。 |
-| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--global | --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。 |
+| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。`--offline` 只适用于项目或全局锁。 |
 | 修改状态 | **是。** 写入缓存、运行时文件、收据和命令路由；锁定的 Python 项目可能创建或验证 `.venv`。不会修改选择。 |
 | 示例 | `pinset install --locked --cwd ./app` |
 | JSON | 不支持。 |
@@ -310,12 +310,26 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合下载缓存检查、验证、修复、清理和离线导入操作。 |
-| 语法与参数 | `pinset cache <list|info|verify|repair|clean|import> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`；必须指定二级命令。 |
 | 修改状态 | 取决于二级命令：`repair`、`clean` 与 `import` 会修改缓存状态。 |
 | 示例 | `pinset cache info` |
 | JSON | 没有一级命令输出；`list`、`info`、`verify`、`repair` 与 `clean` 支持 `--json`。 |
 | 退出码 | 二级命令成功为 `0`；二级命令缺失/无效或缓存失败为 `2`。 |
 | 关键错误 | 二级命令缺失、缓存路径不安全、内容损坏、完整性值无效或文件系统失败。 |
+
+### `cache prefetch`
+
+根据项目锁将当前平台制品下载到经过验证的内容寻址缓存，不解压也不安装。`--jobs <1..16>` 限制并发下载数，默认四个。启动 worker 前先验证锁，全部 worker 失败会集中报告。
+
+```sh
+pinset cache prefetch --jobs 4
+```
+
+### `bundle export` 与 `bundle import`
+
+`pinset bundle export --output project.pinset-bundle.tar.gz [--target <target>]` 使用项目锁和已验证缓存生成 bundle schema 1；制品缺失或损坏时拒绝导出。`pinset bundle import <文件>` 在提交缓存前验证条目路径、格式、目标平台、锁身份、制品大小及密码学身份。Bundle 只传输字节，不授予项目或 Provider 信任。
+
+导入后执行 `pinset install --locked --offline` 不会发出网络请求，并会在改变安装状态前一次报告当前平台缺少的全部制品。
 
 ### `cache list`
 

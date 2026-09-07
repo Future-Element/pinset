@@ -118,6 +118,14 @@ pub struct InstallOutcome {
     pub reused_existing: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefetchOutcome {
+    pub bytes_downloaded: u64,
+    pub integrity: String,
+    pub source_id: String,
+    pub reused_existing: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstallLimits {
     pub max_download_bytes: u64,
@@ -171,6 +179,7 @@ pub struct Installer {
     client: Client,
     limits: InstallLimits,
     progress_reporter: Option<Arc<dyn Fn(DownloadProgressEvent) + Send + Sync>>,
+    offline: bool,
 }
 
 #[derive(Debug)]
@@ -203,6 +212,7 @@ impl Installer {
             client,
             limits,
             progress_reporter: None,
+            offline: false,
         })
     }
 
@@ -212,6 +222,23 @@ impl Installer {
     ) -> Self {
         self.progress_reporter = Some(Arc::new(reporter));
         self
+    }
+
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
+    }
+
+    /// Populate the verified content-addressed cache without extracting or installing it.
+    pub fn prefetch(&self, pinset_home: &Path, artifact: &ArtifactSpec) -> Result<PrefetchOutcome> {
+        validate_artifact_request(artifact, 0)?;
+        let selected = self.select_artifact(pinset_home, artifact)?;
+        Ok(PrefetchOutcome {
+            bytes_downloaded: selected.bytes_downloaded,
+            integrity: selected.actual_integrity,
+            source_id: selected.source_id,
+            reused_existing: selected.bytes_downloaded == 0,
+        })
     }
 
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
@@ -325,6 +352,12 @@ impl Installer {
                 path: cache_path,
                 bytes_downloaded: 0,
                 actual_integrity: expected_integrity.canonical(),
+            });
+        }
+
+        if self.offline {
+            return Err(Error::OfflineArtifactMissing {
+                integrity: expected_integrity.canonical(),
             });
         }
 

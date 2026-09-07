@@ -1,15 +1,16 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env,
     ffi::OsString,
     fs,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{self, Command},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+mod bundle;
 mod diagnostics;
 mod environment;
 mod i18n;
@@ -17,22 +18,22 @@ mod self_update;
 
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DiscoveryReport, DiscoveryStatus, DotnetMetadataClient,
-    DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig, GoMetadataClient,
-    InstallLimits, Installer, JavaMetadataClient, LockAuditReport, LockAuditScope,
-    LockAuditSeverity, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient,
-    PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient, RuntimeInstallKind,
-    RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
-    SourceView, acquire_global_state_write_lock, acquire_project_state_write_lock,
-    audit_global_lock, audit_project_lock, clean_download_cache, command_tool,
-    create_project_config, create_project_python_environment, current_target_for_tool,
-    download_cache_info, ensure_shims, find_optional_project_config, find_project_config,
-    find_project_context, global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_dotnet, install_locked_flutter,
-    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
-    install_locked_python, install_locked_rust, install_payload_statistics,
-    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
-    list_installed_tool_versions, load_global_config, load_lockfile,
+    ArtifactFormat, ArtifactIntegrity, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
+    DiscoveryReport, DiscoveryStatus, DotnetMetadataClient, DownloadProgressEvent, Error,
+    FlutterMetadataClient, GlobalConfig, GoMetadataClient, InstallLimits, Installer,
+    JavaMetadataClient, LockAuditReport, LockAuditScope, LockAuditSeverity, LockedTool, Lockfile,
+    NodeMetadataClient, NpmMetadataClient, PROJECT_CONFIG_SCHEMA, ProjectConfig,
+    PythonMetadataClient, RuntimeInstallKind, RuntimeMetadataKind, RustMetadataClient,
+    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceKind, SourceView,
+    acquire_global_state_write_lock, acquire_project_state_write_lock, audit_global_lock,
+    audit_project_lock, clean_download_cache, command_tool, create_project_config,
+    create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
+    find_optional_project_config, find_project_config, find_project_context, global_config_path,
+    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
+    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
+    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
+    install_payload_statistics, is_managed_command_shim, list_all_installed_tool_versions,
+    list_download_cache, list_installed_tool_versions, load_global_config, load_lockfile,
     load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
     load_project_config, load_project_python_environment, load_source_config, load_user_settings,
     lockfile_path, managed_runtime_arguments, pinset_home, plan_prune_tool_versions,
@@ -156,6 +157,9 @@ enum Commands {
         /// Reinstall a damaged installation after verifying its ownership receipt.
         #[arg(long, requires = "selection")]
         repair: bool,
+        /// Require every locked artifact to be present in the verified local cache.
+        #[arg(long, conflicts_with = "repair")]
+        offline: bool,
     },
     /// Show Pinset-owned CLI, shim, data, and runtime installation paths.
     Paths {
@@ -289,6 +293,11 @@ enum Commands {
     Cache {
         #[command(subcommand)]
         command: CacheCommands,
+    },
+    /// Export or import a verified offline runtime bundle.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommands,
     },
     /// Run a named project task from pinset.toml.
     Run {
@@ -543,6 +552,37 @@ enum CacheCommands {
         #[arg(long, conflicts_with = "sha256")]
         integrity: Option<String>,
     },
+    /// Download every current-target artifact in a project lock without installing it.
+    Prefetch {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Maximum simultaneous downloads.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BundleCommands {
+    /// Export the locked target and its cached artifacts as a verified tar.gz bundle.
+    Export {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify and import an offline bundle into the local content-addressed cache.
+    Import {
+        bundle: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -640,6 +680,7 @@ impl Commands {
             Self::Check { json: true, .. } => Some("check"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
+            Self::Bundle { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
             Self::Env { command } => command.as_ref().and_then(EnvCommands::json_command),
             Self::Trust { command } => command.json_command(),
@@ -708,6 +749,17 @@ impl CacheCommands {
             Self::Verify { json: true } => Some("cache.verify"),
             Self::Repair { json: true, .. } => Some("cache.repair"),
             Self::Clean { json: true, .. } => Some("cache.clean"),
+            Self::Prefetch { json: true, .. } => Some("cache.prefetch"),
+            _ => None,
+        }
+    }
+}
+
+impl BundleCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Export { json: true, .. } => Some("bundle.export"),
+            Self::Import { json: true, .. } => Some("bundle.import"),
             _ => None,
         }
     }
@@ -805,6 +857,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "check"
                 | "lock"
                 | "cache"
+                | "bundle"
                 | "provider"
                 | "env"
                 | "trust"
@@ -816,7 +869,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
     };
     if !matches!(
         values[index].as_ref(),
-        "cache" | "lock" | "provider" | "env" | "trust" | "self"
+        "cache" | "bundle" | "lock" | "provider" | "env" | "trust" | "self"
     ) {
         return Some(values[index].as_ref().to_owned());
     }
@@ -824,8 +877,9 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
     let subcommand = values[index + 1..].iter().find(|value| match group {
         "cache" => matches!(
             value.as_ref(),
-            "list" | "info" | "verify" | "repair" | "clean"
+            "list" | "info" | "verify" | "repair" | "clean" | "prefetch"
         ),
+        "bundle" => matches!(value.as_ref(), "export" | "import"),
         "lock" => value.as_ref() == "audit",
         "provider" => matches!(value.as_ref(), "list" | "verify"),
         "env" => matches!(value.as_ref(), "list" | "identity"),
@@ -1243,17 +1297,21 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             global,
             cwd,
             repair,
+            offline,
         } => {
             if let Some(selection) = selection {
+                if offline {
+                    return Err("offline mode requires a project or global lockfile".into());
+                }
                 if repair {
                     repair_tool_selection(&selection, catalog)?;
                 } else {
                     install_tool_selection(&selection, catalog)?;
                 }
             } else if global {
-                install_global(&pinset_home()?, catalog)?;
+                install_global(&pinset_home()?, offline, catalog)?;
             } else {
-                install_project(&effective_cwd(cwd)?, catalog)?;
+                install_project(&effective_cwd(cwd)?, offline, catalog)?;
             }
         }
         Commands::Paths { tool, json } => run_paths(tool.as_deref(), json)?,
@@ -1355,6 +1413,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         } => run_prune(cwd, &project, dry_run, json)?,
         Commands::Lock { command } => return run_lock_command(command, catalog),
         Commands::Cache { command } => run_cache(command, catalog)?,
+        Commands::Bundle { command } => run_bundle(command)?,
         Commands::Run { task, arguments } => {
             return run_project_task(
                 &env::current_dir()?,
@@ -2833,14 +2892,245 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
             );
         }
+        CacheCommands::Prefetch { cwd, jobs, json } => {
+            let report = prefetch_project_artifacts(&effective_cwd(cwd)?, jobs)?;
+            if json {
+                print_json_success("cache.prefetch", report)?;
+            } else {
+                println!(
+                    "prefetched={} reused={} bytes={}",
+                    report.prefetched, report.reused, report.bytes
+                );
+            }
+        }
     }
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache run exec x doctor status check venv shim env trust activate completions source provider self";
+#[derive(Debug, Serialize)]
+struct PrefetchReport {
+    artifacts: usize,
+    prefetched: usize,
+    reused: usize,
+    bytes: u64,
+    jobs: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PrefetchItem {
+    tool: String,
+    artifact: ArtifactSpec,
+}
+
+fn prefetch_project_artifacts(
+    cwd: &Path,
+    jobs: usize,
+) -> Result<PrefetchReport, Box<dyn std::error::Error>> {
+    if !(1..=16).contains(&jobs) {
+        return Err("--jobs must be between 1 and 16".into());
+    }
+    let home = pinset_home()?;
+    let config_path = find_project_config(cwd)?;
+    let config = load_project_config(&config_path)?;
+    let lock_path = lockfile_path(&config_path);
+    let lock = load_lockfile(&lock_path)?;
+    validate_lock_matches_tools(&lock, &config.tools, &config_path)?;
+    let sources = load_source_config(&source_config_path(&home))?;
+    let items = locked_prefetch_items(&lock, &sources)?;
+    let total = items.len();
+    let queue = Arc::new(Mutex::new(VecDeque::from(items)));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(total.max(1)) {
+            let queue = Arc::clone(&queue);
+            let results = Arc::clone(&results);
+            let home = home.clone();
+            scope.spawn(move || {
+                loop {
+                    let item = queue.lock().expect("prefetch queue").pop_front();
+                    let Some(item) = item else { break };
+                    let result = match Installer::new(InstallLimits::for_tool(&item.tool)) {
+                        Ok(installer) => installer.prefetch(&home, &item.artifact),
+                        Err(error) => Err(error),
+                    }
+                    .map_err(|error| format!("{}: {error}", item.tool));
+                    results.lock().expect("prefetch results").push(result);
+                }
+            });
+        }
+    });
+    let results = Arc::try_unwrap(results)
+        .expect("prefetch workers finished")
+        .into_inner()?;
+    let failures = results
+        .iter()
+        .filter_map(|result| result.as_ref().err())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(format!(
+            "prefetch failed for {} artifact(s): {}",
+            failures.len(),
+            failures.join("; ")
+        )
+        .into());
+    }
+    let outcomes = results
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    Ok(PrefetchReport {
+        artifacts: total,
+        prefetched: outcomes
+            .iter()
+            .filter(|value| !value.reused_existing)
+            .count(),
+        reused: outcomes
+            .iter()
+            .filter(|value| value.reused_existing)
+            .count(),
+        bytes: outcomes.iter().map(|value| value.bytes_downloaded).sum(),
+        jobs,
+    })
+}
+
+fn locked_prefetch_items(
+    lock: &Lockfile,
+    sources: &pinset_core::SourceConfig,
+) -> Result<Vec<PrefetchItem>, Box<dyn std::error::Error>> {
+    let mut items = Vec::new();
+    let mut identities = BTreeSet::new();
+    for tool in &lock.tools {
+        let target = current_target_for_tool(&tool.name);
+        let Some(artifact) = tool.artifacts.iter().find(|value| value.target == target) else {
+            continue;
+        };
+        let identity = artifact.artifact_integrity()?.canonical();
+        if identities.insert(identity.clone()) {
+            items.push(PrefetchItem {
+                tool: tool.name.clone(),
+                artifact: ArtifactSpec {
+                    canonical_url: artifact.canonical_url.clone(),
+                    sources: artifact_sources(
+                        &tool.name,
+                        &artifact.artifact_path,
+                        &artifact.canonical_url,
+                        sources,
+                    )?,
+                    integrity: identity,
+                    format: artifact_format(artifact.format),
+                },
+            });
+        }
+        for overlay in &artifact.overlays {
+            let identity = overlay.artifact_integrity()?.canonical();
+            if identities.insert(identity.clone()) {
+                items.push(PrefetchItem {
+                    tool: tool.name.clone(),
+                    artifact: ArtifactSpec {
+                        canonical_url: overlay.canonical_url.clone(),
+                        sources: artifact_sources(
+                            &tool.name,
+                            &overlay.artifact_path,
+                            &overlay.canonical_url,
+                            sources,
+                        )?,
+                        integrity: identity,
+                        format: artifact_format(overlay.format),
+                    },
+                });
+            }
+        }
+    }
+    Ok(items)
+}
+
+fn artifact_sources(
+    tool: &str,
+    artifact_path: &str,
+    canonical_url: &str,
+    config: &pinset_core::SourceConfig,
+) -> Result<Vec<ArtifactSource>, Box<dyn std::error::Error>> {
+    if SUPPORTED_SOURCE_PROVIDERS.contains(&tool) {
+        return Ok(config
+            .resolve_artifact_sources(tool, artifact_path)?
+            .into_iter()
+            .map(|source| ArtifactSource {
+                id: source.alias,
+                url: source.url,
+                kind: match source.kind {
+                    SourceKind::Official => ArtifactSourceKind::Official,
+                    SourceKind::Custom => ArtifactSourceKind::Mirror,
+                },
+            })
+            .collect());
+    }
+    Ok(vec![ArtifactSource {
+        id: "official".to_owned(),
+        url: canonical_url.to_owned(),
+        kind: ArtifactSourceKind::Official,
+    }])
+}
+
+fn artifact_format(format: pinset_core::LockedArtifactFormat) -> ArtifactFormat {
+    match format {
+        pinset_core::LockedArtifactFormat::Zip => ArtifactFormat::Zip,
+        pinset_core::LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
+        pinset_core::LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
+    }
+}
+
+fn run_bundle(command: BundleCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    match command {
+        BundleCommands::Export {
+            cwd,
+            output,
+            target,
+            json,
+        } => {
+            let config = find_project_config(&effective_cwd(cwd)?)?;
+            let target = target.unwrap_or_else(pinset_core::current_target);
+            let outcome = bundle::export(
+                &home,
+                &lockfile_path(&config),
+                &absolutize(&output)?,
+                &target,
+            )?;
+            if json {
+                print_json_success("bundle.export", outcome)?;
+            } else {
+                println!(
+                    "exported {} artifact(s) for {} ({})",
+                    outcome.artifacts,
+                    outcome.target,
+                    format_bytes(outcome.bytes)
+                );
+            }
+        }
+        BundleCommands::Import { bundle: path, json } => {
+            let outcome =
+                bundle::import(&home, &absolutize(&path)?, &pinset_core::current_target())?;
+            if json {
+                print_json_success("bundle.import", outcome)?;
+            } else {
+                println!(
+                    "imported {} artifact(s) for {} ({})",
+                    outcome.artifacts,
+                    outcome.target,
+                    format_bytes(outcome.bytes)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
-const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
+const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
+const COMPLETION_BUNDLE_COMMANDS: &str = "export import";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
@@ -2880,7 +3170,7 @@ fn completion_script(shell: ActivationShell) -> String {
             detect) values="--cwd --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
-            install) values="__SELECTIONS__ --locked --global --cwd --repair --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
@@ -2895,6 +3185,7 @@ fn completion_script(shell: ActivationShell) -> String {
             status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -2923,7 +3214,7 @@ _pinset_completion() {
             detect) values="--cwd --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
-            install) values="__SELECTIONS__ --locked --global --cwd --repair --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
@@ -2938,6 +3229,7 @@ _pinset_completion() {
             status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -2956,10 +3248,11 @@ compdef _pinset_completion pinset"#
         ActivationShell::Fish => {
             r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__ -C --cwd -e --profile --no-env'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --global --cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --offline --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--available --long'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from bundle' -a '__BUNDLE_COMMANDS__ --cwd --output --target --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from lock' -a '__LOCK_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
@@ -2990,7 +3283,7 @@ complete -c pinset -f -a '--help --lang'"#
         'detect' { '--cwd --json --lang --help' -split ' ' }
         'import' { '--cwd --force --no-install --lang --help' -split ' ' }
         'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
-        'install' { '__SELECTIONS__ --locked --global --cwd --repair --lang --help' -split ' ' }
+        'install' { '__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help' -split ' ' }
         'paths' { '__PROVIDERS__ --json --lang --help' -split ' ' }
         'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
         'unset' { '__PROVIDERS__ --global --cwd --lang --help' -split ' ' }
@@ -3005,6 +3298,7 @@ complete -c pinset -f -a '--help --lang'"#
         { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
+        'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help' -split ' ' }
         'env' { '__ENV_COMMANDS__ --profile --cwd --json --lang --help' -split ' ' }
@@ -3028,6 +3322,7 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__SHELLS__", COMPLETION_SHELLS)
         .replace("__LOCK_COMMANDS__", COMPLETION_LOCK_COMMANDS)
         .replace("__CACHE_COMMANDS__", COMPLETION_CACHE_COMMANDS)
+        .replace("__BUNDLE_COMMANDS__", COMPLETION_BUNDLE_COMMANDS)
         .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
         .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
@@ -3174,9 +3469,9 @@ fn select_tools(
 
     if !no_install {
         let installation = if global {
-            install_global(&home, catalog)
+            install_global(&home, false, catalog)
         } else {
-            install_project(cwd, catalog)
+            install_project(cwd, false, catalog)
         };
         if let Err(error) = installation {
             let localized = catalog.command_error(error.as_ref());
@@ -3665,7 +3960,7 @@ fn run_project_import(
         return Ok(());
     }
 
-    if let Err(error) = install_project(&report.start, catalog) {
+    if let Err(error) = install_project(&report.start, false, catalog) {
         let localized = catalog.command_error(error.as_ref());
         let detail = localized
             .strip_prefix("error: ")
@@ -4112,7 +4407,7 @@ fn install_tool_selection(
     }
     let mut lockfile = new_lockfile();
     lockfile.upsert_tool(locked_tool)?;
-    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, true, catalog)
+    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, true, false, catalog)
 }
 
 fn unset_tool(
@@ -4263,7 +4558,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 33] = [
+    const COMMANDS: [&str; 34] = [
         "init",
         "detect",
         "import",
@@ -4289,6 +4584,7 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "prune",
         "lock",
         "cache",
+        "bundle",
         "venv",
         "paths",
         "env",
@@ -4323,13 +4619,18 @@ fn resolve_language(requested: Option<Language>) -> Result<Language, Box<dyn std
         .map_err(Into::into)
 }
 
-fn install_project(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
-    install_project_with_venv(cwd, false, catalog)
+fn install_project(
+    cwd: &Path,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    install_project_with_venv(cwd, false, offline, catalog)
 }
 
 fn install_project_with_venv(
     cwd: &Path,
     recreate_venv: bool,
+    offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
@@ -4340,7 +4641,14 @@ fn install_project_with_venv(
     validate_lock_matches_tools(&policy_lock, &project.tools, &config_path)?;
     validate_project_lock_policy(&project, &policy_lock, std::time::SystemTime::now())?;
     register_project_config(&home, &config_path)?;
-    install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
+    install_locked_selection(
+        &home,
+        &project.tools,
+        &config_path,
+        &lock_path,
+        offline,
+        catalog,
+    )?;
     if let Some(requested) = project.tools.get("python") {
         let distribution = selected_version_from_lock(
             "python",
@@ -4389,7 +4697,7 @@ fn run_venv_command(
         );
         return Ok(());
     }
-    install_project_with_venv(&cwd, action == "recreate", catalog)
+    install_project_with_venv(&cwd, action == "recreate", false, catalog)
 }
 
 fn ensure_project_python_environment(
@@ -4433,7 +4741,11 @@ fn ensure_project_python_environment(
     Ok(())
 }
 
-fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
+fn install_global(
+    home: &Path,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = global_config_path(home);
     let config: GlobalConfig = load_global_config(&config_path)?;
     install_locked_selection(
@@ -4441,6 +4753,7 @@ fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::erro
         &config.tools,
         &config_path,
         &global_lockfile_path(home),
+        offline,
         catalog,
     )
 }
@@ -4450,12 +4763,51 @@ fn install_locked_selection(
     configured: &std::collections::BTreeMap<String, String>,
     config_path: &Path,
     lock_path: &Path,
+    offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lockfile = load_lockfile(lock_path)?;
     validate_lock_matches_tools(&lockfile, configured, config_path)?;
+    if offline {
+        validate_offline_artifacts(home, &lockfile)?;
+    }
     for provider in pinset_core::selected_provider_order(configured)? {
-        install_tool_from_lock(home, &lockfile, provider.tool, true, catalog)?;
+        install_tool_from_lock(home, &lockfile, provider.tool, true, offline, catalog)?;
+    }
+    Ok(())
+}
+
+fn validate_offline_artifacts(
+    home: &Path,
+    lockfile: &Lockfile,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source_config = load_source_config(&source_config_path(home))?;
+    let items = locked_prefetch_items(lockfile, &source_config)?;
+    let mut missing = Vec::new();
+    for item in items {
+        let identity = ArtifactIntegrity::parse(&item.artifact.integrity)?;
+        let path = home
+            .join("downloads")
+            .join(identity.algorithm().as_str())
+            .join(format!("{}.archive", identity.cache_key()));
+        if !path.is_file() {
+            missing.push(format!("{}:{}", item.tool, identity.canonical()));
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "offline cache is missing {} artifact(s): {}",
+            missing.len(),
+            missing.join(", ")
+        )
+        .into());
+    }
+    let verification = verify_download_cache(home)?;
+    if verification.corrupt > 0 {
+        return Err(Error::DownloadCacheCorrupt {
+            entries: verification.corrupt,
+        }
+        .into());
     }
     Ok(())
 }
@@ -4465,6 +4817,7 @@ fn install_tool_from_lock(
     lockfile: &Lockfile,
     tool: &str,
     register_shims: bool,
+    offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let locked_tool = lockfile
@@ -4473,6 +4826,7 @@ fn install_tool_from_lock(
             tool: tool.to_owned(),
         })?;
     let installer = Installer::new(InstallLimits::for_tool(tool))?
+        .with_offline(offline)
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
     let provider = runtime_provider(tool).expect("locked tool provider exists");
@@ -5244,7 +5598,7 @@ fn install_ephemeral_selection(
         lockfile.upsert_tool(locked_tool)?;
     }
     for provider in providers {
-        install_tool_from_lock(home, &lockfile, provider.tool, false, catalog)?;
+        install_tool_from_lock(home, &lockfile, provider.tool, false, false, catalog)?;
     }
     Ok(())
 }
@@ -6542,7 +6896,7 @@ fn repair_tool_selection(
     lockfile.upsert_tool(locked_tool)?;
     let backup = expected_parent.join(format!(".{target}.repair-backup-{}", uuid::Uuid::new_v4()));
     fs::rename(&install_dir, &backup)?;
-    if let Err(error) = install_tool_from_lock(&home, &lockfile, &tool, true, catalog) {
+    if let Err(error) = install_tool_from_lock(&home, &lockfile, &tool, true, false, catalog) {
         if install_dir.exists() {
             return Err(format!(
                 "repair failed and the unexpected replacement prevents rollback; original remains at {}: {error}",

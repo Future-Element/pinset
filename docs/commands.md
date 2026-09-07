@@ -129,7 +129,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Install one explicit exact runtime, or install every target from a project/global lock. |
-| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--global | --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. |
+| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. `--offline` is valid only with a project or global lock. |
 | Modifies state | **Yes.** Writes cache entries, runtime files, receipts, and command routes; a locked Python project may create or validate `.venv`. It does not change a selection. |
 | Example | `pinset install --locked --cwd ./app` |
 | JSON | No. |
@@ -310,12 +310,26 @@ The cache stores verified archives by integrity identity. Cache inspection never
 | Field | Description |
 | --- | --- |
 | Purpose | Group download-cache inspection, verification, repair, cleanup, and offline import operations. |
-| Syntax and arguments | `pinset cache <list|info|verify|repair|clean|import> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`; a subcommand is required. |
 | Modifies state | Depends on the subcommand: `repair`, `clean`, and `import` modify cache state. |
 | Example | `pinset cache info` |
 | JSON | No group-level output; `list`, `info`, `verify`, `repair`, and `clean` support `--json`. |
 | Exit | `0` for successful subcommand completion; `2` for missing/invalid subcommand or cache failure. |
 | Key errors | Missing subcommand, unsafe cache path, corruption, invalid integrity, or filesystem failure. |
+
+### `cache prefetch`
+
+Downloads the current-platform artifacts from the project lock into the verified content-addressed cache without extracting or installing them. `--jobs <1..16>` limits concurrent downloads and defaults to four. Lock validation happens before workers start, and worker failures are reported together.
+
+```sh
+pinset cache prefetch --jobs 4
+```
+
+### `bundle export` and `bundle import`
+
+`pinset bundle export --output project.pinset-bundle.tar.gz [--target <target>]` creates bundle schema 1 from the project lock and verified cache files. Export fails if a required artifact is absent or corrupt. `pinset bundle import <file>` validates entry paths, format, target, lock identity, artifact sizes, and cryptographic identities before committing artifacts to the local cache. A bundle transports bytes only and never grants project or Provider trust.
+
+After import, `pinset install --locked --offline` makes no network requests. It reports every missing current-platform artifact before changing installation state.
 
 ### `cache list`
 

@@ -1018,6 +1018,10 @@ pub enum Error {
     },
 
     #[cfg(feature = "installer")]
+    #[error("offline mode requires cached artifact {integrity}")]
+    OfflineArtifactMissing { integrity: String },
+
+    #[cfg(feature = "installer")]
     #[error("required runtime path must be relative and contained: {path}")]
     InvalidRequiredPath { path: PathBuf },
 

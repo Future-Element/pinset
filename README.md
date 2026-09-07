@@ -330,6 +330,10 @@ pinset check --repair-preview
 # Check locks, cache bytes, and installation ownership
 pinset lock audit --json
 pinset cache verify
+pinset cache prefetch --jobs 4
+pinset bundle export --output project.pinset-bundle.tar.gz
+pinset bundle import project.pinset-bundle.tar.gz
+pinset install --locked --offline
 
 # Repair a damaged installation with a matching ownership receipt
 pinset install node@24.0.0 --repair
