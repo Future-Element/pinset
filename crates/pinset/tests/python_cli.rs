@@ -33,14 +33,23 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
     let pip = pinset(&project, &home, &["which", "pip"]);
     assert_success_contains(&pip, &python_executable(&environment).display().to_string());
 
-    for arguments in [vec!["exec", "--", "pytest", "tests/unit"], vec!["--", "pytest", "tests/unit"]] {
-    let executed = pinset(&project, &home, &arguments);
-    assert_success_contains(&executed, "fake-pytest tests/unit");
-    let stdout = String::from_utf8_lossy(&executed.stdout);
-    let virtual_env = stdout.lines().find_map(|line| line.strip_prefix("VIRTUAL_ENV=")).expect("virtual environment");
-    assert_eq!(fs::canonicalize(virtual_env).unwrap(), fs::canonicalize(&environment).unwrap());
-    assert_success_contains(&executed, "PYTHONHOME=");
-    assert!(!String::from_utf8_lossy(&executed.stdout).contains("PYTHONHOME=must-be-removed"));
+    for arguments in [
+        vec!["exec", "--", "pytest", "tests/unit"],
+        vec!["--", "pytest", "tests/unit"],
+    ] {
+        let executed = pinset(&project, &home, &arguments);
+        assert_success_contains(&executed, "fake-pytest tests/unit");
+        let stdout = String::from_utf8_lossy(&executed.stdout);
+        let virtual_env = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("VIRTUAL_ENV="))
+            .expect("virtual environment");
+        assert_eq!(
+            fs::canonicalize(virtual_env).unwrap(),
+            fs::canonicalize(&environment).unwrap()
+        );
+        assert_success_contains(&executed, "PYTHONHOME=");
+        assert!(!String::from_utf8_lossy(&executed.stdout).contains("PYTHONHOME=must-be-removed"));
     }
 
     let doctor = pinset(&project, &home, &["doctor", "--json"]);
@@ -48,9 +57,13 @@ fn routes_python_and_project_scripts_through_the_owned_environment_without_activ
     let report: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor JSON");
     assert_eq!(report["data"]["python_environment"]["status"], "ok");
     assert_eq!(
-        fs::canonicalize(report["data"]["python_environment"]["path"].as_str().unwrap()).unwrap(),
-        fs::canonicalize(&environment)
-            .expect("canonical environment")
+        fs::canonicalize(
+            report["data"]["python_environment"]["path"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        fs::canonicalize(&environment).expect("canonical environment")
     );
 }
 

@@ -34,14 +34,14 @@ use pinset_core::{
     list_installed_tool_versions, load_global_config, load_lockfile,
     load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
     load_project_config, load_project_python_environment, load_source_config, load_user_settings,
-    lockfile_path, managed_runtime_arguments, pinset_home,
-    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
-    provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
+    lockfile_path, managed_runtime_arguments, pinset_home, plan_prune_tool_versions,
+    plan_uninstall_tool_version, project_python_environment_path, provider_dependency_order,
+    register_project_config, repair_download_cache, resolve_command,
     resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
     runtime_command_directory, runtime_environment_for_install, runtime_provider,
     save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
-    save_source_config, save_user_settings, scan_project_sources,
-    source_config_path, uninstall_node_version, uninstall_tool_version, user_settings_path,
+    save_source_config, save_user_settings, scan_project_sources, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path,
     validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
     validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
     validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
@@ -733,7 +733,10 @@ fn print_json_failure(
 }
 
 fn requested_json_command(arguments: &[OsString]) -> Option<String> {
-    let arguments = &arguments[..arguments.iter().position(|value| value == "--").unwrap_or(arguments.len())];
+    let arguments = &arguments[..arguments
+        .iter()
+        .position(|value| value == "--")
+        .unwrap_or(arguments.len())];
     if !arguments.iter().any(|value| value == "--json") {
         return None;
     }
@@ -1099,13 +1102,33 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         env::set_current_dir(cwd)?;
     }
     if !cli.execute.is_empty() {
-        if cli.profile.is_some() { find_project_config(&env::current_dir()?)?; }
-        return execute_selected(&env::current_dir()?, &cli.execute, false, cli.profile.as_deref(), cli.no_env, true, catalog);
+        if cli.profile.is_some() {
+            find_project_config(&env::current_dir()?)?;
+        }
+        return execute_selected(
+            &env::current_dir()?,
+            &cli.execute,
+            false,
+            cli.profile.as_deref(),
+            cli.no_env,
+            true,
+            catalog,
+        );
     }
-    if cli.profile.is_some() && !matches!(cli.command, Some(Commands::Env { .. } | Commands::Exec { .. } | Commands::X { .. })) {
+    if cli.profile.is_some()
+        && !matches!(
+            cli.command,
+            Some(Commands::Env { .. } | Commands::Exec { .. } | Commands::X { .. })
+        )
+    {
         return Err("-e/--profile requires env, exec, x, or a command after --".into());
     }
-    if cli.no_env && !matches!(cli.command, Some(Commands::Exec { .. } | Commands::X { .. })) {
+    if cli.no_env
+        && !matches!(
+            cli.command,
+            Some(Commands::Exec { .. } | Commands::X { .. })
+        )
+    {
         return Err("--no-env requires exec, x, or a command after --".into());
     }
     let Some(command) = cli.command else {
@@ -1294,7 +1317,15 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             if profile.is_some() && (no_env || cli.no_env) {
                 return Err("--profile conflicts with --no-env".into());
             }
-            return execute_selected(&cwd, &command, false, profile, no_env || cli.no_env, false, catalog);
+            return execute_selected(
+                &cwd,
+                &command,
+                false,
+                profile,
+                no_env || cli.no_env,
+                false,
+                catalog,
+            );
         }
         Commands::X {
             selection,
@@ -1305,7 +1336,15 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             let mut selected_command = Vec::with_capacity(command.len() + 1);
             selected_command.push(OsString::from(selection));
             selected_command.extend(command);
-            return execute_selected(&cwd, &selected_command, true, cli.profile.as_deref(), cli.no_env, false, catalog);
+            return execute_selected(
+                &cwd,
+                &selected_command,
+                true,
+                cli.profile.as_deref(),
+                cli.no_env,
+                false,
+                catalog,
+            );
         }
         Commands::Doctor { cwd, deep, json } => {
             let cwd = effective_cwd(cwd)?;
@@ -2719,7 +2758,8 @@ const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
 const COMPLETION_PROVIDER_COMMANDS: &str = "list verify";
-const COMPLETION_ENV_COMMANDS: &str = "init use reset set unset list reveal import export share unshare members recipient identity";
+const COMPLETION_ENV_COMMANDS: &str =
+    "init use reset set unset list reveal import export share unshare members recipient identity";
 const COMPLETION_TRUST_COMMANDS: &str = "add status revoke";
 const COMPLETION_SELF_COMMANDS: &str = "outdated update";
 
@@ -4828,7 +4868,9 @@ fn execute_selected(
         .first()
         .and_then(|value| value.to_str())
         .filter(|value| {
-            if allow_external { return false; }
+            if allow_external {
+                return false;
+            }
             value.split_once('@').is_some_and(|(tool, selector)| {
                 !selector.is_empty() && runtime_provider(tool).is_some()
             })

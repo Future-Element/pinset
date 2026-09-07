@@ -162,7 +162,8 @@ fn encrypted_environment(
     let Some(environment) = &config.environment else {
         return Ok(None);
     };
-    let selection = pinset_core::environment_selection(&pinset_home_from_env()?, &config_path, &config, None)?;
+    let selection =
+        pinset_core::environment_selection(&pinset_home_from_env()?, &config_path, &config, None)?;
     if selection.profile.is_none() {
         return Ok(None);
     }

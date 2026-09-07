@@ -33,10 +33,7 @@ pub(crate) enum EnvCommands {
         profile: Option<String>,
         #[arg(long)]
         auto: bool,
-        #[arg(
-            long,
-            conflicts_with = "no_recovery"
-        )]
+        #[arg(long, conflicts_with = "no_recovery")]
         recovery: Option<PathBuf>,
         #[arg(long)]
         no_recovery: bool,
@@ -229,20 +226,52 @@ pub(crate) enum TrustCommands {
     },
 }
 
-pub(crate) fn run_env_command(command: Option<EnvCommands>, default_profile: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn run_env_command(
+    command: Option<EnvCommands>,
+    default_profile: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some(command) = command else {
         let config_path = find_project_config(&env::current_dir()?)?;
         let config = load_project_config(&config_path)?;
-        let selection = pinset_core::environment_selection(&pinset_home()?, &config_path, &config, default_profile)?;
-        println!("profile={} source={}", selection.profile.as_deref().unwrap_or("none"), selection.source);
+        let selection = pinset_core::environment_selection(
+            &pinset_home()?,
+            &config_path,
+            &config,
+            default_profile,
+        )?;
+        println!(
+            "profile={} source={}",
+            selection.profile.as_deref().unwrap_or("none"),
+            selection.source
+        );
         if env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1") {
             println!("injection=disabled (PINSET_ENV_DISABLE)");
         }
         if let Some(environment) = &config.environment {
-            println!("profiles={}", environment.profiles.keys().cloned().collect::<Vec<_>>().join(", "));
+            println!(
+                "profiles={}",
+                environment
+                    .profiles
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             let root = config_path.parent().ok_or("project root is missing")?;
-            let trust = verify_project_trust(&pinset_home()?, root, required_project_id(&config)?, &toml::to_string(environment)?);
-            println!("trust={}", if trust.is_ok() { "trusted" } else { "not-trusted" });
+            let trust = verify_project_trust(
+                &pinset_home()?,
+                root,
+                required_project_id(&config)?,
+                &toml::to_string(environment)?,
+            );
+            println!(
+                "trust={}",
+                if trust.is_ok() {
+                    "trusted"
+                } else {
+                    "not-trusted"
+                }
+            );
         }
         return Ok(());
     };
@@ -257,25 +286,41 @@ pub(crate) fn run_env_command(command: Option<EnvCommands>, default_profile: Opt
             identity,
             cwd,
         } => {
-            let profile = name.or(profile).or_else(|| default_profile.map(str::to_owned));
+            let profile = name
+                .or(profile)
+                .or_else(|| default_profile.map(str::to_owned));
             let wizard = profile.is_none() || (recovery.is_none() && !no_recovery);
             if wizard && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
                 return Err("non-interactive setup requires a profile and --recovery <file> or explicit --no-recovery; example: pinset env init dev --no-recovery".into());
             }
-            let profile = match profile { Some(profile) => profile, None => prompt_line("Profile [dev]: ", Some("dev"))? };
+            let profile = match profile {
+                Some(profile) => profile,
+                None => prompt_line("Profile [dev]: ", Some("dev"))?,
+            };
             let mut recovery = recovery;
             let mut no_recovery = no_recovery;
             if recovery.is_none() && !no_recovery {
-                let answer = prompt_line("Recovery file outside the repository (or type 'none' to explicitly skip recovery): ", None)?;
-                if answer == "none" { no_recovery = true; } else { recovery = Some(PathBuf::from(answer)); }
+                let answer = prompt_line(
+                    "Recovery file outside the repository (or type 'none' to explicitly skip recovery): ",
+                    None,
+                )?;
+                if answer == "none" {
+                    no_recovery = true;
+                } else {
+                    recovery = Some(PathBuf::from(answer));
+                }
             }
             let mut identity = identity;
             if wizard && identity.is_none() && identity_file.is_none() {
                 let identities = list_identities(&pinset_home()?)?;
                 if !identities.is_empty() {
-                    for entry in identities { println!("identity {} {}", entry.id, entry.recipient); }
+                    for entry in identities {
+                        println!("identity {} {}", entry.id, entry.recipient);
+                    }
                     let answer = prompt_line("Identity ID to reuse [new]: ", Some("new"))?;
-                    if answer != "new" { identity = Some(answer); }
+                    if answer != "new" {
+                        identity = Some(answer);
+                    }
                 }
             }
             let cwd = effective_cwd(cwd)?;
@@ -292,28 +337,51 @@ pub(crate) fn run_env_command(command: Option<EnvCommands>, default_profile: Opt
                 let config_path = find_project_config(&cwd)?;
                 pinset_core::save_local_environment(&pinset_home()?, &config_path, Some(&profile))?;
                 println!("Profile {profile} will be used for this project on this machine.");
-                let answer = prompt_line("Trust this project's current environment configuration for command injection? [y/N]: ", Some("n"))?;
+                let answer = prompt_line(
+                    "Trust this project's current environment configuration for command injection? [y/N]: ",
+                    Some("n"),
+                )?;
                 if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
-                    run_trust_command(TrustCommands::Add { cwd: Some(cwd), project_id: None })?;
+                    run_trust_command(TrustCommands::Add {
+                        cwd: Some(cwd),
+                        project_id: None,
+                    })?;
                 }
             }
         }
-        EnvCommands::Use { profile, reset: _, cwd } => {
+        EnvCommands::Use {
+            profile,
+            reset: _,
+            cwd,
+        } => {
             let config_path = find_project_config(&effective_cwd(cwd)?)?;
             pinset_core::save_local_environment(&pinset_home()?, &config_path, profile.as_deref())?;
-            println!("{}", profile.map(|value| format!("selected local profile {value}")).unwrap_or_else(|| "cleared local profile preference".into()));
+            println!(
+                "{}",
+                profile
+                    .map(|value| format!("selected local profile {value}"))
+                    .unwrap_or_else(|| "cleared local profile preference".into())
+            );
         }
         EnvCommands::Reset { cwd } => {
             let config_path = find_project_config(&effective_cwd(cwd)?)?;
             pinset_core::save_local_environment(&pinset_home()?, &config_path, None)?;
             println!("cleared local profile preference");
         }
-        EnvCommands::Share { recipient, profile, cwd } => {
+        EnvCommands::Share {
+            recipient,
+            profile,
+            cwd,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
             change_recipient(&cwd, &profile, &recipient, true)?;
         }
-        EnvCommands::Unshare { recipient, profile, cwd } => {
+        EnvCommands::Unshare {
+            recipient,
+            profile,
+            cwd,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
             change_recipient(&cwd, &profile, &recipient, false)?;
@@ -321,7 +389,10 @@ pub(crate) fn run_env_command(command: Option<EnvCommands>, default_profile: Opt
         EnvCommands::Members { profile, cwd } => {
             let cwd = effective_cwd(cwd)?;
             let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
-            run_recipient(RecipientCommands::List { profile, cwd: Some(cwd) })?;
+            run_recipient(RecipientCommands::List {
+                profile,
+                cwd: Some(cwd),
+            })?;
         }
         EnvCommands::Set {
             name,
@@ -345,18 +416,24 @@ pub(crate) fn run_env_command(command: Option<EnvCommands>, default_profile: Opt
                     .expose_secret()
                     .to_owned()
             };
-            mutate_profile(&effective_cwd(cwd)?, profile.as_deref().or(default_profile), |document| {
-                remove_case_insensitive(&mut document.variables, &name);
-                document.variables.insert(name.clone(), value);
-                Ok(())
-            })?;
+            mutate_profile(
+                &effective_cwd(cwd)?,
+                profile.as_deref().or(default_profile),
+                |document| {
+                    remove_case_insensitive(&mut document.variables, &name);
+                    document.variables.insert(name.clone(), value);
+                    Ok(())
+                },
+            )?;
             println!("set {name}");
         }
         EnvCommands::Unset { name, profile, cwd } => {
             validate_variable_name(&name)?;
-            let removed = mutate_profile(&effective_cwd(cwd)?, profile.as_deref().or(default_profile), |document| {
-                Ok(remove_case_insensitive(&mut document.variables, &name))
-            })?;
+            let removed = mutate_profile(
+                &effective_cwd(cwd)?,
+                profile.as_deref().or(default_profile),
+                |document| Ok(remove_case_insensitive(&mut document.variables, &name)),
+            )?;
             println!("{} {name}", if removed { "unset" } else { "not set" });
         }
         EnvCommands::List { profile, json, cwd } => {
@@ -498,7 +575,12 @@ pub(crate) fn resolve_environment(
         }
         return Ok((EnvironmentCollision::Error, BTreeMap::new()));
     };
-    let selection = pinset_core::environment_selection(&pinset_home()?, &config_path, &config, explicit_profile)?;
+    let selection = pinset_core::environment_selection(
+        &pinset_home()?,
+        &config_path,
+        &config,
+        explicit_profile,
+    )?;
     let Some(profile) = selection.profile.as_deref() else {
         return Ok((environment.collision, BTreeMap::new()));
     };
@@ -539,10 +621,14 @@ fn prompt_line(prompt: &str, default: Option<&str>) -> Result<String, Box<dyn st
     print!("{prompt}");
     io::stdout().flush()?;
     let mut value = String::new();
-    if io::stdin().read_line(&mut value)? == 0 { return Err("setup cancelled: input closed".into()); }
+    if io::stdin().read_line(&mut value)? == 0 {
+        return Err("setup cancelled: input closed".into());
+    }
     let value = value.trim();
     if value.is_empty() {
-        return default.map(str::to_owned).ok_or_else(|| "a value is required".into());
+        return default
+            .map(str::to_owned)
+            .ok_or_else(|| "a value is required".into());
     }
     Ok(value.to_owned())
 }
@@ -551,7 +637,8 @@ fn profile_name(cwd: &Path, explicit: Option<&str>) -> Result<String, Box<dyn st
     let config_path = find_project_config(cwd)?;
     let config = load_project_config(&config_path)?;
     pinset_core::environment_selection(&pinset_home()?, &config_path, &config, explicit)?
-        .profile.ok_or_else(|| "select a profile with `pinset env use <name>` or -e <name>".into())
+        .profile
+        .ok_or_else(|| "select a profile with `pinset env use <name>` or -e <name>".into())
 }
 
 fn init_profile(
@@ -563,11 +650,21 @@ fn init_profile(
     identity_file: Option<&Path>,
     existing_identity: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if profile.is_empty() || profile.len() > 64 || !profile.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte)) {
-        return Err("profile names must contain 1–64 letters, digits, dots, underscores or hyphens".into());
+    if profile.is_empty()
+        || profile.len() > 64
+        || !profile
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err(
+            "profile names must contain 1–64 letters, digits, dots, underscores or hyphens".into(),
+        );
     }
     if (identity_file.is_some() || recovery.is_some()) && !io::stdin().is_terminal() {
-        return Err("passphrase-protected identity and recovery files require an interactive terminal".into());
+        return Err(
+            "passphrase-protected identity and recovery files require an interactive terminal"
+                .into(),
+        );
     }
     let config_path = find_project_config(cwd)?;
     let root = config_path
@@ -587,16 +684,19 @@ fn init_profile(
     let recipient = if let Some(id) = existing_identity {
         // Check that the private identity is available before declaring its public recipient.
         let _secret = load_identity_secret(&pinset_home()?, id)?;
-        list_identities(&pinset_home()?)?.into_iter().find(|record| record.id == id)
-            .ok_or("identity is not registered")?.recipient
+        list_identities(&pinset_home()?)?
+            .into_iter()
+            .find(|record| record.id == id)
+            .ok_or("identity is not registered")?
+            .recipient
     } else {
         let device = generate_identity();
         if let Some(path) = identity_file {
-        let passphrase = prompt_new_passphrase("Device identity passphrase: ")?;
-        backup_identity(path, device.secret(), passphrase)?;
-    } else {
-        store_identity(&pinset_home()?, &device)?;
-    }
+            let passphrase = prompt_new_passphrase("Device identity passphrase: ")?;
+            backup_identity(path, device.secret(), passphrase)?;
+        } else {
+            store_identity(&pinset_home()?, &device)?;
+        }
         device.record.recipient
     };
     let mut recipients = vec![recipient];
@@ -688,8 +788,10 @@ fn selected_profile(
         .environment
         .as_ref()
         .ok_or("project has no encrypted environment profiles")?;
-    let profile_name = pinset_core::environment_selection(&pinset_home()?, &config_path, &config, profile)?
-        .profile.ok_or("select a profile with `pinset env use <name>` or -e <name>")?;
+    let profile_name =
+        pinset_core::environment_selection(&pinset_home()?, &config_path, &config, profile)?
+            .profile
+            .ok_or("select a profile with `pinset env use <name>` or -e <name>")?;
     let selected = environment
         .profiles
         .get(&profile_name)

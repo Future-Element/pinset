@@ -9,6 +9,11 @@ spec.loader.exec_module(module)
 
 
 class ReleaseVersionTest(unittest.TestCase):
+    def test_double_digit_minor_versions_keep_their_exact_base(self):
+        for base in ("2.9.0", "2.10.0"):
+            self.assertTrue(module.validate(base, f"v{base}-rc.10"))
+        self.assertFalse(module.validate("2.9.0", "v2.10.0-rc.1"))
+
     def test_stable_and_multiple_candidates(self):
         for tag in ("v2.2.0", "2.2.0", "v2.2.0-rc.1", "v2.2.0-rc.2", "v2.2.0-rc.10"):
             with self.subTest(tag=tag):

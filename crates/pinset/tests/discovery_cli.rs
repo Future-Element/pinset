@@ -27,9 +27,16 @@ fn detect_emits_a_stable_json_report_without_writes() {
     assert_eq!(value["command"], "detect");
     assert_eq!(value["ok"], true);
     assert_eq!(value["data"]["can_import"], true);
-    let target = Path::new(value["data"]["target_config"].as_str().expect("target path"));
+    let target = Path::new(
+        value["data"]["target_config"]
+            .as_str()
+            .expect("target path"),
+    );
     assert_eq!(target.file_name().unwrap(), "pinset.toml");
-    assert_eq!(fs::canonicalize(target.parent().unwrap()).unwrap(), fs::canonicalize(&project).unwrap());
+    assert_eq!(
+        fs::canonicalize(target.parent().unwrap()).unwrap(),
+        fs::canonicalize(&project).unwrap()
+    );
     let findings = value["data"]["findings"].as_array().expect("findings");
     assert!(findings.iter().any(|finding| {
         finding["tool"] == "node"
