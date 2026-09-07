@@ -8,7 +8,7 @@
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 4 项目配置会保留这个请求选择器，schema 3 锁文件记录精确解析版本。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 4 与 5 项目配置会保留这个请求选择器，schema 3 锁文件记录精确解析版本。
 
 支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
@@ -54,7 +54,7 @@
 | --- | --- |
 | 用途 | 在当前目录创建最小项目配置。 |
 | 语法与参数 | `pinset init`；没有命令专属选项。 |
-| 修改状态 | **是。** 创建包含唯一 `project-id` 与严格项目策略的 schema 4 `pinset.toml`，但不选择或安装运行时。 |
+| 修改状态 | **是。** 创建包含唯一 `project-id` 与严格项目策略的 schema 5 `pinset.toml`，但不选择或安装运行时。 |
 | 示例 | `mkdir app && cd app && pinset init` |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；无法安全创建文件为 `2`。 |
@@ -78,7 +78,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 4 `pinset.toml` 与 schema 3 `pinset.lock`。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 3 `pinset.lock`。 |
 | 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
 | 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
@@ -202,7 +202,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把 schema 1–3 项目配置重写为 schema 4，同时保持运行时锁为 schema 3；还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
+| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时保持运行时锁为 schema 3；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -633,7 +633,13 @@ pinset --no-env -- node app.js
 
 Pinset 参数放在顶层 `--` 之前，之后的全部内容都传给子进程，包括 `--json`、`--lang` 和后续 `--`。`-C` / `--cwd` 在项目查找之前设置本次执行目录。`-e` / `--profile` 临时覆盖执行或常用环境操作的 profile，不能与 `--no-env` 同用。原有子命令上的 `--cwd`、`--profile` 保留，子命令参数优先于顶层参数。
 
-短入口支持受管命令、项目 Python 环境命令、明确的可执行文件路径，以及系统 PATH 中的其他程序。已配置但损坏的运行时会报错，不会绕过配置使用系统版本。任意程序必须经过明确的 `--` 边界，`pinset typo` 仍会报错。参数按数组传递，不作为 Shell 表达式解析；需要 Shell 语法时显式调用 Shell。原有 `exec`、`x` 的语法、运行时命令解析和子进程退出行为保留。具名任务 `pinset run` 属于 2.3，当前未实现。
+短入口支持受管命令、项目 Python 环境命令、明确的可执行文件路径，以及系统 PATH 中的其他程序。已配置但损坏的运行时会报错，不会绕过配置使用系统版本。任意程序必须经过明确的 `--` 边界，`pinset typo` 仍会报错。参数按数组传递，不作为 Shell 表达式解析；需要 Shell 语法时显式调用 Shell。原有 `exec`、`x` 的语法、运行时命令解析和子进程退出行为保留。
+
+### `run`
+
+`pinset run <任务> [-- <追加参数...>]` 执行 `[tasks.<名称>]` 中声明的任务。任务包含非空 `command` 字符串数组，还可声明项目内相对 `cwd`、`profile` 和说明 `description`。`--` 后的参数不经过 Shell 解析，直接追加到命令数组；子进程退出状态保持不变。
+
+任务环境按根参数 `-e`、`PINSET_ENV_PROFILE`、任务 profile、本机选择、项目默认值依次选择。`--no-env` 关闭注入。任务不存在时始终报错，不会回退执行系统程序。任务工作目录经过规范化后必须已经存在并位于项目内。
 
 `env init` 未指定 profile 或恢复方式时进入交互向导：选择 profile、恢复方式、新建或复用本机 identity。创建成功后记住本机环境，并单独询问是否信任项目。非交互调用必须提供 profile 和 `--recovery <路径>` 或显式 `--no-recovery`。新增位置参数 `env init dev` 和 `--identity <id>`，原有 `--profile`、`--identity-file` 保留；完全显式的初始化仍需用 `--auto` 设置共享默认，或另行 `env use` 设置本机默认。项目配置与锁文件 schema 不变。
 
@@ -668,7 +674,7 @@ Pinset 用相互独立的 [age](https://age-encryption.org/) 密文 profile 管�
 第一台电脑的常规流程如下：
 
 ```sh
-# 仅现有 schema 1–3 项目需要；新的 `pinset init` 项目已是 schema 4。
+# 仅现有 schema 1–4 项目需要；新的 `pinset init` 项目已是 schema 5。
 pinset migrate
 
 # 创建 pinset.env/development.age、设备身份和已加密的恢复身份。
@@ -706,10 +712,10 @@ Profile 名称限制为 1–64 位 ASCII 字母、数字、点、下划线或短
 | --- | --- |
 | 用途 | 创建一个空的加密 profile、一个设备 age X25519 identity，通常还会创建独立恢复 identity。 |
 | 语法与参数 | `pinset env init [<名称> \| --profile <名称>] [--auto] [--recovery <路径> \| --no-recovery] [--identity-file <路径> \| --identity <id>] [--cwd <路径>]`。`--identity-file` 会把设备 identity 保存到口令保护文件，而非系统密钥库。 |
-| 修改状态 | **是。** 创建 `pinset.env/<profile>.age`、更新 schema 4 `pinset.toml`、保存设备 identity，并可能创建恢复文件。`--auto` 把该 profile 设为 `auto-profile`。 |
+| 修改状态 | **是。** 创建 `pinset.env/<profile>.age`、更新 schema 4 或 5 的 `pinset.toml`、保存设备 identity，并可能创建恢复文件。`--auto` 把该 profile 设为 `auto-profile`。 |
 | 示例 | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
 | JSON | 不支持。 |
-| 关键错误 | 项目不是 schema 4、profile/文件已存在、profile 名无效、密钥库不可用、路径不安全、恢复输出已存在或加密/写入失败。最后配置写入失败时会删除新密文；操作前面已创建的 identity 或恢复文件可能仍保留，需人工检查。 |
+| 关键错误 | 项目早于 schema 4、profile/文件已存在、profile 名无效、密钥库不可用、路径不安全、恢复输出已存在或加密/写入失败。最后配置写入失败时会删除新密文；操作前面已创建的 identity 或恢复文件可能仍保留，需人工检查。 |
 
 只有在已有其他经过验证的 identity 备份方案时才使用 `--no-recovery`。在没有可用系统密钥库的 Linux/SSH 环境中，使用 `--identity-file <路径>`，后续交互命令通过 `PINSET_IDENTITY_FILE` 指向该受保护文件。
 
@@ -747,6 +753,38 @@ Profile 名称限制为 1–64 位 ASCII 字母、数字、点、下划线或短
 | 示例 | `pinset env list --profile ci --json` |
 | JSON | **支持。** 命令名为 `env.list`，包含 `profile` 和 `names`，永远不包含值。 |
 | 关键错误 | 没有选中 profile、没有匹配 identity、密文不安全/已损坏或 profile schema 不支持。 |
+
+### 环境变量契约
+
+schema 5 可以声明环境结构，而不在 `pinset.toml` 中保存密钥值：
+
+```toml
+[environment.variables.DATABASE_URL]
+type = "url"
+required = true
+secret = true
+profiles = ["development", "test"]
+
+[environment.variables.PORT]
+type = "integer"
+default = "3000"
+
+[environment.variables.MODE]
+type = "enum"
+required = true
+default = "development"
+values = ["development", "production"]
+```
+
+类型包括 `string`、`integer`、`boolean`、`url` 和 `enum`。布尔值必须为 `true` 或 `false`，URL 必须包含主机，枚举至少声明一个允许值。密钥变量不能声明默认值。Pinset 会在注入前检查契约；仅当密文 profile 中缺少同名变量时，才补入适用的非密钥默认值。
+
+### `env check`
+
+`pinset env check [--profile <名称>] [--json] [--cwd <路径>]` 在内存中解密一个 profile，并报告缺少的必填变量或类型错误。就绪时退出码为 `0`，完成检查但存在契约问题时为 `1`，无法开始检查时为 `2`。JSON 命令名为 `env.check`，在 `data.ok` 与问题列表中返回变量名和原因，不包含变量值或由变量值生成的摘要。
+
+### `env diff`
+
+`pinset env diff <左侧> <右侧> [--json] [--cwd <路径>]` 按不区分大小写的变量名及适用契约名比较两个 profile，只报告单侧存在的名称。JSON 命令名为 `env.diff`，不会输出变量值或值摘要。
 
 ### `env reveal`
 
@@ -932,9 +970,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.2.0
+      - uses: Future-Element/pinset@v2.3.0
         with:
-          version: 2.2.0
+          version: 2.3.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -952,6 +990,6 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 ## 稳定协议边界
 
-Pinset v2.0 写入 schema 4 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–3 项目仍可读取，并通过显式迁移升级。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+Pinset v2.3 写入 schema 5 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–4 项目仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
 
 v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

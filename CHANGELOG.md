@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.0 - 2026-09-07
+
+- Add schema 5 project tasks with argument-array commands, optional project-relative working directories, environment profiles, descriptions, and appended arguments through `pinset run <task> -- <arguments...>`.
+- Add typed environment-variable contracts for strings, integers, booleans, URLs, and enums, with required fields, profile filters, non-secret defaults, and secret-default rejection. Validate contracts before command injection.
+- Add `pinset env check` and `pinset env diff` reports that expose readiness and variable structure without printing secret values or secret-derived hashes.
+- Preserve schema 4 projects until explicit migration, retain TOML comments during schema-only migration, and keep migration writes atomic under the existing project-state lock.
+
+Project configuration migrates to schema 5; the runtime lock remains schema 3. Schema 1-4 projects remain readable, and existing schema 4 encrypted environments continue to work before migration.
+
 ## 2.2.0 - 2026-09-07
 
 - Add `pinset [-C <directory>] [-e <profile> | --no-env] -- <command> [arguments...]` for managed tools, project Python commands, and explicit external programs. Preserve the existing `exec` and `x` contracts.

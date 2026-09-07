@@ -232,7 +232,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Upgrade project configuration to schema 4 and runtime lock data to schema 3.
+    /// Upgrade project configuration to schema 5 and runtime lock data to schema 3.
     Migrate {
         /// Migrate the global selection state instead of a project.
         #[arg(long, conflicts_with = "cwd")]
@@ -288,6 +288,14 @@ enum Commands {
     Cache {
         #[command(subcommand)]
         command: CacheCommands,
+    },
+    /// Run a named project task from pinset.toml.
+    Run {
+        /// Task name declared under [tasks.<name>].
+        task: String,
+        /// Arguments appended after the task command, normally separated with --.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<OsString>,
     },
     /// Execute through the selected runtime without enabling direct command routing.
     Exec {
@@ -613,6 +621,8 @@ impl EnvCommands {
     fn json_command(&self) -> Option<&'static str> {
         match self {
             Self::List { json: true, .. } => Some("env.list"),
+            Self::Check { json: true, .. } => Some("env.check"),
+            Self::Diff { json: true, .. } => Some("env.diff"),
             Self::Identity {
                 command: environment::IdentityCommands::List { json: true },
             } => Some("env.identity.list"),
@@ -1118,18 +1128,23 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     if cli.profile.is_some()
         && !matches!(
             cli.command,
-            Some(Commands::Env { .. } | Commands::Exec { .. } | Commands::X { .. })
+            Some(
+                Commands::Env { .. }
+                    | Commands::Run { .. }
+                    | Commands::Exec { .. }
+                    | Commands::X { .. }
+            )
         )
     {
-        return Err("-e/--profile requires env, exec, x, or a command after --".into());
+        return Err("-e/--profile requires env, run, exec, x, or a command after --".into());
     }
     if cli.no_env
         && !matches!(
             cli.command,
-            Some(Commands::Exec { .. } | Commands::X { .. })
+            Some(Commands::Run { .. } | Commands::Exec { .. } | Commands::X { .. })
         )
     {
-        return Err("--no-env requires exec, x, or a command after --".into());
+        return Err("--no-env requires run, exec, x, or a command after --".into());
     }
     let Some(command) = cli.command else {
         if let Some(language) = cli.lang {
@@ -1306,6 +1321,16 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         } => run_prune(cwd, &project, dry_run, json)?,
         Commands::Lock { command } => return run_lock_command(command, catalog),
         Commands::Cache { command } => run_cache(command, catalog)?,
+        Commands::Run { task, arguments } => {
+            return run_project_task(
+                &env::current_dir()?,
+                &task,
+                &arguments,
+                cli.profile.as_deref(),
+                cli.no_env,
+                catalog,
+            );
+        }
         Commands::Exec {
             cwd,
             profile,
@@ -1356,7 +1381,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             }
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
-        Commands::Env { command } => environment::run_env_command(command, cli.profile.as_deref())?,
+        Commands::Env { command } => {
+            return environment::run_env_command(command, cli.profile.as_deref());
+        }
         Commands::Trust { command } => environment::run_trust_command(command)?,
         Commands::InternalEnvResolve {
             cwd,
@@ -2750,7 +2777,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache exec x doctor venv shim env trust activate completions source provider self";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache run exec x doctor venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
@@ -3623,6 +3650,7 @@ fn load_project_import_state(
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: Default::default(),
             tools: BTreeMap::new(),
+            tasks: BTreeMap::new(),
             environment: None,
         }
     };
@@ -3904,7 +3932,7 @@ fn run_migrate(
                 Some(acquire_project_state_write_lock(&home, &config_path)?)
             };
             let lock_path = lockfile_path(&config_path);
-            let config = load_project_config(&config_path)?;
+            let mut config = load_project_config(&config_path)?;
             let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
             if let Some((lockfile, _)) = &lockfile {
                 validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
@@ -3922,6 +3950,10 @@ fn run_migrate(
                 target_refresh_tools.clone(),
             );
             if !dry_run {
+                config.schema = PROJECT_CONFIG_SCHEMA;
+                if config.project_id.is_none() {
+                    config.project_id = Some(uuid::Uuid::new_v4().to_string());
+                }
                 if let Some((mut lockfile, legacy_target_tools)) = lockfile {
                     let mut resolver = resolve_locked_tool;
                     refresh_legacy_target_records(
@@ -4853,6 +4885,59 @@ fn print_current(
         );
     }
     Ok(())
+}
+
+fn run_project_task(
+    cwd: &Path,
+    task_name: &str,
+    appended: &[OsString],
+    explicit_profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let config_path = find_project_config(cwd)?;
+    let config = load_project_config(&config_path)?;
+    if config.schema < PROJECT_CONFIG_SCHEMA {
+        return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
+    }
+    let task = config
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| format!("project task {task_name:?} is not declared"))?;
+    let root = config_path
+        .parent()
+        .ok_or("project configuration has no parent")?;
+    let task_cwd = match &task.cwd {
+        Some(relative) => {
+            let root = fs::canonicalize(root)?;
+            let resolved = fs::canonicalize(root.join(relative))?;
+            if !resolved.starts_with(&root) || !resolved.is_dir() {
+                return Err(format!(
+                    "task {task_name:?} cwd must be an existing directory within the project"
+                )
+                .into());
+            }
+            resolved
+        }
+        None => root.to_path_buf(),
+    };
+    let mut command = task.command.iter().map(OsString::from).collect::<Vec<_>>();
+    command.extend_from_slice(appended);
+    let task_profile = if explicit_profile.is_some() || env::var_os("PINSET_ENV_PROFILE").is_some()
+    {
+        explicit_profile
+    } else {
+        task.profile.as_deref()
+    };
+    execute_selected(
+        &task_cwd,
+        &command,
+        false,
+        task_profile,
+        no_environment,
+        true,
+        catalog,
+    )
 }
 
 fn execute_selected(
@@ -6865,6 +6950,7 @@ mod tests {
                 ("go".to_owned(), "1.24.0".to_owned()),
                 ("node".to_owned(), "22.0.0".to_owned()),
             ]),
+            tasks: BTreeMap::new(),
             environment: None,
         };
         let node = LockedTool {
@@ -7077,6 +7163,7 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tasks: BTreeMap::new(),
                 environment: None,
             },
         )
@@ -7412,6 +7499,7 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tasks: BTreeMap::new(),
                 environment: None,
             },
         )

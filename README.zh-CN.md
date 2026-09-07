@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.2.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.3.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.2.0
+.\install.ps1 -Version 2.3.0
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -174,7 +174,7 @@ pnpm --version
 python --version
 ```
 
-`pinset.toml` 保存用户选择与策略，`pinset.lock` 保存精确版本和平台制品。项目配置使用 schema 4，运行时锁继续使用 schema 3；加密环境不会参与运行时制品解析。
+`pinset.toml` 保存用户选择、任务、环境变量契约与策略，`pinset.lock` 保存精确版本和平台制品。项目配置使用 schema 5，运行时锁继续使用 schema 3；加密环境不会参与运行时制品解析。
 
 ### 3. 临时运行其他版本
 
@@ -195,12 +195,35 @@ pinset import
 
 `detect` 只读且不联网；`import` 不删除或修改来源文件。
 
+### 5. 把日常命令保存为任务
+
+任务使用参数数组，不使用 Shell 字符串，因此参数边界与子进程退出状态保持明确：
+
+```toml
+[tasks.dev]
+command = ["pnpm", "dev"]
+profile = "development"
+description = "启动开发服务器"
+
+[tasks.test]
+command = ["pnpm", "test"]
+cwd = "packages/app"
+profile = "test"
+```
+
+```sh
+pinset run dev
+pinset run test -- --watch
+```
+
+环境优先级为显式 `-e`、`PINSET_ENV_PROFILE`、任务 profile、本机选择、项目默认值。任务不存在时直接报错，不会执行系统中的同名命令。
+
 ## 项目策略
 
 项目默认严格：未声明的工具不会继承全局选择，也不会静默使用系统命令。需要时在 `pinset.toml` 中显式调整：
 
 ```toml
-schema = 4
+schema = 5
 project-id = "4c5652e4-0000-4000-8000-000000000000"
 
 [policy]
@@ -281,9 +304,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.2.0
+      - uses: Future-Element/pinset@v2.3.0
         with:
-          version: 2.2.0
+          version: 2.3.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -347,7 +370,7 @@ pinset <命令> --help
 
 ## 迁移与升级
 
-旧项目升级到 schema 4 前可以先预览：
+旧项目升级到 schema 5 前可以先预览：
 
 ```sh
 pinset migrate --dry-run
@@ -404,11 +427,22 @@ pinset env reset
 
 `env use` 按项目路径和身份保存本机环境，worktree 互相隔离，CI 忽略本机偏好；`env share/unshare/members` 简化接收人操作。现有 `exec`、项目信任要求、配置和锁格式保持兼容。[命令文档](docs/commands.zh-CN.md#短执行入口22) 说明了选择优先级、非交互初始化和参数边界。2.2 不包含具名任务。
 
+### v2.3：任务与环境变量契约
+
+Pinset **2.3.0** 可以保存重复执行的项目流程，并在启动前检查环境是否就绪：
+
+```sh
+pinset run dev
+pinset run test -- --watch
+pinset env check --profile test
+pinset env diff development test
+```
+
+schema 5 增加 `[tasks.<名称>]` 与 `[environment.variables.<名称>]`。任务可以声明参数数组、项目内工作目录、profile 和说明；变量契约支持 `string`、`integer`、`boolean`、`url`、`enum`、必填、profile 过滤，以及非密钥变量的默认值。schema 4 项目继续可读可用，只有显式运行 `pinset migrate` 才会启用 schema 5。
+
 ### 未来方向
 
-Pinset 接下来会围绕项目环境的准备、使用、比较和升级展开。以下功能与命令形式均为规划内容，当前版本尚不支持。
-
-2.2 之后，2.3 将提供 `pinset run dev` 等具名任务、任务绑定环境和变量契约，进一步减少重复输入，同时保留现有命令和脚本接口的兼容性。
+Pinset 接下来会围绕项目环境的诊断、交付和升级展开。以下能力仍在规划中，当前版本尚不支持。
 
 | 方向 | 计划能力 |
 | --- | --- |
@@ -416,12 +450,11 @@ Pinset 接下来会围绕项目环境的准备、使用、比较和升级展开�
 | 语言能力深化 | Rust 组件、编译目标与固定日期 nightly；Java 发行版及 JDK/JRE 选择；Python 具名环境。 |
 | Workspace 与多项目 | 显式成员、共享工具默认值与成员覆盖、批量安装检查，以及工具引用关系查看。 |
 | 离线交付与缓存 | 制品预下载、可验证离线包、显式离线安装、更多镜像支持、并发下载与 CI 缓存。 |
-| 环境变量契约 | 必填变量、类型、说明、普通配置默认值、环境比较，以及配置结构比较。 |
 | 候选升级与恢复 | 准备候选锁、使用候选工具链测试、应用已验证的选择，以及恢复之前的工具链配置。 |
 | 受约束的 Provider 生态 | 开发辅助 CLI 的声明式 Provider、显式来源信任、清单验证与贡献者工具。 |
-| 任务与编辑器集成 | 轻量项目任务，以及后续用于工具链状态、环境选择、诊断和任务执行的 VS Code 集成。 |
+| 编辑器集成 | VS Code 工具链状态、环境选择、诊断和任务执行。 |
 
-后续按兼容的 2.x 功能版本推进：2.3 任务与变量契约，2.4 诊断与 CI，2.5 离线交付，2.6 Rust 与工具身份，2.7 Java/Python，2.8 Workspace，2.9 候选升级与恢复，2.10 Provider，2.11 编辑器集成。版本号是交付目标，不承诺发布日期；破坏公开兼容性的变更另立 3.0 计划。Pinset 继续保持明确的项目边界、制品验证和本地优先原则。
+后续按兼容的 2.x 功能版本推进：2.4 诊断与 CI，2.5 离线交付，2.6 Rust 与工具身份，2.7 Java/Python，2.8 Workspace，2.9 候选升级与恢复，2.10 Provider，2.11 编辑器集成。版本号是交付目标，不承诺发布日期；破坏公开兼容性的变更另立 3.0 计划。Pinset 继续保持明确的项目边界、制品验证和本地优先原则。
 
 ## 贡献与许可证
 

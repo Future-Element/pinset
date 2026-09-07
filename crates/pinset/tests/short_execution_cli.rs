@@ -1,4 +1,4 @@
-use pinset_core::{EnvironmentProfile, ProjectEnvironment};
+use pinset_core::{EnvironmentProfile, ProjectEnvironment, ProjectTask};
 use pinset_env::{EnvironmentDocument, generate_identity, trust_project, write_encrypted_profile};
 use secrecy::ExposeSecret;
 use std::{
@@ -49,6 +49,28 @@ fn print_variable(cmd: &mut Command) {
         "-c",
         "printf 'profile=%s\\n' \"$APP_TEST_VALUE\"",
     ]);
+}
+
+fn environment_probe_task(profile: &str) -> ProjectTask {
+    #[cfg(windows)]
+    let command = vec![
+        "cmd.exe".to_owned(),
+        "/d".to_owned(),
+        "/c".to_owned(),
+        "echo profile=%APP_TEST_VALUE%".to_owned(),
+    ];
+    #[cfg(not(windows))]
+    let command = vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "printf 'profile=%s\\n' \"$APP_TEST_VALUE\"".to_owned(),
+    ];
+    ProjectTask {
+        command,
+        cwd: None,
+        profile: Some(profile.to_owned()),
+        description: Some("Print the selected test profile".to_owned()),
+    }
 }
 
 #[test]
@@ -130,6 +152,9 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
             .collect(),
         ..Default::default()
     });
+    config
+        .tasks
+        .insert("show-profile".to_owned(), environment_probe_task("dev"));
     pinset_core::save_project_config(&config_path, &config).unwrap();
     let original = fs::read(&config_path).unwrap();
     for name in ["dev", "test"] {
@@ -169,6 +194,26 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
         &toml::to_string(config.environment.as_ref().unwrap()).unwrap(),
     )
     .unwrap();
+
+    let task_profile = cli(&project, &home)
+        .env("PINSET_IDENTITY", identity.secret().expose_secret())
+        .args(["run", "show-profile"])
+        .output()
+        .unwrap();
+    assert!(success(&task_profile).contains("profile=dev"));
+    let explicit_task_profile = cli(&project, &home)
+        .env("PINSET_IDENTITY", identity.secret().expose_secret())
+        .args(["-e", "test", "run", "show-profile"])
+        .output()
+        .unwrap();
+    assert!(success(&explicit_task_profile).contains("profile=test"));
+    let process_task_profile = cli(&project, &home)
+        .env("PINSET_IDENTITY", identity.secret().expose_secret())
+        .env("PINSET_ENV_PROFILE", "test")
+        .args(["run", "show-profile"])
+        .output()
+        .unwrap();
+    assert!(success(&process_task_profile).contains("profile=test"));
 
     for (flags, ci, process, expected) in [
         (vec![], false, None, "test"),

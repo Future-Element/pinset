@@ -6,7 +6,7 @@ inputs:
   version:
     description: Exact Pinset release version without the leading v.
     required: false
-    default: 2.2.0
+    default: 2.3.0
   install:
     description: Run pinset install --locked after Pinset is available.
     required: false
@@ -16,7 +16,7 @@ inputs:
     required: false
     default: .
   trust-project-id:
-    description: Expected non-secret schema 4 project-id to trust for encrypted environment injection.
+    description: Expected non-secret schema 4 or 5 project-id to trust for encrypted environment injection.
     required: false
     default: ""
 

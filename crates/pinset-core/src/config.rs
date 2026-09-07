@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
-pub const PROJECT_CONFIG_SCHEMA: u32 = 4;
+pub const PROJECT_CONFIG_SCHEMA: u32 = 5;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
@@ -36,6 +36,8 @@ pub struct ProjectConfig {
     pub policy: ProjectPolicy,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+    #[serde(default)]
+    pub tasks: BTreeMap<String, ProjectTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
 }
@@ -58,6 +60,53 @@ pub struct ProjectEnvironment {
     pub collision: EnvironmentCollision,
     #[serde(default)]
     pub profiles: BTreeMap<String, EnvironmentProfile>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, EnvironmentVariableContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectTask {
+    pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvironmentVariableType {
+    String,
+    Integer,
+    Boolean,
+    Url,
+    Enum,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct EnvironmentVariableContract {
+    #[serde(rename = "type", default = "default_variable_type")]
+    pub kind: EnvironmentVariableType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub secret: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub profiles: Vec<String>,
+    #[serde(default)]
+    pub values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+const fn default_variable_type() -> EnvironmentVariableType {
+    EnvironmentVariableType::String
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,7 +276,7 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
             source,
         })?;
 
-    if !matches!(config.schema, 1 | 2 | 3 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | 4 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -275,19 +324,20 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
 
 #[cfg(feature = "project-write")]
 pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
-    if !matches!(config.schema, 1 | 2 | 3 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | 4 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
     }
     validate_environment_config(config)?;
     let mut normalized = config.clone();
-    normalized.schema = PROJECT_CONFIG_SCHEMA;
+    // Preserve schema 4 until the user explicitly runs `pinset migrate`. Schemas 1-3
+    // keep the established automatic upgrade to schema 4 for compatibility.
+    normalized.schema = if config.schema < 4 { 4 } else { config.schema };
     if normalized.project_id.is_none() {
         normalized.project_id = Some(uuid::Uuid::new_v4().to_string());
     }
-    let serialized = toml::to_string_pretty(&normalized)
-        .map_err(|source| Error::SerializeProjectConfig { source })?;
+    let serialized = serialize_project_config_preserving_comments(path, &normalized)?;
     let mut file =
         AtomicWriteFile::options()
             .open(path)
@@ -304,7 +354,12 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
 }
 
 fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
-    if config.schema < PROJECT_CONFIG_SCHEMA {
+    if config.schema < PROJECT_CONFIG_SCHEMA && !config.tasks.is_empty() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "tasks require schema 5; run `pinset migrate`".to_owned(),
+        });
+    }
+    if config.schema < 4 {
         if config.project_id.is_some() || config.environment.is_some() {
             return Err(Error::InvalidProjectConfig {
                 reason: "project-id and environment require schema 4".to_owned(),
@@ -317,7 +372,7 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         .project_id
         .as_deref()
         .ok_or_else(|| Error::InvalidProjectConfig {
-            reason: "schema 4 requires project-id".to_owned(),
+            reason: format!("schema {} requires project-id", config.schema),
         })?;
     if !valid_project_id(project_id) {
         return Err(Error::InvalidProjectConfig {
@@ -325,9 +380,50 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         });
     }
 
+    for (name, task) in &config.tasks {
+        if !valid_task_name(name)
+            || task.command.is_empty()
+            || task.command.iter().any(String::is_empty)
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} requires a non-empty command array"),
+            });
+        }
+        if let Some(cwd) = &task.cwd {
+            let path = Path::new(cwd);
+            if path.as_os_str().is_empty()
+                || path.is_absolute()
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("task {name} cwd must stay within the project"),
+                });
+            }
+        }
+    }
     let Some(environment) = &config.environment else {
+        if let Some((name, _)) = config.tasks.iter().find(|(_, task)| task.profile.is_some()) {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!(
+                    "task {name} references an environment profile, but no environment is declared"
+                ),
+            });
+        }
         return Ok(());
     };
+    if config.schema < PROJECT_CONFIG_SCHEMA && !environment.variables.is_empty() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "environment variable contracts require schema 5; run `pinset migrate`"
+                .to_owned(),
+        });
+    }
     if let Some(profile) = &environment.auto_profile
         && !environment.profiles.contains_key(profile)
     {
@@ -362,7 +458,157 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             }
         }
     }
+    for (name, contract) in &environment.variables {
+        if !valid_environment_variable_name(name) {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("invalid environment variable name: {name}"),
+            });
+        }
+        if contract.secret && contract.default.is_some() {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("secret variable {name} cannot declare a default"),
+            });
+        }
+        if contract.kind == EnvironmentVariableType::Enum && contract.values.is_empty() {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("enum variable {name} requires values"),
+            });
+        }
+        if contract.kind != EnvironmentVariableType::Enum && !contract.values.is_empty() {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("only enum variable {name} may declare values"),
+            });
+        }
+        for profile in &contract.profiles {
+            if !environment.profiles.contains_key(profile) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("variable {name} references undeclared profile {profile}"),
+                });
+            }
+        }
+        if let Some(value) = &contract.default {
+            validate_environment_variable_value(name, contract, value)?;
+        }
+    }
+    for (name, task) in &config.tasks {
+        if let Some(profile) = &task.profile
+            && !environment.profiles.contains_key(profile)
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} references undeclared profile {profile}"),
+            });
+        }
+    }
     Ok(())
+}
+
+#[cfg(feature = "project-write")]
+fn serialize_project_config_preserving_comments(
+    path: &Path,
+    normalized: &ProjectConfig,
+) -> Result<String> {
+    if let Ok(original) = fs::read_to_string(path)
+        && let Ok(mut existing) = toml::from_str::<ProjectConfig>(&original)
+    {
+        let add_project_id = existing.project_id.is_none();
+        existing.schema = normalized.schema;
+        existing.project_id.clone_from(&normalized.project_id);
+        if existing == *normalized {
+            return Ok(rewrite_schema_header(
+                &original,
+                normalized.schema,
+                add_project_id.then_some(
+                    normalized
+                        .project_id
+                        .as_deref()
+                        .expect("normalized project config has a project-id"),
+                ),
+            ));
+        }
+    }
+    toml::to_string_pretty(normalized).map_err(|source| Error::SerializeProjectConfig { source })
+}
+
+#[cfg(feature = "project-write")]
+fn rewrite_schema_header(original: &str, schema: u32, project_id: Option<&str>) -> String {
+    let mut rewritten = String::with_capacity(original.len() + 64);
+    let mut replaced = false;
+    for line in original.split_inclusive('\n') {
+        if !replaced {
+            let leading = line.len() - line.trim_start().len();
+            let candidate = &line[leading..];
+            if let Some(after_name) = candidate.strip_prefix("schema") {
+                let whitespace = after_name.len() - after_name.trim_start().len();
+                if after_name[whitespace..].starts_with('=') {
+                    let equals = leading + "schema".len() + whitespace;
+                    let after_equals = equals + 1;
+                    let value_start = after_equals + line[after_equals..].len()
+                        - line[after_equals..].trim_start().len();
+                    let value_end = value_start
+                        + line[value_start..]
+                            .bytes()
+                            .take_while(|byte| byte.is_ascii_digit())
+                            .count();
+                    rewritten.push_str(&line[..value_start]);
+                    rewritten.push_str(&schema.to_string());
+                    rewritten.push_str(&line[value_end..]);
+                    if let Some(project_id) = project_id {
+                        if !line.ends_with('\n') {
+                            rewritten.push('\n');
+                        }
+                        rewritten.push_str(&format!("project-id = \"{project_id}\"\n"));
+                    }
+                    replaced = true;
+                    continue;
+                }
+            }
+        }
+        rewritten.push_str(line);
+    }
+    if replaced {
+        rewritten
+    } else {
+        format!("schema = {schema}\n{rewritten}")
+    }
+}
+
+pub fn validate_environment_variable_value(
+    name: &str,
+    contract: &EnvironmentVariableContract,
+    value: &str,
+) -> Result<()> {
+    let valid = match contract.kind {
+        EnvironmentVariableType::String => true,
+        EnvironmentVariableType::Integer => value.parse::<i64>().is_ok(),
+        EnvironmentVariableType::Boolean => matches!(value, "true" | "false"),
+        EnvironmentVariableType::Url => url::Url::parse(value).is_ok_and(|url| url.has_host()),
+        EnvironmentVariableType::Enum => contract.values.iter().any(|candidate| candidate == value),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidProjectConfig {
+            reason: format!("variable {name} does not match its declared type"),
+        })
+    }
+}
+
+fn valid_environment_variable_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && !name.eq_ignore_ascii_case("PATH")
+        && !name.to_ascii_uppercase().starts_with("PINSET_")
+}
+
+fn valid_task_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_profile_name(name: &str) -> bool {
@@ -567,10 +813,98 @@ mod tests {
     fn rejects_unknown_schema() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
-        fs::write(&config_path, "schema = 5\n[tools]\nnode = \"20\"\n").expect("config");
+        fs::write(&config_path, "schema = 6\n[tools]\nnode = \"20\"\n").expect("config");
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
-        assert!(matches!(error, Error::UnsupportedSchema { actual: 5 }));
+        assert!(matches!(error, Error::UnsupportedSchema { actual: 6 }));
+    }
+
+    #[test]
+    fn schema_five_validates_tasks_and_variable_contracts() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000004"
+
+[tools]
+
+[tasks.test]
+command = ["cargo", "test"]
+profile = "test"
+
+[environment.profiles.test]
+file = "pinset.env/test.age"
+recipients = ["age1test"]
+
+[environment.variables.PORT]
+type = "integer"
+required = true
+profiles = ["test"]
+
+[environment.variables.MODE]
+type = "enum"
+default = "development"
+values = ["development", "production"]
+"#,
+        )
+        .expect("schema five config");
+
+        let config = load_project_config(&path).expect("valid schema five config");
+        assert_eq!(config.tasks["test"].command, vec!["cargo", "test"]);
+        assert_eq!(
+            config.environment.as_ref().expect("environment").variables["PORT"].kind,
+            EnvironmentVariableType::Integer
+        );
+
+        fs::write(
+            &path,
+            r#"schema = 4
+project-id = "4c5652e4-0000-4000-8000-000000000004"
+[tools]
+[tasks.test]
+command = ["cargo", "test"]
+"#,
+        )
+        .expect("legacy config with task");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::InvalidProjectConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn variable_contracts_reject_invalid_defaults_and_secret_defaults() {
+        let contract = EnvironmentVariableContract {
+            kind: EnvironmentVariableType::Integer,
+            required: false,
+            secret: false,
+            default: None,
+            profiles: Vec::new(),
+            values: Vec::new(),
+            description: None,
+        };
+        assert!(validate_environment_variable_value("PORT", &contract, "42").is_ok());
+        assert!(validate_environment_variable_value("PORT", &contract, "4.2").is_err());
+
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000005"
+[tools]
+[environment.variables.TOKEN]
+secret = true
+default = "unsafe"
+"#,
+        )
+        .expect("invalid secret default");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::InvalidProjectConfig { .. })
+        ));
     }
 
     #[cfg(feature = "project-write")]
@@ -661,6 +995,26 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "project-write")]
+    #[test]
+    fn saving_schema_four_does_not_enable_schema_five_implicitly() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        let config = ProjectConfig {
+            schema: 4,
+            project_id: Some("4c5652e4-0000-4000-8000-000000000006".to_owned()),
+            policy: ProjectPolicy::default(),
+            tools: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            environment: None,
+        };
+        save_project_config(&path, &config).expect("save schema four");
+        assert_eq!(
+            load_project_config(&path).expect("load schema four").schema,
+            4
+        );
+    }
+
     #[test]
     fn parses_optional_provenance_policy_without_changing_schema_three() {
         let root = tempdir().expect("project");
@@ -706,6 +1060,7 @@ mod tests {
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            tasks: BTreeMap::new(),
             environment: None,
         };
         let lockfile = Lockfile {

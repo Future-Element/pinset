@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.2.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.3.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.2.0
+.\install.ps1 -Version 2.3.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -174,7 +174,7 @@ pnpm --version
 python --version
 ```
 
-`pinset.toml` stores selection intent and policy; `pinset.lock` stores exact versions and platform artifacts. Project configuration uses schema 4 while the runtime lock remains schema 3. Encrypted environments do not participate in runtime artifact resolution.
+`pinset.toml` stores selection intent, tasks, environment contracts, and policy; `pinset.lock` stores exact versions and platform artifacts. Project configuration uses schema 5 while the runtime lock remains schema 3. Encrypted environments do not participate in runtime artifact resolution.
 
 ### 3. Run another version temporarily
 
@@ -195,12 +195,35 @@ pinset import
 
 `detect` is read-only and offline. `import` does not delete or modify its source files.
 
+### 5. Save daily commands as tasks
+
+Declare argument arrays instead of shell strings so Pinset preserves boundaries and child exit status:
+
+```toml
+[tasks.dev]
+command = ["pnpm", "dev"]
+profile = "development"
+description = "Start the development server"
+
+[tasks.test]
+command = ["pnpm", "test"]
+cwd = "packages/app"
+profile = "test"
+```
+
+```sh
+pinset run dev
+pinset run test -- --watch
+```
+
+An explicit `-e` profile wins over `PINSET_ENV_PROFILE`, the task profile, the machine-local selection, and the project default. An unknown task is an error and never runs a same-named system command.
+
 ## Project policy
 
 Projects are strict by default: undeclared tools do not inherit global selections or silently use system commands. Change that behavior explicitly in `pinset.toml` when required:
 
 ```toml
-schema = 4
+schema = 5
 project-id = "4c5652e4-0000-4000-8000-000000000000"
 
 [policy]
@@ -281,9 +304,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.2.0
+      - uses: Future-Element/pinset@v2.3.0
         with:
-          version: 2.2.0
+          version: 2.3.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -347,7 +370,7 @@ pinset <command> --help
 
 ## Migration and upgrades
 
-Preview an older project's migration to schema 4 before writing changes:
+Preview an older project's migration to schema 5 before writing changes:
 
 ```sh
 pinset migrate --dry-run
@@ -404,11 +427,22 @@ pinset env reset
 
 `env use` stores a machine-local preference per project/worktree without changing shared defaults; CI ignores it. `env share/unshare/members` simplify recipient management. Existing `exec`, trust requirements, and project/lock formats remain compatible. See the [command reference](docs/commands.md#short-execution-22) for selection precedence, noninteractive setup, and execution boundaries. Named tasks are not part of 2.2.
 
+### v2.3: tasks and environment contracts
+
+Pinset **2.3.0** stores repeatable project workflows and validates environment readiness:
+
+```sh
+pinset run dev
+pinset run test -- --watch
+pinset env check --profile test
+pinset env diff development test
+```
+
+Schema 5 adds `[tasks.<name>]` and `[environment.variables.<name>]`. Tasks can declare an argument array, project-relative directory, profile, and description. Contracts support `string`, `integer`, `boolean`, `url`, and `enum`, required fields, profile filters, and defaults for non-secret values. Schema 4 projects remain readable and keep working until `pinset migrate` explicitly enables schema 5.
+
 ### Future directions
 
-Pinset's next steps focus on making project environments easier to prepare, use, compare, and upgrade. The features and command forms below are planned and are not available in the current release.
-
-After 2.2, version 2.3 will add named tasks such as `pinset run dev`, task-bound profiles, and variable contracts. Existing commands and script interfaces remain compatible.
+Pinset's next steps focus on making project environments easier to diagnose, deliver, and upgrade. The features below are planned and are not available in the current release.
 
 | Direction | Planned capabilities |
 | --- | --- |
@@ -416,12 +450,11 @@ After 2.2, version 2.3 will add named tasks such as `pinset run dev`, task-bound
 | Deeper language support | Rust components, compilation targets, and date-pinned nightly toolchains; Java distributions and JDK/JRE selection; named Python environments. |
 | Workspaces and multiple projects | Explicit members, shared tool defaults with member overrides, batch installation and checks, and tool-reference visibility. |
 | Offline delivery and caching | Artifact prefetching, verified offline bundles, explicit offline installation, broader mirror support, concurrent downloads, and CI caching. |
-| Environment variable contracts | Required variables, types, descriptions, configuration defaults, and structural profile comparison. |
 | Candidate upgrades and recovery | Prepare candidate locks, test with candidate toolchains, apply verified selections, and restore previous toolchain configuration. |
 | A constrained Provider ecosystem | Declarative Providers for development CLIs, explicit source trust, manifest validation, and contributor tooling. |
-| Tasks and editor integration | Lightweight project tasks, followed by VS Code integration for toolchain status, environment selection, diagnostics, and task execution. |
+| Editor integration | VS Code toolchain status, environment selection, diagnostics, and task execution. |
 
-Planned compatible releases are 2.3 tasks/contracts, 2.4 diagnostics/CI, 2.5 offline delivery, 2.6 Rust/tool identity, 2.7 Java/Python, 2.8 workspaces, 2.9 candidate upgrades/recovery, 2.10 Providers, and 2.11 editor integration. These are delivery targets without promised dates. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
+Planned compatible releases are 2.4 diagnostics/CI, 2.5 offline delivery, 2.6 Rust/tool identity, 2.7 Java/Python, 2.8 workspaces, 2.9 candidate upgrades/recovery, 2.10 Providers, and 2.11 editor integration. These are delivery targets without promised dates. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
 
 ## Contributing and license
 
