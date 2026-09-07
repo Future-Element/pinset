@@ -54,7 +54,7 @@ The tables below repeat exceptional behavior where it matters. Otherwise the com
 | --- | --- |
 | Purpose | Create a minimal project configuration in the current directory. |
 | Syntax and arguments | `pinset init`; no command-specific options. |
-| Modifies state | **Yes.** Creates schema 4 `pinset.toml` with a unique `project-id` and strict project policy; it does not select or install a runtime. |
+| Modifies state | **Yes.** Creates schema 5 `pinset.toml` with a unique `project-id` and strict project policy; it does not select or install a runtime. |
 | Example | `mkdir app && cd app && pinset init` |
 | JSON | No. |
 | Exit | `0` success; `2` if the file cannot be safely created. |
@@ -78,7 +78,7 @@ Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, 
 
 | Field | Description |
 | --- | --- |
-| Purpose | Re-scan and import every safe traditional selection into schema 4 `pinset.toml` and schema 3 `pinset.lock`. |
+| Purpose | Re-scan and import every safe traditional selection into schema 5 `pinset.toml` and schema 3 `pinset.lock`. |
 | Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools whose existing requested selector differs. |
 | Modifies state | **Yes.** Resolves metadata, atomically replaces the lock file and then the config file, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
 | Example | `pinset import --no-install` |
@@ -202,7 +202,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite schema 1–3 project configuration as schema 4 while retaining schema 3 runtime locks. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
+| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 while retaining schema 3 runtime locks. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -633,7 +633,13 @@ pinset --no-env -- node app.js
 
 Put Pinset options before the top-level `--`; everything after it belongs to the child, including `--json`, `--lang`, and further `--` separators. `-C` / `--cwd` changes the invocation directory before project discovery. `-e` / `--profile` overrides the profile for execution or ordinary environment operations; it cannot be combined with `--no-env`. Legacy subcommand `--cwd` and `--profile` remain valid, with subcommand options taking precedence over root options.
 
-The short entry resolves managed commands, project Python environment commands, explicit executable paths, then other commands on the system PATH. A configured but broken runtime is an error; it cannot silently fall back to a system version. Arbitrary commands require the explicit `--` boundary: `pinset typo` remains an error. Commands are argument arrays, not shell expressions; invoke a shell explicitly when shell syntax is needed. The existing `exec` and `x` syntax, runtime-only resolution, and child exit behavior remain available. Named tasks (`pinset run`) are planned for 2.3 and are not included here.
+The short entry resolves managed commands, project Python environment commands, explicit executable paths, then other commands on the system PATH. A configured but broken runtime is an error; it cannot silently fall back to a system version. Arbitrary commands require the explicit `--` boundary: `pinset typo` remains an error. Commands are argument arrays, not shell expressions; invoke a shell explicitly when shell syntax is needed. The existing `exec` and `x` syntax, runtime-only resolution, and child exit behavior remain available.
+
+### `run`
+
+`pinset run <task> [-- <arguments...>]` executes a task declared under `[tasks.<name>]`. A task contains a nonempty `command` string array and may add a project-relative `cwd`, a `profile`, and a human-readable `description`. Arguments after `--` are appended without shell parsing. The task's child exit status is preserved.
+
+Task environment selection uses root `-e`, then `PINSET_ENV_PROFILE`, then the task profile, then machine-local and project defaults. `--no-env` disables injection. A missing task is always an error and never falls back to a system program. Task working directories must already exist within the project after canonical path resolution.
 
 The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
 
@@ -668,7 +674,7 @@ Pinset manages project-scoped string environment variables in independent [age](
 The normal first-computer workflow is:
 
 ```sh
-# Existing schema 1–3 projects only; a new `pinset init` project is already schema 4.
+# Existing schema 1–4 projects only; a new `pinset init` project is already schema 5.
 pinset migrate
 
 # Creates pinset.env/development.age, a device identity, and an encrypted recovery identity.
@@ -706,10 +712,10 @@ The `[environment].collision` policy is case-insensitive and defaults to `error`
 | --- | --- |
 | Purpose | Create one empty encrypted profile, a device age X25519 identity, and normally a separate recovery identity. |
 | Syntax and arguments | `pinset env init [<name> \| --profile <name>] [--auto] [--recovery <path> \| --no-recovery] [--identity-file <path> \| --identity <id>] [--cwd <path>]`. Missing profile or recovery choice opens an interactive wizard. Noninteractive setup must supply both choices; `--identity` reuses a stored device identity. `--identity-file` stores the device identity in a passphrase-protected file instead of the system keyring. |
-| Modifies state | **Yes.** Creates `pinset.env/<profile>.age`, updates schema 4 `pinset.toml`, stores the device identity, and may create a recovery file. `--auto` sets this profile as `auto-profile`. |
+| Modifies state | **Yes.** Creates `pinset.env/<profile>.age`, updates a schema 4 or 5 `pinset.toml`, stores the device identity, and may create a recovery file. `--auto` sets this profile as `auto-profile`. |
 | Example | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
 | JSON | No. |
-| Key errors | Project is not schema 4, profile/file already exists, invalid profile name, unavailable keyring, unsafe path, existing recovery output, or encryption/write failure. A final configuration-write failure removes the new ciphertext; an identity or recovery file created earlier in the operation may remain and should be reviewed. |
+| Key errors | Project is older than schema 4, profile/file already exists, invalid profile name, unavailable keyring, unsafe path, existing recovery output, or encryption/write failure. A final configuration-write failure removes the new ciphertext; an identity or recovery file created earlier in the operation may remain and should be reviewed. |
 
 Use `--no-recovery` only when another tested identity-backup procedure exists. On Linux/SSH systems without a usable keyring, use `--identity-file <path>` and set `PINSET_IDENTITY_FILE` to that protected file for later interactive commands.
 
@@ -747,6 +753,38 @@ Portable names match `[A-Za-z_][A-Za-z0-9_]*`. Names are unique ignoring ASCII c
 | Example | `pinset env list --profile ci --json` |
 | JSON | **Yes**; command name `env.list`, with `profile` and `names`. Values are never included. |
 | Key errors | No selected profile, missing matching identity, unsafe/damaged ciphertext, or unsupported profile schema. |
+
+### Environment variable contracts
+
+Schema 5 can declare expected structure without storing secret values in `pinset.toml`:
+
+```toml
+[environment.variables.DATABASE_URL]
+type = "url"
+required = true
+secret = true
+profiles = ["development", "test"]
+
+[environment.variables.PORT]
+type = "integer"
+default = "3000"
+
+[environment.variables.MODE]
+type = "enum"
+required = true
+default = "development"
+values = ["development", "production"]
+```
+
+Types are `string`, `integer`, `boolean`, `url`, and `enum`. Boolean values are exactly `true` or `false`; URLs require a host; enums require at least one allowed value. Secret contracts cannot declare defaults. Contracts are checked before injection, and applicable non-secret defaults are added only when the encrypted profile does not contain that name.
+
+### `env check`
+
+`pinset env check [--profile <name>] [--json] [--cwd <path>]` decrypts one profile in memory and reports missing required variables or invalid declared types. It exits `0` when ready, `1` after a complete check with contract issues, and `2` when checking cannot start. JSON uses command `env.check`, returns `data.ok` and issue names/reasons, and never includes values or value hashes.
+
+### `env diff`
+
+`pinset env diff <left> <right> [--json] [--cwd <path>]` compares case-insensitive variable names and applicable contract names. It reports only names present on one side. JSON uses command `env.diff`; values and value-derived hashes are never emitted.
 
 ### `env reveal`
 
@@ -932,9 +970,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.2.0
+      - uses: Future-Element/pinset@v2.3.0
         with:
-          version: 2.2.0
+          version: 2.3.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -952,6 +990,6 @@ Self updates use a cross-process lock and a 60-second HTTP timeout. Windows repl
 
 ## Stable protocol boundary
 
-Pinset v2.0 writes schema 4 project configuration and schema 3 global configuration/runtime locks. Schema 1–3 projects remain readable and are migrated explicitly. Installation receipts use independent schema 3 while schema 1/2 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
+Pinset v2.3 writes schema 5 project configuration and schema 3 global configuration/runtime locks. Schema 1–4 projects remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 3 while schema 1/2 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
 
 The JSON schema 1 envelope remains unchanged in v2.0. New JSON commands include `paths`, `env.list`, `env.identity.list`, `trust.status`, and `self.outdated`. Automation should branch on stable command and reason/code fields, not human-facing messages. JSON output and errors never include environment values, identities, or passphrases.

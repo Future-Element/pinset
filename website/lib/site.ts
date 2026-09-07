@@ -16,7 +16,7 @@ export const siteConfig = {
   titleEn: "Pinset — Polyglot Runtime Version Manager",
   descriptionZh: "Pinset 是面向多语言项目的运行时版本管理器，用一份配置与锁文件管理 Node.js、Python、Rust、Go、Java、.NET、Flutter 等工具链。",
   descriptionEn: "Pinset is a runtime version manager for polyglot projects, using one configuration and lockfile for Node.js, Python, Rust, Go, Java, .NET, Flutter, and more.",
-  contentUpdatedAt: "2026-08-31T00:00:00.000Z",
+  contentUpdatedAt: "2026-09-07T00:00:00.000Z",
 };
 
 export type Locale = "zh-CN" | "en";

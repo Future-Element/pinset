@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema", "project-id", "tools"],
   "properties": {
-    "schema": { "const": 4 },
+    "schema": { "const": 5 },
     "project-id": {
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -43,6 +43,29 @@
         "dotnet": { "$ref": "#/$defs/selector" }
       }
     },
+    "tasks": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/taskName" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1,
+            "not": { "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)" }
+          },
+          "profile": { "$ref": "#/$defs/profileName" },
+          "description": { "type": "string" }
+        }
+      }
+    },
     "environment": {
       "type": "object",
       "additionalProperties": false,
@@ -69,6 +92,36 @@
               }
             }
           }
+        },
+        "variables": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!PATH$)(?!PINSET_)[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "enum": ["string", "integer", "boolean", "url", "enum"],
+                "default": "string"
+              },
+              "required": { "type": "boolean", "default": false },
+              "secret": { "type": "boolean", "default": false },
+              "default": { "type": "string" },
+              "profiles": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/profileName" }
+              },
+              "values": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string" }
+              },
+              "description": { "type": "string" }
+            }
+          }
         }
       }
     }
@@ -76,6 +129,12 @@
   "$defs": {
     "selector": { "type": "string", "minLength": 1 },
     "profileName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "taskName": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,

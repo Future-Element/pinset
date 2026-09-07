@@ -22,7 +22,9 @@ pub enum Error {
         source: toml::de::Error,
     },
 
-    #[error("unsupported pinset.toml schema {actual}; this version supports schemas 1, 2, 3 and 4")]
+    #[error(
+        "unsupported pinset.toml schema {actual}; this version supports schemas 1, 2, 3, 4 and 5"
+    )]
     UnsupportedSchema { actual: u32 },
 
     #[error("invalid pinset.toml configuration: {reason}")]

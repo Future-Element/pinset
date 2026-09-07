@@ -90,6 +90,7 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
         project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), "24.0.0".to_owned())]),
+        tasks: BTreeMap::new(),
         environment: None,
     };
     config.policy.verification_strength = Some(VerificationStrength::Provenance);
@@ -118,6 +119,7 @@ fn write_project(project: &Path, version: &str) {
         project_id: None,
         policy: Default::default(),
         tools: BTreeMap::from([("node".to_owned(), version.to_owned())]),
+        tasks: BTreeMap::new(),
         environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");
