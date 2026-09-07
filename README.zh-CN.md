@@ -72,6 +72,8 @@ pinset paths
 pinset paths flutter
 pinset list --long
 pinset doctor --deep
+pinset status --save diagnostic.json
+pinset check --compare diagnostic.json
 ```
 
 ## 安装
@@ -308,6 +310,7 @@ jobs:
         with:
           version: 2.3.0
           install: "true"
+          cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
 ```
@@ -322,6 +325,7 @@ pinset current --explain
 pinset which node --explain
 pinset paths node
 pinset doctor --deep
+pinset check --repair-preview
 
 # 检查锁、缓存与安装所有权
 pinset lock audit --json

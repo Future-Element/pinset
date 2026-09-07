@@ -289,9 +289,21 @@
 | 退出码 | 诊断完成为 `0`；输入无法读取或验证为 `2`。诊断发现会写入数据，并不一定导致命令失败。 |
 | 关键错误 | 配置/锁无法读取、状态格式错误、路径不安全或文件系统失败。 |
 
+### `status` 与 `check`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 生成可移植的诊断报告 schema 1。`status` 负责展示，`check` 可作为 CI 策略门禁。 |
+| 语法与参数 | `pinset <status|check> [--cwd <路径>] [--json] [--save <文件>] [--compare <文件>] [--repair-preview]`。 |
+| 修改状态 | 只有 `--save` 会原子写入指定报告文件。修复预览不会执行命令。 |
+| 示例 | `pinset check --save .pinset-diagnostic.json --repair-preview` |
+| JSON | **支持**；命令名为 `status` 或 `check`。报告拥有独立于 CLI 外层封装的 schema 字段。 |
+| 退出码 | `status` 完成收集后返回 `0`；`check` 遇到错误、警告或基线变化返回 `1`；输入无效返回 `2`。 |
+| 隐私 | 报告省略文件系统路径、环境值、密文内容、校验和及秘密摘要；比较结果只包含变化的 JSON Pointer 路径。 |
+
 ## 下载缓存命令
 
-缓存按完整性标识保存已验证归档。缓存检查不会把文件名本身当作完整性证据。
+缓存按完整性标识保存已验证归档。缓存检查不会把文件名本身当作完整性证据。GitHub Action 只缓存 `PINSET_HOME/downloads`，每次恢复后会先执行 `pinset cache verify`，再安装锁定运行时；将 Action 的 `cache` 输入设为 `"false"` 可禁用缓存。
 
 ### `cache`
 

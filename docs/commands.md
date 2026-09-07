@@ -289,9 +289,21 @@ Stable reason codes are grouped as follows:
 | Exit | `0` when the diagnostic completes; `2` if its inputs cannot be read or validated. Findings are reported in data and do not necessarily make the command fail. |
 | Key errors | Unreadable config/lock, malformed state, unsafe path, or filesystem failure. |
 
+### `status` and `check`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Produce portable diagnostic report schema 1. `status` always reports; `check` is suitable for CI policy gates. |
+| Syntax and arguments | `pinset <status|check> [--cwd <path>] [--json] [--save <file>] [--compare <file>] [--repair-preview]`. |
+| Modifies state | Only `--save` writes the requested report file atomically. Repair preview never executes a command. |
+| Example | `pinset check --save .pinset-diagnostic.json --repair-preview` |
+| JSON | **Yes**; command name `status` or `check`. The report has its own schema field, independent of the CLI envelope. |
+| Exit | `status` returns `0` after collection. `check` returns `1` for errors, warnings, or comparison changes. Invalid input returns `2`. |
+| Privacy | Reports omit filesystem paths, environment values, encrypted payloads, checksums, and secret digests. Comparisons return changed JSON Pointer paths only. |
+
 ## Download cache commands
 
-The cache stores verified archives by integrity identity. Cache inspection never treats a filename alone as proof of integrity.
+The cache stores verified archives by integrity identity. Cache inspection never treats a filename alone as proof of integrity. The GitHub Action caches only `PINSET_HOME/downloads` and runs `pinset cache verify` after every restore before installing locked runtimes; set its `cache` input to `"false"` to disable this behavior.
 
 ### `cache`
 

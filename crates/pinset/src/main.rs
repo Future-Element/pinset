@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod diagnostics;
 mod environment;
 mod i18n;
 mod self_update;
@@ -332,6 +333,35 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Create a redacted, portable diagnostic report without changing project state.
+    Status {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        /// Atomically save diagnostic report schema 1 as JSON.
+        #[arg(long, value_name = "FILE")]
+        save: Option<PathBuf>,
+        /// Compare against a saved report without displaying values.
+        #[arg(long, value_name = "FILE")]
+        compare: Option<PathBuf>,
+        /// Include commands that would repair known findings; never run them.
+        #[arg(long)]
+        repair_preview: bool,
+    },
+    /// Check redacted diagnostic state and fail when action is required.
+    Check {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_name = "FILE")]
+        save: Option<PathBuf>,
+        #[arg(long, value_name = "FILE")]
+        compare: Option<PathBuf>,
+        #[arg(long)]
+        repair_preview: bool,
+    },
     /// Manage the Pinset-owned project Python environment without shell activation.
     Venv {
         #[command(subcommand)]
@@ -606,6 +636,8 @@ impl Commands {
             Self::Uninstall { json: true, .. } => Some("uninstall"),
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
+            Self::Status { json: true, .. } => Some("status"),
+            Self::Check { json: true, .. } => Some("check"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
@@ -769,6 +801,8 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "uninstall"
                 | "prune"
                 | "doctor"
+                | "status"
+                | "check"
                 | "lock"
                 | "cache"
                 | "provider"
@@ -1379,6 +1413,32 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 run_doctor(&cwd, catalog)?;
                 print_doctor_installations(deep)?;
             }
+        }
+        Commands::Status {
+            cwd,
+            json,
+            save,
+            compare,
+            repair_preview,
+        } => {
+            return run_diagnostic_command(
+                "status",
+                cwd,
+                json,
+                save,
+                compare,
+                repair_preview,
+                false,
+            );
+        }
+        Commands::Check {
+            cwd,
+            json,
+            save,
+            compare,
+            repair_preview,
+        } => {
+            return run_diagnostic_command("check", cwd, json, save, compare, repair_preview, true);
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
         Commands::Env { command } => {
@@ -2777,7 +2837,7 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache run exec x doctor venv shim env trust activate completions source provider self";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
@@ -2832,6 +2892,7 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
@@ -2874,6 +2935,7 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
@@ -2908,13 +2970,14 @@ complete -c pinset -f -n '__fish_seen_subcommand_from provider' -a '__PROVIDER_C
 complete -c pinset -f -n '__fish_seen_subcommand_from env' -a '__ENV_COMMANDS__ --profile --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from trust' -a '__TRUST_COMMANDS__ --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from self' -a '__SELF_COMMANDS__ --channel --version --json'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect paths which current list outdated update migrate uninstall prune doctor lock cache provider env trust self' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect paths which current list outdated update migrate uninstall prune doctor status check lock cache provider env trust self' -a '--json'
 complete -c pinset -f -n '__fish_seen_subcommand_from which current' -a '--explain'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor lock' -a '--cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor status check lock' -a '--cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
 complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -n '__fish_seen_subcommand_from doctor' -a '--deep'
+complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -2939,6 +3002,7 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --deep --json --lang --help' -split ' ' }
+        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
@@ -4199,7 +4263,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 31] = [
+    const COMMANDS: [&str; 33] = [
         "init",
         "detect",
         "import",
@@ -4214,6 +4278,8 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "migrate",
         "exec",
         "doctor",
+        "status",
+        "check",
         "shim",
         "activate",
         "completions",
@@ -5198,6 +5264,45 @@ fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
 
 fn command_for_runtime(executable: &Path) -> Command {
     Command::new(executable)
+}
+
+fn run_diagnostic_command(
+    command: &'static str,
+    cwd: Option<PathBuf>,
+    json: bool,
+    save: Option<PathBuf>,
+    compare: Option<PathBuf>,
+    repair_preview: bool,
+    strict: bool,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let cwd = effective_cwd(cwd)?;
+    let report = diagnostics::collect(&cwd, repair_preview)?;
+    let comparison = compare
+        .as_deref()
+        .map(diagnostics::load)
+        .transpose()?
+        .as_ref()
+        .map(|previous| diagnostics::compare(previous, &report));
+    if let Some(path) = save.as_deref() {
+        diagnostics::save(path, &report)?;
+    }
+    let failed = !report.summary.passed
+        || comparison
+            .as_ref()
+            .is_some_and(|comparison| comparison.changed);
+    let output = diagnostics::DiagnosticOutput {
+        report,
+        comparison,
+        saved: save.map(|path| path.display().to_string()),
+    };
+    if json {
+        print_json_success(command, output)?;
+    } else {
+        for line in diagnostics::human_lines(&output) {
+            println!("{line}");
+        }
+    }
+    Ok(if strict && failed { 1 } else { 0 })
 }
 
 #[derive(Debug, Serialize)]

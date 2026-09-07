@@ -12,6 +12,7 @@ name = "pinset"
 path = "src/main.rs"
 
 [dependencies]
+atomic-write-file.workspace = true
 clap.workspace = true
 flate2.workspace = true
 pinset-core = { path = "../pinset-core", features = ["dotnet-metadata", "flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-discovery", "project-write", "provider-registry", "python-metadata", "rust-metadata", "sources", "state-write"] }

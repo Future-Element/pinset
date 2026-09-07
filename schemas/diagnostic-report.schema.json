@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pinset.future-element.com/schemas/diagnostic-report-v1.json",
+  "title": "Pinset diagnostic report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pinset_version", "platform", "project", "environment", "tools", "summary", "findings"],
+  "properties": {
+    "schema": { "const": 1 },
+    "pinset_version": { "type": "string" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "target", "ci"],
+      "properties": {
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "target": { "type": "string" },
+        "ci": { "type": "boolean" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configured", "config_schema", "lock_schema", "tasks"],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "config_schema": { "type": ["integer", "null"] },
+        "lock_schema": { "type": ["integer", "null"] },
+        "tasks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configured", "selected_profile", "selection_source", "profiles", "variables", "secret_variables"],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "selected_profile": { "type": ["string", "null"] },
+        "selection_source": { "enum": ["argument", "process", "local", "project", "none"] },
+        "profiles": { "type": "integer", "minimum": 0 },
+        "variables": { "type": "integer", "minimum": 0 },
+        "secret_variables": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "requested", "locked_version", "provider", "current_target_artifact"],
+        "properties": {
+          "name": { "type": "string" },
+          "requested": { "type": "string" },
+          "locked_version": { "type": ["string", "null"] },
+          "provider": { "type": ["string", "null"] },
+          "current_target_artifact": { "type": "boolean" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "errors", "warnings", "info"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "category", "subject"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "enum": ["error", "warning", "info"] },
+          "category": { "type": "string" },
+          "subject": { "type": "string" }
+        }
+      }
+    },
+    "repair_preview": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "action", "command"],
+        "properties": {
+          "code": { "type": "string" },
+          "action": { "type": "string" },
+          "command": { "type": "string" }
+        }
+      }
+    }
+  }
+}
