@@ -784,7 +784,7 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert!(
         fs::read_to_string(&config_path)
             .expect("unchanged config")
-            .starts_with("schema = 2")
+            .contains("schema = 2 # schema comment")
     );
 
     let migrated = pinset(&project, &home, &["migrate"]);
