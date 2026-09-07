@@ -932,9 +932,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.6
+      - uses: Future-Element/pinset@v2.2.0
         with:
-          version: 2.1.6
+          version: 2.2.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
