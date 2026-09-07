@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
         ("[y/N]: ", "y"),
     ])
     config = tomllib.loads((project / "pinset.toml").read_text())
-    assert config["schema"] == 4
+    assert config["schema"] == 5
     assert "auto-profile" not in config["environment"]
     assert len(config["environment"]["profiles"]["dev"]["recipients"]) == 2
     assert identity.is_file() and recovery.is_file()
