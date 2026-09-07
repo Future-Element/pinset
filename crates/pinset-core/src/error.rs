@@ -2,6 +2,9 @@ use std::{env::JoinPathsError, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("local environment selection at {path}: {reason}")]
+    LocalEnvironment { path: PathBuf, reason: String },
+
     #[error("no pinset.toml was found from {start} or its ancestors")]
     ProjectConfigNotFound { start: PathBuf },
 

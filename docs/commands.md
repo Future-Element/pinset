@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v2.1 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the Pinset v2.2 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
@@ -619,6 +619,48 @@ The v1.8 Registry is a read-only preview. A verified manifest describes commands
 | Exit | `0` only after cryptographic, schema, capability, and dependency validation; `2` otherwise. |
 | Key errors | Symlink/non-file input, input over 256 KiB, unsigned or multiply-signed data, signer mismatch, tampering, unknown field/capability, missing dependency, or cycle. |
 
+## Short execution (2.2)
+
+```sh
+pinset env init
+pinset env use dev
+pinset env set DATABASE_URL
+pinset -- pnpm dev
+pinset -e test -- pnpm test
+pinset -C ./another-project -- pnpm dev
+pinset --no-env -- node app.js
+```
+
+Put Pinset options before the top-level `--`; everything after it belongs to the child, including `--json`, `--lang`, and further `--` separators. `-C` / `--cwd` changes the invocation directory before project discovery. `-e` / `--profile` overrides the profile for execution or ordinary environment operations; it cannot be combined with `--no-env`. Legacy subcommand `--cwd` and `--profile` remain valid, with subcommand options taking precedence over root options.
+
+The short entry resolves managed commands, project Python environment commands, explicit executable paths, then other commands on the system PATH. A configured but broken runtime is an error; it cannot silently fall back to a system version. Arbitrary commands require the explicit `--` boundary: `pinset typo` remains an error. Commands are argument arrays, not shell expressions; invoke a shell explicitly when shell syntax is needed. The existing `exec` and `x` syntax, runtime-only resolution, and child exit behavior remain available. Named tasks (`pinset run`) are planned for 2.3 and are not included here.
+
+The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
+
+### `env`
+
+`pinset env` shows the selected profile, its source, declared profiles, and trust status without decrypting values. Use root `-C` to inspect another project. It does not change state.
+
+### `env use`
+
+`pinset env use <profile> [--cwd <path>]` remembers a declared profile in `PINSET_HOME/state/environments/`. The record is bound to the canonical project path and `project-id`, so worktrees are independent. It never changes shared project configuration, ciphertext, or trust. Invalid, removed, or stale selections fail with a reset instruction. Newer selection via `-e` or `PINSET_ENV_PROFILE` takes precedence.
+
+### `env reset`
+
+`pinset env reset [--cwd <path>]` clears only the local preference. `pinset env use --reset` is equivalent. Process and shared defaults still apply afterward.
+
+### `env share`
+
+`pinset env share <age-recipient> [--profile <name>] [--cwd <path>]` adds a public recipient to the selected profile, using the existing re-encryption operation. A matching private identity is required; changed recipient policy invalidates existing project trust. The original `env recipient add` remains available.
+
+### `env unshare`
+
+`pinset env unshare <age-recipient> [--profile <name>] [--cwd <path>]` removes a recipient using the existing re-encryption operation. It cannot remove the last recipient. This cannot revoke plaintext or ciphertext already copied by that recipient. The original `env recipient remove` remains available.
+
+### `env members`
+
+`pinset env members [--profile <name>] [--cwd <path>]` lists the selected profile's public recipients without decrypting values or changing state. The original `env recipient list` remains available.
+
 ## Encrypted project environment commands
 
 Pinset manages project-scoped string environment variables in independent [age](https://age-encryption.org/) ciphertext profiles. Public recipients and ciphertext files belong in the repository; private identities and recovery passphrases do not. Pinset does not automatically read `.env`, write temporary plaintext files, interpolate values, or provide a general-purpose Secrets Vault.
@@ -646,9 +688,9 @@ Profile names are 1–64 ASCII letters, digits, dots, underscores, or hyphens. A
 
 ### Profile selection and injection
 
-Commands with an optional `--profile` select a profile in this order: explicit `--profile`, `PINSET_ENV_PROFILE`, then `[environment].auto-profile`. If none is available, Pinset asks for `--profile`. Commands whose syntax requires `--profile` do not use this fallback.
+Commands with an optional `--profile` select a profile in this order: explicit `--profile` (or root `-e`), `PINSET_ENV_PROFILE`, machine-local `env use`, then `[environment].auto-profile`. CI ignores machine-local preferences (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, or `TF_BUILD` set to a nonempty value other than `0` or `false`). If none is available, Pinset asks for `--profile`. Commands whose syntax requires `--profile` do not use this fallback.
 
-Direct Provider commands such as `node`, `python`, `cargo`, and `flutter` inject only when the project is trusted and either `PINSET_ENV_PROFILE` or `auto-profile` selects a profile. `pinset exec --profile <name> -- <command>` makes the selection explicit. `PINSET_ENV_DISABLE=1` and `pinset exec --no-env -- <command>` disable injection for one launch.
+Direct Provider commands such as `node`, `python`, `cargo`, and `flutter` inject only when the project is trusted and `PINSET_ENV_PROFILE`, a machine-local preference, or `auto-profile` selects a profile. `pinset exec --profile <name> -- <command>` makes the selection explicit. `PINSET_ENV_DISABLE=1` and `pinset exec --no-env -- <command>` disable injection for one launch.
 
 The `[environment].collision` policy is case-insensitive and defaults to `error`:
 
@@ -663,7 +705,7 @@ The `[environment].collision` policy is case-insensitive and defaults to `error`
 | Field | Description |
 | --- | --- |
 | Purpose | Create one empty encrypted profile, a device age X25519 identity, and normally a separate recovery identity. |
-| Syntax and arguments | `pinset env init --profile <name> [--auto] (--recovery <path> | --no-recovery) [--identity-file <path>] [--cwd <path>]`. `--identity-file` stores the device identity in a passphrase-protected file instead of the system keyring. |
+| Syntax and arguments | `pinset env init [<name> \| --profile <name>] [--auto] [--recovery <path> \| --no-recovery] [--identity-file <path> \| --identity <id>] [--cwd <path>]`. Missing profile or recovery choice opens an interactive wizard. Noninteractive setup must supply both choices; `--identity` reuses a stored device identity. `--identity-file` stores the device identity in a passphrase-protected file instead of the system keyring. |
 | Modifies state | **Yes.** Creates `pinset.env/<profile>.age`, updates schema 4 `pinset.toml`, stores the device identity, and may create a recovery file. `--auto` sets this profile as `auto-profile`. |
 | Example | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
 | JSON | No. |

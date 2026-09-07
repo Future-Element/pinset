@@ -16,6 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKSPACE_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"][
     "package"
 ]["version"]
+subprocess.run([sys.executable, str(ROOT / "scripts/tests/release_version_test.py")], check=True)
 ARCHIVES = (
     "pinset-linux-x86_64.tar.gz",
     "pinset-linux-aarch64.tar.gz",

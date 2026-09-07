@@ -2,7 +2,7 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v2.1 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset v2.2 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
@@ -619,6 +619,48 @@ v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖�
 | 退出码 | 密码学、schema、capability 与依赖验证全部通过为 `0`；否则为 `2`。 |
 | 关键错误 | 符号链接/非文件、输入超过 256 KiB、未签名或多重签名、签名者不匹配、内容篡改、未知字段/capability、依赖缺失或循环。 |
 
+## 短执行入口（2.2）
+
+```sh
+pinset env init
+pinset env use dev
+pinset env set DATABASE_URL
+pinset -- pnpm dev
+pinset -e test -- pnpm test
+pinset -C ./another-project -- pnpm dev
+pinset --no-env -- node app.js
+```
+
+Pinset 参数放在顶层 `--` 之前，之后的全部内容都传给子进程，包括 `--json`、`--lang` 和后续 `--`。`-C` / `--cwd` 在项目查找之前设置本次执行目录。`-e` / `--profile` 临时覆盖执行或常用环境操作的 profile，不能与 `--no-env` 同用。原有子命令上的 `--cwd`、`--profile` 保留，子命令参数优先于顶层参数。
+
+短入口支持受管命令、项目 Python 环境命令、明确的可执行文件路径，以及系统 PATH 中的其他程序。已配置但损坏的运行时会报错，不会绕过配置使用系统版本。任意程序必须经过明确的 `--` 边界，`pinset typo` 仍会报错。参数按数组传递，不作为 Shell 表达式解析；需要 Shell 语法时显式调用 Shell。原有 `exec`、`x` 的语法、运行时命令解析和子进程退出行为保留。具名任务 `pinset run` 属于 2.3，当前未实现。
+
+`env init` 未指定 profile 或恢复方式时进入交互向导：选择 profile、恢复方式、新建或复用本机 identity。创建成功后记住本机环境，并单独询问是否信任项目。非交互调用必须提供 profile 和 `--recovery <路径>` 或显式 `--no-recovery`。新增位置参数 `env init dev` 和 `--identity <id>`，原有 `--profile`、`--identity-file` 保留；完全显式的初始化仍需用 `--auto` 设置共享默认，或另行 `env use` 设置本机默认。项目配置与锁文件 schema 不变。
+
+### `env`
+
+`pinset env` 显示当前 profile、选择来源、已声明环境和信任状态，不解密变量值、不写状态。可用顶层 `-C` 查看其他项目。
+
+### `env use`
+
+`pinset env use <profile> [--cwd <路径>]` 将已声明环境记录到 `PINSET_HOME/state/environments/`。记录同时绑定规范化项目路径与 `project-id`，不同 worktree 互不影响，不修改共享配置、密文或信任。环境被删除、记录损坏或项目身份变化时明确报错并提示重置；`-e` 和进程变量仍可覆盖本机选择。
+
+### `env reset`
+
+`pinset env reset [--cwd <路径>]` 清除本机环境偏好，等价于 `pinset env use --reset`。清除后进程选择与项目共享默认继续生效。
+
+### `env share`
+
+`pinset env share <age-接收人> [--profile <名称>] [--cwd <路径>]` 为当前环境添加公钥接收人，复用原有重新加密操作。需要匹配的私钥；接收人策略变化会使原有项目信任失效。原 `env recipient add` 保留。
+
+### `env unshare`
+
+`pinset env unshare <age-接收人> [--profile <名称>] [--cwd <路径>]` 移除当前环境接收人并重新加密，不能移除最后一个接收人；无法撤回对方已经复制的明文或旧密文。原 `env recipient remove` 保留。
+
+### `env members`
+
+`pinset env members [--profile <名称>] [--cwd <路径>]` 显示当前环境的公钥接收人，不解密变量值、不修改状态。原 `env recipient list` 保留。
+
 ## 加密项目环境命令
 
 Pinset 用相互独立的 [age](https://age-encryption.org/) 密文 profile 管理项目级字符串环境变量。公开 recipient 和密文文件应进入仓库；私有 identity 和恢复口令不应进入仓库。Pinset 不会自动读取 `.env`、生成临时明文文件、插值变量，也不是通用 Secrets Vault。
@@ -646,9 +688,9 @@ Profile 名称限制为 1–64 位 ASCII 字母、数字、点、下划线或短
 
 ### Profile 选择与注入
 
-对于 `--profile` 可选的命令，依次使用显式 `--profile`、`PINSET_ENV_PROFILE`、`[environment].auto-profile`。三者都没有时，Pinset 会要求指定 `--profile`。语法中必填 `--profile` 的命令不使用这个回退顺序。
+对于 `--profile` 可选的命令，依次使用显式 `--profile`（或顶层 `-e`）、`PINSET_ENV_PROFILE`、`env use` 保存的本机选择、`[environment].auto-profile`。CI 忽略本机选择：`CI`、`GITHUB_ACTIONS`、`GITLAB_CI` 或 `TF_BUILD` 为非空且不为 `0`、`false` 时生效。全部都没有时，Pinset 会要求指定 `--profile`。语法中必填 `--profile` 的命令不使用这个回退顺序。
 
-`node`、`python`、`cargo`、`flutter` 等直接 Provider 命令只在项目已信任，且 `PINSET_ENV_PROFILE` 或 `auto-profile` 选中 profile 时注入。`pinset exec --profile <名称> -- <命令>` 可显式选择。`PINSET_ENV_DISABLE=1` 和 `pinset exec --no-env -- <命令>` 可对单次启动禁用注入。
+`node`、`python`、`cargo`、`flutter` 等直接 Provider 命令只在项目已信任，且 `PINSET_ENV_PROFILE`、本机选择或 `auto-profile` 选中 profile 时注入。`pinset exec --profile <名称> -- <命令>` 可显式选择。`PINSET_ENV_DISABLE=1` 和 `pinset exec --no-env -- <命令>` 可对单次启动禁用注入。
 
 `[environment].collision` 不区分变量名大小写，默认为 `error`：
 
@@ -663,7 +705,7 @@ Profile 名称限制为 1–64 位 ASCII 字母、数字、点、下划线或短
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 创建一个空的加密 profile、一个设备 age X25519 identity，通常还会创建独立恢复 identity。 |
-| 语法与参数 | `pinset env init --profile <名称> [--auto] (--recovery <路径> | --no-recovery) [--identity-file <路径>] [--cwd <路径>]`。`--identity-file` 会把设备 identity 保存到口令保护文件，而非系统密钥库。 |
+| 语法与参数 | `pinset env init [<名称> \| --profile <名称>] [--auto] [--recovery <路径> \| --no-recovery] [--identity-file <路径> \| --identity <id>] [--cwd <路径>]`。`--identity-file` 会把设备 identity 保存到口令保护文件，而非系统密钥库。 |
 | 修改状态 | **是。** 创建 `pinset.env/<profile>.age`、更新 schema 4 `pinset.toml`、保存设备 identity，并可能创建恢复文件。`--auto` 把该 profile 设为 `auto-profile`。 |
 | 示例 | `pinset env init --profile ci --recovery ~/pinset-ci-recovery.age` |
 | JSON | 不支持。 |

@@ -1,5 +1,6 @@
 /target/
 /.pinset/
+/plan/
 *.tmp
 *.part
 .DS_Store

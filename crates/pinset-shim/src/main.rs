@@ -20,8 +20,8 @@ type EncryptedEnvironment = Option<(
 
 use pinset_core::{
     CommandResolution, EnvironmentCollision, decode_environment, find_optional_project_config,
-    load_project_config, managed_runtime_arguments, path_with_selected_tools, pinset_home_from_env,
-    resolve_command_with_path, selected_runtime_environment, validate_managed_runtime_invocation,
+    load_project_config, managed_runtime_arguments, pinset_home_from_env,
+    resolve_command_with_path, validate_managed_runtime_invocation,
     validate_windows_batch_arguments,
 };
 
@@ -76,7 +76,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     };
     validate_windows_batch_arguments(&resolution.executable, &runtime_arguments)?;
 
-    let runtime_path = path_with_selected_tools(
+    let execution = pinset_core::execution_context(
         &resolution.tool,
         &resolution.executable,
         &invocation.cwd,
@@ -84,14 +84,16 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     )?;
     let mut child = command_for_runtime(&resolution.executable, &runtime_arguments);
     child
-        .env("PATH", runtime_path)
+        .env("PATH", execution.path)
         .env(SHIM_CHAIN_ENV, shim_chain)
         .env(SHIM_OWNER_ENV, shim_owner)
         .env(SELECTED_TOOL_ENV, &resolution.tool)
         .env(SELECTED_VERSION_ENV, &resolution.version)
         .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
-    let runtime_environment =
-        selected_runtime_environment(&resolution.tool, &invocation.cwd, &home);
+    for name in execution.remove_environment {
+        child.env_remove(name);
+    }
+    let runtime_environment = execution.environment;
     let mut occupied = env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
         .map(|name| name.to_ascii_uppercase())
@@ -157,11 +159,11 @@ fn encrypted_environment(
         return Ok(None);
     };
     let config = load_project_config(&config_path)?;
-    let Some(environment) = config.environment else {
+    let Some(environment) = &config.environment else {
         return Ok(None);
     };
-    let explicit_profile = env::var(ENV_PROFILE_ENV).ok();
-    if explicit_profile.is_none() && environment.auto_profile.is_none() {
+    let selection = pinset_core::environment_selection(&pinset_home_from_env()?, &config_path, &config, None)?;
+    if selection.profile.is_none() {
         return Ok(None);
     }
     let directory = shim_executable
@@ -189,7 +191,7 @@ fn encrypted_environment(
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    if let Some(profile) = explicit_profile.as_deref() {
+    if let Some(profile) = selection.profile.as_deref() {
         broker.arg("--profile").arg(profile);
     }
     let mut output = broker.output()?;
