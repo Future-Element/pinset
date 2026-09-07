@@ -322,6 +322,16 @@ jobs:
       - name: Link development binaries
         run: cargo build --locked -p pinset-cli -p pinset-shim
 
+      - name: Prepare native terminal and credential-store acceptance
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            python -m pip install --only-binary=:all: pywinpty==3.0.5
+          elif [[ "${RUNNER_OS}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y gnome-keyring dbus-x11
+          fi
+
       - name: Validate native execution and local environments
         shell: bash
         run: |
@@ -331,8 +341,10 @@ jobs:
           if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi
           PINSET_TEST_SHIM="${GITHUB_WORKSPACE}/target/debug/pinset-shim${suffix}" \
             cargo test --locked -p pinset-cli --test short_execution_cli paired_shim_uses -- --ignored
-          if [[ "${RUNNER_OS}" != "Windows" ]]; then
-            python3 scripts/tests/environment_wizard_test.py target/debug/pinset
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            dbus-run-session -- sh -c 'printf "%s" "disposable-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets; python3 scripts/tests/environment_wizard_test.py target/debug/pinset --keyring'
+          else
+            python scripts/tests/environment_wizard_test.py "target/debug/pinset${suffix}" --keyring
           fi
 
   website:
