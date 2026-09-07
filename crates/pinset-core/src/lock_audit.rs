@@ -1309,7 +1309,7 @@ mod tests {
         fs::create_dir(&project).expect("project");
         fs::write(
             project.join(PROJECT_CONFIG_FILENAME),
-            "schema = 4\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n",
+            "schema = 5\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\nnode = \"24.0.0\"\n",
         )
         .expect("project config");
         save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).expect("lockfile");
