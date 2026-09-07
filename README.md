@@ -88,7 +88,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.1.6
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.2.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +103,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.1.6
+.\install.ps1 -Version 2.2.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -281,9 +281,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.1.6
+      - uses: Future-Element/pinset@v2.2.0
         with:
-          version: 2.1.6
+          version: 2.2.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -388,9 +388,9 @@ pinset use --global node@lts pnpm@latest bun@latest go@latest python@3.14
 - If installation fails after the state commit, successfully installed runtimes remain valid and the complete requested state remains locked. The error directs the user to retry with `pinset install --locked` or `pinset install --global --locked`; Pinset does not pretend that already completed filesystem installations can be rolled back atomically.
 - Help, completions, English/Chinese command references, and tests cover single-selection compatibility and multi-selection behavior. `install <tool@exact-version>` remains a single explicit-selection command; lock-based `install --locked` installs the complete scope.
 
-### v2.2 development: shorter commands and local environments
+### v2.2: shorter commands and local environments
 
-The source tree targets **2.2.0 (unreleased)**. Installation examples above continue to reference the released 2.1.6. In a 2.2 build:
+Pinset **2.2.0** simplifies command execution and remembers this machine's project environment:
 
 ```sh
 pinset env init
