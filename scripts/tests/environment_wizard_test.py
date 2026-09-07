@@ -16,7 +16,7 @@ if os.name != "nt":
     import pty
 
 
-def interact_windows(binary, project, environment, arguments, replies):
+def interact_windows(binary, project, environment, arguments, replies, expected_codes):
     from winpty import PtyProcess
 
     process = PtyProcess.spawn(
@@ -37,26 +37,31 @@ def interact_windows(binary, project, environment, arguments, replies):
                 pending += process.read(4096)
             except EOFError:
                 break
+            # ConPTY can request the terminal cursor position before rendering.
+            if "\x1b[6n" in pending:
+                process.write("\x1b[1;1R")
             pending = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", pending)
             if len(pending) > 65536:
                 raise AssertionError("wizard produced excessive terminal output")
-            while replies and replies[0][0] in pending:
+            # Trailing prompt spaces may be encoded as cursor moves by ConPTY.
+            while replies and replies[0][0].rstrip() in pending:
                 prompt, response = replies.pop(0)
-                pending = pending.split(prompt, 1)[1]
-                process.write(response + "\r\n")
+                pending = pending.split(prompt.rstrip(), 1)[1]
+                process.write(response + "\r")
         else:
-            raise AssertionError("Windows wizard timed out")
+            expected = replies[0][0] if replies else "process exit"
+            raise AssertionError(f"Windows wizard timed out waiting for {expected!r}: {pending[-2048:]!r}")
         while process.isalive() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert process.exitstatus == 0, "interactive Windows command failed"
+        assert process.exitstatus in expected_codes, "interactive Windows command failed"
         assert not replies, "command exited before all expected prompts"
     finally:
         process.close(force=True)
 
 
-def interact(binary, project, environment, arguments, replies):
+def interact(binary, project, environment, arguments, replies, expected_codes=(0,)):
     if os.name == "nt":
-        return interact_windows(binary, project, environment, arguments, replies)
+        return interact_windows(binary, project, environment, arguments, replies, expected_codes)
     pid, terminal = pty.fork()
     if pid == 0:
         os.chdir(project)
@@ -90,7 +95,7 @@ def interact(binary, project, environment, arguments, replies):
             raise AssertionError("wizard timed out")
         _, status = os.waitpid(pid, 0)
         finished = True
-        assert os.waitstatus_to_exitcode(status) == 0, "interactive command failed"
+        assert os.waitstatus_to_exitcode(status) in expected_codes, "interactive command failed"
         assert not replies, "command exited before all expected prompts"
     finally:
         if not finished:
@@ -145,6 +150,47 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
              'import os; assert os.environ["APP_WIZARD_VALUE"] == "wizard-variable-fixture"']
     interact(binary, project, environment, ["--", *probe],
              [("Identity file passphrase: ", "wizard-device-fixture")])
+
+    child_pid_path = root / "cancel-child.pid"
+    cancellation_probe = (
+        'import os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); '
+        'print("CANCEL_READY", flush=True); time.sleep(60)'
+    )
+    interact(binary, project, environment,
+             ["--no-env", "--", sys.executable, "-c", cancellation_probe, str(child_pid_path)],
+             [("CANCEL_READY", "\x03")],
+             expected_codes=(-2, 130, -1073741510, 3221225786))
+    child_pid = int(child_pid_path.read_text())
+
+    def child_is_alive():
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = kernel.OpenProcess(0x00100000, False, child_pid)
+            if not handle:
+                assert ctypes.get_last_error() == 87, "cannot inspect cancellation child"
+                return False
+            try:
+                return kernel.WaitForSingleObject(handle, 0) == 258
+            finally:
+                kernel.CloseHandle(handle)
+        try:
+            os.kill(child_pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    cancellation_deadline = time.monotonic() + 10
+    while child_is_alive() and time.monotonic() < cancellation_deadline:
+        time.sleep(0.1)
+    assert not child_is_alive(), "Ctrl-C left the command running"
+    print("Native terminal cancellation and child termination passed")
 
     if "--keyring" in sys.argv[2:]:
         environment.pop("PINSET_IDENTITY_FILE")
