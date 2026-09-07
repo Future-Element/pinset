@@ -381,7 +381,10 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
     }
 
     for (name, task) in &config.tasks {
-        if !valid_task_name(name) || task.command.is_empty() || task.command.iter().any(String::is_empty) {
+        if !valid_task_name(name)
+            || task.command.is_empty()
+            || task.command.iter().any(String::is_empty)
+        {
             return Err(Error::InvalidProjectConfig {
                 reason: format!("task {name} requires a non-empty command array"),
             });
@@ -390,7 +393,14 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             let path = Path::new(cwd);
             if path.as_os_str().is_empty()
                 || path.is_absolute()
-                || path.components().any(|component| matches!(component, std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_)))
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
             {
                 return Err(Error::InvalidProjectConfig {
                     reason: format!("task {name} cwd must stay within the project"),
@@ -399,16 +409,19 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         }
     }
     let Some(environment) = &config.environment else {
-        if let Some((name, task)) = config.tasks.iter().find(|(_, task)| task.profile.is_some()) {
+        if let Some((name, _)) = config.tasks.iter().find(|(_, task)| task.profile.is_some()) {
             return Err(Error::InvalidProjectConfig {
-                reason: format!("task {name} references an environment profile, but no environment is declared"),
+                reason: format!(
+                    "task {name} references an environment profile, but no environment is declared"
+                ),
             });
         }
         return Ok(());
     };
     if config.schema < PROJECT_CONFIG_SCHEMA && !environment.variables.is_empty() {
         return Err(Error::InvalidProjectConfig {
-            reason: "environment variable contracts require schema 5; run `pinset migrate`".to_owned(),
+            reason: "environment variable contracts require schema 5; run `pinset migrate`"
+                .to_owned(),
         });
     }
     if let Some(profile) = &environment.auto_profile
@@ -447,20 +460,30 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
     }
     for (name, contract) in &environment.variables {
         if !valid_environment_variable_name(name) {
-            return Err(Error::InvalidProjectConfig { reason: format!("invalid environment variable name: {name}") });
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("invalid environment variable name: {name}"),
+            });
         }
         if contract.secret && contract.default.is_some() {
-            return Err(Error::InvalidProjectConfig { reason: format!("secret variable {name} cannot declare a default") });
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("secret variable {name} cannot declare a default"),
+            });
         }
         if contract.kind == EnvironmentVariableType::Enum && contract.values.is_empty() {
-            return Err(Error::InvalidProjectConfig { reason: format!("enum variable {name} requires values") });
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("enum variable {name} requires values"),
+            });
         }
         if contract.kind != EnvironmentVariableType::Enum && !contract.values.is_empty() {
-            return Err(Error::InvalidProjectConfig { reason: format!("only enum variable {name} may declare values") });
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("only enum variable {name} may declare values"),
+            });
         }
         for profile in &contract.profiles {
             if !environment.profiles.contains_key(profile) {
-                return Err(Error::InvalidProjectConfig { reason: format!("variable {name} references undeclared profile {profile}") });
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("variable {name} references undeclared profile {profile}"),
+                });
             }
         }
         if let Some(value) = &contract.default {
@@ -471,7 +494,9 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         if let Some(profile) = &task.profile
             && !environment.profiles.contains_key(profile)
         {
-            return Err(Error::InvalidProjectConfig { reason: format!("task {name} references undeclared profile {profile}") });
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} references undeclared profile {profile}"),
+            });
         }
     }
     Ok(())
@@ -501,8 +526,7 @@ fn serialize_project_config_preserving_comments(
             ));
         }
     }
-    toml::to_string_pretty(normalized)
-        .map_err(|source| Error::SerializeProjectConfig { source })
+    toml::to_string_pretty(normalized).map_err(|source| Error::SerializeProjectConfig { source })
 }
 
 #[cfg(feature = "project-write")]
@@ -518,8 +542,7 @@ fn rewrite_schema_header(original: &str, schema: u32, project_id: Option<&str>) 
                 if after_name[whitespace..].starts_with('=') {
                     let equals = leading + "schema".len() + whitespace;
                     let after_equals = equals + 1;
-                    let value_start = after_equals
-                        + line[after_equals..].len()
+                    let value_start = after_equals + line[after_equals..].len()
                         - line[after_equals..].trim_start().len();
                     let value_end = value_start
                         + line[value_start..]
@@ -561,20 +584,31 @@ pub fn validate_environment_variable_value(
         EnvironmentVariableType::Url => url::Url::parse(value).is_ok_and(|url| url.has_host()),
         EnvironmentVariableType::Enum => contract.values.iter().any(|candidate| candidate == value),
     };
-    if valid { Ok(()) } else { Err(Error::InvalidProjectConfig { reason: format!("variable {name} does not match its declared type") }) }
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidProjectConfig {
+            reason: format!("variable {name} does not match its declared type"),
+        })
+    }
 }
 
 fn valid_environment_variable_name(name: &str) -> bool {
     let mut bytes = name.bytes();
-    bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         && !name.eq_ignore_ascii_case("PATH")
         && !name.to_ascii_uppercase().starts_with("PINSET_")
 }
 
 fn valid_task_name(name: &str) -> bool {
-    !name.is_empty() && name.len() <= 64
-        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_profile_name(name: &str) -> bool {
@@ -975,7 +1009,10 @@ default = "unsafe"
             environment: None,
         };
         save_project_config(&path, &config).expect("save schema four");
-        assert_eq!(load_project_config(&path).expect("load schema four").schema, 4);
+        assert_eq!(
+            load_project_config(&path).expect("load schema four").schema,
+            4
+        );
     }
 
     #[test]

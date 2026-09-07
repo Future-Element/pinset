@@ -97,10 +97,10 @@ mod user_settings;
 #[cfg(feature = "lockfile")]
 pub use config::validate_project_lock_policy;
 pub use config::{
-    EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract,
-    EnvironmentVariableType, PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary,
-    ProjectConfig, ProjectContext, ProjectEnvironment, ProjectPolicy, ProjectTask,
-    find_optional_project_config, find_project_config, find_project_context, load_project_config,
+    EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType,
+    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
+    ProjectEnvironment, ProjectPolicy, ProjectTask, find_optional_project_config,
+    find_project_config, find_project_context, load_project_config,
     validate_environment_variable_value,
 };
 #[cfg(feature = "project-write")]

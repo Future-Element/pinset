@@ -221,7 +221,10 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
         .expect("diff environment profiles");
     assert!(diff.status.success());
     let report: serde_json::Value = serde_json::from_slice(&diff.stdout).expect("diff JSON");
-    assert_eq!(report["data"]["only_left"], serde_json::json!(["UNDECLARED"]));
+    assert_eq!(
+        report["data"]["only_left"],
+        serde_json::json!(["UNDECLARED"])
+    );
     assert!(!String::from_utf8_lossy(&diff.stdout).contains("test-secret"));
 
     write_encrypted_profile(
@@ -247,7 +250,10 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
     let resolved = broker(&project, &home, identity.secret().expose_secret());
     assert!(resolved.status.success());
     let variables = decode_environment(&resolved.stdout).expect("resolved environment");
-    assert_eq!(variables.get("MODE").map(String::as_str), Some("development"));
+    assert_eq!(
+        variables.get("MODE").map(String::as_str),
+        Some("development")
+    );
     assert_eq!(variables.get("PORT").map(String::as_str), Some("3000"));
 }
 

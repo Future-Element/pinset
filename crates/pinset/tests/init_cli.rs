@@ -18,7 +18,7 @@ fn init_creates_a_minimal_config_without_runtime_side_effects() {
     );
     let config_path = project.join("pinset.toml");
     let config = fs::read_to_string(&config_path).expect("created config");
-    assert!(config.starts_with("schema = 4\nproject-id = \""));
+    assert!(config.starts_with("schema = 5\nproject-id = \""));
     assert!(config.contains("\n[policy]\ninherit-global = false\n"));
     assert!(config.ends_with("\n[tools]\n"));
     assert!(String::from_utf8_lossy(&output.stdout).contains(&config_path.display().to_string()));

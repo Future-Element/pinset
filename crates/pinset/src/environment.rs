@@ -7,8 +7,8 @@ use std::{
 
 use clap::Subcommand;
 use pinset_core::{
-    EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, PROJECT_CONFIG_SCHEMA,
-    ProjectConfig, ProjectEnvironment, encode_environment, find_project_config,
+    EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, ProjectConfig,
+    ProjectEnvironment, encode_environment, find_project_config,
     load_project_config, pinset_home, save_project_config, validate_environment_variable_value,
 };
 use pinset_env::{
@@ -477,11 +477,14 @@ pub(crate) fn run_env_command(
             let config = load_project_config(&config_path)?;
             let issues = contract_issues(&config, &profile_name, &document.variables);
             if json {
-                print_json("env.check", serde_json::json!({
-                    "profile": profile_name,
-                    "ok": issues.is_empty(),
-                    "issues": issues,
-                }))?;
+                print_json(
+                    "env.check",
+                    serde_json::json!({
+                        "profile": profile_name,
+                        "ok": issues.is_empty(),
+                        "issues": issues,
+                    }),
+                )?;
             } else if issues.is_empty() {
                 println!("environment profile {profile_name} is ready");
             } else {
@@ -496,26 +499,44 @@ pub(crate) fn run_env_command(
                 return Err("environment contract check failed".into());
             }
         }
-        EnvCommands::Diff { left, right, json, cwd } => {
+        EnvCommands::Diff {
+            left,
+            right,
+            json,
+            cwd,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let (config_path, _, _, left_document) = load_profile(&cwd, Some(&left))?;
             let (_, _, _, right_document) = load_profile(&cwd, Some(&right))?;
             let config = load_project_config(&config_path)?;
             let left_names = effective_contract_names(&config, &left, &left_document.variables);
             let right_names = effective_contract_names(&config, &right, &right_document.variables);
-            let only_left = left_names.difference(&right_names).cloned().collect::<Vec<_>>();
-            let only_right = right_names.difference(&left_names).cloned().collect::<Vec<_>>();
+            let only_left = left_names
+                .difference(&right_names)
+                .cloned()
+                .collect::<Vec<_>>();
+            let only_right = right_names
+                .difference(&left_names)
+                .cloned()
+                .collect::<Vec<_>>();
             if json {
-                print_json("env.diff", serde_json::json!({
-                    "left": left, "right": right,
-                    "only_left": only_left, "only_right": only_right,
-                    "equal": only_left.is_empty() && only_right.is_empty(),
-                }))?;
+                print_json(
+                    "env.diff",
+                    serde_json::json!({
+                        "left": left, "right": right,
+                        "only_left": only_left, "only_right": only_right,
+                        "equal": only_left.is_empty() && only_right.is_empty(),
+                    }),
+                )?;
             } else if only_left.is_empty() && only_right.is_empty() {
                 println!("{left} and {right} have the same variable structure");
             } else {
-                for name in only_left { println!("- {left}: {name}"); }
-                for name in only_right { println!("+ {right}: {name}"); }
+                for name in only_left {
+                    println!("- {left}: {name}");
+                }
+                for name in only_right {
+                    println!("+ {right}: {name}");
+                }
             }
         }
         EnvCommands::Reveal { name, profile, cwd } => {
@@ -666,10 +687,19 @@ pub(crate) fn resolve_environment(
     let mut document = read_encrypted_profile(root, &selected.file, &identities)?;
     let issues = contract_issues(&config, profile, &document.variables);
     if !issues.is_empty() {
-        return Err(format!("environment contract check failed: {}", issues.iter().map(|issue| format!("{} {}", issue.name, issue.reason)).collect::<Vec<_>>().join(", ")).into());
+        return Err(format!(
+            "environment contract check failed: {}",
+            issues
+                .iter()
+                .map(|issue| format!("{} {}", issue.name, issue.reason))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into());
     }
     for (name, contract) in &environment.variables {
-        if applies_to_profile(contract, profile) && !contains_case_insensitive(&document.variables, name)
+        if applies_to_profile(contract, profile)
+            && !contains_case_insensitive(&document.variables, name)
             && let Some(default) = &contract.default
         {
             document.variables.insert(name.clone(), default.clone());
@@ -686,23 +716,41 @@ struct ContractIssue {
 }
 
 fn applies_to_profile(contract: &EnvironmentVariableContract, profile: &str) -> bool {
-    contract.profiles.is_empty() || contract.profiles.iter().any(|candidate| candidate == profile)
+    contract.profiles.is_empty()
+        || contract
+            .profiles
+            .iter()
+            .any(|candidate| candidate == profile)
 }
 
 fn contains_case_insensitive(values: &BTreeMap<String, String>, name: &str) -> bool {
     find_case_insensitive(values, name).is_some()
 }
 
-fn contract_issues(config: &ProjectConfig, profile: &str, values: &BTreeMap<String, String>) -> Vec<ContractIssue> {
+fn contract_issues(
+    config: &ProjectConfig,
+    profile: &str,
+    values: &BTreeMap<String, String>,
+) -> Vec<ContractIssue> {
     let mut issues = Vec::new();
-    let Some(environment) = &config.environment else { return issues; };
+    let Some(environment) = &config.environment else {
+        return issues;
+    };
     for (name, contract) in &environment.variables {
-        if !applies_to_profile(contract, profile) { continue; }
+        if !applies_to_profile(contract, profile) {
+            continue;
+        }
         let value = find_case_insensitive(values, name).or(contract.default.as_deref());
         match value {
-            None if contract.required => issues.push(ContractIssue { name: name.clone(), reason: "is required but missing" }),
+            None if contract.required => issues.push(ContractIssue {
+                name: name.clone(),
+                reason: "is required but missing",
+            }),
             Some(value) if validate_environment_variable_value(name, contract, value).is_err() => {
-                issues.push(ContractIssue { name: name.clone(), reason: "has an invalid value" });
+                issues.push(ContractIssue {
+                    name: name.clone(),
+                    reason: "has an invalid value",
+                });
             }
             _ => {}
         }
@@ -710,10 +758,23 @@ fn contract_issues(config: &ProjectConfig, profile: &str, values: &BTreeMap<Stri
     issues
 }
 
-fn effective_contract_names(config: &ProjectConfig, profile: &str, values: &BTreeMap<String, String>) -> BTreeSet<String> {
-    let mut names = values.keys().map(|name| name.to_ascii_uppercase()).collect::<BTreeSet<_>>();
+fn effective_contract_names(
+    config: &ProjectConfig,
+    profile: &str,
+    values: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
+    let mut names = values
+        .keys()
+        .map(|name| name.to_ascii_uppercase())
+        .collect::<BTreeSet<_>>();
     if let Some(environment) = &config.environment {
-        names.extend(environment.variables.iter().filter(|(_, contract)| applies_to_profile(contract, profile)).map(|(name, _)| name.to_ascii_uppercase()));
+        names.extend(
+            environment
+                .variables
+                .iter()
+                .filter(|(_, contract)| applies_to_profile(contract, profile))
+                .map(|(name, _)| name.to_ascii_uppercase()),
+        );
     }
     names
 }
@@ -789,7 +850,9 @@ fn init_profile(
         .ok_or("project configuration has no parent")?;
     let mut config = load_project_config(&config_path)?;
     if config.schema < 4 {
-        return Err("encrypted environments require schema 4 or newer; run `pinset migrate` first".into());
+        return Err(
+            "encrypted environments require schema 4 or newer; run `pinset migrate` first".into(),
+        );
     }
     if config
         .environment
@@ -899,7 +962,9 @@ fn selected_profile(
     let config_path = find_project_config(cwd)?;
     let config = load_project_config(&config_path)?;
     if config.schema < 4 {
-        return Err("encrypted environments require schema 4 or newer; run `pinset migrate` first".into());
+        return Err(
+            "encrypted environments require schema 4 or newer; run `pinset migrate` first".into(),
+        );
     }
     let environment = config
         .environment

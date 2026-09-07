@@ -1128,7 +1128,12 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     if cli.profile.is_some()
         && !matches!(
             cli.command,
-            Some(Commands::Env { .. } | Commands::Run { .. } | Commands::Exec { .. } | Commands::X { .. })
+            Some(
+                Commands::Env { .. }
+                    | Commands::Run { .. }
+                    | Commands::Exec { .. }
+                    | Commands::X { .. }
+            )
         )
     {
         return Err("-e/--profile requires env, run, exec, x, or a command after --".into());
@@ -1377,7 +1382,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
         Commands::Env { command } => {
-            return environment::run_env_command(command, cli.profile.as_deref())
+            return environment::run_env_command(command, cli.profile.as_deref());
         }
         Commands::Trust { command } => environment::run_trust_command(command)?,
         Commands::InternalEnvResolve {
@@ -4895,15 +4900,22 @@ fn run_project_task(
     if config.schema < PROJECT_CONFIG_SCHEMA {
         return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
     }
-    let task = config.tasks.get(task_name)
+    let task = config
+        .tasks
+        .get(task_name)
         .ok_or_else(|| format!("project task {task_name:?} is not declared"))?;
-    let root = config_path.parent().ok_or("project configuration has no parent")?;
+    let root = config_path
+        .parent()
+        .ok_or("project configuration has no parent")?;
     let task_cwd = match &task.cwd {
         Some(relative) => {
             let root = fs::canonicalize(root)?;
             let resolved = fs::canonicalize(root.join(relative))?;
             if !resolved.starts_with(&root) || !resolved.is_dir() {
-                return Err(format!("task {task_name:?} cwd must be an existing directory within the project").into());
+                return Err(format!(
+                    "task {task_name:?} cwd must be an existing directory within the project"
+                )
+                .into());
             }
             resolved
         }
@@ -4911,7 +4923,8 @@ fn run_project_task(
     };
     let mut command = task.command.iter().map(OsString::from).collect::<Vec<_>>();
     command.extend_from_slice(appended);
-    let task_profile = if explicit_profile.is_some() || env::var_os("PINSET_ENV_PROFILE").is_some() {
+    let task_profile = if explicit_profile.is_some() || env::var_os("PINSET_ENV_PROFILE").is_some()
+    {
         explicit_profile
     } else {
         task.profile.as_deref()
