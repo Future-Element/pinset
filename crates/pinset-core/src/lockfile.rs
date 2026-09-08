@@ -14,7 +14,7 @@ use crate::{
     FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat, JAVA_TARGETS, JavaArchiveFormat,
     JavaVersion, NodeArchiveFormat, PYTHON_TARGETS, PYTHON_VARIANT, RUST_COMPONENTS, RUST_PROFILE,
     RUST_TARGETS, Result, RustArchiveFormat, SourceConfig, parse_python_distribution,
-    plan_dotnet_artifact, plan_flutter_artifact, plan_go_artifact, plan_java_artifact,
+    plan_dotnet_artifact, plan_flutter_artifact, plan_go_artifact, plan_java_artifact_with_package,
     plan_node_artifact, plan_python_artifact, plan_rust_artifact, plan_rust_nightly_artifact,
 };
 
@@ -793,10 +793,35 @@ fn validate_java_metadata(tool: &LockedTool) -> Result<()> {
         .ok_or_else(|| Error::InvalidLockfile {
             reason: "Java lock metadata has no OpenJDK version".to_owned(),
         })?;
+    let image_type = tool
+        .metadata
+        .get("image_type")
+        .filter(|value| matches!(value.as_str(), "jdk" | "jre"))
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Java lock metadata must identify a jdk or jre package".to_owned(),
+        })?;
+    if tool.options.is_empty() {
+        if image_type != "jdk" {
+            return Err(Error::InvalidLockfile {
+                reason: "legacy Java locks without options may only identify a JDK".to_owned(),
+            });
+        }
+    } else {
+        let expected_options = BTreeMap::from([
+            ("distribution".to_owned(), "temurin".to_owned()),
+            ("package".to_owned(), image_type.clone()),
+        ]);
+        if tool.options != expected_options {
+            return Err(Error::InvalidLockfile {
+                reason: "Java lock options must identify the Temurin distribution and jdk or jre package"
+                    .to_owned(),
+            });
+        }
+    }
     let mut expected = BTreeMap::from([
         ("distribution".to_owned(), "eclipse-temurin".to_owned()),
         ("vendor".to_owned(), "eclipse".to_owned()),
-        ("image_type".to_owned(), "jdk".to_owned()),
+        ("image_type".to_owned(), image_type.clone()),
         ("jvm_impl".to_owned(), "hotspot".to_owned()),
         ("heap_size".to_owned(), "normal".to_owned()),
         ("release_type".to_owned(), "ga".to_owned()),
@@ -812,7 +837,7 @@ fn validate_java_metadata(tool: &LockedTool) -> Result<()> {
     }
     if tool.metadata != expected {
         return Err(Error::InvalidLockfile {
-            reason: "Java lock metadata must identify one Eclipse Temurin GA JDK/HotSpot release and each archive signature"
+            reason: "Java lock metadata must identify one Eclipse Temurin GA JDK/JRE HotSpot release and each archive signature"
                 .to_owned(),
         });
     }
@@ -1162,10 +1187,17 @@ fn validate_locked_java_artifact(tool: &LockedTool, artifact: &LockedArtifact) -
         .ok_or_else(|| Error::InvalidLockfile {
             reason: format!("Java artifact {} has no package name", artifact.target),
         })?;
-    let plan = plan_java_artifact(
+    let image_type = tool
+        .metadata
+        .get("image_type")
+        .ok_or_else(|| Error::InvalidLockfile {
+            reason: "Java lock metadata has no image_type".to_owned(),
+        })?;
+    let plan = plan_java_artifact_with_package(
         &tool.version,
         release_name,
         &artifact.target,
+        image_type,
         package_name,
         &artifact.canonical_url,
     )?;
@@ -1869,6 +1901,29 @@ mod tests {
         };
         validate_locked_tool(&tool).expect("Java lock");
 
+        let jre_artifacts = JAVA_TARGETS
+            .into_iter()
+            .map(|target| locked_java_artifact_for(version, release_name, target, "jre"))
+            .collect::<Vec<_>>();
+        let mut jre = tool.clone();
+        jre.metadata
+            .insert("image_type".to_owned(), "jre".to_owned());
+        jre.metadata
+            .retain(|key, _| !key.starts_with("signature_link."));
+        for artifact in &jre_artifacts {
+            jre.metadata.insert(
+                format!("signature_link.{}", artifact.target),
+                format!("{}.sig", artifact.canonical_url),
+            );
+        }
+        jre.options = BTreeMap::from([
+            ("distribution".to_owned(), "temurin".to_owned()),
+            ("package".to_owned(), "jre".to_owned()),
+        ]);
+        jre.artifacts = jre_artifacts;
+        validate_locked_tool(&jre).expect("Temurin JRE lock");
+        assert_ne!(tool.installation_version(), jre.installation_version());
+
         let mut invalid_signature = tool.clone();
         invalid_signature.metadata.insert(
             "signature_link.linux-x86_64".to_owned(),
@@ -2226,6 +2281,15 @@ mod tests {
     }
 
     fn locked_java_artifact(version: &str, release_name: &str, target: &str) -> LockedArtifact {
+        locked_java_artifact_for(version, release_name, target, "jdk")
+    }
+
+    fn locked_java_artifact_for(
+        version: &str,
+        release_name: &str,
+        target: &str,
+        image_type: &str,
+    ) -> LockedArtifact {
         let (os, arch, extension) = match target {
             "windows-x86_64" => ("windows", "x64", "zip"),
             "linux-x86_64" => ("linux", "x64", "tar.gz"),
@@ -2234,14 +2298,21 @@ mod tests {
             "macos-aarch64" => ("mac", "aarch64", "tar.gz"),
             _ => unreachable!("known Java target"),
         };
-        let package = format!("OpenJDK21U-jdk_{arch}_{os}_hotspot_21.0.8_9.{extension}");
+        let package = format!("OpenJDK21U-{image_type}_{arch}_{os}_hotspot_21.0.8_9.{extension}");
         let canonical_url = format!(
             "https://github.com/adoptium/temurin21-binaries/releases/download/{}/{}",
             release_name.replace('+', "%2B"),
             package,
         );
-        let plan = plan_java_artifact(version, release_name, target, &package, &canonical_url)
-            .expect("Java plan");
+        let plan = crate::plan_java_artifact_with_package(
+            version,
+            release_name,
+            target,
+            image_type,
+            &package,
+            &canonical_url,
+        )
+        .expect("Java plan");
         LockedArtifact {
             target: target.to_owned(),
             canonical_url: plan.canonical_url,

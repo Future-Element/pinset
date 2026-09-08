@@ -25,6 +25,33 @@ date = "2026-07-16"
 
 Rust 支持 `minimal`、`default`、`complete` profile。`components` 在所选 profile 上增加经过验证的组件，`targets` 安装额外的 `rust-std` 编译目标。固定 nightly 可以使用 `rust = "nightly"` 配合 `date`，也可以使用 `rust = "nightly-YYYY-MM-DD"`；不带日期的浮动 nightly 会被拒绝。不同选项集合使用不同安装身份，没有结构化选项的项目继续使用原版本目录。
 
+Java 使用 Eclipse Temurin，并默认安装 JDK。schema 5 可以在不改变版本选择器的情况下选择体积更小的 JRE：
+
+```toml
+[tools]
+java = "lts"
+
+[tool-options.java]
+distribution = "temurin"
+package = "jre"
+```
+
+发行版和包类型都会进入锁与安装身份，因此同一精确版本的 JDK 与 JRE 可以共存。
+
+Python 继续兼容默认 `.venv`，并可声明额外的隔离环境供任务绑定：
+
+```toml
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+```
+
 支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
 全局选项 `--lang <en|zh-CN>` 用于选择单次调用的输出语言。不带子命令运行 `pinset --lang <language>` 会保存默认语言。
@@ -420,14 +447,14 @@ pinset cache prefetch --jobs 4
 
 ## Python 环境命令
 
-只有当项目 `.venv` 的所有权标记与当前项目和所选 CPython 发行版一致时，Pinset 才认为它由自己所有。无法证明所有权时，破坏性操作会失败关闭。
+只有当项目 Python 环境的所有权标记与声明名称、路径、所选 CPython 发行版和目标一致时，Pinset 才认为它由自己所有。保留名称 `default` 继续对应 `.venv`；其他名称必须在 `[python.environments.<名称>]` 下声明。无法证明所有权时，破坏性操作会失败关闭。
 
 ### `venv`
 
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合项目所有的 Python 环境操作。 |
-| 语法与参数 | `pinset venv <create|status|recreate> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset venv <create|status|recreate> [名称] ...`；名称默认为 `default`。 |
 | 修改状态 | 取决于二级命令；`create` 与 `recreate` 会修改状态。 |
 | 示例 | `pinset venv status` |
 | JSON | 不支持。 |
@@ -438,10 +465,10 @@ pinset cache prefetch --jobs 4
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 必要时安装所选 CPython，然后创建或验证项目 `.venv`。 |
-| 语法与参数 | `pinset venv create [--cwd <path>]`。 |
-| 修改状态 | **是。** 可能安装 Python，并创建 `.venv` 及其所有权标记。 |
-| 示例 | `pinset venv create --cwd ./app` |
+| 用途 | 必要时安装所选 CPython，然后创建或验证一个项目环境。 |
+| 语法与参数 | `pinset venv create [名称] [--cwd <path>]`。 |
+| 修改状态 | **是。** 可能安装 Python，并创建所选环境及其所有权标记。 |
+| 示例 | `pinset venv create docs --cwd ./app` |
 | JSON | 不支持。 |
 | 退出码 | 环境就绪为 `0`；Pinset 失败为 `2`。 |
 | 关键错误 | 项目未选择 Python、锁不匹配、目标不支持、安装失败、已存在外部 `.venv` 或标记不匹配。 |
@@ -451,7 +478,7 @@ pinset cache prefetch --jobs 4
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 显示所选 CPython 发行版与受管项目环境路径。 |
-| 语法与参数 | `pinset venv status [--cwd <path>]`。 |
+| 语法与参数 | `pinset venv status [名称] [--cwd <path>]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset venv status` |
 | JSON | 不支持。 |
@@ -462,10 +489,10 @@ pinset cache prefetch --jobs 4
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 在证明 Pinset 所有权后删除并重建项目 `.venv`。 |
-| 语法与参数 | `pinset venv recreate [--cwd <path>]`。 |
-| 修改状态 | **是。** 只替换具有正确标记、归 Pinset 所有的 `.venv`。 |
-| 示例 | `pinset venv recreate --cwd ./app` |
+| 用途 | 在证明 Pinset 所有权后删除并重建一个项目环境。 |
+| 语法与参数 | `pinset venv recreate [名称] [--cwd <path>]`。 |
+| 修改状态 | **是。** 只替换具有正确标记、归 Pinset 所有的环境。 |
+| 示例 | `pinset venv recreate docs --cwd ./app` |
 | JSON | 不支持。 |
 | 退出码 | 重建成功为 `0`；验证或重建失败为 `2`。 |
 | 关键错误 | 所有权标记缺失/无效、路径逃逸、所选 Python 不匹配、删除失败或 venv 创建失败。 |

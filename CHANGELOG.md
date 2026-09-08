@@ -6,6 +6,8 @@
 - Add concurrent `cache prefetch`, verified offline bundle export/import, and an explicit offline locked-install mode that reports all missing artifacts before changing installation state.
 - Add schema 5 `[tool-options]`, lock schema 4 option identities, and installation receipt schema 4 so one exact release can coexist with different verified tool configurations.
 - Add Rust profiles, extra components, extra compilation targets, and fixed-date nightly toolchains. Rust artifacts and target overlays remain bound to the official v2 manifest and SHA-256 identities.
+- Add Eclipse Temurin JDK/JRE selection with package-aware metadata, lock, install identities, archive validation, and runtime command checks.
+- Add isolated named Python environments, ownership marker schema 2, `venv <command> [name]`, and task-level `python-environment` binding while preserving the default `.venv` contract.
 
 Project configuration remains schema 5. Runtime locks migrate explicitly to schema 4; schema 1-3 locks remain readable. Installations without structured options retain their historical version-only directory identity, and receipt schemas 1-3 remain readable.
 

@@ -137,6 +137,7 @@ impl PartialOrd for JavaVersion {
 pub struct JavaArtifactPlan {
     pub version: String,
     pub target: String,
+    pub image_type: String,
     pub os: &'static str,
     pub arch: &'static str,
     pub artifact_path: String,
@@ -152,10 +153,33 @@ pub fn plan_java_artifact(
     package_name: &str,
     canonical_url: &str,
 ) -> Result<JavaArtifactPlan> {
+    plan_java_artifact_with_package(
+        version,
+        release_name,
+        target,
+        "jdk",
+        package_name,
+        canonical_url,
+    )
+}
+
+pub fn plan_java_artifact_with_package(
+    version: &str,
+    release_name: &str,
+    target: &str,
+    image_type: &str,
+    package_name: &str,
+    canonical_url: &str,
+) -> Result<JavaArtifactPlan> {
     let version = JavaVersion::parse(version)?;
     let (os, arch, format) = java_platform(target)?;
+    if !matches!(image_type, "jdk" | "jre") {
+        return Err(Error::InvalidJavaArtifact {
+            reason: format!("unsupported Temurin package type {image_type:?}"),
+        });
+    }
     validate_release_name(release_name)?;
-    validate_package_name(&version, os, arch, format, package_name)?;
+    validate_package_name(&version, os, arch, format, image_type, package_name)?;
     let url = Url::parse(canonical_url).map_err(|source| Error::InvalidJavaArtifact {
         reason: format!("invalid package URL: {source}"),
     })?;
@@ -191,6 +215,7 @@ pub fn plan_java_artifact(
     Ok(JavaArtifactPlan {
         version: version.to_string(),
         target: target.to_owned(),
+        image_type: image_type.to_owned(),
         os,
         arch,
         artifact_path,
@@ -235,9 +260,13 @@ fn validate_package_name(
     os: &str,
     arch: &str,
     format: JavaArchiveFormat,
+    image_type: &str,
     package_name: &str,
 ) -> Result<()> {
-    let prefix = format!("OpenJDK{}U-jdk_{arch}_{os}_hotspot_", version.major);
+    let prefix = format!(
+        "OpenJDK{}U-{image_type}_{arch}_{os}_hotspot_",
+        version.major
+    );
     let suffix = format!(".{}", format.as_str());
     if !package_name.starts_with(&prefix)
         || !package_name.ends_with(&suffix)
@@ -246,7 +275,9 @@ fn validate_package_name(
         })
     {
         return Err(Error::InvalidJavaArtifact {
-            reason: format!("package {package_name:?} does not match {os}/{arch} JDK archive"),
+            reason: format!(
+                "package {package_name:?} does not match {os}/{arch} {image_type} archive"
+            ),
         });
     }
     Ok(())
@@ -303,6 +334,17 @@ mod tests {
         .expect("Linux ARM64 plan");
         assert_eq!(linux_arm.arch, "aarch64");
         assert_eq!(linux_arm.os, "linux");
+
+        let jre = plan_java_artifact_with_package(
+            "21.0.8+9",
+            "jdk-21.0.8+9",
+            "linux-x86_64",
+            "jre",
+            "OpenJDK21U-jre_x64_linux_hotspot_21.0.8_9.tar.gz",
+            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.8_9.tar.gz",
+        )
+        .expect("JRE plan");
+        assert_eq!(jre.image_type, "jre");
     }
 
     #[test]
@@ -314,6 +356,17 @@ mod tests {
                 "linux-x86_64",
                 "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.8_9.tar.gz",
                 "https://example.com/archive.tar.gz",
+            )
+            .is_err()
+        );
+        assert!(
+            plan_java_artifact_with_package(
+                "21.0.8+9",
+                "jdk-21.0.8+9",
+                "linux-x86_64",
+                "jre",
+                "OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz",
+                "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz",
             )
             .is_err()
         );

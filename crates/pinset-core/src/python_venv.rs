@@ -16,10 +16,11 @@ use crate::{Error, Result};
 
 pub const PYTHON_ENVIRONMENT_DIR: &str = ".venv";
 pub const PYTHON_ENVIRONMENT_MARKER: &str = ".pinset-venv.toml";
-const PYTHON_ENVIRONMENT_SCHEMA: u32 = 1;
+const PYTHON_ENVIRONMENT_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectPythonEnvironment {
+    pub name: String,
     pub root: PathBuf,
     pub command_directory: PathBuf,
     pub python: PathBuf,
@@ -31,6 +32,8 @@ pub struct ProjectPythonEnvironment {
 #[serde(deny_unknown_fields)]
 struct PythonEnvironmentMarker {
     schema: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environment: Option<String>,
     distribution: String,
     target: String,
 }
@@ -42,13 +45,102 @@ pub fn project_python_environment_path(project_config_path: &Path) -> PathBuf {
         .join(PYTHON_ENVIRONMENT_DIR)
 }
 
+pub fn project_python_environment_path_for(
+    project_config_path: &Path,
+    environment_name: &str,
+    relative_path: &str,
+) -> Result<PathBuf> {
+    if environment_name == "default" {
+        if relative_path != PYTHON_ENVIRONMENT_DIR {
+            return Err(Error::InvalidProjectConfig {
+                reason: "the default Python environment path must remain .venv".to_owned(),
+            });
+        }
+        return Ok(project_python_environment_path(project_config_path));
+    }
+    if environment_name.is_empty()
+        || environment_name.len() > 64
+        || !environment_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("invalid Python environment name {environment_name:?}"),
+        });
+    }
+    let relative = Path::new(relative_path);
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative_path.contains(['\\', ':'])
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: format!(
+                "Python environment {environment_name} path must stay within the project"
+            ),
+        });
+    }
+    let project_root = project_config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let root = project_root.join(relative);
+    let mut ancestor = project_root.to_path_buf();
+    for component in relative.components() {
+        ancestor.push(component.as_os_str());
+        match fs::symlink_metadata(&ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::PythonEnvironmentNotOwned { path: ancestor });
+            }
+            Ok(metadata) if !metadata.is_dir() && ancestor != root => {
+                return Err(Error::PythonEnvironmentNotOwned { path: ancestor });
+            }
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => break,
+            Err(source) => {
+                return Err(Error::ReadPythonEnvironmentMarker {
+                    path: ancestor,
+                    source,
+                });
+            }
+        }
+    }
+    Ok(root)
+}
+
 pub fn load_project_python_environment(
     project_config_path: &Path,
     expected_distribution: &str,
     expected_target: &str,
 ) -> Result<ProjectPythonEnvironment> {
-    let root = project_python_environment_path(project_config_path);
+    load_project_python_environment_for(
+        project_config_path,
+        "default",
+        PYTHON_ENVIRONMENT_DIR,
+        expected_distribution,
+        expected_target,
+    )
+}
+
+pub fn load_project_python_environment_for(
+    project_config_path: &Path,
+    environment_name: &str,
+    relative_path: &str,
+    expected_distribution: &str,
+    expected_target: &str,
+) -> Result<ProjectPythonEnvironment> {
+    let root =
+        project_python_environment_path_for(project_config_path, environment_name, relative_path)?;
     let marker = read_marker(&root)?;
+    let marker_environment = marker.environment.as_deref().unwrap_or("default");
+    if marker_environment != environment_name {
+        return Err(Error::PythonEnvironmentMismatch {
+            path: root,
+            expected: format!("environment {environment_name}"),
+            actual: format!("environment {marker_environment}"),
+        });
+    }
     if marker.distribution != expected_distribution || marker.target != expected_target {
         return Err(Error::PythonEnvironmentMismatch {
             path: root,
@@ -66,18 +158,51 @@ pub fn create_project_python_environment(
     target: &str,
     recreate: bool,
 ) -> Result<ProjectPythonEnvironment> {
-    let root = project_python_environment_path(project_config_path);
+    create_project_python_environment_for(
+        project_config_path,
+        "default",
+        PYTHON_ENVIRONMENT_DIR,
+        base_python,
+        distribution,
+        target,
+        recreate,
+    )
+}
+
+pub fn create_project_python_environment_for(
+    project_config_path: &Path,
+    environment_name: &str,
+    relative_path: &str,
+    base_python: &Path,
+    distribution: &str,
+    target: &str,
+    recreate: bool,
+) -> Result<ProjectPythonEnvironment> {
+    let root =
+        project_python_environment_path_for(project_config_path, environment_name, relative_path)?;
     match fs::symlink_metadata(&root) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err(Error::PythonEnvironmentNotOwned { path: root });
             }
             if !recreate {
-                return load_project_python_environment(project_config_path, distribution, target);
+                return load_project_python_environment_for(
+                    project_config_path,
+                    environment_name,
+                    relative_path,
+                    distribution,
+                    target,
+                );
             }
             // The marker is deliberately checked before recursive removal. `recreate` is not
             // permission to replace an environment created by the user or another tool.
-            read_marker(&root)?;
+            load_project_python_environment_for(
+                project_config_path,
+                environment_name,
+                relative_path,
+                distribution,
+                target,
+            )?;
             fs::remove_dir_all(&root).map_err(|source| Error::RemovePythonEnvironment {
                 path: root.clone(),
                 source,
@@ -111,7 +236,12 @@ pub fn create_project_python_environment(
     }
 
     let marker = PythonEnvironmentMarker {
-        schema: PYTHON_ENVIRONMENT_SCHEMA,
+        schema: if environment_name == "default" {
+            1
+        } else {
+            PYTHON_ENVIRONMENT_SCHEMA
+        },
+        environment: (environment_name != "default").then(|| environment_name.to_owned()),
         distribution: distribution.to_owned(),
         target: target.to_owned(),
     };
@@ -130,7 +260,13 @@ pub fn create_project_python_environment(
         });
     }
 
-    match load_project_python_environment(project_config_path, distribution, target) {
+    match load_project_python_environment_for(
+        project_config_path,
+        environment_name,
+        relative_path,
+        distribution,
+        target,
+    ) {
         Ok(environment) => Ok(environment),
         Err(error) => {
             clean_failed_environment(&root);
@@ -185,13 +321,23 @@ fn read_marker(root: &Path) -> Result<PythonEnvironmentMarker> {
             path: marker_path.clone(),
             reason: source.to_string(),
         })?;
-    if marker.schema != PYTHON_ENVIRONMENT_SCHEMA
-        || marker.distribution.trim().is_empty()
-        || marker.target.trim().is_empty()
-    {
+    let valid_schema = match marker.schema {
+        1 => marker.environment.is_none(),
+        PYTHON_ENVIRONMENT_SCHEMA => marker.environment.as_deref().is_some_and(|name| {
+            name != "default"
+                && !name.is_empty()
+                && name.len() <= 64
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        }),
+        _ => false,
+    };
+    if !valid_schema || marker.distribution.trim().is_empty() || marker.target.trim().is_empty() {
         return Err(Error::InvalidPythonEnvironmentMarker {
             path: marker_path,
-            reason: "expected schema 1 with non-empty distribution and target".to_owned(),
+            reason: "expected a supported marker schema with environment identity, distribution and target"
+                .to_owned(),
         });
     }
     Ok(marker)
@@ -218,6 +364,7 @@ fn environment_from_marker(
         });
     }
     Ok(ProjectPythonEnvironment {
+        name: marker.environment.unwrap_or_else(|| "default".to_owned()),
         root,
         command_directory,
         python,
@@ -347,6 +494,45 @@ mod tests {
         create_project_python_environment(&config, &base, "3.14.7+20260807", target, true)
             .expect("recreate");
         assert!(!sentinel.exists());
+    }
+
+    #[test]
+    fn creates_named_environment_with_distinct_marker_and_path() {
+        let project = tempfile::tempdir().expect("project");
+        let config = project.path().join("pinset.toml");
+        let base = fake_base_python(project.path());
+        let target = if cfg!(windows) {
+            "windows-x86_64"
+        } else {
+            "linux-x86_64"
+        };
+        let environment = create_project_python_environment_for(
+            &config,
+            "docs",
+            ".venv-docs",
+            &base,
+            "3.14.7+20260807",
+            target,
+            false,
+        )
+        .expect("named environment");
+        assert_eq!(environment.name, "docs");
+        assert_eq!(environment.root, project.path().join(".venv-docs"));
+        assert!(!project.path().join(PYTHON_ENVIRONMENT_DIR).exists());
+        let marker =
+            fs::read_to_string(environment.root.join(PYTHON_ENVIRONMENT_MARKER)).expect("marker");
+        assert!(marker.contains("schema = 2"));
+        assert!(marker.contains("environment = \"docs\""));
+        assert!(
+            load_project_python_environment_for(
+                &config,
+                "other",
+                ".venv-docs",
+                "3.14.7+20260807",
+                target,
+            )
+            .is_err()
+        );
     }
 
     #[cfg(windows)]

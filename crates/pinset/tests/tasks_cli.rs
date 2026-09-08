@@ -48,6 +48,7 @@ fn task(command: impl IntoIterator<Item = impl AsRef<OsStr>>) -> ProjectTask {
         cwd: None,
         profile: None,
         description: None,
+        python_environment: None,
     }
 }
 
@@ -98,6 +99,7 @@ fn named_tasks_preserve_arguments_cwd_and_exit_status_without_path_fallback() {
                 task([env!("CARGO_BIN_EXE_pinset"), "--version"]),
             ),
         ]),
+        python: None,
         environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");

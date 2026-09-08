@@ -25,6 +25,33 @@ date = "2026-07-16"
 
 Rust supports `minimal`, `default`, and `complete` profiles. `components` adds verified components to the selected profile, while `targets` installs additional `rust-std` compilation targets. A fixed nightly may use `rust = "nightly"` with `date`, or `rust = "nightly-YYYY-MM-DD"`; a floating undated nightly is rejected. Different option sets use distinct installation identities, while projects without options keep the historical version-only path.
 
+Java uses Eclipse Temurin and defaults to a JDK. Schema 5 can select the smaller JRE package while keeping the same version selector:
+
+```toml
+[tools]
+java = "lts"
+
+[tool-options.java]
+distribution = "temurin"
+package = "jre"
+```
+
+The distribution and package type are part of the lock and installation identity, so a JDK and JRE at the same exact release can coexist.
+
+Python keeps the compatible default `.venv` and can declare additional isolated environments for task binding:
+
+```toml
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+```
+
 Supported tools are Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter. Dart is provided by the selected Flutter SDK. Project discovery stops at the nearest Git root by default; without a Git marker it inspects only the start directory. A project is strict by default: an undeclared tool neither inherits global state nor falls back to the system command unless `[policy]` explicitly enables `inherit-global` or `system-fallback`. Outside a project, global state then system `PATH` remain eligible.
 
 The global `--lang <en|zh-CN>` option selects output language for one invocation. Running `pinset --lang <language>` without a subcommand saves the default language.
@@ -420,14 +447,14 @@ After import, `pinset install --locked --offline` makes no network requests. It 
 
 ## Python environment commands
 
-Pinset owns a project `.venv` only when its ownership marker matches the current project and selected CPython distribution. Destructive operations fail closed if ownership cannot be proven.
+Pinset owns a project Python environment only when its ownership marker matches its declared name, path, selected CPython distribution, and target. The reserved `default` environment remains `.venv`; other names must be declared under `[python.environments.<name>]`. Destructive operations fail closed if ownership cannot be proven.
 
 ### `venv`
 
 | Field | Description |
 | --- | --- |
 | Purpose | Group project-owned Python environment operations. |
-| Syntax and arguments | `pinset venv <create|status|recreate> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset venv <create|status|recreate> [name] ...`; `name` defaults to `default`. |
 | Modifies state | Depends on the subcommand; `create` and `recreate` modify state. |
 | Example | `pinset venv status` |
 | JSON | No. |
@@ -438,10 +465,10 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 
 | Field | Description |
 | --- | --- |
-| Purpose | Install the selected CPython runtime if needed, then create or validate the project `.venv`. |
-| Syntax and arguments | `pinset venv create [--cwd <path>]`. |
-| Modifies state | **Yes.** May install Python and create `.venv` plus its ownership marker. |
-| Example | `pinset venv create --cwd ./app` |
+| Purpose | Install the selected CPython runtime if needed, then create or validate one project environment. |
+| Syntax and arguments | `pinset venv create [name] [--cwd <path>]`. |
+| Modifies state | **Yes.** May install Python and create the selected environment plus its ownership marker. |
+| Example | `pinset venv create docs --cwd ./app` |
 | JSON | No. |
 | Exit | `0` when the environment is ready; `2` on Pinset failure. |
 | Key errors | No project Python selection, lock mismatch, unsupported target, install failure, existing foreign `.venv`, or marker mismatch. |
@@ -451,7 +478,7 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 | Field | Description |
 | --- | --- |
 | Purpose | Show the selected CPython distribution and managed project-environment path. |
-| Syntax and arguments | `pinset venv status [--cwd <path>]`. |
+| Syntax and arguments | `pinset venv status [name] [--cwd <path>]`. |
 | Modifies state | No. |
 | Example | `pinset venv status` |
 | JSON | No. |
@@ -462,10 +489,10 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 
 | Field | Description |
 | --- | --- |
-| Purpose | Delete and recreate the project `.venv` after proving Pinset ownership. |
-| Syntax and arguments | `pinset venv recreate [--cwd <path>]`. |
-| Modifies state | **Yes.** Replaces only a correctly marked Pinset-owned `.venv`. |
-| Example | `pinset venv recreate --cwd ./app` |
+| Purpose | Delete and recreate one project environment after proving Pinset ownership. |
+| Syntax and arguments | `pinset venv recreate [name] [--cwd <path>]`. |
+| Modifies state | **Yes.** Replaces only the correctly marked Pinset-owned environment. |
+| Example | `pinset venv recreate docs --cwd ./app` |
 | JSON | No. |
 | Exit | `0` when recreated; `2` when validation or recreation fails. |
 | Key errors | Missing/invalid ownership marker, path escape, selected Python mismatch, removal failure, or venv creation failure. |

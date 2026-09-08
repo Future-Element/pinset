@@ -66,6 +66,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
         tools: BTreeMap::from([("node".to_owned(), "24".to_owned())]),
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
+        python: None,
         environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");
@@ -843,6 +844,7 @@ fn write_project(project: &Path, configured_version: &str, locked_version: &str)
         tools: BTreeMap::from([("node".to_owned(), configured_version.to_owned())]),
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
+        python: None,
         environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");

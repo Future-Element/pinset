@@ -86,7 +86,35 @@
             "not": { "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)" }
           },
           "profile": { "$ref": "#/$defs/profileName" },
-          "description": { "type": "string" }
+          "description": { "type": "string" },
+          "python-environment": { "$ref": "#/$defs/pythonEnvironmentName" }
+        }
+      }
+    },
+    "python": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environments": {
+          "type": "object",
+          "propertyNames": {
+            "allOf": [
+              { "$ref": "#/$defs/pythonEnvironmentName" },
+              { "not": { "const": "default" } }
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "not": { "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)" }
+              }
+            }
+          }
         }
       }
     },
@@ -159,6 +187,12 @@
       "pattern": "^[A-Za-z0-9._-]+$"
     },
     "taskName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "pythonEnvironmentName": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,

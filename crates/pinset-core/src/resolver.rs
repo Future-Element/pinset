@@ -17,8 +17,9 @@ use crate::current_target;
 use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
     find_project_context, global_config_path, is_managed_command_shim, load_optional_global_config,
-    load_project_config, load_project_python_environment, project_python_command_candidates,
-    provider_dependency_order, runtime_provider, runtime_provider_for_command, runtime_providers,
+    load_project_config, load_project_python_environment, load_project_python_environment_for,
+    project_python_command_candidates, provider_dependency_order, runtime_provider,
+    runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "lockfile")]
 use crate::{
@@ -127,6 +128,63 @@ pub fn resolve_execution_command(
             Err(error) => return Err(error),
         }
     }
+    resolve_system_execution_command(command, cwd, home)
+}
+
+pub fn resolve_execution_command_for_python_environment(
+    command: &str,
+    cwd: &Path,
+    home: &Path,
+    environment_name: &str,
+    relative_path: &str,
+) -> Result<CommandResolution> {
+    if let Some(tool) = command_tool(command) {
+        return if tool == "python" {
+            resolve_project_python_command_for(command, cwd, home, environment_name, relative_path)
+        } else {
+            resolve_command(command, cwd, home)
+        };
+    }
+    let configured = effective_configured_tools(cwd, home)?;
+    for provider in runtime_providers()
+        .iter()
+        .filter(|provider| configured.contains_key(provider.tool))
+    {
+        if provider.tool == "python" {
+            resolve_project_python_command_for(
+                provider.commands[0],
+                cwd,
+                home,
+                environment_name,
+                relative_path,
+            )?;
+        } else {
+            resolve_command(provider.commands[0], cwd, home)?;
+        }
+    }
+    if configured.contains_key("python") {
+        match resolve_project_python_command_for(
+            command,
+            cwd,
+            home,
+            environment_name,
+            relative_path,
+        ) {
+            Ok(resolution) => return Ok(resolution),
+            Err(Error::RuntimeCommandNotFound { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    resolve_system_execution_command(command, cwd, home)
+}
+
+fn resolve_system_execution_command(
+    command: &str,
+    cwd: &Path,
+    home: &Path,
+) -> Result<CommandResolution> {
+    let command_path = Path::new(command);
+    let explicit_path = command_path.is_absolute() || command_path.components().count() > 1;
     let excluded = sibling_shim_executable().into_iter().collect::<Vec<_>>();
     let path = env::var_os("PATH");
     let executable = if explicit_path {
@@ -321,6 +379,16 @@ pub fn resolve_project_python_command(
     cwd: &Path,
     pinset_home: &Path,
 ) -> Result<CommandResolution> {
+    resolve_project_python_command_for(command, cwd, pinset_home, "default", ".venv")
+}
+
+pub fn resolve_project_python_command_for(
+    command: &str,
+    cwd: &Path,
+    pinset_home: &Path,
+    environment_name: &str,
+    relative_path: &str,
+) -> Result<CommandResolution> {
     let selection = resolve_tool_selection("python", cwd, pinset_home)?;
     if selection.source != SelectionSource::Project {
         return Err(Error::PythonEnvironmentSelectionMissing {
@@ -328,8 +396,13 @@ pub fn resolve_project_python_command(
         });
     }
     let target = current_target_for_tool("python");
-    let environment =
-        load_project_python_environment(&selection.config_path, &selection.version, &target)?;
+    let environment = load_project_python_environment_for(
+        &selection.config_path,
+        environment_name,
+        relative_path,
+        &selection.version,
+        &target,
+    )?;
     let candidates = project_python_command_candidates(&environment, command);
     let executable = candidates
         .iter()

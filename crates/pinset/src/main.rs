@@ -27,27 +27,29 @@ use pinset_core::{
     SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceKind, SourceView,
     acquire_global_state_write_lock, acquire_project_state_write_lock, audit_global_lock,
     audit_project_lock, clean_download_cache, command_tool, create_project_config,
-    create_project_python_environment, current_target_for_tool, download_cache_info, ensure_shims,
-    find_optional_project_config, find_project_config, find_project_context, global_config_path,
-    global_lockfile_path, import_download_cache, import_download_cache_with_integrity,
-    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
-    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
-    install_payload_statistics, is_managed_command_shim, list_all_installed_tool_versions,
-    list_download_cache, list_installed_tool_versions, load_global_config, load_lockfile,
+    create_project_python_environment_for, current_target_for_tool, download_cache_info,
+    ensure_shims, find_optional_project_config, find_project_config, find_project_context,
+    global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_dotnet, install_locked_flutter,
+    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
+    install_locked_python, install_locked_rust, install_payload_statistics,
+    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
+    list_installed_tool_versions, load_global_config, load_lockfile,
     load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
-    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
-    lockfile_path, managed_runtime_arguments, pinset_home, plan_prune_tool_versions,
-    plan_uninstall_tool_version, project_python_environment_path, provider_dependency_order,
-    register_project_config, repair_download_cache, resolve_command,
-    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
-    runtime_command_directory, runtime_environment_for_install, runtime_provider,
-    save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
-    save_source_config, save_user_settings, scan_project_sources, source_config_path,
-    uninstall_node_version, uninstall_tool_version, user_settings_path,
-    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
-    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
-    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tool_options, validate_lock_matches_tools,
+    load_project_config, load_project_python_environment, load_project_python_environment_for,
+    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments, pinset_home,
+    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
+    provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
+    resolve_execution_command_for_python_environment, resolve_project_python_command,
+    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
+    runtime_environment_for_install, runtime_provider, save_global_config,
+    save_global_state_locked, save_project_config, save_project_state_locked, save_source_config,
+    save_user_settings, scan_project_sources, source_config_path, uninstall_node_version,
+    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
+    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
+    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
+    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
+    validate_lock_matches_tool_options, validate_lock_matches_tools,
     validate_managed_runtime_invocation, validate_project_lock_policy,
     validate_windows_batch_arguments, verify_download_cache,
 };
@@ -454,18 +456,25 @@ enum SelfChannel {
 
 #[derive(Debug, Subcommand)]
 enum VenvCommands {
-    /// Install the selected CPython runtime and create or validate .venv.
+    /// Install CPython and create or validate a declared environment.
     Create {
+        /// Environment name. The default environment remains .venv.
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Show the selected CPython distribution and managed .venv path.
+    /// Show the selected CPython distribution and managed environment path.
     Status {
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Delete and recreate .venv after verifying Pinset ownership.
+    /// Delete and recreate an environment after verifying Pinset ownership.
     Recreate {
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
@@ -1210,7 +1219,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             false,
             cli.profile.as_deref(),
             cli.no_env,
-            true,
+            SelectedExecution::external(None),
             catalog,
         );
     }
@@ -1442,7 +1451,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 false,
                 profile,
                 no_env || cli.no_env,
-                false,
+                SelectedExecution::managed(),
                 catalog,
             );
         }
@@ -1461,7 +1470,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 true,
                 cli.profile.as_deref(),
                 cli.no_env,
-                false,
+                SelectedExecution::managed(),
                 catalog,
             );
         }
@@ -3426,7 +3435,9 @@ fn resolve_locked_tool_with_options(
             flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?
         }
         RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Java => JavaMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Java => {
+            JavaMetadataClient::official()?.resolve_tool_with_options(selector, options)?
+        }
         RuntimeMetadataKind::Rust => {
             RustMetadataClient::official()?.resolve_tool_with_options(selector, options)?
         }
@@ -4030,6 +4041,7 @@ fn load_project_import_state(
             tools: BTreeMap::new(),
             tool_options: BTreeMap::new(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: None,
         }
     };
@@ -4663,6 +4675,24 @@ fn install_project_with_venv(
     offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    install_project_with_python_environment(
+        cwd,
+        "default",
+        pinset_core::PYTHON_ENVIRONMENT_DIR,
+        recreate_venv,
+        offline,
+        catalog,
+    )
+}
+
+fn install_project_with_python_environment(
+    cwd: &Path,
+    environment_name: &str,
+    environment_path: &str,
+    recreate_venv: bool,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
     let project = load_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
@@ -4688,7 +4718,14 @@ fn install_project_with_venv(
             &config_path,
             &lock_path,
         )?;
-        ensure_project_python_environment(&home, &config_path, &distribution, recreate_venv)?;
+        ensure_project_python_environment(
+            &home,
+            &config_path,
+            environment_name,
+            environment_path,
+            &distribution,
+            recreate_venv,
+        )?;
     }
     Ok(())
 }
@@ -4697,13 +4734,14 @@ fn run_venv_command(
     command: VenvCommands,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (cwd, action) = match command {
-        VenvCommands::Create { cwd } => (effective_cwd(cwd)?, "create"),
-        VenvCommands::Status { cwd } => (effective_cwd(cwd)?, "status"),
-        VenvCommands::Recreate { cwd } => (effective_cwd(cwd)?, "recreate"),
+    let (cwd, name, action) = match command {
+        VenvCommands::Create { name, cwd } => (effective_cwd(cwd)?, name, "create"),
+        VenvCommands::Status { name, cwd } => (effective_cwd(cwd)?, name, "status"),
+        VenvCommands::Recreate { name, cwd } => (effective_cwd(cwd)?, name, "recreate"),
     };
     let config_path = find_project_config(&cwd)?;
     let project = load_project_config(&config_path)?;
+    let environment_path = python_environment_relative_path(&project, &name)?.to_owned();
     let requested =
         project
             .tools
@@ -4720,20 +4758,36 @@ fn run_venv_command(
     )?;
     if action == "status" {
         let target = current_target_for_tool("python");
-        let environment = load_project_python_environment(&config_path, &distribution, &target)?;
+        let environment = load_project_python_environment_for(
+            &config_path,
+            &name,
+            &environment_path,
+            &distribution,
+            &target,
+        )?;
         println!(
-            "python@{} project environment {}",
+            "python@{} project environment {} at {}",
             environment.distribution,
+            environment.name,
             environment.root.display()
         );
         return Ok(());
     }
-    install_project_with_venv(&cwd, action == "recreate", false, catalog)
+    install_project_with_python_environment(
+        &cwd,
+        &name,
+        &environment_path,
+        action == "recreate",
+        false,
+        catalog,
+    )
 }
 
 fn ensure_project_python_environment(
     home: &Path,
     config_path: &Path,
+    environment_name: &str,
+    environment_path: &str,
     distribution: &str,
     recreate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4757,16 +4811,19 @@ fn ensure_project_python_environment(
                 .collect::<Vec<_>>()
                 .join(", "),
         })?;
-    let environment = create_project_python_environment(
+    let environment = create_project_python_environment_for(
         config_path,
+        environment_name,
+        environment_path,
         base_python,
         distribution,
         &target,
         recreate,
     )?;
     println!(
-        "python@{} project environment ready at {}",
+        "python@{} project environment {} ready at {}",
         environment.distribution,
+        environment.name,
         environment.root.display()
     );
     Ok(())
@@ -5387,9 +5444,46 @@ fn run_project_task(
         false,
         task_profile,
         no_environment,
-        true,
+        SelectedExecution::external(task.python_environment.as_deref()),
         catalog,
     )
+}
+
+fn python_environment_relative_path<'a>(
+    config: &'a ProjectConfig,
+    name: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    if name == "default" {
+        return Ok(pinset_core::PYTHON_ENVIRONMENT_DIR);
+    }
+    config
+        .python
+        .as_ref()
+        .and_then(|python| python.environments.get(name))
+        .map(|environment| environment.path.as_str())
+        .ok_or_else(|| format!("Python environment {name:?} is not declared").into())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SelectedExecution<'a> {
+    allow_external: bool,
+    python_environment: Option<&'a str>,
+}
+
+impl<'a> SelectedExecution<'a> {
+    const fn managed() -> Self {
+        Self {
+            allow_external: false,
+            python_environment: None,
+        }
+    }
+
+    const fn external(python_environment: Option<&'a str>) -> Self {
+        Self {
+            allow_external: true,
+            python_environment,
+        }
+    }
 }
 
 fn execute_selected(
@@ -5398,9 +5492,20 @@ fn execute_selected(
     install_ephemeral: bool,
     environment_profile: Option<&str>,
     no_environment: bool,
-    allow_external: bool,
+    options: SelectedExecution<'_>,
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    let allow_external = options.allow_external;
+    let python_environment = options.python_environment;
+    let python_environment_path = python_environment
+        .map(|name| {
+            let config_path = find_project_config(cwd)?;
+            let config = load_project_config(&config_path)?;
+            Ok::<String, Box<dyn std::error::Error>>(
+                python_environment_relative_path(&config, name)?.to_owned(),
+            )
+        })
+        .transpose()?;
     let (ephemeral_selection, mut command) = command
         .first()
         .and_then(|value| value.to_str())
@@ -5474,7 +5579,18 @@ fn execute_selected(
                 environment,
             )
         } else {
-            let resolution = if allow_external {
+            let resolution = if allow_external
+                && let (Some(environment_name), Some(relative_path)) =
+                    (python_environment, python_environment_path.as_deref())
+            {
+                resolve_execution_command_for_python_environment(
+                    command_name,
+                    cwd,
+                    &home,
+                    environment_name,
+                    relative_path,
+                )?
+            } else if allow_external {
                 pinset_core::resolve_execution_command(command_name, cwd, &home)?
             } else if command_tool(command_name).is_some() {
                 resolve_command(command_name, cwd, &home)?
@@ -5490,7 +5606,52 @@ fn execute_selected(
                 Vec::new(),
             )
         };
-    let execution = pinset_core::execution_context(&tool, &executable, cwd, &home)?;
+    let mut execution = pinset_core::execution_context(&tool, &executable, cwd, &home)?;
+    if let (Some(environment_name), Some(relative_path)) =
+        (python_environment, python_environment_path.as_deref())
+    {
+        let selection = resolve_tool_selection("python", cwd, &home)?;
+        if selection.source != pinset_core::SelectionSource::Project {
+            return Err(Error::PythonEnvironmentSelectionMissing {
+                path: cwd.to_path_buf(),
+            }
+            .into());
+        }
+        let environment = load_project_python_environment_for(
+            &selection.config_path,
+            environment_name,
+            relative_path,
+            &selection.version,
+            &current_target_for_tool("python"),
+        )?;
+        let previous_virtual_environment = execution
+            .environment
+            .iter()
+            .find(|variable| variable.name == "VIRTUAL_ENV")
+            .map(|variable| PathBuf::from(&variable.value));
+        let mut path_entries = vec![environment.command_directory.clone()];
+        path_entries.extend(env::split_paths(&execution.path).filter(|entry| {
+            if entry == &environment.command_directory {
+                return false;
+            }
+            previous_virtual_environment.as_ref().is_none_or(|root| {
+                entry != &root.join(if cfg!(windows) { "Scripts" } else { "bin" })
+            })
+        }));
+        execution.path = env::join_paths(path_entries)?;
+        execution
+            .environment
+            .retain(|variable| variable.name != "VIRTUAL_ENV");
+        execution
+            .environment
+            .push(pinset_core::RuntimeEnvironmentVariable {
+                name: "VIRTUAL_ENV",
+                value: environment.root.into_os_string(),
+            });
+        if !execution.remove_environment.contains(&"PYTHONHOME") {
+            execution.remove_environment.push("PYTHONHOME");
+        }
+    }
     if source != "system" {
         validate_managed_runtime_invocation(&tool, command_name, &command[1..])?;
     }
@@ -7452,6 +7613,7 @@ mod tests {
             ]),
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: None,
         };
         let node = LockedTool {
@@ -7667,6 +7829,7 @@ mod tests {
                 tools: BTreeMap::new(),
                 tool_options: Default::default(),
                 tasks: BTreeMap::new(),
+                python: None,
                 environment: None,
             },
         )
@@ -8004,6 +8167,7 @@ mod tests {
                 tools: BTreeMap::new(),
                 tool_options: Default::default(),
                 tasks: BTreeMap::new(),
+                python: None,
                 environment: None,
             },
         )

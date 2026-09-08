@@ -38,6 +38,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
             tools: BTreeMap::new(),
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: Some(environment.clone()),
         },
     )
@@ -86,6 +87,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
         tools: BTreeMap::new(),
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
+        python: None,
         environment: Some(changed),
     };
     save_project_config(&project.join("pinset.toml"), &changed_config).expect("changed config");
@@ -168,6 +170,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
             tools: BTreeMap::new(),
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: Some(environment.clone()),
         },
     )

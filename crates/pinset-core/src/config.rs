@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "project-write")]
 use std::io::Write;
 
-use crate::{Error, MinimumReleaseAge, Result, VerificationStrength};
+use crate::{Error, MinimumReleaseAge, PYTHON_ENVIRONMENT_DIR, Result, VerificationStrength};
 
 #[cfg(feature = "lockfile")]
 use crate::Lockfile;
@@ -45,6 +45,8 @@ pub struct ProjectConfig {
     pub tool_options: BTreeMap<String, ToolOptions>,
     #[serde(default)]
     pub tasks: BTreeMap<String, ProjectTask>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<ProjectPython>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
 }
@@ -127,6 +129,21 @@ pub struct ProjectTask {
     pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_environment: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectPython {
+    #[serde(default)]
+    pub environments: BTreeMap<String, ProjectPythonEnvironmentConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectPythonEnvironmentConfig {
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,6 +429,11 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             reason: "tasks require schema 5; run `pinset migrate`".to_owned(),
         });
     }
+    if config.schema < PROJECT_CONFIG_SCHEMA && config.python.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "named Python environments require schema 5; run `pinset migrate`".to_owned(),
+        });
+    }
     validate_tool_options(config)?;
     if config.schema < 4 {
         if config.project_id.is_some() || config.environment.is_some() {
@@ -462,6 +484,7 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             }
         }
     }
+    validate_python_environments(config)?;
     let Some(environment) = &config.environment else {
         if let Some((name, _)) = config.tasks.iter().find(|(_, task)| task.profile.is_some()) {
             return Err(Error::InvalidProjectConfig {
@@ -550,6 +573,70 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         {
             return Err(Error::InvalidProjectConfig {
                 reason: format!("task {name} references undeclared profile {profile}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_python_environments(config: &ProjectConfig) -> Result<()> {
+    let declared = config.python.as_ref().map(|python| &python.environments);
+    if declared.is_some_and(|environments| !environments.is_empty())
+        && !config.tools.contains_key("python")
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: "python environments require tools.python".to_owned(),
+        });
+    }
+    let mut paths = std::collections::BTreeSet::from([PYTHON_ENVIRONMENT_DIR.to_owned()]);
+    if let Some(environments) = declared {
+        for (name, environment) in environments {
+            if name == "default" || !valid_task_name(name) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "invalid Python environment name {name:?}; default is reserved for .venv"
+                    ),
+                });
+            }
+            let path = Path::new(&environment.path);
+            let components = environment
+                .path
+                .split('/')
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            let portable_path = components.join("/");
+            if path.as_os_str().is_empty()
+                || path.is_absolute()
+                || environment.path.contains(['\\', ':'])
+                || components.iter().any(|component| {
+                    component.is_empty() || matches!(component.as_str(), "." | "..")
+                })
+                || !paths.insert(portable_path)
+            {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "Python environment {name} path must be unique and stay within the project"
+                    ),
+                });
+            }
+        }
+    }
+    for (name, task) in &config.tasks {
+        let Some(environment_name) = task.python_environment.as_deref() else {
+            continue;
+        };
+        if environment_name != "default"
+            && declared.is_none_or(|environments| !environments.contains_key(environment_name))
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!(
+                    "task {name} references undeclared Python environment {environment_name}"
+                ),
+            });
+        }
+        if !config.tools.contains_key("python") {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} binds a Python environment without tools.python"),
             });
         }
     }
@@ -1016,6 +1103,48 @@ command = ["cargo", "test"]
     }
 
     #[test]
+    fn schema_five_validates_named_python_environments_and_task_bindings() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000027"
+
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+"#,
+        )
+        .expect("named environment config");
+        let config = load_project_config(&path).expect("valid named environment");
+        assert_eq!(
+            config.python.as_ref().expect("Python config").environments["docs"].path,
+            ".venv-docs"
+        );
+        assert_eq!(
+            config.tasks["docs"].python_environment.as_deref(),
+            Some("docs")
+        );
+
+        let invalid = fs::read_to_string(&path).expect("config").replace(
+            "python-environment = \"docs\"",
+            "python-environment = \"missing\"",
+        );
+        fs::write(&path, invalid).expect("invalid binding");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::InvalidProjectConfig { .. })
+        ));
+    }
+
+    #[test]
     fn variable_contracts_reject_invalid_defaults_and_secret_defaults() {
         let contract = EnvironmentVariableContract {
             kind: EnvironmentVariableType::Integer,
@@ -1181,6 +1310,7 @@ date = "2026-07-16"
             tools: BTreeMap::new(),
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: None,
         };
         save_project_config(&path, &config).expect("save schema four");
@@ -1237,6 +1367,7 @@ date = "2026-07-16"
             tools: BTreeMap::new(),
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
             environment: None,
         };
         let lockfile = Lockfile {

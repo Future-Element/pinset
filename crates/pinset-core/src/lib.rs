@@ -99,9 +99,9 @@ pub use config::validate_project_lock_policy;
 pub use config::{
     EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType,
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
-    ProjectEnvironment, ProjectPolicy, ProjectTask, ToolOptions, find_optional_project_config,
-    find_project_config, find_project_context, load_project_config,
-    validate_environment_variable_value,
+    ProjectEnvironment, ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectTask,
+    ToolOptions, find_optional_project_config, find_project_config, find_project_context,
+    load_project_config, validate_environment_variable_value,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};
@@ -176,7 +176,7 @@ pub use java_metadata::{JavaMetadataClient, JavaRelease};
 #[cfg(feature = "java-provider")]
 pub use java_provider::{
     JAVA_TARGETS, JavaArchiveFormat, JavaArtifactPlan, JavaVersion, plan_java_artifact,
-    validate_exact_java_version,
+    plan_java_artifact_with_package, validate_exact_java_version,
 };
 #[cfg(all(feature = "installer", feature = "java-provider", feature = "lockfile"))]
 pub use java_runtime::install_locked_java;
@@ -246,15 +246,18 @@ pub use python_provider::{
 pub use python_runtime::install_locked_python;
 pub use python_venv::{
     PYTHON_ENVIRONMENT_DIR, PYTHON_ENVIRONMENT_MARKER, ProjectPythonEnvironment,
-    create_project_python_environment, load_project_python_environment,
+    create_project_python_environment, create_project_python_environment_for,
+    load_project_python_environment, load_project_python_environment_for,
     project_python_command_candidates, project_python_environment_path,
+    project_python_environment_path_for,
 };
 pub use resolver::{
     CommandResolution, ExecutionContext, RuntimeEnvironmentVariable, SelectionSource,
     ToolSelection, command_tool, execution_context, find_system_commands, java_home_for_install,
     managed_runtime_arguments, path_with_selected_runtime, path_with_selected_tools, pinset_home,
     pinset_home_from_env, resolve_command, resolve_command_with_path, resolve_execution_command,
-    resolve_from_env, resolve_project_python_command, resolve_tool_selection,
+    resolve_execution_command_for_python_environment, resolve_from_env,
+    resolve_project_python_command, resolve_project_python_command_for, resolve_tool_selection,
     runtime_command_candidates, runtime_command_directory, runtime_environment_for_install,
     selected_runtime_environment, validate_managed_runtime_invocation,
     validate_windows_batch_arguments,

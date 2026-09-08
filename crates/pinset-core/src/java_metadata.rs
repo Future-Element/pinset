@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::{
     Error, JAVA_TARGETS, JavaArchiveFormat, JavaVersion, LockedArtifact, LockedArtifactFormat,
-    LockedTool, Result, plan_java_artifact,
+    LockedTool, Result, ToolOptions, plan_java_artifact_with_package,
 };
 
 const OFFICIAL_ADOPTIUM_API_BASE_URL: &str = "https://api.adoptium.net/v3/";
@@ -134,7 +134,7 @@ impl JavaMetadataClient {
 
     pub fn available_releases(&self) -> Result<Vec<JavaRelease>> {
         Ok(self
-            .supported_releases()?
+            .supported_releases("jdk")?
             .into_iter()
             .map(|release| JavaRelease {
                 version: release.version.to_string(),
@@ -148,16 +148,25 @@ impl JavaMetadataClient {
     }
 
     pub fn resolve_version_selector(&self, selector: &str) -> Result<String> {
-        Ok(self.resolve_release(selector)?.version.to_string())
+        Ok(self.resolve_release(selector, "jdk")?.version.to_string())
     }
 
     pub fn resolve_tool(&self, selector: &str) -> Result<LockedTool> {
-        let release = self.resolve_release(selector)?;
+        self.resolve_tool_with_options(selector, None)
+    }
+
+    pub fn resolve_tool_with_options(
+        &self,
+        selector: &str,
+        options: Option<&ToolOptions>,
+    ) -> Result<LockedTool> {
+        let (distribution, image_type, lock_options) = java_options(options)?;
+        let release = self.resolve_release(selector, image_type)?;
         let version = release.version.to_string();
         let mut metadata = BTreeMap::from([
-            ("distribution".to_owned(), "eclipse-temurin".to_owned()),
+            ("distribution".to_owned(), distribution.to_owned()),
             ("vendor".to_owned(), "eclipse".to_owned()),
-            ("image_type".to_owned(), "jdk".to_owned()),
+            ("image_type".to_owned(), image_type.to_owned()),
             ("jvm_impl".to_owned(), "hotspot".to_owned()),
             ("heap_size".to_owned(), "normal".to_owned()),
             ("release_type".to_owned(), "ga".to_owned()),
@@ -175,10 +184,11 @@ impl JavaMetadataClient {
             .artifacts
             .into_iter()
             .map(|artifact| {
-                let plan = plan_java_artifact(
+                let plan = plan_java_artifact_with_package(
                     &version,
                     &release.release_name,
                     &artifact.target,
+                    image_type,
                     &artifact.name,
                     &artifact.link,
                 )?;
@@ -209,16 +219,16 @@ impl JavaMetadataClient {
             provider: "adoptium-temurin".to_owned(),
             released_at: Some(release.date),
             metadata,
-            options: BTreeMap::new(),
+            options: lock_options,
             artifacts,
         })
     }
 
-    fn resolve_release(&self, selector: &str) -> Result<SupportedJavaRelease> {
-        select_release(self.supported_releases()?, selector)
+    fn resolve_release(&self, selector: &str, image_type: &str) -> Result<SupportedJavaRelease> {
+        select_release(self.supported_releases(image_type)?, selector)
     }
 
-    fn supported_releases(&self) -> Result<Vec<SupportedJavaRelease>> {
+    fn supported_releases(&self, image_type: &str) -> Result<Vec<SupportedJavaRelease>> {
         let available_url = self
             .base_url
             .join("info/available_releases")
@@ -243,7 +253,7 @@ impl JavaMetadataClient {
                     .expect("known Adoptium API path");
                 url.query_pairs_mut()
                     .append_pair("heap_size", "normal")
-                    .append_pair("image_type", "jdk")
+                    .append_pair("image_type", image_type)
                     .append_pair("jvm_impl", "hotspot")
                     .append_pair("page", &page.to_string())
                     .append_pair("page_size", &JAVA_PAGE_SIZE.to_string())
@@ -260,6 +270,7 @@ impl JavaMetadataClient {
                 releases.extend(parse_feature_releases(
                     page_releases,
                     lts.contains(&feature),
+                    image_type,
                 ));
                 if page_len < JAVA_PAGE_SIZE {
                     break;
@@ -315,14 +326,56 @@ impl JavaMetadataClient {
     }
 }
 
-fn parse_feature_releases(releases: Vec<ApiRelease>, lts: bool) -> Vec<SupportedJavaRelease> {
+fn java_options(
+    options: Option<&ToolOptions>,
+) -> Result<(&'static str, &'static str, BTreeMap<String, String>)> {
+    let Some(options) = options else {
+        return Ok(("eclipse-temurin", "jdk", BTreeMap::new()));
+    };
+    if options.profile.is_some()
+        || options.date.is_some()
+        || !options.components.is_empty()
+        || !options.targets.is_empty()
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: "Java tool options accept only distribution and package".to_owned(),
+        });
+    }
+    let distribution = options.distribution.as_deref().unwrap_or("temurin");
+    if distribution != "temurin" {
+        return Err(Error::InvalidProjectConfig {
+            reason: "Java distribution must be temurin".to_owned(),
+        });
+    }
+    let image_type = match options.package.as_deref().unwrap_or("jdk") {
+        "jdk" => "jdk",
+        "jre" => "jre",
+        _ => {
+            return Err(Error::InvalidProjectConfig {
+                reason: "Java package must be jdk or jre".to_owned(),
+            });
+        }
+    };
+    let mut lock_options = BTreeMap::new();
+    if options.distribution.is_some() || options.package.is_some() {
+        lock_options.insert("distribution".to_owned(), distribution.to_owned());
+        lock_options.insert("package".to_owned(), image_type.to_owned());
+    }
+    Ok(("eclipse-temurin", image_type, lock_options))
+}
+
+fn parse_feature_releases(
+    releases: Vec<ApiRelease>,
+    lts: bool,
+    image_type: &str,
+) -> Vec<SupportedJavaRelease> {
     releases
         .into_iter()
-        .filter_map(|release| parse_release(release, lts))
+        .filter_map(|release| parse_release(release, lts, image_type))
         .collect()
 }
 
-fn parse_release(release: ApiRelease, lts: bool) -> Option<SupportedJavaRelease> {
+fn parse_release(release: ApiRelease, lts: bool, image_type: &str) -> Option<SupportedJavaRelease> {
     if release.release_type != "ga"
         || release.vendor != "eclipse"
         || release.version_data.pre.is_some()
@@ -343,13 +396,14 @@ fn parse_release(release: ApiRelease, lts: bool) -> Option<SupportedJavaRelease>
         let binary = release
             .binaries
             .iter()
-            .find(|binary| binary_matches_target(binary, target))?;
+            .find(|binary| binary_matches_target(binary, target, image_type))?;
         let signature_link = binary.package.signature_link.as_deref()?;
         if !valid_sha256(&binary.package.checksum)
-            || plan_java_artifact(
+            || plan_java_artifact_with_package(
                 &version_string,
                 &release.release_name,
                 target,
+                image_type,
                 &binary.package.name,
                 &binary.package.link,
             )
@@ -376,7 +430,7 @@ fn parse_release(release: ApiRelease, lts: bool) -> Option<SupportedJavaRelease>
     })
 }
 
-fn binary_matches_target(binary: &ApiBinary, target: &str) -> bool {
+fn binary_matches_target(binary: &ApiBinary, target: &str, image_type: &str) -> bool {
     let (os, architecture) = match target {
         "windows-x86_64" => ("windows", "x64"),
         "linux-x86_64" => ("linux", "x64"),
@@ -388,7 +442,7 @@ fn binary_matches_target(binary: &ApiBinary, target: &str) -> bool {
     binary.os == os
         && binary.architecture == architecture
         && binary.heap_size == "normal"
-        && binary.image_type == "jdk"
+        && binary.image_type == image_type
         && binary.jvm_impl == "hotspot"
         && binary.project == "jdk"
 }
@@ -468,11 +522,12 @@ mod tests {
 
     #[test]
     fn parses_only_complete_temurin_jdk_releases() {
-        let complete: ApiRelease =
-            serde_json::from_value(fixture_release("21.0.8+9", true)).expect("complete fixture");
+        let complete: ApiRelease = serde_json::from_value(fixture_release("21.0.8+9", true, "jdk"))
+            .expect("complete fixture");
         let incomplete: ApiRelease =
-            serde_json::from_value(fixture_release("21.0.7+6", false)).expect("incomplete fixture");
-        let releases = parse_feature_releases(vec![complete, incomplete], true);
+            serde_json::from_value(fixture_release("21.0.7+6", false, "jdk"))
+                .expect("incomplete fixture");
+        let releases = parse_feature_releases(vec![complete, incomplete], true, "jdk");
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].version.to_string(), "21.0.8+9");
         assert!(releases[0].lts);
@@ -482,13 +537,15 @@ mod tests {
     #[test]
     fn resolves_lts_feature_update_and_exact_build_selectors() {
         let java_25 = parse_release(
-            serde_json::from_value(fixture_release("25.0.2+10", true)).expect("25"),
+            serde_json::from_value(fixture_release("25.0.2+10", true, "jdk")).expect("25"),
             true,
+            "jdk",
         )
         .expect("25 supported");
         let java_21 = parse_release(
-            serde_json::from_value(fixture_release("21.0.8+9", true)).expect("21"),
+            serde_json::from_value(fixture_release("21.0.8+9", true, "jdk")).expect("21"),
             true,
+            "jdk",
         )
         .expect("21 supported");
         let releases = vec![java_25, java_21];
@@ -522,7 +579,42 @@ mod tests {
         );
     }
 
-    fn fixture_release(version: &str, complete: bool) -> serde_json::Value {
+    #[test]
+    fn keeps_jdk_and_jre_release_artifacts_separate() {
+        let jre = parse_release(
+            serde_json::from_value(fixture_release("21.0.8+9", true, "jre")).expect("JRE fixture"),
+            true,
+            "jre",
+        )
+        .expect("supported JRE");
+        assert!(
+            jre.artifacts
+                .iter()
+                .all(|artifact| artifact.name.contains("-jre_"))
+        );
+
+        let same_release =
+            serde_json::from_value(fixture_release("21.0.8+9", true, "jre")).expect("JRE fixture");
+        assert!(parse_release(same_release, true, "jdk").is_none());
+    }
+
+    #[test]
+    fn normalizes_explicit_temurin_package_identity() {
+        let options = ToolOptions {
+            distribution: Some("temurin".to_owned()),
+            package: Some("jre".to_owned()),
+            ..ToolOptions::default()
+        };
+        let (distribution, image_type, lock_options) =
+            java_options(Some(&options)).expect("Java options");
+        assert_eq!(distribution, "eclipse-temurin");
+        assert_eq!(image_type, "jre");
+        assert_eq!(lock_options["distribution"], "temurin");
+        assert_eq!(lock_options["package"], "jre");
+        assert!(java_options(None).expect("legacy defaults").2.is_empty());
+    }
+
+    fn fixture_release(version: &str, complete: bool, image_type: &str) -> serde_json::Value {
         let parsed = JavaVersion::parse(version).expect("fixture version");
         let release_name = format!("jdk-{version}");
         let mut binaries = Vec::new();
@@ -539,7 +631,7 @@ mod tests {
                 _ => unreachable!("known Java target"),
             };
             let package_name = format!(
-                "OpenJDK{}U-jdk_{arch}_{os}_hotspot_{}_{}.{}",
+                "OpenJDK{}U-{image_type}_{arch}_{os}_hotspot_{}_{}.{}",
                 parsed.major,
                 version.split('+').next().expect("version part"),
                 parsed.build,
@@ -554,7 +646,7 @@ mod tests {
             binaries.push(serde_json::json!({
                 "architecture": arch,
                 "heap_size": "normal",
-                "image_type": "jdk",
+                "image_type": image_type,
                 "jvm_impl": "hotspot",
                 "os": os,
                 "package": {
