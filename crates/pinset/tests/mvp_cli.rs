@@ -67,6 +67,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
         python: None,
+        workspace: None,
         environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");
@@ -845,6 +846,7 @@ fn write_project(project: &Path, configured_version: &str, locked_version: &str)
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
         python: None,
+        workspace: None,
         environment: None,
     };
     save_project_config(&config_path, &config).expect("project config");

@@ -8,8 +8,8 @@ use std::{
 use atomic_write_file::AtomicWriteFile;
 use pinset_core::{
     LockAuditCategory, LockAuditReasonCode, LockAuditSeverity, audit_project_lock, current_target,
-    environment_selection, find_optional_project_config, load_optional_lockfile,
-    load_project_config, lockfile_path, pinset_home,
+    environment_selection, find_optional_project_config, load_effective_project_config,
+    load_optional_lockfile, lockfile_path, pinset_home,
 };
 use serde::{Deserialize, Serialize};
 
@@ -120,7 +120,7 @@ pub fn collect(
     let config_path = find_optional_project_config(cwd)?;
     let config = config_path
         .as_deref()
-        .map(load_project_config)
+        .map(load_effective_project_config)
         .transpose()?;
     let lock = config_path
         .as_deref()

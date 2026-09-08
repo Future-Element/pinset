@@ -709,6 +709,21 @@ The short entry resolves managed commands, project Python environment commands, 
 
 Task environment selection uses root `-e`, then `PINSET_ENV_PROFILE`, then the task profile, then machine-local and project defaults. `--no-env` disables injection. A missing task is always an error and never falls back to a system program. Task working directories must already exist within the project after canonical path resolution.
 
+### `workspace`
+
+Schema 5 workspaces declare explicit member paths in the root `pinset.toml`. Every member has its own `pinset.toml` and `pinset.lock`. Commands may run from the workspace root or any declared member:
+
+| Command | Behavior |
+| --- | --- |
+| `pinset workspace members [--json]` | List members, effective tool selectors, and whether each selector comes from the root or member. |
+| `pinset workspace install [--member <path>]... [--changed-since <git-ref>] [--offline]` | Install each selected member's independently locked effective tool set. |
+| `pinset workspace check [--member <path>]... [--changed-since <git-ref>] [--json]` | Run strict diagnostics for selected members and return `1` when any member fails. |
+| `pinset workspace run <task> [--member <path>]... [--changed-since <git-ref>] [-- <arguments...>]` | Run the named task sequentially and stop at the first nonzero child exit. |
+| `pinset workspace update [--member <path>]... [--changed-since <git-ref>] [--json]` | Resolve and report candidate updates without changing member locks. |
+| `pinset workspace references <tool> [--json]` | Show members that select a tool and the source of each selector. |
+
+Root tools, tasks, Python environments, and environment settings provide member defaults. A member tool selector replaces the root selector and its complete structured options table; option arrays are never merged. A same-name member task replaces the root task. A member `[python]` or `[environment]` section replaces the corresponding root section. `--changed-since` selects members with Git changes below their declared paths; changing the root `pinset.toml` selects every member.
+
 The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
 
 ### `env`

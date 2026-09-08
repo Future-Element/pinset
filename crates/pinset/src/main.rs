@@ -28,16 +28,17 @@ use pinset_core::{
     acquire_global_state_write_lock, acquire_project_state_write_lock, audit_global_lock,
     audit_project_lock, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment_for, current_target_for_tool, download_cache_info,
-    ensure_shims, find_optional_project_config, find_project_config, find_project_context,
-    global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_dotnet, install_locked_flutter,
-    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
-    install_locked_python, install_locked_rust, install_payload_statistics,
-    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
-    list_installed_tool_versions, load_global_config, load_lockfile,
-    load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
-    load_project_config, load_project_python_environment, load_project_python_environment_for,
-    load_source_config, load_user_settings, lockfile_path, managed_runtime_arguments, pinset_home,
+    effective_project_config, ensure_shims, find_optional_project_config, find_project_config,
+    find_project_context, find_workspace_config, global_config_path, global_lockfile_path,
+    import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
+    install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
+    install_locked_npm_tool, install_locked_python, install_locked_rust,
+    install_payload_statistics, is_managed_command_shim, list_all_installed_tool_versions,
+    list_download_cache, list_installed_tool_versions, load_effective_project_config,
+    load_global_config, load_lockfile, load_lockfile_for_provider_refresh,
+    load_optional_global_config, load_optional_lockfile, load_project_config,
+    load_project_python_environment, load_project_python_environment_for, load_source_config,
+    load_user_settings, lockfile_path, managed_runtime_arguments, pinset_home,
     plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
     provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
     resolve_execution_command_for_python_environment, resolve_project_python_command,
@@ -51,7 +52,7 @@ use pinset_core::{
     validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
     validate_lock_matches_tool_options, validate_lock_matches_tools,
     validate_managed_runtime_invocation, validate_project_lock_policy,
-    validate_windows_batch_arguments, verify_download_cache,
+    validate_windows_batch_arguments, verify_download_cache, workspace_members,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -301,6 +302,11 @@ enum Commands {
     Bundle {
         #[command(subcommand)]
         command: BundleCommands,
+    },
+    /// Run batch operations across explicit workspace members.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
     },
     /// Run a named project task from pinset.toml.
     Run {
@@ -596,6 +602,59 @@ enum BundleCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum WorkspaceCommands {
+    /// List explicit members and the tools each member inherits or overrides.
+    Members {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install every selected member from its exact lock.
+    Install {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Run strict diagnostics for every selected member.
+    Check {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run one declared task in every selected member.
+    Run {
+        task: String,
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<OsString>,
+    },
+    /// Resolve and display member lock changes without writing files.
+    #[command(name = "update")]
+    UpdatePreview {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show which members inherit or override one root tool default.
+    References {
+        tool: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum LockCommands {
     /// Audit one project or global lock without network access or state changes.
     Audit {
@@ -691,6 +750,7 @@ impl Commands {
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
             Self::Bundle { command } => command.json_command(),
+            Self::Workspace { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
             Self::Env { command } => command.as_ref().and_then(EnvCommands::json_command),
             Self::Trust { command } => command.json_command(),
@@ -770,6 +830,18 @@ impl BundleCommands {
         match self {
             Self::Export { json: true, .. } => Some("bundle.export"),
             Self::Import { json: true, .. } => Some("bundle.import"),
+            _ => None,
+        }
+    }
+}
+
+impl WorkspaceCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Members { json: true } => Some("workspace.members"),
+            Self::Check { json: true, .. } => Some("workspace.check"),
+            Self::UpdatePreview { json: true, .. } => Some("workspace.update"),
+            Self::References { json: true, .. } => Some("workspace.references"),
             _ => None,
         }
     }
@@ -1229,6 +1301,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             Some(
                 Commands::Env { .. }
                     | Commands::Run { .. }
+                    | Commands::Workspace {
+                        command: WorkspaceCommands::Run { .. }
+                    }
                     | Commands::Exec { .. }
                     | Commands::X { .. }
             )
@@ -1239,7 +1314,14 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     if cli.no_env
         && !matches!(
             cli.command,
-            Some(Commands::Run { .. } | Commands::Exec { .. } | Commands::X { .. })
+            Some(
+                Commands::Run { .. }
+                    | Commands::Workspace {
+                        command: WorkspaceCommands::Run { .. }
+                    }
+                    | Commands::Exec { .. }
+                    | Commands::X { .. }
+            )
         )
     {
         return Err("--no-env requires run, exec, x, or a command after --".into());
@@ -1424,6 +1506,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         Commands::Lock { command } => return run_lock_command(command, catalog),
         Commands::Cache { command } => run_cache(command, catalog)?,
         Commands::Bundle { command } => run_bundle(command)?,
+        Commands::Workspace { command } => {
+            return run_workspace_command(command, cli.profile.as_deref(), cli.no_env, catalog);
+        }
         Commands::Run { task, arguments } => {
             return run_project_task(
                 &env::current_dir()?,
@@ -1824,7 +1909,7 @@ fn resolution_explanation(
     let mut global_eligible = true;
     let mut system_eligible = true;
     if let Some(config_path) = context.config_path.as_ref() {
-        let config = load_project_config(config_path)?;
+        let config = load_effective_project_config(config_path)?;
         project_strict = !config.policy.inherit_global && !config.policy.system_fallback;
         global_eligible = config.policy.inherit_global;
         system_eligible = config.policy.system_fallback;
@@ -2488,7 +2573,7 @@ fn selected_runtimes_for_outdated(
     let mut selected = Vec::new();
     let mut seen = BTreeSet::new();
     if !global_only && let Some(path) = find_optional_project_config(cwd)? {
-        let config = load_project_config(&path)?;
+        let config = load_effective_project_config(&path)?;
         let lock_path = lockfile_path(&path);
         for (selected_tool, requested) in config.tools {
             if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
@@ -2948,7 +3033,7 @@ fn prefetch_project_artifacts(
     }
     let home = pinset_home()?;
     let config_path = find_project_config(cwd)?;
-    let config = load_project_config(&config_path)?;
+    let config = load_effective_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
     let lock = load_lockfile(&lock_path)?;
     validate_lock_matches_tools(&lock, &config.tools, &config_path)?;
@@ -3144,11 +3229,325 @@ fn run_bundle(command: BundleCommands) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle run exec x doctor status check venv shim env trust activate completions source provider self";
+#[derive(Debug, Serialize)]
+struct WorkspaceMemberReport {
+    member: String,
+    root: PathBuf,
+    tools: Vec<WorkspaceToolReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceToolReport {
+    tool: String,
+    requested: String,
+    source: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceCheckReport {
+    member: String,
+    report: diagnostics::DiagnosticReport,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceUpdateReport {
+    member: String,
+    changes: Vec<UpdateReport>,
+}
+
+fn run_workspace_command(
+    command: WorkspaceCommands,
+    profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let cwd = env::current_dir()?;
+    let root_config_path = find_workspace_config(&cwd)?;
+    let root_config = load_project_config(&root_config_path)?;
+    match command {
+        WorkspaceCommands::Members { json } => {
+            let reports = workspace_member_reports(&root_config_path, &root_config)?;
+            if json {
+                print_json_success("workspace.members", reports)?;
+            } else {
+                for report in reports {
+                    let tools = report
+                        .tools
+                        .iter()
+                        .map(|tool| format!("{}@{} ({})", tool.tool, tool.requested, tool.source))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("{} {}: {}", report.member, report.root.display(), tools);
+                }
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::Install {
+            members,
+            changed_since,
+            offline,
+        } => {
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                println!("workspace member {}: install", member.name);
+                install_project(&member.root, offline, catalog)?;
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::Check {
+            members,
+            changed_since,
+            json,
+        } => {
+            let mut reports = Vec::new();
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                reports.push(WorkspaceCheckReport {
+                    member: member.name,
+                    report: diagnostics::collect(&member.root, false)?,
+                });
+            }
+            let passed = reports.iter().all(|report| report.report.summary.passed);
+            if json {
+                print_json_success("workspace.check", &reports)?;
+            } else {
+                for report in &reports {
+                    println!(
+                        "{}: {} errors={} warnings={}",
+                        report.member,
+                        if report.report.summary.passed {
+                            "ok"
+                        } else {
+                            "failed"
+                        },
+                        report.report.summary.errors,
+                        report.report.summary.warnings
+                    );
+                }
+            }
+            Ok(if passed { 0 } else { 1 })
+        }
+        WorkspaceCommands::Run {
+            task,
+            members,
+            changed_since,
+            arguments,
+        } => {
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                println!("workspace member {}: run {task}", member.name);
+                let code = run_project_task(
+                    &member.root,
+                    &task,
+                    &arguments,
+                    profile,
+                    no_environment,
+                    catalog,
+                )?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::UpdatePreview {
+            members,
+            changed_since,
+            json,
+        } => {
+            let mut reports = Vec::new();
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                reports.push(workspace_update_preview(&member)?);
+            }
+            if json {
+                print_json_success("workspace.update", &reports)?;
+            } else {
+                for report in &reports {
+                    let changed = report
+                        .changes
+                        .iter()
+                        .filter(|change| change.changed)
+                        .count();
+                    println!("{}: {changed} update(s)", report.member);
+                    for change in report.changes.iter().filter(|change| change.changed) {
+                        println!(
+                            "  {}@{} -> {} requested={}",
+                            change.tool, change.previous, change.resolved, change.requested
+                        );
+                    }
+                }
+                println!("preview only: no workspace lockfile was changed");
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::References { tool, json } => {
+            require_provider(&tool)?;
+            let reports = workspace_member_reports(&root_config_path, &root_config)?
+                .into_iter()
+                .filter_map(|member| {
+                    member
+                        .tools
+                        .into_iter()
+                        .find(|selected| selected.tool == tool)
+                        .map(|selected| {
+                            serde_json::json!({
+                                "member": member.member,
+                                "root": member.root,
+                                "requested": selected.requested,
+                                "source": selected.source,
+                            })
+                        })
+                })
+                .collect::<Vec<_>>();
+            if json {
+                print_json_success("workspace.references", &reports)?;
+            } else {
+                for report in reports {
+                    println!(
+                        "{} {}@{} ({})",
+                        report["member"].as_str().unwrap_or_default(),
+                        tool,
+                        report["requested"].as_str().unwrap_or_default(),
+                        report["source"].as_str().unwrap_or_default()
+                    );
+                }
+            }
+            Ok(0)
+        }
+    }
+}
+
+fn workspace_member_reports(
+    root_config_path: &Path,
+    root_config: &ProjectConfig,
+) -> Result<Vec<WorkspaceMemberReport>, Box<dyn std::error::Error>> {
+    workspace_members(root_config_path)?
+        .into_iter()
+        .map(|member| {
+            let local = load_project_config(&member.config_path)?;
+            let effective = load_effective_project_config(&member.config_path)?;
+            let tools = effective
+                .tools
+                .into_iter()
+                .map(|(tool, requested)| WorkspaceToolReport {
+                    source: if local.tools.contains_key(&tool) {
+                        "member"
+                    } else if root_config.tools.contains_key(&tool) {
+                        "root"
+                    } else {
+                        "member"
+                    },
+                    tool,
+                    requested,
+                })
+                .collect();
+            Ok(WorkspaceMemberReport {
+                member: member.name,
+                root: member.root,
+                tools,
+            })
+        })
+        .collect()
+}
+
+fn selected_workspace_members(
+    root_config_path: &Path,
+    requested: &[String],
+    changed_since: Option<&str>,
+) -> Result<Vec<pinset_core::WorkspaceMember>, Box<dyn std::error::Error>> {
+    let mut members = workspace_members(root_config_path)?;
+    for name in requested {
+        if !members
+            .iter()
+            .any(|member| member.name.eq_ignore_ascii_case(name))
+        {
+            return Err(format!("workspace member {name:?} is not declared").into());
+        }
+    }
+    if !requested.is_empty() {
+        members.retain(|member| {
+            requested
+                .iter()
+                .any(|name| member.name.eq_ignore_ascii_case(name))
+        });
+    }
+    if let Some(base) = changed_since {
+        let root = root_config_path
+            .parent()
+            .ok_or("workspace configuration has no parent")?;
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["diff", "--name-only", base, "--"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "git diff for {base:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
+        let changed = String::from_utf8(output.stdout)?;
+        let root_changed = changed
+            .lines()
+            .any(|path| path.eq_ignore_ascii_case(pinset_core::PROJECT_CONFIG_FILENAME));
+        if !root_changed {
+            members.retain(|member| {
+                let prefix = format!("{}/", member.name);
+                changed.lines().any(|path| {
+                    path.eq_ignore_ascii_case(&member.name)
+                        || path
+                            .get(..prefix.len())
+                            .is_some_and(|value| value.eq_ignore_ascii_case(&prefix))
+                })
+            });
+        }
+    }
+    Ok(members)
+}
+
+fn workspace_update_preview(
+    member: &pinset_core::WorkspaceMember,
+) -> Result<WorkspaceUpdateReport, Box<dyn std::error::Error>> {
+    let config = load_effective_project_config(&member.config_path)?;
+    let lock_path = lockfile_path(&member.config_path);
+    let lock = load_lockfile(&lock_path)?;
+    validate_lock_matches_tools(&lock, &config.tools, &member.config_path)?;
+    validate_lock_matches_tool_options(&lock, &config.tool_options, &member.config_path)?;
+    let mut changes = Vec::new();
+    for (tool, requested) in &config.tools {
+        let previous = lock
+            .tool(tool)
+            .expect("validated workspace lock contains configured tool");
+        let resolved =
+            resolve_locked_tool_with_options(tool, requested, config.tool_options.get(tool))?;
+        changes.push(UpdateReport {
+            scope: "workspace-member",
+            config: member.config_path.clone(),
+            tool: tool.clone(),
+            requested: requested.clone(),
+            changed: previous.version != resolved.version || previous.options != resolved.options,
+            previous: previous.version.clone(),
+            resolved: resolved.version,
+        });
+    }
+    Ok(WorkspaceUpdateReport {
+        member: member.name.clone(),
+        changes,
+    })
+}
+
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle workspace run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
 const COMPLETION_BUNDLE_COMMANDS: &str = "export import";
+const COMPLETION_WORKSPACE_COMMANDS: &str = "members install check run update references";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
@@ -3204,6 +3603,7 @@ fn completion_script(shell: ActivationShell) -> String {
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
+            workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -3248,6 +3648,7 @@ _pinset_completion() {
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
+            workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -3271,6 +3672,7 @@ complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdate
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--available --long'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from bundle' -a '__BUNDLE_COMMANDS__ --cwd --output --target --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from workspace' -a '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from lock' -a '__LOCK_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
@@ -3317,6 +3719,7 @@ complete -c pinset -f -a '--help --lang'"#
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
+        'workspace' { '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help' -split ' ' }
         'env' { '__ENV_COMMANDS__ --profile --cwd --json --lang --help' -split ' ' }
@@ -3341,6 +3744,7 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__LOCK_COMMANDS__", COMPLETION_LOCK_COMMANDS)
         .replace("__CACHE_COMMANDS__", COMPLETION_CACHE_COMMANDS)
         .replace("__BUNDLE_COMMANDS__", COMPLETION_BUNDLE_COMMANDS)
+        .replace("__WORKSPACE_COMMANDS__", COMPLETION_WORKSPACE_COMMANDS)
         .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
         .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
@@ -3591,7 +3995,8 @@ where
             load_optional_lockfile_for_target_refresh(&lock_path)?
                 .unwrap_or_else(|| (new_lockfile(), Vec::new()));
         if !legacy_target_tools.is_empty() {
-            validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
+            let effective = effective_project_config(&config_path, &project)?;
+            validate_lock_matches_tools(&lockfile, &effective.tools, &config_path)?;
             let explicitly_replaced = resolved
                 .iter()
                 .map(|(tool, _, _)| tool.clone())
@@ -3605,9 +4010,40 @@ where
         }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
+        synchronize_effective_project_lock(&config_path, &project, &mut lockfile)?;
         save_project_state_locked(home, &config_path, &project, &lockfile)?;
         Ok(("project", lock_path))
     }
+}
+
+fn synchronize_effective_project_lock(
+    config_path: &Path,
+    project: &ProjectConfig,
+    lockfile: &mut Lockfile,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let effective = effective_project_config(config_path, project)?;
+    lockfile
+        .tools
+        .retain(|locked| effective.tools.contains_key(&locked.name));
+    for (tool, requested) in &effective.tools {
+        let expected_options = effective
+            .tool_options
+            .get(tool)
+            .map(pinset_core::ToolOptions::lock_options)
+            .unwrap_or_default();
+        let current_matches = lockfile.tool(tool).is_some_and(|locked| {
+            locked.requested == *requested && locked.options == expected_options
+        });
+        if !current_matches {
+            let resolved = resolve_locked_tool_with_options(
+                tool,
+                requested,
+                effective.tool_options.get(tool),
+            )?;
+            lockfile.upsert_tool(resolved)?;
+        }
+    }
+    Ok(())
 }
 
 fn load_optional_lockfile_for_target_refresh(
@@ -4042,6 +4478,7 @@ fn load_project_import_state(
             tool_options: BTreeMap::new(),
             tasks: BTreeMap::new(),
             python: None,
+            workspace: None,
             environment: None,
         }
     };
@@ -4168,10 +4605,11 @@ fn run_update(
         )
     } else {
         let config_path = selected_config_path;
-        let config = load_project_config(&config_path)?;
+        let config = load_effective_project_config(&config_path)?;
         let (lockfile, legacy_target_tools) =
             load_lockfile_for_provider_refresh(&lockfile_path(&config_path))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        validate_lock_matches_tool_options(&lockfile, &config.tool_options, &config_path)?;
         (
             "project",
             config_path,
@@ -4206,15 +4644,11 @@ fn run_update(
             .expect("validated lock contains configured tool");
         let previous = previous_tool.version.clone();
         let previous_options = previous_tool.options.clone();
-        let mut resolved = resolve_locked_tool_with_options(
+        let resolved = resolve_locked_tool_with_options(
             selected_tool,
             requested,
             tool_options.get(selected_tool),
         )?;
-        resolved.options = tool_options
-            .get(selected_tool)
-            .map(pinset_core::ToolOptions::lock_options)
-            .unwrap_or_default();
         let report = UpdateReport {
             scope,
             config: config_path.clone(),
@@ -4237,7 +4671,7 @@ fn run_update(
     }
 
     if !global {
-        let config = load_project_config(&config_path)?;
+        let config = load_effective_project_config(&config_path)?;
         validate_project_lock_policy(&config, &lockfile, std::time::SystemTime::now())?;
     }
 
@@ -4525,7 +4959,9 @@ fn unset_tool(
     let lock_path = lockfile_path(&config_path);
     let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
     if let Some((lockfile, _)) = &lockfile {
-        validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+        let effective = effective_project_config(&config_path, &config)?;
+        validate_lock_matches_tools(lockfile, &effective.tools, &config_path)?;
+        validate_lock_matches_tool_options(lockfile, &effective.tool_options, &config_path)?;
     }
     config.tools.remove(tool);
     if let Some((mut lockfile, legacy_target_tools)) = lockfile {
@@ -4541,6 +4977,7 @@ fn unset_tool(
             &BTreeSet::new(),
             &mut resolver,
         )?;
+        synchronize_effective_project_lock(&config_path, &config, &mut lockfile)?;
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         let remove_empty_lock = lockfile.tools.is_empty();
         save_project_state_locked(&home, &config_path, &config, &lockfile)?;
@@ -4548,7 +4985,13 @@ fn unset_tool(
             fs::remove_file(&lock_path)?;
         }
     } else {
-        save_project_config(&config_path, &config)?;
+        let mut lockfile = new_lockfile();
+        synchronize_effective_project_lock(&config_path, &config, &mut lockfile)?;
+        if lockfile.tools.is_empty() {
+            save_project_config(&config_path, &config)?;
+        } else {
+            save_project_state_locked(&home, &config_path, &config, &lockfile)?;
+        }
     }
     println!(
         "{}",
@@ -4694,7 +5137,7 @@ fn install_project_with_python_environment(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
     let policy_lock = load_lockfile(&lock_path)?;
@@ -4740,7 +5183,7 @@ fn run_venv_command(
         VenvCommands::Recreate { name, cwd } => (effective_cwd(cwd)?, name, "recreate"),
     };
     let config_path = find_project_config(&cwd)?;
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
     let environment_path = python_environment_relative_path(&project, &name)?.to_owned();
     let requested =
         project
@@ -5277,7 +5720,7 @@ fn print_project_override(
     let Some(config_path) = find_optional_project_config(cwd)? else {
         return Ok(());
     };
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
     let Some(project_version) = project.tools.get("node") else {
         return Ok(());
     };
@@ -5405,7 +5848,7 @@ fn run_project_task(
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let config = load_project_config(&config_path)?;
+    let config = load_effective_project_config(&config_path)?;
     if config.schema < PROJECT_CONFIG_SCHEMA {
         return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
     }
@@ -5500,7 +5943,7 @@ fn execute_selected(
     let python_environment_path = python_environment
         .map(|name| {
             let config_path = find_project_config(cwd)?;
-            let config = load_project_config(&config_path)?;
+            let config = load_effective_project_config(&config_path)?;
             Ok::<String, Box<dyn std::error::Error>>(
                 python_environment_relative_path(&config, name)?.to_owned(),
             )
@@ -5774,7 +6217,7 @@ fn install_ephemeral_selection(
                 &selection.config_path,
             )?;
             if selection.source == pinset_core::SelectionSource::Project {
-                let config = load_project_config(&selection.config_path)?;
+                let config = load_effective_project_config(&selection.config_path)?;
                 validate_project_lock_policy(
                     &config,
                     &dependency_lock,
@@ -7003,7 +7446,11 @@ fn manual_shim_commands(
         tools.insert(provider.to_owned());
     } else {
         if let Some(config_path) = find_optional_project_config(cwd)? {
-            tools.extend(load_project_config(&config_path)?.tools.into_keys());
+            tools.extend(
+                load_effective_project_config(&config_path)?
+                    .tools
+                    .into_keys(),
+            );
         }
         if let Some(config) = load_optional_global_config(&global_config_path(home))? {
             tools.extend(config.tools.into_keys());
@@ -7614,6 +8061,7 @@ mod tests {
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
             python: None,
+            workspace: None,
             environment: None,
         };
         let node = LockedTool {
@@ -7830,6 +8278,7 @@ mod tests {
                 tool_options: Default::default(),
                 tasks: BTreeMap::new(),
                 python: None,
+                workspace: None,
                 environment: None,
             },
         )
@@ -8168,6 +8617,7 @@ mod tests {
                 tool_options: Default::default(),
                 tasks: BTreeMap::new(),
                 python: None,
+                workspace: None,
                 environment: None,
             },
         )

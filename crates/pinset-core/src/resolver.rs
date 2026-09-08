@@ -16,10 +16,10 @@ use std::{
 use crate::current_target;
 use crate::{
     Error, Result, RuntimeCommandLayout, RuntimeEnvironmentKind, current_target_for_tool,
-    find_project_context, global_config_path, is_managed_command_shim, load_optional_global_config,
-    load_project_config, load_project_python_environment, load_project_python_environment_for,
-    project_python_command_candidates, provider_dependency_order, runtime_provider,
-    runtime_provider_for_command, runtime_providers,
+    find_project_context, global_config_path, is_managed_command_shim,
+    load_effective_project_config, load_optional_global_config, load_project_python_environment,
+    load_project_python_environment_for, project_python_command_candidates,
+    provider_dependency_order, runtime_provider, runtime_provider_for_command, runtime_providers,
 };
 #[cfg(feature = "lockfile")]
 use crate::{
@@ -432,7 +432,7 @@ pub fn resolve_project_python_command_for(
 pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Result<ToolSelection> {
     let context = find_project_context(cwd)?;
     if let Some(config_path) = context.config_path.as_ref() {
-        let config = load_project_config(config_path)?;
+        let config = load_effective_project_config(config_path)?;
         if let Some(requested) = config.tools.get(tool) {
             return selection_from_config(
                 tool,
@@ -797,7 +797,7 @@ pub fn path_with_selected_tools(
 fn effective_configured_tools(cwd: &Path, pinset_home: &Path) -> Result<BTreeMap<String, String>> {
     let context = find_project_context(cwd)?;
     if let Some(config_path) = context.config_path {
-        let config = load_project_config(&config_path)?;
+        let config = load_effective_project_config(&config_path)?;
         if !config.policy.inherit_global {
             return Ok(config.tools);
         }

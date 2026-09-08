@@ -93,6 +93,7 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
         python: None,
+        workspace: None,
         environment: None,
     };
     config.policy.verification_strength = Some(VerificationStrength::Provenance);
@@ -124,6 +125,7 @@ fn write_project(project: &Path, version: &str) {
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
         python: None,
+        workspace: None,
         environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");

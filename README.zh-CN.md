@@ -448,6 +448,29 @@ pinset env diff development test
 
 schema 5 增加 `[tasks.<名称>]` 与 `[environment.variables.<名称>]`。任务可以声明参数数组、项目内工作目录、profile 和说明；变量契约支持 `string`、`integer`、`boolean`、`url`、`enum`、必填、profile 过滤，以及非密钥变量的默认值。schema 4 项目继续可读可用，只有显式运行 `pinset migrate` 才会启用 schema 5。
 
+### Workspace 工作区
+
+schema 5 可以显式声明多个成员项目。成员共享根配置的默认值，同时各自保留独立的 `pinset.toml` 和 `pinset.lock`：
+
+```toml
+[workspace]
+members = ["apps/web", "services/api"]
+
+[tools]
+node = "24"
+```
+
+```sh
+pinset workspace members
+pinset workspace install
+pinset workspace check --changed-since origin/main
+pinset workspace run test -- --watch
+pinset workspace update
+pinset workspace references node
+```
+
+成员声明某个工具后，会整体替换该工具的根选择器及 `[tool-options.<tool>]`；数组不会跨层隐式合并。根任务与环境默认值会被继承，除非成员声明同名任务或完整的环境配置。批量更新仅生成预览，不修改成员锁文件。
+
 ### 未来方向
 
 Pinset 接下来会围绕项目环境的诊断、交付和升级展开。以下能力仍在规划中，当前版本尚不支持。

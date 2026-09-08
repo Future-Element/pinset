@@ -78,6 +78,7 @@ fn write_project(project: &Path, hash: &str) {
         tool_options: Default::default(),
         tasks: BTreeMap::new(),
         python: None,
+        workspace: None,
         environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("config");

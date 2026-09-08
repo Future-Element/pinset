@@ -17,7 +17,7 @@ use crate::Lockfile;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 use crate::{
     acquire_project_state_write_lock, lockfile_path, register_project_config, save_lockfile,
-    validate_lock_matches_tools,
+    validate_lock_matches_tool_options, validate_lock_matches_tools,
 };
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
@@ -47,6 +47,8 @@ pub struct ProjectConfig {
     pub tasks: BTreeMap<String, ProjectTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python: Option<ProjectPython>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ProjectWorkspace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
 }
@@ -144,6 +146,19 @@ pub struct ProjectPython {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProjectPythonEnvironmentConfig {
     pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectWorkspace {
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMember {
+    pub name: String,
+    pub root: PathBuf,
+    pub config_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,6 +351,12 @@ fn ancestors_through<'a>(start: &'a Path, boundary: &'a Path) -> impl Iterator<I
 }
 
 pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
+    let config = parse_project_config(path)?;
+    effective_project_config(path, &config)?;
+    Ok(config)
+}
+
+fn parse_project_config(path: &Path) -> Result<ProjectConfig> {
     let content = fs::read_to_string(path).map_err(|source| Error::ReadProjectConfig {
         path: path.to_path_buf(),
         source,
@@ -352,9 +373,121 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
         });
     }
 
-    validate_environment_config(&config)?;
-
     Ok(config)
+}
+
+pub fn load_effective_project_config(path: &Path) -> Result<ProjectConfig> {
+    let config = parse_project_config(path)?;
+    effective_project_config(path, &config)
+}
+
+pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<ProjectConfig> {
+    let Some((_, root)) = workspace_root_for_member(path)? else {
+        validate_environment_config(member)?;
+        return Ok(member.clone());
+    };
+    if member.workspace.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "a workspace member cannot declare a nested workspace".to_owned(),
+        });
+    }
+    let mut effective = root;
+    effective.project_id = member.project_id.clone();
+    effective.policy = member.policy.clone();
+    for tool in member.tools.keys() {
+        effective.tool_options.remove(tool);
+    }
+    effective.tools.extend(member.tools.clone());
+    effective.tool_options.extend(member.tool_options.clone());
+    effective.tasks.extend(member.tasks.clone());
+    if member.python.is_some() {
+        effective.python = member.python.clone();
+    }
+    if member.environment.is_some() {
+        effective.environment = member.environment.clone();
+    }
+    effective.workspace = None;
+    validate_environment_config(&effective)?;
+    Ok(effective)
+}
+
+pub fn workspace_members(root_config_path: &Path) -> Result<Vec<WorkspaceMember>> {
+    let root_config = parse_project_config(root_config_path)?;
+    validate_environment_config(&root_config)?;
+    let workspace = root_config
+        .workspace
+        .as_ref()
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!(
+                "{} does not declare a workspace",
+                root_config_path.display()
+            ),
+        })?;
+    let root = root_config_path.parent().unwrap_or_else(|| Path::new("."));
+    workspace
+        .members
+        .iter()
+        .map(|name| {
+            let member_root = root.join(name);
+            let config_path = member_root.join(PROJECT_CONFIG_FILENAME);
+            if !config_path.is_file() {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("workspace member {name:?} has no {}", config_path.display()),
+                });
+            }
+            Ok(WorkspaceMember {
+                name: name.clone(),
+                root: member_root,
+                config_path,
+            })
+        })
+        .collect()
+}
+
+pub fn find_workspace_config(start: &Path) -> Result<PathBuf> {
+    let config_path = find_project_config(start)?;
+    if parse_project_config(&config_path)?.workspace.is_some() {
+        return Ok(config_path);
+    }
+    workspace_root_for_member(&config_path)?
+        .map(|(path, _)| path)
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!(
+                "{} is not part of a Pinset workspace",
+                config_path.display()
+            ),
+        })
+}
+
+fn workspace_root_for_member(path: &Path) -> Result<Option<(PathBuf, ProjectConfig)>> {
+    let member_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_member =
+        fs::canonicalize(member_root).unwrap_or_else(|_| member_root.to_path_buf());
+    let boundary = nearest_git_root(member_root).unwrap_or_else(|| filesystem_root(member_root));
+    for ancestor in member_root
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .take_while(|ancestor| ancestor.starts_with(&boundary))
+    {
+        let candidate = ancestor.join(PROJECT_CONFIG_FILENAME);
+        if !candidate.is_file() {
+            continue;
+        }
+        let root = parse_project_config(&candidate)?;
+        validate_environment_config(&root)?;
+        let Some(workspace) = &root.workspace else {
+            continue;
+        };
+        let matches = workspace.members.iter().any(|member| {
+            let declared = ancestor.join(member);
+            fs::canonicalize(&declared).unwrap_or(declared) == canonical_member
+        });
+        if matches {
+            return Ok(Some((candidate, root)));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(feature = "project-write")]
@@ -399,7 +532,6 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
             actual: config.schema,
         });
     }
-    validate_environment_config(config)?;
     let mut normalized = config.clone();
     // Preserve schema 4 until the user explicitly runs `pinset migrate`. Schemas 1-3
     // keep the established automatic upgrade to schema 4 for compatibility.
@@ -407,6 +539,7 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
     if normalized.project_id.is_none() {
         normalized.project_id = Some(uuid::Uuid::new_v4().to_string());
     }
+    effective_project_config(path, &normalized)?;
     let serialized = serialize_project_config_preserving_comments(path, &normalized)?;
     let mut file =
         AtomicWriteFile::options()
@@ -434,7 +567,13 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             reason: "named Python environments require schema 5; run `pinset migrate`".to_owned(),
         });
     }
+    if config.schema < PROJECT_CONFIG_SCHEMA && config.workspace.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "workspaces require schema 5; run `pinset migrate`".to_owned(),
+        });
+    }
     validate_tool_options(config)?;
+    validate_workspace_config(config)?;
     if config.schema < 4 {
         if config.project_id.is_some() || config.environment.is_some() {
             return Err(Error::InvalidProjectConfig {
@@ -573,6 +712,34 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         {
             return Err(Error::InvalidProjectConfig {
                 reason: format!("task {name} references undeclared profile {profile}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_workspace_config(config: &ProjectConfig) -> Result<()> {
+    let Some(workspace) = &config.workspace else {
+        return Ok(());
+    };
+    if workspace.members.is_empty() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "workspace.members must declare at least one member".to_owned(),
+        });
+    }
+    let mut members = std::collections::BTreeSet::new();
+    for member in &workspace.members {
+        let components = member.split('/').collect::<Vec<_>>();
+        if member.contains(['\\', ':'])
+            || components
+                .iter()
+                .any(|component| component.is_empty() || matches!(*component, "." | ".."))
+            || !members.insert(member.to_ascii_lowercase())
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!(
+                    "workspace member {member:?} must be a unique portable project-relative path"
+                ),
             });
         }
     }
@@ -873,9 +1040,11 @@ pub fn save_project_state_locked(
     config: &ProjectConfig,
     lockfile: &Lockfile,
 ) -> Result<()> {
-    crate::validate_provider_selections(&config.tools)?;
-    validate_lock_matches_tools(lockfile, &config.tools, path)?;
-    validate_project_lock_policy(config, lockfile, std::time::SystemTime::now())?;
+    let effective = effective_project_config(path, config)?;
+    crate::validate_provider_selections(&effective.tools)?;
+    validate_lock_matches_tools(lockfile, &effective.tools, path)?;
+    validate_lock_matches_tool_options(lockfile, &effective.tool_options, path)?;
+    validate_project_lock_policy(&effective, lockfile, std::time::SystemTime::now())?;
     register_project_config(pinset_home, path)?;
 
     // Commit the lock first. If the second atomic write is interrupted, the previous
@@ -1145,6 +1314,82 @@ python-environment = "docs"
     }
 
     #[test]
+    fn workspace_members_inherit_root_defaults_with_whole_tool_option_overrides() {
+        let root = tempdir().expect("workspace");
+        fs::create_dir(root.path().join(".git")).expect("git boundary");
+        let member = root.path().join("apps/api");
+        fs::create_dir_all(&member).expect("member");
+        let root_config = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &root_config,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000028"
+
+[workspace]
+members = ["apps/api"]
+
+[tools]
+node = "24"
+python = "3.13"
+rust = "stable"
+
+[tool-options.rust]
+profile = "complete"
+components = ["rustfmt", "clippy"]
+
+[tasks.test]
+command = ["cargo", "test", "--workspace"]
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[environment.profiles.dev]
+file = ".env.dev.age"
+recipients = ["age1workspace"]
+"#,
+        )
+        .expect("root config");
+        let member_config = member.join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &member_config,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000029"
+
+[tools]
+rust = "1.97"
+
+[tasks.test]
+command = ["cargo", "test", "-p", "api"]
+profile = "dev"
+python-environment = "docs"
+"#,
+        )
+        .expect("member config");
+
+        let effective = load_effective_project_config(&member_config).expect("effective member");
+        load_project_config(&member_config).expect("contextually valid member");
+        assert_eq!(effective.tools["node"], "24");
+        assert_eq!(effective.tools["rust"], "1.97");
+        assert!(!effective.tool_options.contains_key("rust"));
+        assert_eq!(
+            effective.tasks["test"].command,
+            ["cargo", "test", "-p", "api"]
+        );
+        assert_eq!(effective.tasks["test"].profile.as_deref(), Some("dev"));
+        assert_eq!(
+            effective.tasks["test"].python_environment.as_deref(),
+            Some("docs")
+        );
+        assert_eq!(
+            find_workspace_config(&member).expect("workspace config"),
+            root_config
+        );
+        let members = workspace_members(&root_config).expect("members");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, "apps/api");
+    }
+
+    #[test]
     fn variable_contracts_reject_invalid_defaults_and_secret_defaults() {
         let contract = EnvironmentVariableContract {
             kind: EnvironmentVariableType::Integer,
@@ -1311,6 +1556,7 @@ date = "2026-07-16"
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
             python: None,
+            workspace: None,
             environment: None,
         };
         save_project_config(&path, &config).expect("save schema four");
@@ -1368,6 +1614,7 @@ date = "2026-07-16"
             tool_options: Default::default(),
             tasks: BTreeMap::new(),
             python: None,
+            workspace: None,
             environment: None,
         };
         let lockfile = Lockfile {

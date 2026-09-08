@@ -100,6 +100,7 @@ fn named_tasks_preserve_arguments_cwd_and_exit_status_without_path_fallback() {
             ),
         ]),
         python: None,
+        workspace: None,
         environment: None,
     };
     save_project_config(&project.join("pinset.toml"), &config).expect("project config");

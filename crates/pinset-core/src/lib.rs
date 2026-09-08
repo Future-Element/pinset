@@ -100,8 +100,10 @@ pub use config::{
     EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType,
     PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
     ProjectEnvironment, ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectTask,
-    ToolOptions, find_optional_project_config, find_project_config, find_project_context,
-    load_project_config, validate_environment_variable_value,
+    ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
+    find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
+    load_effective_project_config, load_project_config, validate_environment_variable_value,
+    workspace_members,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};

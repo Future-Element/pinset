@@ -709,6 +709,21 @@ Pinset 参数放在顶层 `--` 之前，之后的全部内容都传给子进程�
 
 任务环境按根参数 `-e`、`PINSET_ENV_PROFILE`、任务 profile、本机选择、项目默认值依次选择。`--no-env` 关闭注入。任务不存在时始终报错，不会回退执行系统程序。任务工作目录经过规范化后必须已经存在并位于项目内。
 
+### `workspace`
+
+schema 5 工作区在根 `pinset.toml` 中显式声明成员路径。每个成员各自保留 `pinset.toml` 与 `pinset.lock`。以下命令可以从工作区根目录或任一已声明成员执行：
+
+| 命令 | 行为 |
+| --- | --- |
+| `pinset workspace members [--json]` | 列出成员、有效工具选择器，以及选择器来自根配置还是成员配置。 |
+| `pinset workspace install [--member <路径>]... [--changed-since <git-ref>] [--offline]` | 安装每个已选成员独立锁定的有效工具集合。 |
+| `pinset workspace check [--member <路径>]... [--changed-since <git-ref>] [--json]` | 对成员执行严格诊断；任一成员失败时返回 `1`。 |
+| `pinset workspace run <任务> [--member <路径>]... [--changed-since <git-ref>] [-- <追加参数...>]` | 顺序执行具名任务，在第一个非零子进程退出码处停止。 |
+| `pinset workspace update [--member <路径>]... [--changed-since <git-ref>] [--json]` | 解析并报告候选更新，不修改成员锁文件。 |
+| `pinset workspace references <工具> [--json]` | 显示选择该工具的成员及选择器来源。 |
+
+根工具、任务、Python 环境和环境设置为成员提供默认值。成员工具选择器会连同完整的结构化选项表替换根选择，选项数组不会合并；同名成员任务替换根任务；成员 `[python]` 或 `[environment]` 整体替换对应的根配置。`--changed-since` 选择声明路径下存在 Git 变更的成员；根 `pinset.toml` 发生变化时选择全部成员。
+
 `env init` 未指定 profile 或恢复方式时进入交互向导：选择 profile、恢复方式、新建或复用本机 identity。创建成功后记住本机环境，并单独询问是否信任项目。非交互调用必须提供 profile 和 `--recovery <路径>` 或显式 `--no-recovery`。新增位置参数 `env init dev` 和 `--identity <id>`，原有 `--profile`、`--identity-file` 保留；完全显式的初始化仍需用 `--auto` 设置共享默认，或另行 `env use` 设置本机默认。项目配置与锁文件 schema 不变。
 
 ### `env`

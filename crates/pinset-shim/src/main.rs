@@ -20,9 +20,8 @@ type EncryptedEnvironment = Option<(
 
 use pinset_core::{
     CommandResolution, EnvironmentCollision, decode_environment, find_optional_project_config,
-    load_project_config, managed_runtime_arguments, pinset_home_from_env,
-    resolve_command_with_path, validate_managed_runtime_invocation,
-    validate_windows_batch_arguments,
+    managed_runtime_arguments, pinset_home_from_env, resolve_command_with_path,
+    validate_managed_runtime_invocation, validate_windows_batch_arguments,
 };
 
 const SHIM_CHAIN_ENV: &str = "PINSET_SHIM_CHAIN";
@@ -158,7 +157,7 @@ fn encrypted_environment(
     let Some(config_path) = find_optional_project_config(cwd)? else {
         return Ok(None);
     };
-    let config = load_project_config(&config_path)?;
+    let config = pinset_core::load_effective_project_config(&config_path)?;
     let Some(environment) = &config.environment else {
         return Ok(None);
     };
