@@ -91,7 +91,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.3.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.11.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -106,7 +106,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.3.0
+.\install.ps1 -Version 2.11.0
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -203,6 +203,9 @@ pinset import
 任务使用参数数组，不使用 Shell 字符串，因此参数边界与子进程退出状态保持明确：
 
 ```toml
+[tasks.prepare]
+command = ["pnpm", "install", "--frozen-lockfile"]
+
 [tasks.dev]
 command = ["pnpm", "dev"]
 profile = "development"
@@ -212,6 +215,7 @@ description = "启动开发服务器"
 command = ["pnpm", "test"]
 cwd = "packages/app"
 profile = "test"
+depends-on = ["prepare"]
 ```
 
 ```sh
@@ -307,9 +311,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -447,7 +451,7 @@ pinset env check --profile test
 pinset env diff development test
 ```
 
-schema 5 增加 `[tasks.<名称>]` 与 `[environment.variables.<名称>]`。任务可以声明参数数组、项目内工作目录、profile 和说明；变量契约支持 `string`、`integer`、`boolean`、`url`、`enum`、必填、profile 过滤，以及非密钥变量的默认值。schema 4 项目继续可读可用，只有显式运行 `pinset migrate` 才会启用 schema 5。
+schema 5 增加 `[tasks.<名称>]` 与 `[environment.variables.<名称>]`。任务可以声明参数数组、项目内工作目录、profile、说明和 `depends-on` 列表。依赖按声明顺序在目标任务前各执行一次；依赖缺失或成环属于配置错误，首个非零退出会终止整个任务图。变量契约支持 `string`、`integer`、`boolean`、`url`、`enum`、必填、profile 过滤，以及非密钥变量的默认值。schema 4 项目继续可读可用，只有显式运行 `pinset migrate` 才会启用 schema 5。
 
 ### Workspace 工作区
 
@@ -501,15 +505,16 @@ pinset provider scaffold jq --repository jqlang/jq --command jq
 
 Pinset 在路由命令前验证 Registry 签名、精确 Release 制品 URL、上游 SHA-256 文件、下载内容、安装收据和当前 Provider 修订号。`provider trust` 激活由 Pinset 固定签名者签署的快照，`provider untrust` 恢复使用二进制内嵌快照。签名修订可以禁用 Provider，已有锁随后会明确拒绝执行。
 
-### 未来方向
+### VS Code 集成
 
-Pinset 剩余的 2.x 规划聚焦编辑器集成。
+[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.11.0 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
 
-| 方向 | 计划能力 |
-| --- | --- |
-| 编辑器集成 | VS Code 工具链状态、环境选择、诊断和任务执行。 |
+```sh
+code --install-extension pinset-vscode-1.0.0.vsix
+pinset editor context --json
+```
 
-剩余的兼容目标是 2.11 编辑器集成；破坏公开兼容性的变更另立 3.0 计划。Pinset 继续保持明确的项目边界、制品验证和本地优先原则。
+VS Code 将工作区标记为受信任前，扩展不会启动 Pinset 或项目进程。扩展使用上下文前会检查协议与最低扩展版本，隔离每个工作区文件夹的状态，并在取消任务终端时结束由该任务启动的进程树。
 
 ## 贡献与许可证
 

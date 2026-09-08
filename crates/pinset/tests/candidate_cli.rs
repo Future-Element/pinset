@@ -17,8 +17,12 @@ project-id = "4c5652e4-0000-4000-8000-000000000041"
 
 [tools]
 
+[tasks.setup]
+command = ["{pinset}", "--version"]
+
 [tasks.smoke]
 command = ["{pinset}", "--version"]
+depends-on = ["setup"]
 "#
         ),
     )
@@ -51,6 +55,12 @@ command = ["{pinset}", "--version"]
         tested.status.success(),
         "{}",
         String::from_utf8_lossy(&tested.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&tested.stdout)
+            .matches(pinset_core::pinset_version())
+            .count(),
+        2
     );
 
     let applied = pinset_command(&project, &home)

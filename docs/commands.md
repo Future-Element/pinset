@@ -731,9 +731,22 @@ The short entry resolves managed commands, project Python environment commands, 
 
 ### `run`
 
-`pinset run <task> [-- <arguments...>]` executes a task declared under `[tasks.<name>]`. A task contains a nonempty `command` string array and may add a project-relative `cwd`, a `profile`, and a human-readable `description`. Arguments after `--` are appended without shell parsing. The task's child exit status is preserved.
+`pinset run <task> [-- <arguments...>]` executes a task declared under `[tasks.<name>]`. A task contains a nonempty `command` string array and may add a project-relative `cwd`, a `profile`, a human-readable `description`, and a `depends-on` string array. Dependencies run once in depth-first declaration order before the selected task. Missing dependencies, duplicates, and cycles are configuration errors. The first nonzero exit stops the graph. Arguments after `--` are appended only to the selected task without shell parsing. The child exit status is preserved.
 
 Task environment selection uses root `-e`, then `PINSET_ENV_PROFILE`, then the task profile, then machine-local and project defaults. `--no-env` disables injection. A missing task is always an error and never falls back to a system program. Task working directories must already exist within the project after canonical path resolution.
+
+### `editor context`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Return the secret-free, folder-scoped context consumed by editor integrations. |
+| Syntax and arguments | `pinset editor context [--cwd <path>] [--json]`. |
+| Modifies state | No. It does not decrypt or execute project tasks. |
+| JSON | **Yes**; envelope command `editor.context`. Its data contains editor protocol schema 1, minimum extension version, CLI version, project paths, workspace member names, environment profile names and selection, task metadata without command contents, and diagnostic report schema 1. |
+| Exit | `0` when project discovery, configuration, environment selection, and diagnostics complete; `2` for an invalid or incompatible project. |
+| Key errors | Invalid task graph, project or workspace configuration, unsafe environment profile path, or unreadable local selection. |
+
+The VS Code extension 1.0.0 refuses unknown protocol schemas or a context that requires a newer extension. It keeps contexts separate per workspace folder and does not start this command until Workspace Trust is granted. Project task commands and environment values are excluded from the editor context.
 
 ### `workspace`
 
@@ -1095,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

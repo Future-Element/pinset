@@ -23,8 +23,12 @@ members = ["apps/web", "services/api"]
 
 [tools]
 
+[tasks.setup]
+command = ["{pinset}", "--version"]
+
 [tasks.smoke]
 command = ["{pinset}", "--version"]
+depends-on = ["setup"]
 "#
         ),
     )
@@ -65,7 +69,7 @@ command = ["{pinset}", "--version"]
     let stdout = String::from_utf8_lossy(&ran.stdout);
     assert!(stdout.contains("workspace member apps/web: run smoke"));
     assert!(stdout.contains("workspace member services/api: run smoke"));
-    assert_eq!(stdout.matches(pinset_core::pinset_version()).count(), 2);
+    assert_eq!(stdout.matches(pinset_core::pinset_version()).count(), 4);
 }
 
 fn pinset_command(cwd: &Path, home: &Path) -> Command {

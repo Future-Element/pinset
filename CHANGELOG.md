@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.11.0 - 2026-09-08
+
 - Add portable `status` and strict `check` diagnostics, redacted report schema 1, saved-report comparison, repair previews, and verified GitHub Action cache restores.
 - Add concurrent `cache prefetch`, verified offline bundle export/import, and an explicit offline locked-install mode that reports all missing artifacts before changing installation state.
 - Add schema 5 `[tool-options]`, lock schema 4 option identities, and installation receipt schema 4 so one exact release can coexist with different verified tool configurations.
@@ -12,6 +14,8 @@
 - Add exact candidate lock preparation, isolated candidate task execution, baseline-bound test records, conflict-safe apply/history/restore, and recoverable multi-member workspace transactions.
 - Promote the signed Provider Registry to schema 2 with revision and disable controls, explicit local trust, structural validation, contributor scaffolding, and a constrained GitHub release binary backend that cannot run scripts or hooks.
 - Add `jq` as the first declarative Provider, covering selector resolution, upstream SHA-256 verification, atomic single-binary installation, CLI/shim routing, update, offline cache, audit, and semantic-version uninstall across revision-bound installation identities.
+- Add task dependency graphs with deterministic execute-once ordering, cycle validation, selected-task argument appending, and first-failure stopping for normal, workspace, and candidate task runs.
+- Add versioned `pinset editor context` output and a VS Code 1.0.0 extension with trusted-workspace gating, per-folder multi-root status, diagnostics, environment selection, task entries, and process-tree cancellation.
 
 Project configuration remains schema 5. Runtime locks migrate explicitly to schema 4; schema 1-3 locks remain readable. Installations without structured options retain their historical version-only directory identity, and receipt schemas 1-3 remain readable.
 

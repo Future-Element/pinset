@@ -32,6 +32,7 @@ jobs:
       validation_required: ${{ steps.classify.outputs.validation_required }}
       code_changed: ${{ steps.classify.outputs.code_changed }}
       cargo_changed: ${{ steps.classify.outputs.cargo_changed }}
+      extension_changed: ${{ steps.classify.outputs.extension_changed }}
       website_changed: ${{ steps.classify.outputs.website_changed }}
     steps:
       - name: Check out repository
@@ -52,6 +53,7 @@ jobs:
           validation_required=true
           code_changed=true
           cargo_changed=true
+          extension_changed=true
           website_changed=true
 
           if [[ "${EVENT_NAME}" == "pull_request" && "${IS_DRAFT}" == "true" ]]; then
@@ -77,6 +79,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             code_changed=false
             cargo_changed=true
+            extension_changed=false
             website_changed=false
           elif [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             if [[ -n "${BASE_SHA}" && "${BASE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
@@ -87,6 +90,7 @@ jobs:
 
             code_changed=false
             cargo_changed=false
+            extension_changed=false
             website_changed=false
             while IFS= read -r changed_file; do
               [[ -z "${changed_file}" ]] && continue
@@ -106,6 +110,12 @@ jobs:
               esac
 
               case "${changed_file}" in
+                editors/vscode/*|.github/workflows/ci.yml|.github/workflows/release-preflight.yml|.github/workflows/release.yml)
+                  extension_changed=true
+                  ;;
+              esac
+
+              case "${changed_file}" in
                 website/*|docs/commands.md|docs/commands.zh-CN.md|.github/workflows/ci.yml|.github/workflows/release-preflight.yml|.github/workflows/release.yml)
                   website_changed=true
                   ;;
@@ -117,12 +127,14 @@ jobs:
             echo "validation_required=${validation_required}"
             echo "code_changed=${code_changed}"
             echo "cargo_changed=${cargo_changed}"
+            echo "extension_changed=${extension_changed}"
             echo "website_changed=${website_changed}"
           } >> "${GITHUB_OUTPUT}"
 
           echo "validation_required=${validation_required}"
           echo "code_changed=${code_changed}"
           echo "cargo_changed=${cargo_changed}"
+          echo "extension_changed=${extension_changed}"
           echo "website_changed=${website_changed}"
 
   security:
@@ -385,6 +397,39 @@ jobs:
         shell: bash
         run: if grep -R --exclude='404.html' --exclude='_not-found*' --exclude-dir='_not-found' "http://localhost:3000" out; then exit 1; fi
 
+  extension:
+    name: Validate VS Code extension
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.validation_required == 'true' &&
+        needs.changes.outputs.extension_changed == 'true'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install locked extension dependencies
+        run: npm ci
+
+      - name: Type-check, test, and package extension
+        run: npm run package
+
+      - name: Inspect packaged files
+        shell: bash
+        run: |
+          unzip -l dist/pinset-vscode-1.0.0.vsix > vsix-files.txt
+          grep -F 'extension/dist/extension.js' vsix-files.txt
+          if grep -E 'extension/(src|test|node_modules)/' vsix-files.txt; then
+            echo "VSIX contains development files" >&2
+            exit 1
+          fi
+
   gate:
     name: CI Gate
     needs:
@@ -392,6 +437,7 @@ jobs:
       - security
       - quality
       - build
+      - extension
       - website
     if: always()
     runs-on: ubuntu-24.04
@@ -403,6 +449,8 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
+          EXTENSION_CHANGED: ${{ needs.changes.outputs.extension_changed }}
+          EXTENSION_RESULT: ${{ needs.extension.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           WEBSITE_CHANGED: ${{ needs.changes.outputs.website_changed }}
@@ -423,6 +471,10 @@ jobs:
           fi
           if [[ "${WEBSITE_CHANGED}" == "true" && "${WEBSITE_RESULT}" != "success" ]]; then
             echo "Documentation website validation failed: ${WEBSITE_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${EXTENSION_CHANGED}" == "true" && "${EXTENSION_RESULT}" != "success" ]]; then
+            echo "VS Code extension validation failed: ${EXTENSION_RESULT}" >&2
             exit 1
           fi
           if [[ "${CODE_CHANGED}" != "true" ]]; then

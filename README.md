@@ -91,7 +91,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.3.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.11.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -106,7 +106,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.3.0
+.\install.ps1 -Version 2.11.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -203,6 +203,9 @@ pinset import
 Declare argument arrays instead of shell strings so Pinset preserves boundaries and child exit status:
 
 ```toml
+[tasks.prepare]
+command = ["pnpm", "install", "--frozen-lockfile"]
+
 [tasks.dev]
 command = ["pnpm", "dev"]
 profile = "development"
@@ -212,6 +215,7 @@ description = "Start the development server"
 command = ["pnpm", "test"]
 cwd = "packages/app"
 profile = "test"
+depends-on = ["prepare"]
 ```
 
 ```sh
@@ -307,9 +311,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -447,7 +451,7 @@ pinset env check --profile test
 pinset env diff development test
 ```
 
-Schema 5 adds `[tasks.<name>]` and `[environment.variables.<name>]`. Tasks can declare an argument array, project-relative directory, profile, and description. Contracts support `string`, `integer`, `boolean`, `url`, and `enum`, required fields, profile filters, and defaults for non-secret values. Schema 4 projects remain readable and keep working until `pinset migrate` explicitly enables schema 5.
+Schema 5 adds `[tasks.<name>]` and `[environment.variables.<name>]`. Tasks can declare an argument array, project-relative directory, profile, description, and `depends-on` list. Dependencies run once in declaration order before the selected task; cycles and missing dependencies are configuration errors, and the first nonzero exit stops the graph. Contracts support `string`, `integer`, `boolean`, `url`, and `enum`, required fields, profile filters, and defaults for non-secret values. Schema 4 projects remain readable and keep working until `pinset migrate` explicitly enables schema 5.
 
 ### Workspaces
 
@@ -501,15 +505,16 @@ pinset provider scaffold jq --repository jqlang/jq --command jq
 
 Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 file, downloaded bytes, installation receipt, and active Provider revision before routing a command. `provider trust` activates a clear-signed snapshot from Pinset's pinned signer; `provider untrust` returns to the snapshot embedded in the binary. A signed revision can disable a Provider, and existing locks then fail closed.
 
-### Future directions
+### VS Code integration
 
-Pinset's remaining planned 2.x work focuses on editor integration.
+The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.11.0. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
 
-| Direction | Planned capabilities |
-| --- | --- |
-| Editor integration | VS Code toolchain status, environment selection, diagnostics, and task execution. |
+```sh
+code --install-extension pinset-vscode-1.0.0.vsix
+pinset editor context --json
+```
 
-The remaining compatible target is 2.11 editor integration. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
+The extension starts no Pinset or project process until VS Code marks the workspace trusted. It checks the protocol and minimum extension version before using context, keeps each workspace folder's state separate, and terminates the launched process tree when a task terminal is cancelled.
 
 ## Contributing and license
 

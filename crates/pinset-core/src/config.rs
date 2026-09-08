@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
 };
@@ -125,6 +125,8 @@ pub struct ProjectEnvironment {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProjectTask {
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -595,6 +597,11 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         });
     }
 
+    if config.tasks.len() > 256 {
+        return Err(Error::InvalidProjectConfig {
+            reason: "a project may declare at most 256 tasks".to_owned(),
+        });
+    }
     for (name, task) in &config.tasks {
         if !valid_task_name(name)
             || task.command.is_empty()
@@ -622,6 +629,27 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
                 });
             }
         }
+        if task.depends_on.len() > 64 {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} may depend on at most 64 tasks"),
+            });
+        }
+        let mut dependencies = BTreeSet::new();
+        for dependency in &task.depends_on {
+            if !valid_task_name(dependency)
+                || !dependencies.insert(dependency)
+                || !config.tasks.contains_key(dependency)
+            {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "task {name} has an invalid, duplicate or undeclared dependency {dependency}"
+                    ),
+                });
+            }
+        }
+    }
+    for name in config.tasks.keys() {
+        project_task_order(config, name)?;
     }
     validate_python_environments(config)?;
     let Some(environment) = &config.environment else {
@@ -715,6 +743,52 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             });
         }
     }
+    Ok(())
+}
+
+pub fn project_task_order(config: &ProjectConfig, task_name: &str) -> Result<Vec<String>> {
+    if !config.tasks.contains_key(task_name) {
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("project task {task_name:?} is not declared"),
+        });
+    }
+    let mut visiting = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut order = Vec::new();
+    visit_project_task(config, task_name, &mut visiting, &mut visited, &mut order)?;
+    Ok(order)
+}
+
+fn visit_project_task(
+    config: &ProjectConfig,
+    task_name: &str,
+    visiting: &mut Vec<String>,
+    visited: &mut BTreeSet<String>,
+    order: &mut Vec<String>,
+) -> Result<()> {
+    if visited.contains(task_name) {
+        return Ok(());
+    }
+    if let Some(position) = visiting.iter().position(|name| name == task_name) {
+        let mut cycle = visiting[position..].to_vec();
+        cycle.push(task_name.to_owned());
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("task dependency cycle: {}", cycle.join(" -> ")),
+        });
+    }
+    visiting.push(task_name.to_owned());
+    let task = config
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!("project task {task_name:?} is not declared"),
+        })?;
+    for dependency in &task.depends_on {
+        visit_project_task(config, dependency, visiting, visited, order)?;
+    }
+    visiting.pop();
+    visited.insert(task_name.to_owned());
+    order.push(task_name.to_owned());
     Ok(())
 }
 
@@ -1214,6 +1288,59 @@ mod tests {
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
         assert!(matches!(error, Error::UnsupportedSchema { actual: 6 }));
+    }
+
+    #[test]
+    fn task_dependencies_are_topological_and_cycles_fail_closed() {
+        let root = tempdir().expect("temp directory");
+        let config_path = root.path().join("pinset.toml");
+        fs::write(
+            &config_path,
+            r#"schema = 5
+project-id = "11111111-1111-4111-8111-111111111111"
+
+[tools]
+
+[tasks.setup]
+command = ["setup"]
+
+[tasks.build]
+command = ["build"]
+depends-on = ["setup"]
+
+[tasks.test]
+command = ["test"]
+depends-on = ["setup", "build"]
+"#,
+        )
+        .expect("config");
+        let config = load_project_config(&config_path).expect("task graph");
+        assert_eq!(
+            project_task_order(&config, "test").expect("order"),
+            ["setup", "build", "test"]
+        );
+
+        fs::write(
+            &config_path,
+            r#"schema = 5
+project-id = "11111111-1111-4111-8111-111111111111"
+
+[tools]
+
+[tasks.a]
+command = ["a"]
+depends-on = ["b"]
+
+[tasks.b]
+command = ["b"]
+depends-on = ["a"]
+"#,
+        )
+        .expect("cyclic config");
+        let error = load_project_config(&config_path).expect_err("cycle must fail");
+        assert!(
+            matches!(error, Error::InvalidProjectConfig { reason } if reason.contains("a -> b -> a") || reason.contains("b -> a -> b"))
+        );
     }
 
     #[test]

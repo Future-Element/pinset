@@ -110,8 +110,8 @@ pub use config::{
     ProjectEnvironment, ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectTask,
     ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
     find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
-    load_effective_project_config, load_project_config, validate_environment_variable_value,
-    workspace_members,
+    load_effective_project_config, load_project_config, project_task_order,
+    validate_environment_variable_value, workspace_members,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};

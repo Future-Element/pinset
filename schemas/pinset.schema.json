@@ -80,6 +80,12 @@
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }
           },
+          "depends-on": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/taskName" }
+          },
           "cwd": {
             "type": "string",
             "minLength": 1,

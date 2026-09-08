@@ -316,6 +316,11 @@ enum Commands {
         #[command(subcommand)]
         command: WorkspaceCommands,
     },
+    /// Stable, secret-free context consumed by editor integrations.
+    Editor {
+        #[command(subcommand)]
+        command: EditorCommands,
+    },
     /// Run a named project task from pinset.toml.
     Run {
         /// Task name declared under [tasks.<name>].
@@ -818,6 +823,17 @@ enum ProviderCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum EditorCommands {
+    /// Report tasks, environment choices, and diagnostics for one workspace folder.
+    Context {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 impl Cli {
     fn json_command(&self) -> Option<&'static str> {
         self.command.as_ref()?.json_command()
@@ -845,6 +861,7 @@ impl Commands {
             Self::Bundle { command } => command.json_command(),
             Self::Candidate { command } => command.json_command(),
             Self::Workspace { command } => command.json_command(),
+            Self::Editor { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
             Self::Env { command } => command.as_ref().and_then(EnvCommands::json_command),
             Self::Trust { command } => command.json_command(),
@@ -895,6 +912,15 @@ impl ProviderCommands {
             Self::Trust { json: true, .. } => Some("provider.trust"),
             Self::Untrust { json: true } => Some("provider.untrust"),
             Self::Validate { json: true, .. } => Some("provider.validate"),
+            _ => None,
+        }
+    }
+}
+
+impl EditorCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Context { json: true, .. } => Some("editor.context"),
             _ => None,
         }
     }
@@ -1628,6 +1654,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         Commands::Workspace { command } => {
             return run_workspace_command(command, cli.profile.as_deref(), cli.no_env, catalog);
         }
+        Commands::Editor { command } => run_editor_command(command)?,
         Commands::Run { task, arguments } => {
             return run_project_task(
                 &env::current_dir()?,
@@ -3779,6 +3806,29 @@ fn run_candidate_task(
     appended: &[OsString],
     options: CandidateTaskOptions<'_>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    if !project.tasks.contains_key(task_name) {
+        return Err(format!("project task {task_name:?} is not declared").into());
+    }
+    for current in pinset_core::project_task_order(project, task_name)? {
+        let arguments = if current == task_name { appended } else { &[] };
+        let code =
+            run_candidate_task_once(home, target, project, record, &current, arguments, options)?;
+        if code != 0 {
+            return Ok(code);
+        }
+    }
+    Ok(0)
+}
+
+fn run_candidate_task_once(
+    home: &Path,
+    target: &CandidateTarget,
+    project: &ProjectConfig,
+    record: &candidate::CandidateRecord,
+    task_name: &str,
+    appended: &[OsString],
+    options: CandidateTaskOptions<'_>,
+) -> Result<i32, Box<dyn std::error::Error>> {
     let task = project
         .tasks
         .get(task_name)
@@ -4289,13 +4339,14 @@ fn workspace_update_preview(
     })
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace run exec x doctor status check venv shim env trust activate completions source provider self";
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
 const COMPLETION_BUNDLE_COMMANDS: &str = "export import";
 const COMPLETION_CANDIDATE_COMMANDS: &str = "prepare test status apply history restore recover";
 const COMPLETION_WORKSPACE_COMMANDS: &str = "members install check run update references";
+const COMPLETION_EDITOR_COMMANDS: &str = "context";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
@@ -4361,6 +4412,7 @@ fn completion_script(shell: ActivationShell) -> String {
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
             provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
+            editor) values="__EDITOR_COMMANDS__ --cwd --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -4407,6 +4459,7 @@ _pinset_completion() {
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
             provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
+            editor) values="__EDITOR_COMMANDS__ --cwd --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -4431,6 +4484,7 @@ complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '--provider --all
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from provider' -a '__PROVIDER_COMMANDS__ --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from editor' -a '__EDITOR_COMMANDS__ --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from env' -a '__ENV_COMMANDS__ --profile --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from trust' -a '__TRUST_COMMANDS__ --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from self' -a '__SELF_COMMANDS__ --channel --version --json'
@@ -4480,6 +4534,7 @@ complete -c pinset -f -a '--help --lang'"#
         { $_ -in @('activate', 'completions') } { '__SHELLS__ --lang --help' -split ' ' }
         'source' { '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help' -split ' ' }
         'provider' { '__PROVIDER_COMMANDS__ --json --lang --help' -split ' ' }
+        'editor' { '__EDITOR_COMMANDS__ --cwd --json --lang --help' -split ' ' }
         default { '__COMMANDS__ -C --cwd -e --profile --no-env --help --version --lang' -split ' ' }
     }
     $values |
@@ -4498,6 +4553,7 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__BUNDLE_COMMANDS__", COMPLETION_BUNDLE_COMMANDS)
         .replace("__CANDIDATE_COMMANDS__", COMPLETION_CANDIDATE_COMMANDS)
         .replace("__WORKSPACE_COMMANDS__", COMPLETION_WORKSPACE_COMMANDS)
+        .replace("__EDITOR_COMMANDS__", COMPLETION_EDITOR_COMMANDS)
         .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
         .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
@@ -6663,6 +6719,37 @@ fn run_project_task(
     if config.schema < PROJECT_CONFIG_SCHEMA {
         return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
     }
+    if !config.tasks.contains_key(task_name) {
+        return Err(format!("project task {task_name:?} is not declared").into());
+    }
+    let order = pinset_core::project_task_order(&config, task_name)?;
+    for current in order {
+        let arguments = if current == task_name { appended } else { &[] };
+        let code = run_project_task_once(
+            &config_path,
+            &config,
+            &current,
+            arguments,
+            explicit_profile,
+            no_environment,
+            catalog,
+        )?;
+        if code != 0 {
+            return Ok(code);
+        }
+    }
+    Ok(0)
+}
+
+fn run_project_task_once(
+    config_path: &Path,
+    config: &ProjectConfig,
+    task_name: &str,
+    appended: &[OsString],
+    explicit_profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
     let task = config
         .tasks
         .get(task_name)
@@ -8043,6 +8130,129 @@ fn run_source_command(
                     source.base_url.starts_with("https://"),
                 )
             );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct EditorContextReport {
+    protocol_schema: u32,
+    minimum_extension_version: &'static str,
+    cli_version: &'static str,
+    requires_workspace_trust: bool,
+    folder: String,
+    project_root: Option<String>,
+    config: Option<String>,
+    workspace_members: Vec<String>,
+    environment: EditorEnvironmentReport,
+    tasks: Vec<EditorTaskReport>,
+    diagnostics: diagnostics::DiagnosticReport,
+}
+
+#[derive(Debug, Serialize)]
+struct EditorEnvironmentReport {
+    profiles: Vec<String>,
+    selected: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EditorTaskReport {
+    name: String,
+    description: Option<String>,
+    depends_on: Vec<String>,
+    profile: Option<String>,
+    cwd: Option<String>,
+    python_environment: Option<String>,
+}
+
+fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        EditorCommands::Context { cwd, json } => {
+            let cwd = effective_cwd(cwd)?;
+            let config_path = find_optional_project_config(&cwd)?;
+            let config = config_path
+                .as_deref()
+                .map(load_effective_project_config)
+                .transpose()?;
+            let home = pinset_home()?;
+            let environment = if let (Some(path), Some(config)) = (&config_path, &config) {
+                let selection = pinset_core::environment_selection(&home, path, config, None)?;
+                EditorEnvironmentReport {
+                    profiles: config
+                        .environment
+                        .as_ref()
+                        .map(|environment| environment.profiles.keys().cloned().collect())
+                        .unwrap_or_default(),
+                    selected: selection.profile,
+                    source: selection.source.to_owned(),
+                }
+            } else {
+                EditorEnvironmentReport {
+                    profiles: Vec::new(),
+                    selected: None,
+                    source: "none".to_owned(),
+                }
+            };
+            let tasks = config
+                .as_ref()
+                .map(|config| {
+                    config
+                        .tasks
+                        .iter()
+                        .map(|(name, task)| EditorTaskReport {
+                            name: name.clone(),
+                            description: task.description.clone(),
+                            depends_on: task.depends_on.clone(),
+                            profile: task.profile.clone(),
+                            cwd: task.cwd.clone(),
+                            python_environment: task.python_environment.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let workspace_members = match (&config_path, &config) {
+                (Some(path), Some(config)) if config.workspace.is_some() => {
+                    workspace_members(path)?
+                        .into_iter()
+                        .map(|member| member.name)
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            let report = EditorContextReport {
+                protocol_schema: 1,
+                minimum_extension_version: "1.0.0",
+                cli_version: pinset_core::pinset_version(),
+                requires_workspace_trust: true,
+                folder: cwd.display().to_string(),
+                project_root: config_path
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map(|path| path.display().to_string()),
+                config: config_path.map(|path| path.display().to_string()),
+                workspace_members,
+                environment,
+                tasks,
+                diagnostics: diagnostics::collect(&cwd, false)?,
+            };
+            if json {
+                print_json_success("editor.context", report)?;
+            } else {
+                println!(
+                    "Pinset editor protocol={} CLI={} tasks={} profiles={} diagnostics={}",
+                    report.protocol_schema,
+                    report.cli_version,
+                    report.tasks.len(),
+                    report.environment.profiles.len(),
+                    if report.diagnostics.summary.passed {
+                        "passed"
+                    } else {
+                        "attention"
+                    }
+                );
+            }
         }
     }
     Ok(())

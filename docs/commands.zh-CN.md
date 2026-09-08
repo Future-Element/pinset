@@ -731,9 +731,22 @@ Pinset 参数放在顶层 `--` 之前，之后的全部内容都传给子进程�
 
 ### `run`
 
-`pinset run <任务> [-- <追加参数...>]` 执行 `[tasks.<名称>]` 中声明的任务。任务包含非空 `command` 字符串数组，还可声明项目内相对 `cwd`、`profile` 和说明 `description`。`--` 后的参数不经过 Shell 解析，直接追加到命令数组；子进程退出状态保持不变。
+`pinset run <任务> [-- <追加参数...>]` 执行 `[tasks.<名称>]` 中声明的任务。任务包含非空 `command` 字符串数组，还可声明项目内相对 `cwd`、`profile`、说明 `description` 和 `depends-on` 字符串数组。依赖按深度优先和声明顺序在目标任务前各执行一次；依赖缺失、重复或成环属于配置错误；首个非零退出会终止任务图。`--` 后的参数只追加到目标任务，不经过 Shell 解析；子进程退出状态保持不变。
 
 任务环境按根参数 `-e`、`PINSET_ENV_PROFILE`、任务 profile、本机选择、项目默认值依次选择。`--no-env` 关闭注入。任务不存在时始终报错，不会回退执行系统程序。任务工作目录经过规范化后必须已经存在并位于项目内。
+
+### `editor context`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 返回编辑器集成使用的无秘密值、按文件夹隔离的上下文。 |
+| 语法与参数 | `pinset editor context [--cwd <路径>] [--json]`。 |
+| 修改状态 | 否。不会解密环境，也不会执行项目任务。 |
+| JSON | **支持**；命令名为 `editor.context`。`data` 包含编辑器协议 schema 1、最低扩展版本、CLI 版本、项目路径、工作区成员名称、环境 profile 名称与选择、无命令内容的任务元数据，以及诊断报告 schema 1。 |
+| 退出码 | 项目发现、配置、环境选择和诊断成功为 `0`；项目无效或不兼容为 `2`。 |
+| 关键错误 | 任务图无效、项目或工作区配置错误、环境 profile 路径不安全，或本机选择不可读。 |
+
+VS Code 扩展 1.0.0 会拒绝未知协议 schema，以及要求更高扩展版本的上下文。扩展为每个工作区文件夹单独保存上下文，并在 Workspace Trust 授予前不启动该命令。编辑器上下文不包含项目任务命令和环境变量值。
 
 ### `workspace`
 
@@ -1095,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

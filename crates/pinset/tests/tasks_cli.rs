@@ -45,6 +45,7 @@ fn task(command: impl IntoIterator<Item = impl AsRef<OsStr>>) -> ProjectTask {
             .into_iter()
             .map(|value| value.as_ref().to_string_lossy().into_owned())
             .collect(),
+        depends_on: Vec::new(),
         cwd: None,
         profile: None,
         description: None,
@@ -159,4 +160,70 @@ fn task_cwd_cannot_escape_the_project() {
         .expect("run invalid task");
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("cwd must stay within the project"));
+}
+
+#[test]
+fn task_dependencies_run_once_in_order_and_stop_on_failure() {
+    let temporary = tempdir().expect("temporary root");
+    let project = temporary.path().join("project");
+    let home = temporary.path().join("home");
+    fs::create_dir(&project).expect("project");
+
+    #[cfg(windows)]
+    let write = |value: &str| task(["cmd.exe", "/d", "/c", &format!("echo {value}>>order.txt")]);
+    #[cfg(not(windows))]
+    let write = |value: &str| task(["sh", "-c", &format!("printf '{value}\\n' >> order.txt")]);
+    #[cfg(windows)]
+    let fail = task(["cmd.exe", "/d", "/c", "exit 23"]);
+    #[cfg(not(windows))]
+    let fail = task(["sh", "-c", "exit 23"]);
+
+    let mut build = write("build");
+    build.depends_on = vec!["setup".to_owned()];
+    let mut test = write("test");
+    test.depends_on = vec!["setup".to_owned(), "build".to_owned()];
+    let mut blocked = write("blocked");
+    blocked.depends_on = vec!["fail".to_owned()];
+    let config = ProjectConfig {
+        schema: 5,
+        project_id: Some("4c5652e4-0000-4000-8000-000000000003".to_owned()),
+        policy: ProjectPolicy {
+            system_fallback: true,
+            ..ProjectPolicy::default()
+        },
+        tools: BTreeMap::new(),
+        tool_options: Default::default(),
+        tasks: BTreeMap::from([
+            ("setup".to_owned(), write("setup")),
+            ("build".to_owned(), build),
+            ("test".to_owned(), test),
+            ("fail".to_owned(), fail),
+            ("blocked".to_owned(), blocked),
+        ]),
+        python: None,
+        workspace: None,
+        environment: None,
+    };
+    save_project_config(&project.join("pinset.toml"), &config).expect("project config");
+
+    let output = cli(&project, &home)
+        .args(["run", "test"])
+        .output()
+        .expect("run dependency graph");
+    success(&output);
+    assert_eq!(
+        fs::read_to_string(project.join("order.txt")).expect("task order"),
+        "setup\nbuild\ntest\n"
+    );
+
+    let failed = cli(&project, &home)
+        .args(["run", "blocked"])
+        .output()
+        .expect("run failing dependency");
+    assert_eq!(failed.status.code(), Some(23));
+    assert!(
+        !fs::read_to_string(project.join("order.txt"))
+            .expect("task order")
+            .contains("blocked")
+    );
 }
