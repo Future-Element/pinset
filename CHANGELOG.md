@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+## 2.11.0 - 2026-09-08
+
+- Add portable `status` and strict `check` diagnostics, redacted report schema 1, saved-report comparison, repair previews, and verified GitHub Action cache restores.
+- Add concurrent `cache prefetch`, verified offline bundle export/import, and an explicit offline locked-install mode that reports all missing artifacts before changing installation state.
+- Add schema 5 `[tool-options]`, lock schema 4 option identities, and installation receipt schema 4 so one exact release can coexist with different verified tool configurations.
+- Add Rust profiles, extra components, extra compilation targets, and fixed-date nightly toolchains. Rust artifacts and target overlays remain bound to the official v2 manifest and SHA-256 identities.
+- Add Eclipse Temurin JDK/JRE selection with package-aware metadata, lock, install identities, archive validation, and runtime command checks.
+- Add isolated named Python environments, ownership marker schema 2, `venv <command> [name]`, and task-level `python-environment` binding while preserving the default `.venv` contract.
+- Add schema 5 explicit workspaces with root defaults, whole-option member overrides, independent member locks, batch install/check/task/update-preview commands, changed-member filtering, and tool-reference reports.
+- Add exact candidate lock preparation, isolated candidate task execution, baseline-bound test records, conflict-safe apply/history/restore, and recoverable multi-member workspace transactions.
+- Promote the signed Provider Registry to schema 2 with revision and disable controls, explicit local trust, structural validation, contributor scaffolding, and a constrained GitHub release binary backend that cannot run scripts or hooks.
+- Add `jq` as the first declarative Provider, covering selector resolution, upstream SHA-256 verification, atomic single-binary installation, CLI/shim routing, update, offline cache, audit, and semantic-version uninstall across revision-bound installation identities.
+- Add task dependency graphs with deterministic execute-once ordering, cycle validation, selected-task argument appending, and first-failure stopping for normal, workspace, and candidate task runs.
+- Add versioned `pinset editor context` output and a VS Code 1.0.0 extension with trusted-workspace gating, per-folder multi-root status, diagnostics, environment selection, task entries, and process-tree cancellation.
+
+Project configuration remains schema 5. Runtime locks migrate explicitly to schema 4; schema 1-3 locks remain readable. Installations without structured options retain their historical version-only directory identity, and receipt schemas 1-3 remain readable.
+
 ## 2.3.0 - 2026-09-07
 
 - Add schema 5 project tasks with argument-array commands, optional project-relative working directories, environment profiles, descriptions, and appended arguments through `pinset run <task> -- <arguments...>`.

@@ -6,9 +6,13 @@ inputs:
   version:
     description: Exact Pinset release version without the leading v.
     required: false
-    default: 2.3.0
+    default: 2.11.0
   install:
     description: Run pinset install --locked after Pinset is available.
+    required: false
+    default: "true"
+  cache:
+    description: Cache verified runtime archives and revalidate them after every restore.
     required: false
     default: "true"
   working-directory:
@@ -80,6 +84,25 @@ runs:
         if ($actual -ne $expected) { throw "Checksum mismatch for $archive" }
         Expand-Archive -LiteralPath (Join-Path $root $archive) -DestinationPath $bin -Force
         Add-Content -LiteralPath $env:GITHUB_PATH -Value $bin
+
+    - name: Configure isolated Pinset data directory
+      shell: bash
+      run: |
+        printf 'PINSET_HOME=%s\n' "${RUNNER_TEMP}/pinset-action-home" >> "${GITHUB_ENV}"
+
+    - name: Restore verified runtime archives
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/pinset-action-home/downloads
+        key: pinset-artifacts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/pinset.lock', inputs.working-directory)) }}
+        restore-keys: |
+          pinset-artifacts-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Revalidate restored runtime archives
+      if: inputs.cache == 'true'
+      shell: bash
+      run: pinset cache verify
 
     - name: Install locked runtimes
       if: inputs.install == 'true'

@@ -17,9 +17,9 @@ use crate::{
     ArtifactIntegrity, Error, GLOBAL_STATE_SCHEMA, LOCKFILE_SCHEMA, LockedArtifact, Lockfile,
     MinimumReleaseAge, PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, RuntimeLockAuditKind,
     VerificationStrength, current_target_for_tool, download_cache::verify_download_cache_integrity,
-    find_optional_project_config, global_config_path, global_lockfile_path, load_global_config,
-    load_lockfile, load_project_config, load_project_python_environment, lockfile_path,
-    runtime_provider,
+    find_optional_project_config, global_config_path, global_lockfile_path,
+    load_effective_project_config, load_global_config, load_lockfile,
+    load_project_python_environment, lockfile_path, runtime_provider,
 };
 
 const MAX_AUDIT_RECEIPT_BYTES: u64 = 64 * 1024;
@@ -216,6 +216,8 @@ struct AuditInstallReceipt {
     #[serde(default)]
     version: String,
     #[serde(default)]
+    install_identity: Option<String>,
+    #[serde(default)]
     target: String,
     #[serde(default)]
     canonical_url: Option<String>,
@@ -297,12 +299,14 @@ fn load_config_selection(
     report: &mut LockAuditReport,
 ) -> Option<ConfigSelection> {
     let result = match scope {
-        LockAuditScope::Project => load_project_config(path).map(|config| ConfigSelection {
-            schema: config.schema,
-            tools: config.tools,
-            verification_strength: config.policy.verification_strength,
-            minimum_release_age: config.policy.minimum_release_age,
-        }),
+        LockAuditScope::Project => {
+            load_effective_project_config(path).map(|config| ConfigSelection {
+                schema: config.schema,
+                tools: config.tools,
+                verification_strength: config.policy.verification_strength,
+                minimum_release_age: config.policy.minimum_release_age,
+            })
+        }
         LockAuditScope::Global => load_global_config(path).map(|config| ConfigSelection {
             schema: config.schema,
             tools: config.tools,
@@ -736,9 +740,14 @@ fn audit_install_receipt(
     let install_dir = pinset_home
         .join("installs")
         .join(&locked.name)
-        .join(&locked.version)
+        .join(locked.installation_version())
         .join(target);
-    match validate_install_directory_chain(pinset_home, &locked.name, &locked.version, target) {
+    match validate_install_directory_chain(
+        pinset_home,
+        &locked.name,
+        &locked.installation_version(),
+        target,
+    ) {
         Ok(false) => {
             report.push(finding(
                 LockAuditReasonCode::InstallMissing,
@@ -874,7 +883,7 @@ fn audit_install_receipt(
         }
     };
     report.summary.receipts += 1;
-    if !matches!(receipt.schema, 1..=3) {
+    if !matches!(receipt.schema, 1..=4) {
         report.push(finding(
             LockAuditReasonCode::ReceiptSchemaUnsupported,
             LockAuditSeverity::Error,
@@ -919,7 +928,14 @@ fn audit_install_receipt(
         ));
         return;
     }
-    if receipt.tool != locked.name || receipt.version != locked.version || receipt.target != target
+    if receipt.tool != locked.name
+        || receipt.version != locked.version
+        || receipt
+            .install_identity
+            .as_deref()
+            .unwrap_or(&receipt.version)
+            != locked.installation_version()
+        || receipt.target != target
     {
         report.push(finding(
             LockAuditReasonCode::ReceiptIdentityMismatch,
@@ -964,7 +980,7 @@ fn audit_install_receipt(
             )),
         ));
     }
-    if receipt.schema == 3
+    if receipt.schema >= 3
         && (receipt.install_root.as_deref().is_none_or(str::is_empty)
             || receipt.file_count.is_none()
             || receipt.total_size.is_none()
@@ -978,6 +994,25 @@ fn audit_install_receipt(
             subject,
             Some(&receipt_path),
             "schema 3 receipt is missing installation transparency metadata".to_owned(),
+            Some(repair(
+                "repair the owned installation",
+                Some("pinset install <tool@version> --repair".to_owned()),
+            )),
+        ));
+    }
+    if receipt.schema == 4
+        && receipt
+            .install_identity
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        report.push(finding(
+            LockAuditReasonCode::ReceiptInvalid,
+            LockAuditSeverity::Error,
+            LockAuditCategory::InstallReceipt,
+            subject,
+            Some(&receipt_path),
+            "schema 4 receipt is missing its structured installation identity".to_owned(),
             Some(repair(
                 "repair the owned installation",
                 Some("pinset install <tool@version> --repair".to_owned()),

@@ -186,6 +186,7 @@ impl DotnetMetadataClient {
                 ("release_version".to_owned(), release.release_version),
                 ("support_phase".to_owned(), release.support_phase),
             ]),
+            options: BTreeMap::new(),
             artifacts,
         })
     }

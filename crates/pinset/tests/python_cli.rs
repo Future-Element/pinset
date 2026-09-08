@@ -1,9 +1,14 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::Path,
     process::{Command, Output},
 };
 
+use pinset_core::{
+    LockedArtifact, LockedArtifactFormat, LockedTool, Lockfile, PYTHON_TARGETS, SourceConfig,
+    plan_python_artifact, save_lockfile,
+};
 use tempfile::tempdir;
 
 const DISTRIBUTION: &str = "3.14.7+20260807";
@@ -94,8 +99,118 @@ fn refuses_to_adopt_an_unmarked_dot_venv() {
     assert_eq!(report["data"]["python_environment"]["status"], "invalid");
 }
 
+#[test]
+fn named_environment_isolated_and_bound_to_declared_task() {
+    let root = tempdir().expect("root");
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    fs::create_dir(&project).expect("project");
+    fs::write(
+        project.join("pinset.toml"),
+        format!(
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000027"
+
+[tools]
+python = "{DISTRIBUTION}"
+
+[python.environments.test]
+path = ".venv-test"
+
+[tasks.test]
+command = ["pytest", "suite"]
+python-environment = "test"
+"#
+        ),
+    )
+    .expect("config");
+    write_python_lock(&project);
+    let named_environment = create_fake_named_environment(&project, "test", ".venv-test");
+    assert!(!project.join(".venv").exists());
+
+    let status = pinset(&project, &home, &["venv", "status", "test"]);
+    assert_success_contains(&status, "project environment test");
+    assert_success_contains(&status, &named_environment.display().to_string());
+
+    let executed = pinset(&project, &home, &["run", "test"]);
+    assert_success_contains(&executed, "fake-pytest suite");
+    let stdout = String::from_utf8_lossy(&executed.stdout);
+    let virtual_env = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("VIRTUAL_ENV="))
+        .expect("virtual environment");
+    assert_eq!(
+        fs::canonicalize(virtual_env).expect("task environment"),
+        fs::canonicalize(&named_environment).expect("named environment")
+    );
+}
+
+fn write_python_lock(project: &Path) {
+    let artifacts = PYTHON_TARGETS
+        .into_iter()
+        .map(|target| {
+            let plan = plan_python_artifact(&SourceConfig::default(), DISTRIBUTION, target)
+                .expect("Python artifact plan");
+            LockedArtifact {
+                target: target.to_owned(),
+                canonical_url: plan.canonical_url,
+                artifact_path: plan.artifact_path,
+                sha256: "ab".repeat(32),
+                integrity: None,
+                format: LockedArtifactFormat::TarGz,
+                archive_root: plan.archive_root,
+                verification: "python-build-standalone-versions-sha256".to_owned(),
+                overlays: Vec::new(),
+            }
+        })
+        .collect();
+    save_lockfile(
+        &project.join("pinset.lock"),
+        &Lockfile {
+            schema: pinset_core::LOCKFILE_SCHEMA,
+            generated_by: format!("pinset {}", pinset_core::pinset_version()),
+            tools: vec![LockedTool {
+                name: "python".to_owned(),
+                requested: DISTRIBUTION.to_owned(),
+                version: DISTRIBUTION.to_owned(),
+                provider: "python-build-standalone".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::from([
+                    ("build_id".to_owned(), "20260807".to_owned()),
+                    (
+                        "distribution".to_owned(),
+                        "astral-sh/python-build-standalone".to_owned(),
+                    ),
+                    ("python_version".to_owned(), "3.14.7".to_owned()),
+                    ("variant".to_owned(), "install_only".to_owned()),
+                ]),
+                options: BTreeMap::new(),
+                artifacts,
+            }],
+        },
+    )
+    .expect("Python lock");
+}
+
 fn create_fake_environment(project: &Path) -> std::path::PathBuf {
-    let root = project.join(".venv");
+    create_fake_environment_at(project, "default", ".venv", 1)
+}
+
+fn create_fake_named_environment(
+    project: &Path,
+    name: &str,
+    relative_path: &str,
+) -> std::path::PathBuf {
+    create_fake_environment_at(project, name, relative_path, 2)
+}
+
+fn create_fake_environment_at(
+    project: &Path,
+    name: &str,
+    relative_path: &str,
+    schema: u32,
+) -> std::path::PathBuf {
+    let root = project.join(relative_path);
     let commands = if cfg!(windows) {
         root.join("Scripts")
     } else {
@@ -105,10 +220,17 @@ fn create_fake_environment(project: &Path) -> std::path::PathBuf {
     fs::write(root.join("pyvenv.cfg"), "home = pinset-test\n").expect("pyvenv");
     fs::write(
         root.join(".pinset-venv.toml"),
-        format!(
-            "schema = 1\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n",
-            pinset_core::current_target_for_tool("python")
-        ),
+        if schema == 1 {
+            format!(
+                "schema = 1\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n",
+                pinset_core::current_target_for_tool("python")
+            )
+        } else {
+            format!(
+                "schema = 2\nenvironment = \"{name}\"\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n",
+                pinset_core::current_target_for_tool("python")
+            )
+        },
     )
     .expect("marker");
     write_python(&commands);

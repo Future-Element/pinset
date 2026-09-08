@@ -2,13 +2,55 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.md)
 
-This document describes the Pinset v2.2 command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
+This document describes the current Pinset development command-line contract. Run `pinset <command> --help` for the exact parser help shipped with your binary.
 
 ## Conventions
 
 ### Selections and scope
 
-A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Schema 3 keeps that requested selector in configuration and records its exact resolved version in the lockfile.
+A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Project configuration keeps that requested selector and lock schema 4 records its exact resolved version, options, and platform artifacts.
+
+Schema 5 projects may add structured options without changing the string selection:
+
+```toml
+[tools]
+rust = "nightly"
+
+[tool-options.rust]
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+date = "2026-07-16"
+```
+
+Rust supports `minimal`, `default`, and `complete` profiles. `components` adds verified components to the selected profile, while `targets` installs additional `rust-std` compilation targets. A fixed nightly may use `rust = "nightly"` with `date`, or `rust = "nightly-YYYY-MM-DD"`; a floating undated nightly is rejected. Different option sets use distinct installation identities, while projects without options keep the historical version-only path.
+
+Java uses Eclipse Temurin and defaults to a JDK. Schema 5 can select the smaller JRE package while keeping the same version selector:
+
+```toml
+[tools]
+java = "lts"
+
+[tool-options.java]
+distribution = "temurin"
+package = "jre"
+```
+
+The distribution and package type are part of the lock and installation identity, so a JDK and JRE at the same exact release can coexist.
+
+Python keeps the compatible default `.venv` and can declare additional isolated environments for task binding:
+
+```toml
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+```
 
 Supported tools are Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter. Dart is provided by the selected Flutter SDK. Project discovery stops at the nearest Git root by default; without a Git marker it inspects only the start directory. A project is strict by default: an undeclared tool neither inherits global state nor falls back to the system command unless `[policy]` explicitly enables `inherit-global` or `system-fallback`. Outside a project, global state then system `PATH` remain eligible.
 
@@ -78,7 +120,7 @@ Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, 
 
 | Field | Description |
 | --- | --- |
-| Purpose | Re-scan and import every safe traditional selection into schema 5 `pinset.toml` and schema 3 `pinset.lock`. |
+| Purpose | Re-scan and import every safe traditional selection into schema 5 `pinset.toml` and schema 4 `pinset.lock`. |
 | Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools whose existing requested selector differs. |
 | Modifies state | **Yes.** Resolves metadata, atomically replaces the lock file and then the config file, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
 | Example | `pinset import --no-install` |
@@ -129,7 +171,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Install one explicit exact runtime, or install every target from a project/global lock. |
-| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--global | --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. |
+| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. `--offline` is valid only with a project or global lock. |
 | Modifies state | **Yes.** Writes cache entries, runtime files, receipts, and command routes; a locked Python project may create or validate `.venv`. It does not change a selection. |
 | Example | `pinset install --locked --cwd ./app` |
 | JSON | No. |
@@ -202,7 +244,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 while retaining schema 3 runtime locks. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
+| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 and runtime locks as schema 4. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -289,21 +331,47 @@ Stable reason codes are grouped as follows:
 | Exit | `0` when the diagnostic completes; `2` if its inputs cannot be read or validated. Findings are reported in data and do not necessarily make the command fail. |
 | Key errors | Unreadable config/lock, malformed state, unsafe path, or filesystem failure. |
 
+### `status` and `check`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Produce portable diagnostic report schema 1. `status` always reports; `check` is suitable for CI policy gates. |
+| Syntax and arguments | `pinset <status|check> [--cwd <path>] [--json] [--save <file>] [--compare <file>] [--repair-preview]`. |
+| Modifies state | Only `--save` writes the requested report file atomically. Repair preview never executes a command. |
+| Example | `pinset check --save .pinset-diagnostic.json --repair-preview` |
+| JSON | **Yes**; command name `status` or `check`. The report has its own schema field, independent of the CLI envelope. |
+| Exit | `status` returns `0` after collection. `check` returns `1` for errors, warnings, or comparison changes. Invalid input returns `2`. |
+| Privacy | Reports omit filesystem paths, environment values, encrypted payloads, checksums, and secret digests. Comparisons return changed JSON Pointer paths only. |
+
 ## Download cache commands
 
-The cache stores verified archives by integrity identity. Cache inspection never treats a filename alone as proof of integrity.
+The cache stores verified archives by integrity identity. Cache inspection never treats a filename alone as proof of integrity. The GitHub Action caches only `PINSET_HOME/downloads` and runs `pinset cache verify` after every restore before installing locked runtimes; set its `cache` input to `"false"` to disable this behavior.
 
 ### `cache`
 
 | Field | Description |
 | --- | --- |
 | Purpose | Group download-cache inspection, verification, repair, cleanup, and offline import operations. |
-| Syntax and arguments | `pinset cache <list|info|verify|repair|clean|import> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`; a subcommand is required. |
 | Modifies state | Depends on the subcommand: `repair`, `clean`, and `import` modify cache state. |
 | Example | `pinset cache info` |
 | JSON | No group-level output; `list`, `info`, `verify`, `repair`, and `clean` support `--json`. |
 | Exit | `0` for successful subcommand completion; `2` for missing/invalid subcommand or cache failure. |
 | Key errors | Missing subcommand, unsafe cache path, corruption, invalid integrity, or filesystem failure. |
+
+### `cache prefetch`
+
+Downloads the current-platform artifacts from the project lock into the verified content-addressed cache without extracting or installing them. `--jobs <1..16>` limits concurrent downloads and defaults to four. Lock validation happens before workers start, and worker failures are reported together.
+
+```sh
+pinset cache prefetch --jobs 4
+```
+
+### `bundle export` and `bundle import`
+
+`pinset bundle export --output project.pinset-bundle.tar.gz [--target <target>]` creates bundle schema 1 from the project lock and verified cache files. Export fails if a required artifact is absent or corrupt. `pinset bundle import <file>` validates entry paths, format, target, lock identity, artifact sizes, and cryptographic identities before committing artifacts to the local cache. A bundle transports bytes only and never grants project or Provider trust.
+
+After import, `pinset install --locked --offline` makes no network requests. It reports every missing current-platform artifact before changing installation state.
 
 ### `cache list`
 
@@ -379,14 +447,14 @@ The cache stores verified archives by integrity identity. Cache inspection never
 
 ## Python environment commands
 
-Pinset owns a project `.venv` only when its ownership marker matches the current project and selected CPython distribution. Destructive operations fail closed if ownership cannot be proven.
+Pinset owns a project Python environment only when its ownership marker matches its declared name, path, selected CPython distribution, and target. The reserved `default` environment remains `.venv`; other names must be declared under `[python.environments.<name>]`. Destructive operations fail closed if ownership cannot be proven.
 
 ### `venv`
 
 | Field | Description |
 | --- | --- |
 | Purpose | Group project-owned Python environment operations. |
-| Syntax and arguments | `pinset venv <create|status|recreate> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset venv <create|status|recreate> [name] ...`; `name` defaults to `default`. |
 | Modifies state | Depends on the subcommand; `create` and `recreate` modify state. |
 | Example | `pinset venv status` |
 | JSON | No. |
@@ -397,10 +465,10 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 
 | Field | Description |
 | --- | --- |
-| Purpose | Install the selected CPython runtime if needed, then create or validate the project `.venv`. |
-| Syntax and arguments | `pinset venv create [--cwd <path>]`. |
-| Modifies state | **Yes.** May install Python and create `.venv` plus its ownership marker. |
-| Example | `pinset venv create --cwd ./app` |
+| Purpose | Install the selected CPython runtime if needed, then create or validate one project environment. |
+| Syntax and arguments | `pinset venv create [name] [--cwd <path>]`. |
+| Modifies state | **Yes.** May install Python and create the selected environment plus its ownership marker. |
+| Example | `pinset venv create docs --cwd ./app` |
 | JSON | No. |
 | Exit | `0` when the environment is ready; `2` on Pinset failure. |
 | Key errors | No project Python selection, lock mismatch, unsupported target, install failure, existing foreign `.venv`, or marker mismatch. |
@@ -410,7 +478,7 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 | Field | Description |
 | --- | --- |
 | Purpose | Show the selected CPython distribution and managed project-environment path. |
-| Syntax and arguments | `pinset venv status [--cwd <path>]`. |
+| Syntax and arguments | `pinset venv status [name] [--cwd <path>]`. |
 | Modifies state | No. |
 | Example | `pinset venv status` |
 | JSON | No. |
@@ -421,10 +489,10 @@ Pinset owns a project `.venv` only when its ownership marker matches the current
 
 | Field | Description |
 | --- | --- |
-| Purpose | Delete and recreate the project `.venv` after proving Pinset ownership. |
-| Syntax and arguments | `pinset venv recreate [--cwd <path>]`. |
-| Modifies state | **Yes.** Replaces only a correctly marked Pinset-owned `.venv`. |
-| Example | `pinset venv recreate --cwd ./app` |
+| Purpose | Delete and recreate one project environment after proving Pinset ownership. |
+| Syntax and arguments | `pinset venv recreate [name] [--cwd <path>]`. |
+| Modifies state | **Yes.** Replaces only the correctly marked Pinset-owned environment. |
+| Example | `pinset venv recreate docs --cwd ./app` |
 | JSON | No. |
 | Exit | `0` when recreated; `2` when validation or recreation fails. |
 | Key errors | Missing/invalid ownership marker, path escape, selected Python mismatch, removal failure, or venv creation failure. |
@@ -593,17 +661,17 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 ## Provider Registry commands
 
-The v1.8 Registry is a read-only preview. A verified manifest describes commands, dependencies, shared capabilities, and provenance methods, but it cannot install, activate, or execute a Provider. Only Providers compiled into the current Pinset binary are active. Registry files must be bounded regular files containing exactly one valid cleartext OpenPGP signature from Pinset's pinned registry key.
+Registry schema 2 supports a constrained `github-release-binary` backend. It fixes the upstream repository, release tag prefix, checksum asset, platform asset names, commands, revision, and disable state. A manifest cannot contain scripts, hooks, shell fragments, arbitrary download hosts, or environment code. `jq` is the first Provider resolved and installed by this generic backend. Active Registry files must be bounded regular files containing exactly one valid cleartext OpenPGP signature from Pinset's pinned Registry key.
 
 ### `provider list`
 
 | Field | Description |
 | --- | --- |
-| Purpose | Verify and list the embedded declarative Provider Registry. |
+| Purpose | Verify and list the active declarative Provider Registry. |
 | Syntax and arguments | `pinset provider list [--json]`. |
-| Modifies state | No. It does not use the network, install runtimes, activate Providers, or execute manifest content. |
+| Modifies state | No. It does not use the network, install runtimes, or execute manifest content. |
 | Example | `pinset provider list --json` |
-| JSON | **Yes**; command name `provider.list`, including the signed document and signer fingerprint. |
+| JSON | **Yes**; command name `provider.list`, including whether a trusted file is active, the signed document, and signer fingerprint. |
 | Exit | `0` when signature, schema, capabilities, dependency graph, and built-in declarations all verify; `2` otherwise. |
 | Key errors | Invalid embedded key/signature, unknown capability, duplicate command, missing dependency, cycle, or declaration drift. |
 
@@ -618,6 +686,32 @@ The v1.8 Registry is a read-only preview. A verified manifest describes commands
 | JSON | **Yes**; command name `provider.verify`, including the verified document and signer fingerprint. |
 | Exit | `0` only after cryptographic, schema, capability, and dependency validation; `2` otherwise. |
 | Key errors | Symlink/non-file input, input over 256 KiB, unsigned or multiply-signed data, signer mismatch, tampering, unknown field/capability, missing dependency, or cycle. |
+
+### `provider status`, `trust`, and `untrust`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Inspect the active snapshot, activate a verified official snapshot, or return to the Registry embedded in the binary. |
+| Syntax and arguments | `pinset provider status [--json]`; `pinset provider trust <REGISTRY> [--json]`; `pinset provider untrust [--json]`. |
+| Modifies state | `status` does not. `trust` atomically writes `PINSET_HOME/config/provider-registry.asc` only after signature, schema, capability, and runtime-declaration validation. `untrust` removes that local selection. |
+| Example | `pinset provider trust registry/providers.json.asc` |
+| JSON | **Yes** for all three commands, using `provider.status`, `provider.trust`, and `provider.untrust`. |
+| Exit | `0` after the resulting active Registry has been verified; `2` otherwise. |
+| Key errors | Untrusted signer, tampering, declaration drift, disabled or missing Provider revision, unsafe input, or atomic write failure. |
+
+### `provider validate` and `provider scaffold`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Validate unsigned JSON during contribution, or generate a constrained GitHub release binary manifest template. Neither command grants trust. |
+| Syntax and arguments | `pinset provider validate <REGISTRY.json> [--json]`; `pinset provider scaffold <tool> --repository <owner/repository> [--command <name>]`. |
+| Modifies state | No. |
+| Example | `pinset provider scaffold jq --repository jqlang/jq --command jq` |
+| JSON | `validate` uses command name `provider.validate`; `scaffold` prints the manifest JSON directly. |
+| Exit | `0` for a valid bounded document or generated template; `2` otherwise. |
+| Key errors | Unknown fields or capabilities, scripts/hooks represented as unknown fields, unsafe names, incomplete target mapping, duplicate commands, missing dependencies, or cycles. |
+
+Locks for declarative Providers record the Provider id, revision, Registry signer fingerprint, repository, tag, five target assets, and exact SHA-256 identities. CLI and shim routing compare the lock to the active signed manifest every time. A signed revision change or disable flag therefore fails closed until the project explicitly resolves a new lock. `pinset uninstall jq@1.8.2` resolves a unique revision-bound installation identity; if multiple identities exist, Pinset asks for the exact identity shown by `pinset list jq`.
 
 ## Short execution (2.2)
 
@@ -637,9 +731,53 @@ The short entry resolves managed commands, project Python environment commands, 
 
 ### `run`
 
-`pinset run <task> [-- <arguments...>]` executes a task declared under `[tasks.<name>]`. A task contains a nonempty `command` string array and may add a project-relative `cwd`, a `profile`, and a human-readable `description`. Arguments after `--` are appended without shell parsing. The task's child exit status is preserved.
+`pinset run <task> [-- <arguments...>]` executes a task declared under `[tasks.<name>]`. A task contains a nonempty `command` string array and may add a project-relative `cwd`, a `profile`, a human-readable `description`, and a `depends-on` string array. Dependencies run once in depth-first declaration order before the selected task. Missing dependencies, duplicates, and cycles are configuration errors. The first nonzero exit stops the graph. Arguments after `--` are appended only to the selected task without shell parsing. The child exit status is preserved.
 
 Task environment selection uses root `-e`, then `PINSET_ENV_PROFILE`, then the task profile, then machine-local and project defaults. `--no-env` disables injection. A missing task is always an error and never falls back to a system program. Task working directories must already exist within the project after canonical path resolution.
+
+### `editor context`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Return the secret-free, folder-scoped context consumed by editor integrations. |
+| Syntax and arguments | `pinset editor context [--cwd <path>] [--json]`. |
+| Modifies state | No. It does not decrypt or execute project tasks. |
+| JSON | **Yes**; envelope command `editor.context`. Its data contains editor protocol schema 1, minimum extension version, CLI version, project paths, workspace member names, environment profile names and selection, task metadata without command contents, and diagnostic report schema 1. |
+| Exit | `0` when project discovery, configuration, environment selection, and diagnostics complete; `2` for an invalid or incompatible project. |
+| Key errors | Invalid task graph, project or workspace configuration, unsafe environment profile path, or unreadable local selection. |
+
+The VS Code extension 1.0.0 refuses unknown protocol schemas or a context that requires a newer extension. It keeps contexts separate per workspace folder and does not start this command until Workspace Trust is granted. Project task commands and environment values are excluded from the editor context.
+
+### `workspace`
+
+Schema 5 workspaces declare explicit member paths in the root `pinset.toml`. Every member has its own `pinset.toml` and `pinset.lock`. Commands may run from the workspace root or any declared member:
+
+| Command | Behavior |
+| --- | --- |
+| `pinset workspace members [--json]` | List members, effective tool selectors, and whether each selector comes from the root or member. |
+| `pinset workspace install [--member <path>]... [--changed-since <git-ref>] [--offline]` | Install each selected member's independently locked effective tool set. |
+| `pinset workspace check [--member <path>]... [--changed-since <git-ref>] [--json]` | Run strict diagnostics for selected members and return `1` when any member fails. |
+| `pinset workspace run <task> [--member <path>]... [--changed-since <git-ref>] [-- <arguments...>]` | Run the named task sequentially and stop at the first nonzero child exit. |
+| `pinset workspace update [--member <path>]... [--changed-since <git-ref>] [--json]` | Resolve and report candidate updates without changing member locks. |
+| `pinset workspace references <tool> [--json]` | Show members that select a tool and the source of each selector. |
+
+Root tools, tasks, Python environments, and environment settings provide member defaults. A member tool selector replaces the root selector and its complete structured options table; option arrays are never merged. A same-name member task replaces the root task. A member `[python]` or `[environment]` section replaces the corresponding root section. `--changed-since` selects members with Git changes below their declared paths; changing the root `pinset.toml` selects every member.
+
+### `candidate`
+
+`pinset candidate` prepares and verifies an exact replacement lock before it becomes the active project selection:
+
+| Command | Behavior |
+| --- | --- |
+| `candidate prepare [tool] [--workspace] [--no-install] [--json]` | Re-resolve all selectors or one tool, save a candidate record under `PINSET_HOME`, and prepare every exact runtime unless `--no-install` is set. The active lock is unchanged. |
+| `candidate test <task> [--workspace] [-- <arguments...>]` | Run a declared task with the candidate runtime directories, variables, and an isolated candidate Python environment; preserve and record the child exit code. |
+| `candidate status [--workspace] [--json]` | Show candidate identity, exact-lock digest, and test records. |
+| `candidate apply [--workspace] [--json]` | Apply the exact candidate from the latest passing test after rechecking project, lock, and Git baselines. |
+| `candidate history [--json]` | List local application and restoration records for the current project. |
+| `candidate restore [history-id] [--json]` | Restore the previous lock from the selected or latest history entry when the current state still matches it. |
+| `candidate recover [--json]` | Complete history for fully applied interrupted transactions or roll a partially applied workspace transaction back to every previous member lock. |
+
+Candidate apply writes a recovery journal before changing any lock. It rejects concurrent configuration or lock changes and uses one deterministic history entry per member. Candidate history covers Pinset-managed lock state only; task side effects in source files, databases, or external services are outside recovery.
 
 The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
 
@@ -970,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -990,6 +1128,6 @@ Self updates use a cross-process lock and a 60-second HTTP timeout. Windows repl
 
 ## Stable protocol boundary
 
-Pinset v2.3 writes schema 5 project configuration and schema 3 global configuration/runtime locks. Schema 1–4 projects remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 3 while schema 1/2 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
+The current development line writes schema 5 project configuration and schema 4 global configuration/runtime locks. Schema 1–4 projects and schema 1–3 locks remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 4 while schema 1–3 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
 
 The JSON schema 1 envelope remains unchanged in v2.0. New JSON commands include `paths`, `env.list`, `env.identity.list`, `trust.status`, and `self.outdated`. Automation should branch on stable command and reason/code fields, not human-facing messages. JSON output and errors never include environment values, identities, or passphrases.

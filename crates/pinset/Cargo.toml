@@ -12,9 +12,11 @@ name = "pinset"
 path = "src/main.rs"
 
 [dependencies]
+atomic-write-file.workspace = true
 clap.workspace = true
 flate2.workspace = true
-pinset-core = { path = "../pinset-core", features = ["dotnet-metadata", "flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-discovery", "project-write", "provider-registry", "python-metadata", "rust-metadata", "sources", "state-write"] }
+hex.workspace = true
+pinset-core = { path = "../pinset-core", features = ["declarative-provider", "dotnet-metadata", "flutter-metadata", "go-metadata", "installer", "java-metadata", "node-metadata", "npm-metadata", "project-discovery", "project-write", "provider-registry", "python-metadata", "rust-metadata", "sources", "state-write"] }
 pinset-env = { path = "../pinset-env" }
 reqwest.workspace = true
 rpassword = "7.4.0"
@@ -33,6 +35,5 @@ zip.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

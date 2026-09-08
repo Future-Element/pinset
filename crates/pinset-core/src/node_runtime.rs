@@ -43,6 +43,11 @@ pub fn install_locked_node(
                 LockedArtifactFormat::Zip => ArtifactFormat::Zip,
                 LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
                 LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
+                LockedArtifactFormat::Binary => {
+                    return Err(Error::InvalidLockfile {
+                        reason: "node artifact cannot use binary format".to_owned(),
+                    });
+                }
             },
         },
         strip_components: 1,

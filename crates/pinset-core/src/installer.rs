@@ -35,6 +35,7 @@ const DOWNLOAD_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
+    Binary,
     Zip,
     TarXz,
     TarGz,
@@ -43,6 +44,7 @@ pub enum ArtifactFormat {
 impl ArtifactFormat {
     fn receipt_name(self) -> &'static str {
         match self {
+            Self::Binary => "binary",
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
             Self::TarGz => "tar.gz",
@@ -118,6 +120,14 @@ pub struct InstallOutcome {
     pub reused_existing: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefetchOutcome {
+    pub bytes_downloaded: u64,
+    pub integrity: String,
+    pub source_id: String,
+    pub reused_existing: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstallLimits {
     pub max_download_bytes: u64,
@@ -171,6 +181,8 @@ pub struct Installer {
     client: Client,
     limits: InstallLimits,
     progress_reporter: Option<Arc<dyn Fn(DownloadProgressEvent) + Send + Sync>>,
+    offline: bool,
+    install_identity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -203,6 +215,8 @@ impl Installer {
             client,
             limits,
             progress_reporter: None,
+            offline: false,
+            install_identity: None,
         })
     }
 
@@ -214,17 +228,41 @@ impl Installer {
         self
     }
 
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
+    }
+
+    pub fn with_install_identity(mut self, identity: String) -> Self {
+        self.install_identity = Some(identity);
+        self
+    }
+
+    /// Populate the verified content-addressed cache without extracting or installing it.
+    pub fn prefetch(&self, pinset_home: &Path, artifact: &ArtifactSpec) -> Result<PrefetchOutcome> {
+        validate_artifact_request(artifact, 0)?;
+        let selected = self.select_artifact(pinset_home, artifact)?;
+        Ok(PrefetchOutcome {
+            bytes_downloaded: selected.bytes_downloaded,
+            integrity: selected.actual_integrity,
+            source_id: selected.source_id,
+            reused_existing: selected.bytes_downloaded == 0,
+        })
+    }
+
     pub fn install(&self, request: &InstallRequest) -> Result<InstallOutcome> {
         validate_request(request)?;
-        let _install_lock = acquire_install_lock(request)?;
+        let install_identity = self.install_identity.as_deref().unwrap_or(&request.version);
+        validate_segment("install identity", install_identity)?;
+        let _install_lock = acquire_install_lock(request, install_identity)?;
         let final_dir = request
             .pinset_home
             .join("installs")
             .join(&request.tool)
-            .join(&request.version)
+            .join(install_identity)
             .join(&request.target);
         if final_dir.exists() {
-            return existing_install_outcome(&final_dir, request)
+            return existing_install_outcome(&final_dir, request, install_identity)
                 .ok_or(Error::InstallAlreadyExists { path: final_dir });
         }
 
@@ -273,7 +311,13 @@ impl Installer {
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
         create_install_aliases(&staging_dir, &request.aliases)?;
-        write_receipt(&staging_dir, request, &selected, &selected_bases)?;
+        write_receipt(
+            &staging_dir,
+            request,
+            install_identity,
+            &selected,
+            &selected_bases,
+        )?;
 
         let final_parent = final_dir
             .parent()
@@ -328,6 +372,12 @@ impl Installer {
             });
         }
 
+        if self.offline {
+            return Err(Error::OfflineArtifactMissing {
+                integrity: expected_integrity.canonical(),
+            });
+        }
+
         let mut attempted = Vec::with_capacity(artifact.sources.len());
         let mut last_retryable_error = None;
         let download_path = download_partial_path_for_integrity(pinset_home, &expected_integrity)?;
@@ -372,6 +422,19 @@ impl Installer {
         include_prefixes: &[PathBuf],
     ) -> Result<()> {
         match format {
+            ArtifactFormat::Binary => {
+                debug_assert_eq!(strip_components, 0);
+                debug_assert!(include_prefixes.is_empty());
+                let output_path = staging_dir.join("binary");
+                fs::copy(&selected.path, &output_path).map_err(|source| {
+                    Error::ExtractArchiveEntry {
+                        entry: "binary".to_owned(),
+                        path: output_path,
+                        source,
+                    }
+                })?;
+                Ok(())
+            }
             ArtifactFormat::Zip => {
                 debug_assert!(include_prefixes.is_empty());
                 self.extract_zip(&selected.path, staging_dir, strip_components)
@@ -927,7 +990,9 @@ impl Installer {
         let reader: Box<dyn Read> = match format {
             ArtifactFormat::TarXz => Box::new(XzDecoder::new(file)),
             ArtifactFormat::TarGz => Box::new(GzDecoder::new(file)),
-            ArtifactFormat::Zip => unreachable!("ZIP archives use extract_zip"),
+            ArtifactFormat::Binary | ArtifactFormat::Zip => {
+                unreachable!("binary and ZIP artifacts do not use extract_tar")
+            }
         };
         let mut archive = tar::Archive::new(reader);
         let entries = archive.entries().map_err(|source| Error::ReadTarArchive {
@@ -1139,8 +1204,8 @@ fn create_pending_archive_symlinks(
     Ok(())
 }
 
-fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
-    let identity = format!("{}\0{}\0{}", request.tool, request.version, request.target);
+fn acquire_install_lock(request: &InstallRequest, install_identity: &str) -> Result<InstallLock> {
+    let identity = format!("{}\0{}\0{}", request.tool, install_identity, request.target);
     let name = hex::encode(Sha256::digest(identity.as_bytes()));
     let directory = request.pinset_home.join("locks").join("installs");
     fs::create_dir_all(&directory).map_err(|source| Error::OpenInstallLock {
@@ -1162,7 +1227,11 @@ fn acquire_install_lock(request: &InstallRequest) -> Result<InstallLock> {
     Ok(InstallLock { file })
 }
 
-fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Option<InstallOutcome> {
+fn existing_install_outcome(
+    final_dir: &Path,
+    request: &InstallRequest,
+    install_identity: &str,
+) -> Option<InstallOutcome> {
     let content = fs::read_to_string(final_dir.join(".pinset-install.toml")).ok()?;
     let receipt: ExistingInstallReceipt = toml::from_str(&content).ok()?;
     let receipt_integrity = receipt
@@ -1183,8 +1252,15 @@ fn existing_install_outcome(final_dir: &Path, request: &InstallRequest) -> Optio
         })
         .collect::<Option<Vec<_>>>()?;
     if !receipt.complete
+        || !matches!(receipt.schema, 1..=4)
+        || (receipt.schema == 4 && receipt.install_identity.is_none())
         || receipt.tool != request.tool
         || receipt.version != request.version
+        || receipt
+            .install_identity
+            .as_deref()
+            .unwrap_or(&receipt.version)
+            != install_identity
         || receipt.target != request.target
         || receipt_integrity != expected_integrity
         || receipt.base_artifact_integrities != expected_base_integrities
@@ -1223,6 +1299,13 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
     validate_artifact_request(&request.artifact, request.strip_components)?;
+    if request.artifact.format == ArtifactFormat::Binary
+        && (request.strip_components != 0 || !request.include_prefixes.is_empty())
+    {
+        return Err(Error::InvalidStripComponents {
+            value: request.strip_components,
+        });
+    }
     debug_assert!(
         request.artifact.format != ArtifactFormat::Zip || request.include_prefixes.is_empty()
     );
@@ -1522,6 +1605,7 @@ struct InstallReceipt<'a> {
     complete: bool,
     tool: &'a str,
     version: &'a str,
+    install_identity: &'a str,
     target: &'a str,
     canonical_url: &'a str,
     selected_source: &'a str,
@@ -1543,9 +1627,13 @@ struct InstallReceipt<'a> {
 
 #[derive(Deserialize)]
 struct ExistingInstallReceipt {
+    #[serde(default = "legacy_install_receipt_schema")]
+    schema: u32,
     complete: bool,
     tool: String,
     version: String,
+    #[serde(default)]
+    install_identity: Option<String>,
     target: String,
     selected_source: String,
     #[serde(default)]
@@ -1556,9 +1644,14 @@ struct ExistingInstallReceipt {
     base_artifact_integrities: Vec<String>,
 }
 
+fn legacy_install_receipt_schema() -> u32 {
+    1
+}
+
 fn write_receipt(
     staging: &Path,
     request: &InstallRequest,
+    install_identity: &str,
     selected: &SelectedArtifact,
     selected_bases: &[SelectedArtifact],
 ) -> Result<()> {
@@ -1573,7 +1666,7 @@ fn write_receipt(
         .pinset_home
         .join("installs")
         .join(&request.tool)
-        .join(&request.version)
+        .join(install_identity)
         .join(&request.target)
         .display()
         .to_string();
@@ -1587,10 +1680,11 @@ fn write_receipt(
     critical_entries.sort();
     critical_entries.dedup();
     let receipt = InstallReceipt {
-        schema: 3,
+        schema: 4,
         complete: true,
         tool: &request.tool,
         version: &request.version,
+        install_identity,
         target: &request.target,
         canonical_url: &canonical_url,
         selected_source: &selected.source_id,
@@ -1798,6 +1892,40 @@ mod tests {
             Err(Error::InstallAlreadyExists { .. })
         ));
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn installs_a_verified_binary_with_an_atomic_command_alias() {
+        let binary = b"portable executable fixture".to_vec();
+        let (url, server) = serve_once(binary.clone(), binary.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&binary));
+        request.tool = "jq".to_owned();
+        request.version = "1.8.2".to_owned();
+        request.artifact.canonical_url =
+            "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64".to_owned();
+        request.artifact.format = ArtifactFormat::Binary;
+        request.required_paths = vec![PathBuf::from("binary")];
+        request.executable_paths = vec![PathBuf::from("binary")];
+        request.aliases = vec![InstallAlias {
+            source: PathBuf::from("binary"),
+            destination: PathBuf::from("jq"),
+        }];
+
+        let outcome = test_installer().install(&request).expect("install binary");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read(outcome.install_dir.join("binary")).expect("binary"),
+            binary
+        );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("jq")).expect("command alias"),
+            b"portable executable fixture"
+        );
+        let receipt =
+            fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
+        assert!(receipt.contains("artifact_format = \"binary\""));
     }
 
     #[test]
@@ -2035,7 +2163,7 @@ mod tests {
         assert!(root.path().join("downloads/sha512").is_dir());
         let receipt =
             fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
-        assert!(receipt.contains("schema = 3"));
+        assert!(receipt.contains("schema = 4"));
         assert!(receipt.contains("file_count ="));
         assert!(receipt.contains("pinset_version ="));
         assert!(receipt.contains("artifact_integrity = \"sha512-"));

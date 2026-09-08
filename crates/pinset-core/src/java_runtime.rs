@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error, InstallOutcome,
     InstallRequest, Installer, JavaArchiveFormat, LockedArtifactFormat, LockedTool, Result,
-    plan_java_artifact,
+    plan_java_artifact_with_package,
 };
 
 pub fn install_locked_java(
@@ -41,14 +41,22 @@ pub fn install_locked_java(
         .ok_or_else(|| Error::InvalidLockfile {
             reason: format!("Java artifact {target} has no package name"),
         })?;
-    let plan = plan_java_artifact(
+    let image_type =
+        locked_java
+            .metadata
+            .get("image_type")
+            .ok_or_else(|| Error::InvalidLockfile {
+                reason: "Java lock has no image_type metadata".to_owned(),
+            })?;
+    let plan = plan_java_artifact_with_package(
         &locked_java.version,
         release_name,
         target,
+        image_type,
         package_name,
         &artifact.canonical_url,
     )?;
-    let required_paths = required_java_paths(target)?;
+    let required_paths = required_java_paths(target, image_type)?;
     let request = InstallRequest {
         pinset_home: pinset_home.to_path_buf(),
         tool: "java".to_owned(),
@@ -70,6 +78,11 @@ pub fn install_locked_java(
                         reason: format!("Java artifact {target} cannot use tar.xz"),
                     });
                 }
+                LockedArtifactFormat::Binary => {
+                    return Err(Error::InvalidLockfile {
+                        reason: format!("Java artifact {target} cannot use binary format"),
+                    });
+                }
             },
         },
         strip_components: 1,
@@ -86,7 +99,7 @@ pub fn install_locked_java(
     installer.install(&request)
 }
 
-fn required_java_paths(target: &str) -> Result<Vec<PathBuf>> {
+fn required_java_paths(target: &str, image_type: &str) -> Result<Vec<PathBuf>> {
     let home = if target.starts_with("macos-") {
         PathBuf::from("Contents/Home")
     } else if target.starts_with("windows-") || target.starts_with("linux-") {
@@ -101,8 +114,17 @@ fn required_java_paths(target: &str) -> Result<Vec<PathBuf>> {
     } else {
         ""
     };
-    Ok(["java", "javac", "jar", "javadoc", "javap", "keytool"]
-        .into_iter()
+    let commands: &[&str] = match image_type {
+        "jdk" => &["java", "javac", "jar", "javadoc", "javap", "keytool"],
+        "jre" => &["java", "keytool"],
+        _ => {
+            return Err(Error::InvalidLockfile {
+                reason: format!("unsupported Java package type {image_type:?}"),
+            });
+        }
+    };
+    Ok(commands
+        .iter()
         .map(|command| home.join("bin").join(format!("{command}{extension}")))
         .collect())
 }
@@ -115,15 +137,15 @@ mod tests {
     #[test]
     fn requires_jdk_commands_under_the_platform_java_home() {
         assert_eq!(
-            required_java_paths("linux-x86_64").expect("Linux paths")[0],
+            required_java_paths("linux-x86_64", "jdk").expect("Linux paths")[0],
             PathBuf::from("bin/java")
         );
         assert_eq!(
-            required_java_paths("windows-x86_64").expect("Windows paths")[1],
+            required_java_paths("windows-x86_64", "jdk").expect("Windows paths")[1],
             PathBuf::from("bin/javac.exe")
         );
         assert_eq!(
-            required_java_paths("macos-aarch64").expect("macOS paths")[0],
+            required_java_paths("macos-aarch64", "jdk").expect("macOS paths")[0],
             PathBuf::from("Contents/Home/bin/java")
         );
     }
@@ -133,10 +155,19 @@ mod tests {
         assert!(JavaVersion::parse("8.0.462+8").is_ok());
         assert!(JavaVersion::parse("21.0.8+9").is_ok());
         assert!(
-            !required_java_paths("linux-x86_64")
+            !required_java_paths("linux-x86_64", "jdk")
                 .expect("paths")
                 .iter()
                 .any(|path| path.ends_with("jshell"))
+        );
+    }
+
+    #[test]
+    fn jre_requires_runtime_commands_without_jdk_compilers() {
+        let paths = required_java_paths("linux-x86_64", "jre").expect("JRE paths");
+        assert_eq!(
+            paths,
+            [PathBuf::from("bin/java"), PathBuf::from("bin/keytool")]
         );
     }
 }

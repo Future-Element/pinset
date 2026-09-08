@@ -10,8 +10,9 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Error, LockedArtifact, LockedArtifactFormat, LockedTool, RUST_COMPONENTS, RUST_PROFILE,
-    RUST_TARGETS, Result, RustArchiveFormat, RustVersion, plan_rust_artifact, rust_target_triple,
+    Error, LockedArtifact, LockedArtifactFormat, LockedArtifactOverlay, LockedTool, RUST_PROFILE,
+    RUST_TARGETS, Result, RustArchiveFormat, RustVersion, ToolOptions, plan_rust_artifact,
+    plan_rust_nightly_artifact, rust_target_triple,
 };
 
 const OFFICIAL_RUST_BASE_URL: &str = "https://static.rust-lang.org/";
@@ -32,7 +33,7 @@ pub struct RustMetadataClient {
     base_url: Url,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ChannelManifest {
     #[serde(rename = "manifest-version")]
     manifest_version: String,
@@ -42,14 +43,14 @@ struct ChannelManifest {
     profiles: BTreeMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ManifestPackage {
     version: String,
     #[serde(default)]
     target: BTreeMap<String, ManifestTarget>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ManifestTarget {
     available: bool,
     #[serde(default)]
@@ -95,7 +96,31 @@ impl RustMetadataClient {
     }
 
     pub fn resolve_tool(&self, selector: &str) -> Result<LockedTool> {
+        self.resolve_tool_with_options(selector, None)
+    }
+
+    pub fn resolve_tool_with_options(
+        &self,
+        selector: &str,
+        options: Option<&ToolOptions>,
+    ) -> Result<LockedTool> {
+        if selector == "nightly" {
+            let date = options
+                .and_then(|value| value.date.as_deref())
+                .ok_or_else(|| Error::InvalidRustSelector {
+                    selector: "nightly requires tool-options.rust.date".to_owned(),
+                })?;
+            return self.resolve_nightly(date, options);
+        }
+        if let Some(date) = selector.strip_prefix("nightly-") {
+            return self.resolve_nightly(date, options);
+        }
         let selected = select_release(self.available_releases()?, selector)?;
+        if options.and_then(|value| value.date.as_deref()).is_some() {
+            return Err(Error::InvalidRustSelector {
+                selector: "date is accepted only with nightly-YYYY-MM-DD".to_owned(),
+            });
+        }
         let manifest_path = format!("dist/channel-rust-{}.toml", selected.version);
         let manifest_url = self
             .base_url
@@ -129,7 +154,69 @@ impl RustMetadataClient {
             &selected.date,
             manifest,
             &actual_checksum,
+            options,
+            "stable",
         )
+    }
+
+    fn resolve_nightly(&self, date: &str, options: Option<&ToolOptions>) -> Result<LockedTool> {
+        if !valid_release_date(date)
+            || options
+                .and_then(|value| value.date.as_deref())
+                .is_some_and(|configured| configured != date)
+        {
+            return Err(Error::InvalidRustSelector {
+                selector: format!("nightly-{date}"),
+            });
+        }
+        let manifest_path = format!("dist/{date}/channel-rust-nightly.toml");
+        let manifest_url = self
+            .base_url
+            .join(&manifest_path)
+            .expect("nightly manifest path");
+        let checksum_url = self
+            .base_url
+            .join(&format!("{manifest_path}.sha256"))
+            .expect("nightly checksum path");
+        let manifest_bytes = self.download_bytes(&manifest_url, MAX_RUST_MANIFEST_BYTES)?;
+        let checksum = self.download_text(&checksum_url, 1024)?;
+        let expected_checksum = parse_sha256_document(&checksum)?;
+        let actual_checksum = hex_sha256(&manifest_bytes);
+        if actual_checksum != expected_checksum {
+            return Err(Error::InvalidRustIndex {
+                reason: "nightly manifest checksum mismatch".to_owned(),
+            });
+        }
+        let manifest_text =
+            std::str::from_utf8(&manifest_bytes).map_err(|_| Error::InvalidRustIndex {
+                reason: "nightly manifest is not UTF-8".to_owned(),
+            })?;
+        let manifest: ChannelManifest =
+            toml::from_str(manifest_text).map_err(|source| Error::InvalidRustIndex {
+                reason: format!("nightly manifest: {source}"),
+            })?;
+        let package_version = manifest
+            .pkg
+            .get("rust")
+            .and_then(|package| package.version.split_whitespace().next())
+            .ok_or_else(|| Error::InvalidRustIndex {
+                reason: "nightly manifest has no Rust version".to_owned(),
+            })?
+            .strip_suffix("-nightly")
+            .ok_or_else(|| Error::InvalidRustIndex {
+                reason: "nightly manifest Rust version has no -nightly suffix".to_owned(),
+            })?
+            .to_owned();
+        let mut tool = resolve_manifest_tool(
+            &package_version,
+            date,
+            manifest,
+            &actual_checksum,
+            options,
+            "nightly",
+        )?;
+        tool.requested = format!("nightly-{date}");
+        Ok(tool)
     }
 
     fn download_text(&self, url: &Url, limit: u64) -> Result<String> {
@@ -260,6 +347,8 @@ fn resolve_manifest_tool(
     expected_date: &str,
     manifest: ChannelManifest,
     manifest_sha256: &str,
+    options: Option<&ToolOptions>,
+    channel: &str,
 ) -> Result<LockedTool> {
     if manifest.manifest_version != "2" || !valid_release_date(&manifest.date) {
         return Err(Error::InvalidRustIndex {
@@ -280,6 +369,15 @@ fn resolve_manifest_tool(
             .ok_or_else(|| Error::InvalidRustIndex {
                 reason: "rust package has no version".to_owned(),
             })?;
+    let manifest_version = if channel == "nightly" {
+        manifest_version
+            .strip_suffix("-nightly")
+            .ok_or_else(|| Error::InvalidRustIndex {
+                reason: "nightly Rust package version has no -nightly suffix".to_owned(),
+            })?
+    } else {
+        manifest_version
+    };
     if manifest_version != requested_version {
         return Err(Error::InvalidRustIndex {
             reason: format!(
@@ -295,7 +393,38 @@ fn resolve_manifest_tool(
             ),
         });
     }
-    validate_default_profile(&manifest.profiles)?;
+    let profile_name = options
+        .and_then(|value| value.profile.as_deref())
+        .unwrap_or(RUST_PROFILE);
+    let profile = manifest
+        .profiles
+        .get(profile_name)
+        .ok_or_else(|| Error::InvalidRustIndex {
+            reason: format!("release manifest has no {profile_name} profile"),
+        })?;
+    if profile_name == RUST_PROFILE {
+        validate_default_profile(&manifest.profiles)?;
+    }
+    let mut components = profile.clone();
+    if let Some(extra_components) = options.map(|value| &value.components) {
+        components.extend(extra_components.iter().cloned());
+    }
+    let mut seen_components = BTreeSet::new();
+    components.retain(|component| seen_components.insert(component.clone()));
+    for component in &components {
+        let package = component_package_name(component);
+        if !manifest.pkg.contains_key(package) {
+            return Err(Error::InvalidRustIndex {
+                reason: format!("Rust component {component} is unavailable"),
+            });
+        }
+    }
+    let artifact_channel = if channel == "nightly" {
+        "nightly"
+    } else {
+        requested_version
+    };
+    let overlays = rust_target_overlays(&manifest, options, artifact_channel, &manifest.date)?;
     let artifacts = RUST_TARGETS
         .into_iter()
         .map(|target| {
@@ -320,7 +449,11 @@ fn resolve_manifest_tool(
                 .ok_or_else(|| Error::InvalidRustIndex {
                     reason: format!("Rust {requested_version} {triple} has no valid SHA-256"),
                 })?;
-            let plan = plan_rust_artifact(requested_version, &manifest.date, target, url)?;
+            let plan = if channel == "nightly" {
+                plan_rust_nightly_artifact(requested_version, &manifest.date, target, url)?
+            } else {
+                plan_rust_artifact(requested_version, &manifest.date, target, url)?
+            };
             Ok(LockedArtifact {
                 target: target.to_owned(),
                 canonical_url: plan.canonical_url,
@@ -332,7 +465,7 @@ fn resolve_manifest_tool(
                 },
                 archive_root: plan.archive_root,
                 verification: RUST_VERIFICATION.to_owned(),
-                overlays: Vec::new(),
+                overlays: overlays.clone(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -343,14 +476,82 @@ fn resolve_manifest_tool(
         provider: "rust-official".to_owned(),
         released_at: Some(manifest.date.clone()),
         metadata: BTreeMap::from([
-            ("channel".to_owned(), "stable".to_owned()),
-            ("components".to_owned(), RUST_COMPONENTS.to_owned()),
+            ("channel".to_owned(), channel.to_owned()),
+            ("components".to_owned(), components.join(",")),
             ("manifest_date".to_owned(), manifest.date),
             ("manifest_sha256".to_owned(), manifest_sha256.to_owned()),
-            ("profile".to_owned(), RUST_PROFILE.to_owned()),
+            ("profile".to_owned(), profile_name.to_owned()),
         ]),
+        options: options.map(ToolOptions::lock_options).unwrap_or_default(),
         artifacts,
     })
+}
+
+fn component_package_name(component: &str) -> &str {
+    match component {
+        "rustfmt" => "rustfmt-preview",
+        "clippy" => "clippy-preview",
+        other => other,
+    }
+}
+
+fn rust_target_overlays(
+    manifest: &ChannelManifest,
+    options: Option<&ToolOptions>,
+    channel: &str,
+    date: &str,
+) -> Result<Vec<LockedArtifactOverlay>> {
+    let targets = options
+        .map(|value| value.targets.as_slice())
+        .unwrap_or_default();
+    let Some(package) = manifest.pkg.get("rust-std") else {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(Error::InvalidRustIndex {
+            reason: "release manifest has no rust-std package".to_owned(),
+        });
+    };
+    targets
+        .iter()
+        .map(|target| {
+            let artifact = package
+                .target
+                .get(target)
+                .filter(|value| value.available)
+                .ok_or_else(|| Error::InvalidRustIndex {
+                    reason: format!("Rust standard library target {target} is unavailable"),
+                })?;
+            let url = artifact
+                .xz_url
+                .as_deref()
+                .ok_or_else(|| Error::InvalidRustIndex {
+                    reason: format!("Rust standard library target {target} has no tar.xz URL"),
+                })?;
+            let hash = artifact
+                .xz_hash
+                .as_deref()
+                .filter(|value| valid_sha256(value))
+                .ok_or_else(|| Error::InvalidRustIndex {
+                    reason: format!("Rust standard library target {target} has no valid SHA-256"),
+                })?;
+            let archive_name = format!("rust-std-{channel}-{target}.tar.xz");
+            let expected_url = format!("https://static.rust-lang.org/dist/{date}/{archive_name}");
+            if url != expected_url {
+                return Err(Error::InvalidRustIndex {
+                    reason: format!("Rust target URL must be {expected_url}"),
+                });
+            }
+            Ok(LockedArtifactOverlay {
+                canonical_url: url.to_owned(),
+                artifact_path: format!("dist/{date}/{archive_name}"),
+                integrity: format!("sha256:{hash}"),
+                format: LockedArtifactFormat::TarXz,
+                archive_root: format!("rust-std-{channel}-{target}"),
+                verification: RUST_VERIFICATION.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn validate_default_profile(profiles: &BTreeMap<String, Vec<String>>) -> Result<()> {
@@ -408,6 +609,7 @@ fn valid_release_date(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RUST_COMPONENTS;
 
     #[test]
     fn lists_only_exact_stable_release_manifests() {
@@ -466,8 +668,15 @@ mod tests {
     #[test]
     fn resolves_a_complete_default_profile_manifest() {
         let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).expect("manifest");
-        let tool = resolve_manifest_tool("1.97.1", "2026-07-16", manifest, &"ab".repeat(32))
-            .expect("tool");
+        let tool = resolve_manifest_tool(
+            "1.97.1",
+            "2026-07-16",
+            manifest,
+            &"ab".repeat(32),
+            None,
+            "stable",
+        )
+        .expect("tool");
         assert_eq!(tool.provider, "rust-official");
         assert_eq!(tool.artifacts.len(), RUST_TARGETS.len());
         assert_eq!(
@@ -480,15 +689,58 @@ mod tests {
     fn rejects_a_manifest_that_does_not_match_the_indexed_release_date() {
         let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).expect("manifest");
         assert!(matches!(
-            resolve_manifest_tool("1.97.1", "2026-07-15", manifest, &"ab".repeat(32),),
+            resolve_manifest_tool(
+                "1.97.1",
+                "2026-07-15",
+                manifest,
+                &"ab".repeat(32),
+                None,
+                "stable",
+            ),
             Err(Error::InvalidRustIndex { .. })
         ));
+    }
+
+    #[test]
+    fn structured_components_and_targets_extend_the_selected_profile() {
+        let mut fixture = fixture_manifest();
+        fixture.push_str(&format!(
+            "[pkg.rust-std.target.wasm32-unknown-unknown]\navailable = true\n\
+             xz_url = \"https://static.rust-lang.org/dist/2026-07-16/rust-std-1.97.1-wasm32-unknown-unknown.tar.xz\"\n\
+             xz_hash = \"{}\"\n",
+            "ef".repeat(32)
+        ));
+        let manifest: ChannelManifest = toml::from_str(&fixture).expect("manifest");
+        let options = ToolOptions {
+            profile: Some("minimal".to_owned()),
+            components: vec!["rustfmt".to_owned()],
+            targets: vec!["wasm32-unknown-unknown".to_owned()],
+            ..ToolOptions::default()
+        };
+        let tool = resolve_manifest_tool(
+            "1.97.1",
+            "2026-07-16",
+            manifest,
+            &"ab".repeat(32),
+            Some(&options),
+            "stable",
+        )
+        .expect("tool");
+
+        assert_eq!(tool.options, options.lock_options());
+        assert_eq!(tool.metadata["profile"], "minimal");
+        assert_eq!(tool.metadata["components"], "rustc,cargo,rust-std,rustfmt");
+        assert!(
+            tool.artifacts
+                .iter()
+                .all(|artifact| artifact.overlays.len() == 1)
+        );
     }
 
     fn fixture_manifest() -> String {
         let mut value = String::from(
             "manifest-version = \"2\"\ndate = \"2026-07-16\"\n\
-             [profiles]\ndefault = [\"rustc\", \"cargo\", \"rust-std\", \"rust-docs\", \"rustfmt\", \"clippy\"]\n\
+             [profiles]\nminimal = [\"rustc\", \"cargo\", \"rust-std\"]\ndefault = [\"rustc\", \"cargo\", \"rust-std\", \"rust-docs\", \"rustfmt\", \"clippy\"]\ncomplete = [\"rustc\", \"cargo\", \"rust-std\", \"rust-docs\", \"rustfmt\", \"clippy\", \"rust-src\"]\n\
              [pkg.rust]\nversion = \"1.97.1 (fixture 2026-07-16)\"\n",
         );
         for target in RUST_TARGETS {
@@ -500,6 +752,15 @@ mod tests {
                 "cd".repeat(32)
             ));
         }
+        value.push_str(
+            "[pkg.rustc]\nversion = \"1.97.1\"\n\
+             [pkg.cargo]\nversion = \"1.97.1\"\n\
+             [pkg.rust-std]\nversion = \"1.97.1\"\n\
+             [pkg.rust-docs]\nversion = \"1.97.1\"\n\
+             [pkg.rustfmt-preview]\nversion = \"1.97.1\"\n\
+             [pkg.clippy-preview]\nversion = \"1.97.1\"\n\
+             [pkg.rust-src]\nversion = \"1.97.1\"\n",
+        );
         value
     }
 }

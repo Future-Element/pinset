@@ -28,6 +28,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InstalledToolVersion {
     pub tool: String,
+    /// Exact upstream version recorded in the installation receipt.
+    pub resolved_version: String,
+    /// Stable on-disk identity, including structured options or Provider revision when needed.
     pub version: String,
     pub targets: Vec<String>,
 }
@@ -96,6 +99,7 @@ pub fn list_installed_tool_versions(
             continue;
         }
         let mut targets = Vec::new();
+        let mut resolved_version = None;
         for target_entry in
             fs::read_dir(entry.path()).map_err(|source| Error::ReadToolInstallDirectory {
                 tool: tool.to_owned(),
@@ -110,8 +114,13 @@ pub fn list_installed_tool_versions(
             })?;
             let target = target_entry.file_name().to_string_lossy().into_owned();
             if target_entry.path().is_dir()
-                && has_matching_complete_receipt(&target_entry.path(), tool, &version, &target)
+                && let Some(receipt) =
+                    matching_complete_receipt(&target_entry.path(), tool, &version, &target)
+                && resolved_version
+                    .as_ref()
+                    .is_none_or(|existing| existing == &receipt.version)
             {
+                resolved_version.get_or_insert(receipt.version);
                 targets.push(target);
             }
         }
@@ -119,6 +128,7 @@ pub fn list_installed_tool_versions(
         if !targets.is_empty() {
             versions.push(InstalledToolVersion {
                 tool: tool.to_owned(),
+                resolved_version: resolved_version.expect("owned targets have a receipt"),
                 version,
                 targets,
             });
@@ -205,7 +215,10 @@ fn locked_config_selects_version(
         None if legacy_without_lock => return Ok(requested == version),
         None => load_lockfile(lock_path)?,
     };
-    Ok(validate_lock_matches_tool(&lockfile, tool, requested, config_path)?.version == version)
+    Ok(
+        validate_lock_matches_tool(&lockfile, tool, requested, config_path)?.installation_version()
+            == version,
+    )
 }
 
 pub fn find_tool_version_references(
@@ -436,6 +449,8 @@ struct InstallReceiptIdentity {
     complete: bool,
     tool: String,
     version: String,
+    #[serde(default)]
+    install_identity: Option<String>,
     target: String,
 }
 
@@ -445,19 +460,34 @@ fn has_matching_complete_receipt(
     version: &str,
     target: &str,
 ) -> bool {
+    matching_complete_receipt(directory, tool, version, target).is_some()
+}
+
+fn matching_complete_receipt(
+    directory: &Path,
+    tool: &str,
+    version: &str,
+    target: &str,
+) -> Option<InstallReceiptIdentity> {
     let Ok(content) = fs::read_to_string(directory.join(".pinset-install.toml")) else {
-        return false;
+        return None;
     };
     let Ok(receipt) = toml::from_str::<InstallReceiptIdentity>(&content) else {
-        return false;
+        return None;
     };
     // Legacy schema 1 receipts remain readable, but every identity field must still agree with
     // the directory being inspected before the directory is considered Pinset-owned.
-    matches!(receipt.schema, 1..=3)
+    (matches!(receipt.schema, 1..=4)
+        && (receipt.schema < 4 || receipt.install_identity.is_some())
         && receipt.complete
         && receipt.tool == tool
-        && receipt.version == version
-        && receipt.target == target
+        && receipt
+            .install_identity
+            .as_deref()
+            .unwrap_or(&receipt.version)
+            == version
+        && receipt.target == target)
+        .then_some(receipt)
 }
 
 fn validate_tool_and_version(tool: &str, version: &str) -> Result<()> {
@@ -554,6 +584,30 @@ mod tests {
         let installed = list_installed_tool_versions(home.path(), "bun").expect("installed");
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].version, "1.3.14");
+    }
+
+    #[test]
+    fn lists_schema_four_structured_install_identities() {
+        let home = tempfile::tempdir().expect("home");
+        let identity = "1.97.1--0123456789ab";
+        let directory = home
+            .path()
+            .join("installs")
+            .join("rust")
+            .join(identity)
+            .join("linux-x86_64");
+        fs::create_dir_all(&directory).expect("directory");
+        fs::write(
+            directory.join(".pinset-install.toml"),
+            format!(
+                "schema = 4\ncomplete = true\ntool = \"rust\"\nversion = \"1.97.1\"\ninstall_identity = \"{identity}\"\ntarget = \"linux-x86_64\"\n"
+            ),
+        )
+        .expect("receipt");
+
+        let installed = list_installed_tool_versions(home.path(), "rust").expect("installed");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].version, identity);
     }
 
     #[test]

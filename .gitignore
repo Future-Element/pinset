@@ -9,3 +9,5 @@ Thumbs.db
 /website/.next/
 /website/out/
 /website/tsconfig.tsbuildinfo
+/editors/vscode/node_modules/
+/editors/vscode/dist/

@@ -12,6 +12,7 @@ const PROVIDER_VERSIONS: &[(&str, &str)] = &[
     ("java", "21.0.8+9"),
     ("rust", "1.97.0"),
     ("dotnet", "10.0.100"),
+    ("jq", "1.8.2"),
 ];
 
 #[test]

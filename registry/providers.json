@@ -1,7 +1,7 @@
 {
-  "schema": 1,
+  "schema": 2,
   "registry": "Future-Element/pinset",
-  "generated-at": "2026-08-20T06:15:00Z",
+  "generated-at": "2026-09-08T00:00:00Z",
   "providers": [
     {
       "id": "pinset/node",
@@ -127,6 +127,35 @@
         "environment": "dotnet",
         "lock-audit": "artifact-receipt",
         "provenance": { "methods": ["https-checksum"], "release-time": true }
+      }
+    },
+    {
+      "id": "pinset/jq",
+      "tool": "jq",
+      "commands": ["jq"],
+      "dependencies": [],
+      "revision": 1,
+      "disabled": false,
+      "capabilities": {
+        "command-layout": "root",
+        "metadata": "github-release-binary",
+        "installer": "github-release-binary",
+        "environment": "none",
+        "lock-audit": "artifact-receipt",
+        "provenance": { "methods": ["https-checksum"], "release-time": true }
+      },
+      "backend": {
+        "kind": "github-release-binary",
+        "repository": "jqlang/jq",
+        "tag-prefix": "jq-",
+        "checksum-asset": "sha256sum.txt",
+        "assets": {
+          "windows-x86_64": "jq-windows-amd64.exe",
+          "macos-aarch64": "jq-macos-arm64",
+          "macos-x86_64": "jq-macos-amd64",
+          "linux-x86_64": "jq-linux-amd64",
+          "linux-aarch64": "jq-linux-arm64"
+        }
       }
     }
   ]

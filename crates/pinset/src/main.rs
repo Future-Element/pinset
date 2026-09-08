@@ -1,42 +1,50 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env,
     ffi::OsString,
     fs,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{self, Command},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+mod bundle;
+mod candidate;
+mod diagnostics;
 mod environment;
 mod i18n;
 mod self_update;
 
+use atomic_write_file::AtomicWriteFile;
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
-    ArtifactIntegrity, DiscoveryReport, DiscoveryStatus, DotnetMetadataClient,
-    DownloadProgressEvent, Error, FlutterMetadataClient, GlobalConfig, GoMetadataClient,
-    InstallLimits, Installer, JavaMetadataClient, LockAuditReport, LockAuditScope,
-    LockAuditSeverity, LockedTool, Lockfile, NodeMetadataClient, NpmMetadataClient,
-    PROJECT_CONFIG_SCHEMA, ProjectConfig, PythonMetadataClient, RuntimeInstallKind,
-    RuntimeMetadataKind, RustMetadataClient, SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod,
-    SourceView, acquire_global_state_write_lock, acquire_project_state_write_lock,
-    audit_global_lock, audit_project_lock, clean_download_cache, command_tool,
-    create_project_config, create_project_python_environment, current_target_for_tool,
-    download_cache_info, ensure_shims, find_optional_project_config, find_project_config,
-    find_project_context, global_config_path, global_lockfile_path, import_download_cache,
-    import_download_cache_with_integrity, install_locked_dotnet, install_locked_flutter,
-    install_locked_go, install_locked_java, install_locked_node, install_locked_npm_tool,
-    install_locked_python, install_locked_rust, install_payload_statistics,
-    is_managed_command_shim, list_all_installed_tool_versions, list_download_cache,
-    list_installed_tool_versions, load_global_config, load_lockfile,
-    load_lockfile_for_provider_refresh, load_optional_global_config, load_optional_lockfile,
-    load_project_config, load_project_python_environment, load_source_config, load_user_settings,
-    lockfile_path, managed_runtime_arguments, pinset_home, plan_prune_tool_versions,
-    plan_uninstall_tool_version, project_python_environment_path, provider_dependency_order,
-    register_project_config, repair_download_cache, resolve_command,
+    ArtifactFormat, ArtifactIntegrity, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
+    DiscoveryReport, DiscoveryStatus, DotnetMetadataClient, DownloadProgressEvent, Error,
+    FlutterMetadataClient, GlobalConfig, GoMetadataClient, InstallLimits, Installer,
+    JavaMetadataClient, LockAuditReport, LockAuditScope, LockAuditSeverity, LockedTool, Lockfile,
+    NodeMetadataClient, NpmMetadataClient, PROJECT_CONFIG_SCHEMA, ProjectConfig,
+    PythonMetadataClient, RuntimeInstallKind, RuntimeMetadataKind, RustMetadataClient,
+    SUPPORTED_SOURCE_PROVIDERS, ShimInstallMethod, SourceKind, SourceView,
+    acquire_global_state_write_lock, acquire_project_state_write_lock, audit_global_lock,
+    audit_project_lock, clean_download_cache, command_tool, create_project_config,
+    create_project_python_environment_for, current_target_for_tool, download_cache_info,
+    effective_project_config, effective_provider_registry, ensure_shims,
+    find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
+    global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_declarative_provider,
+    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
+    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
+    install_payload_statistics, is_managed_command_shim, list_all_installed_tool_versions,
+    list_download_cache, list_installed_tool_versions, load_effective_project_config,
+    load_global_config, load_lockfile, load_lockfile_for_provider_refresh,
+    load_optional_global_config, load_optional_lockfile, load_project_config,
+    load_project_python_environment, load_project_python_environment_for, load_source_config,
+    load_user_settings, lockfile_path, managed_runtime_arguments, pinset_home,
+    plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
+    provider_dependency_order, provider_registry_path, register_project_config,
+    repair_download_cache, resolve_command, resolve_execution_command_for_python_environment,
     resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
     runtime_command_directory, runtime_environment_for_install, runtime_provider,
     save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
@@ -45,8 +53,9 @@ use pinset_core::{
     validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
     validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
     validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
-    validate_lock_matches_tool, validate_lock_matches_tools, validate_managed_runtime_invocation,
-    validate_project_lock_policy, validate_windows_batch_arguments, verify_download_cache,
+    validate_lock_matches_tool, validate_lock_matches_tool_options, validate_lock_matches_tools,
+    validate_managed_runtime_invocation, validate_project_lock_policy,
+    validate_windows_batch_arguments, verify_download_cache, workspace_members,
 };
 use serde::Serialize;
 use terminal_size::{Width, terminal_size_of};
@@ -130,7 +139,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
+        /// Tool to clear: node, pnpm, bun, go, python, flutter, java, rust, dotnet or jq.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -155,6 +164,9 @@ enum Commands {
         /// Reinstall a damaged installation after verifying its ownership receipt.
         #[arg(long, requires = "selection")]
         repair: bool,
+        /// Require every locked artifact to be present in the verified local cache.
+        #[arg(long, conflicts_with = "repair")]
+        offline: bool,
     },
     /// Show Pinset-owned CLI, shim, data, and runtime installation paths.
     Paths {
@@ -189,7 +201,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
+        /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust, dotnet or jq.
         tool: Option<String>,
         /// Query the official provider index instead of local installations.
         #[arg(long, requires = "tool", conflicts_with = "long")]
@@ -232,7 +244,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Upgrade project configuration to schema 5 and runtime lock data to schema 3.
+    /// Upgrade project configuration to schema 5 and runtime lock data to schema 4.
     Migrate {
         /// Migrate the global selection state instead of a project.
         #[arg(long, conflicts_with = "cwd")]
@@ -289,6 +301,26 @@ enum Commands {
         #[command(subcommand)]
         command: CacheCommands,
     },
+    /// Export or import a verified offline runtime bundle.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommands,
+    },
+    /// Prepare, test, apply, and restore exact candidate toolchain locks.
+    Candidate {
+        #[command(subcommand)]
+        command: CandidateCommands,
+    },
+    /// Run batch operations across explicit workspace members.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
+    },
+    /// Stable, secret-free context consumed by editor integrations.
+    Editor {
+        #[command(subcommand)]
+        command: EditorCommands,
+    },
     /// Run a named project task from pinset.toml.
     Run {
         /// Task name declared under [tasks.<name>].
@@ -331,6 +363,35 @@ enum Commands {
         /// Emit a stable machine-readable report.
         #[arg(long)]
         json: bool,
+    },
+    /// Create a redacted, portable diagnostic report without changing project state.
+    Status {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        /// Atomically save diagnostic report schema 1 as JSON.
+        #[arg(long, value_name = "FILE")]
+        save: Option<PathBuf>,
+        /// Compare against a saved report without displaying values.
+        #[arg(long, value_name = "FILE")]
+        compare: Option<PathBuf>,
+        /// Include commands that would repair known findings; never run them.
+        #[arg(long)]
+        repair_preview: bool,
+    },
+    /// Check redacted diagnostic state and fail when action is required.
+    Check {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_name = "FILE")]
+        save: Option<PathBuf>,
+        #[arg(long, value_name = "FILE")]
+        compare: Option<PathBuf>,
+        #[arg(long)]
+        repair_preview: bool,
     },
     /// Manage the Pinset-owned project Python environment without shell activation.
     Venv {
@@ -414,18 +475,25 @@ enum SelfChannel {
 
 #[derive(Debug, Subcommand)]
 enum VenvCommands {
-    /// Install the selected CPython runtime and create or validate .venv.
+    /// Install CPython and create or validate a declared environment.
     Create {
+        /// Environment name. The default environment remains .venv.
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Show the selected CPython distribution and managed .venv path.
+    /// Show the selected CPython distribution and managed environment path.
     Status {
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Delete and recreate .venv after verifying Pinset ownership.
+    /// Delete and recreate an environment after verifying Pinset ownership.
     Recreate {
+        #[arg(default_value = "default")]
+        name: String,
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
@@ -513,6 +581,145 @@ enum CacheCommands {
         #[arg(long, conflicts_with = "sha256")]
         integrity: Option<String>,
     },
+    /// Download every current-target artifact in a project lock without installing it.
+    Prefetch {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// Maximum simultaneous downloads.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BundleCommands {
+    /// Export the locked target and its cached artifacts as a verified tar.gz bundle.
+    Export {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify and import an offline bundle into the local content-addressed cache.
+    Import {
+        bundle: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommands {
+    /// List explicit members and the tools each member inherits or overrides.
+    Members {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install every selected member from its exact lock.
+    Install {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Run strict diagnostics for every selected member.
+    Check {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run one declared task in every selected member.
+    Run {
+        task: String,
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<OsString>,
+    },
+    /// Resolve and display member lock changes without writing files.
+    #[command(name = "update")]
+    UpdatePreview {
+        #[arg(long = "member", value_name = "PATH")]
+        members: Vec<String>,
+        #[arg(long, value_name = "GIT_REF")]
+        changed_since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show which members inherit or override one root tool default.
+    References {
+        tool: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CandidateCommands {
+    /// Resolve a candidate lock and prepare its exact toolchain without changing the current lock.
+    Prepare {
+        /// Limit resolution to one configured tool and retain other exact lock records.
+        tool: Option<String>,
+        /// Prepare every explicit workspace member as one batch.
+        #[arg(long)]
+        workspace: bool,
+        /// Save the candidate lock without installing its toolchain.
+        #[arg(long)]
+        no_install: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run one project task against the prepared exact candidate toolchain and record its result.
+    Test {
+        task: String,
+        #[arg(long)]
+        workspace: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<OsString>,
+    },
+    /// Show the active candidate and its recorded tests.
+    Status {
+        #[arg(long)]
+        workspace: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply the last passing, baseline-matched exact candidate lock.
+    Apply {
+        #[arg(long)]
+        workspace: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List applied candidate and restoration history.
+    History {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore the previous lock from one history entry, defaulting to the latest.
+    Restore {
+        history_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recover interrupted single-project or workspace candidate transactions.
+    Recover {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -570,7 +777,7 @@ enum SourceCommands {
 
 #[derive(Debug, Subcommand)]
 enum ProviderCommands {
-    /// List manifests from the embedded signed Registry.
+    /// List manifests from the active signed Registry.
     List {
         /// Emit the verified Registry using the stable JSON envelope.
         #[arg(long)]
@@ -581,6 +788,47 @@ enum ProviderCommands {
         /// Registry file. Omit it to verify the copy embedded in this binary.
         registry: Option<PathBuf>,
         /// Emit the verified Registry using the stable JSON envelope.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show which signed Registry is active.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify and activate an official signed Registry snapshot.
+    Trust {
+        registry: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return to the Registry embedded in this Pinset build.
+    Untrust {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate an unsigned Registry document for contributor feedback.
+    Validate {
+        registry: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a constrained GitHub release binary Provider manifest template.
+    Scaffold {
+        tool: String,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        command: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EditorCommands {
+    /// Report tasks, environment choices, and diagnostics for one workspace folder.
+    Context {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -606,8 +854,14 @@ impl Commands {
             Self::Uninstall { json: true, .. } => Some("uninstall"),
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
+            Self::Status { json: true, .. } => Some("status"),
+            Self::Check { json: true, .. } => Some("check"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
+            Self::Bundle { command } => command.json_command(),
+            Self::Candidate { command } => command.json_command(),
+            Self::Workspace { command } => command.json_command(),
+            Self::Editor { command } => command.json_command(),
             Self::Provider { command } => command.json_command(),
             Self::Env { command } => command.as_ref().and_then(EnvCommands::json_command),
             Self::Trust { command } => command.json_command(),
@@ -654,6 +908,19 @@ impl ProviderCommands {
         match self {
             Self::List { json: true } => Some("provider.list"),
             Self::Verify { json: true, .. } => Some("provider.verify"),
+            Self::Status { json: true } => Some("provider.status"),
+            Self::Trust { json: true, .. } => Some("provider.trust"),
+            Self::Untrust { json: true } => Some("provider.untrust"),
+            Self::Validate { json: true, .. } => Some("provider.validate"),
+            _ => None,
+        }
+    }
+}
+
+impl EditorCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Context { json: true, .. } => Some("editor.context"),
             _ => None,
         }
     }
@@ -676,6 +943,43 @@ impl CacheCommands {
             Self::Verify { json: true } => Some("cache.verify"),
             Self::Repair { json: true, .. } => Some("cache.repair"),
             Self::Clean { json: true, .. } => Some("cache.clean"),
+            Self::Prefetch { json: true, .. } => Some("cache.prefetch"),
+            _ => None,
+        }
+    }
+}
+
+impl BundleCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Export { json: true, .. } => Some("bundle.export"),
+            Self::Import { json: true, .. } => Some("bundle.import"),
+            _ => None,
+        }
+    }
+}
+
+impl CandidateCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Prepare { json: true, .. } => Some("candidate.prepare"),
+            Self::Status { json: true, .. } => Some("candidate.status"),
+            Self::Apply { json: true, .. } => Some("candidate.apply"),
+            Self::History { json: true } => Some("candidate.history"),
+            Self::Restore { json: true, .. } => Some("candidate.restore"),
+            Self::Recover { json: true } => Some("candidate.recover"),
+            _ => None,
+        }
+    }
+}
+
+impl WorkspaceCommands {
+    fn json_command(&self) -> Option<&'static str> {
+        match self {
+            Self::Members { json: true } => Some("workspace.members"),
+            Self::Check { json: true, .. } => Some("workspace.check"),
+            Self::UpdatePreview { json: true, .. } => Some("workspace.update"),
+            Self::References { json: true, .. } => Some("workspace.references"),
             _ => None,
         }
     }
@@ -769,8 +1073,11 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
                 | "uninstall"
                 | "prune"
                 | "doctor"
+                | "status"
+                | "check"
                 | "lock"
                 | "cache"
+                | "bundle"
                 | "provider"
                 | "env"
                 | "trust"
@@ -782,7 +1089,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
     };
     if !matches!(
         values[index].as_ref(),
-        "cache" | "lock" | "provider" | "env" | "trust" | "self"
+        "cache" | "bundle" | "lock" | "provider" | "env" | "trust" | "self"
     ) {
         return Some(values[index].as_ref().to_owned());
     }
@@ -790,8 +1097,9 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
     let subcommand = values[index + 1..].iter().find(|value| match group {
         "cache" => matches!(
             value.as_ref(),
-            "list" | "info" | "verify" | "repair" | "clean"
+            "list" | "info" | "verify" | "repair" | "clean" | "prefetch"
         ),
+        "bundle" => matches!(value.as_ref(), "export" | "import"),
         "lock" => value.as_ref() == "audit",
         "provider" => matches!(value.as_ref(), "list" | "verify"),
         "env" => matches!(value.as_ref(), "list" | "identity"),
@@ -877,6 +1185,7 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::RustSelectorNotFound { .. }
         | Error::DotnetSelectorNotFound { .. }
         | Error::NpmToolSelectorNotFound { .. }
+        | Error::DeclarativeProviderVersionNotFound { .. }
         | Error::ToolSelectionNotFound { .. }
         | Error::CommandSelectionNotFound { .. }
         | Error::ToolNotConfigured { .. }
@@ -925,6 +1234,8 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::DotnetMetadataRead { .. }
         | Error::NpmMetadataRequest { .. }
         | Error::NpmMetadataRead { .. }
+        | Error::DeclarativeProviderMetadataRequest { .. }
+        | Error::DeclarativeProviderMetadataRead { .. }
         | Error::HttpClient { .. } => "metadata_request_failed",
         Error::NodeMetadataTooLarge { .. }
         | Error::NodeIndexTooLarge { .. }
@@ -944,7 +1255,8 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::DotnetMetadataTooLarge { .. }
         | Error::InvalidDotnetIndex { .. }
         | Error::NpmMetadataTooLarge { .. }
-        | Error::InvalidNpmMetadata { .. } => "metadata_invalid",
+        | Error::InvalidNpmMetadata { .. }
+        | Error::DeclarativeProviderMetadataInvalid { .. } => "metadata_invalid",
         Error::NodeSignatureInvalid { .. }
         | Error::NodeTrustStoreInvalid { .. }
         | Error::NpmSignatureVerification { .. } => "signature_invalid",
@@ -1121,7 +1433,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             false,
             cli.profile.as_deref(),
             cli.no_env,
-            true,
+            SelectedExecution::external(None),
             catalog,
         );
     }
@@ -1131,6 +1443,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             Some(
                 Commands::Env { .. }
                     | Commands::Run { .. }
+                    | Commands::Workspace {
+                        command: WorkspaceCommands::Run { .. }
+                    }
                     | Commands::Exec { .. }
                     | Commands::X { .. }
             )
@@ -1141,7 +1456,14 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     if cli.no_env
         && !matches!(
             cli.command,
-            Some(Commands::Run { .. } | Commands::Exec { .. } | Commands::X { .. })
+            Some(
+                Commands::Run { .. }
+                    | Commands::Workspace {
+                        command: WorkspaceCommands::Run { .. }
+                    }
+                    | Commands::Exec { .. }
+                    | Commands::X { .. }
+            )
         )
     {
         return Err("--no-env requires run, exec, x, or a command after --".into());
@@ -1209,17 +1531,21 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             global,
             cwd,
             repair,
+            offline,
         } => {
             if let Some(selection) = selection {
+                if offline {
+                    return Err("offline mode requires a project or global lockfile".into());
+                }
                 if repair {
                     repair_tool_selection(&selection, catalog)?;
                 } else {
                     install_tool_selection(&selection, catalog)?;
                 }
             } else if global {
-                install_global(&pinset_home()?, catalog)?;
+                install_global(&pinset_home()?, offline, catalog)?;
             } else {
-                install_project(&effective_cwd(cwd)?, catalog)?;
+                install_project(&effective_cwd(cwd)?, offline, catalog)?;
             }
         }
         Commands::Paths { tool, json } => run_paths(tool.as_deref(), json)?,
@@ -1321,6 +1647,14 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
         } => run_prune(cwd, &project, dry_run, json)?,
         Commands::Lock { command } => return run_lock_command(command, catalog),
         Commands::Cache { command } => run_cache(command, catalog)?,
+        Commands::Bundle { command } => run_bundle(command)?,
+        Commands::Candidate { command } => {
+            return run_candidate_command(command, cli.profile.as_deref(), cli.no_env, catalog);
+        }
+        Commands::Workspace { command } => {
+            return run_workspace_command(command, cli.profile.as_deref(), cli.no_env, catalog);
+        }
+        Commands::Editor { command } => run_editor_command(command)?,
         Commands::Run { task, arguments } => {
             return run_project_task(
                 &env::current_dir()?,
@@ -1348,7 +1682,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 false,
                 profile,
                 no_env || cli.no_env,
-                false,
+                SelectedExecution::managed(),
                 catalog,
             );
         }
@@ -1367,7 +1701,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 true,
                 cli.profile.as_deref(),
                 cli.no_env,
-                false,
+                SelectedExecution::managed(),
                 catalog,
             );
         }
@@ -1379,6 +1713,32 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
                 run_doctor(&cwd, catalog)?;
                 print_doctor_installations(deep)?;
             }
+        }
+        Commands::Status {
+            cwd,
+            json,
+            save,
+            compare,
+            repair_preview,
+        } => {
+            return run_diagnostic_command(
+                "status",
+                cwd,
+                json,
+                save,
+                compare,
+                repair_preview,
+                false,
+            );
+        }
+        Commands::Check {
+            cwd,
+            json,
+            save,
+            compare,
+            repair_preview,
+        } => {
+            return run_diagnostic_command("check", cwd, json, save, compare, repair_preview, true);
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
         Commands::Env { command } => {
@@ -1662,7 +2022,7 @@ fn current_report(
             let install_dir = home
                 .join("installs")
                 .join(provider.tool)
-                .join(&selection.version)
+                .join(&selection.installation_version)
                 .join(current_target_for_tool(provider.tool));
             Ok(CurrentReport {
                 command: command.to_owned(),
@@ -1695,7 +2055,7 @@ fn resolution_explanation(
     let mut global_eligible = true;
     let mut system_eligible = true;
     if let Some(config_path) = context.config_path.as_ref() {
-        let config = load_project_config(config_path)?;
+        let config = load_effective_project_config(config_path)?;
         project_strict = !config.policy.inherit_global && !config.policy.system_fallback;
         global_eligible = config.policy.inherit_global;
         system_eligible = config.policy.system_fallback;
@@ -2124,9 +2484,16 @@ fn installation_receipt_status(
         .get("pinset_version")
         .and_then(toml::Value::as_str)
         .map(str::to_owned);
+    let receipt_identity = receipt
+        .get("install_identity")
+        .and_then(toml::Value::as_str);
     let identity_matches = receipt.get("complete").and_then(toml::Value::as_bool) == Some(true)
         && receipt.get("tool").and_then(toml::Value::as_str) == Some(installed.tool.as_str())
-        && receipt.get("version").and_then(toml::Value::as_str) == Some(installed.version.as_str())
+        && receipt
+            .get("install_identity")
+            .and_then(toml::Value::as_str)
+            .or_else(|| receipt.get("version").and_then(toml::Value::as_str))
+            == Some(installed.version.as_str())
         && receipt.get("target").and_then(toml::Value::as_str) == Some(target);
     if !identity_matches {
         return ("mismatch", Some(schema), installed_by);
@@ -2134,7 +2501,7 @@ fn installation_receipt_status(
     if matches!(schema, 1 | 2) {
         return ("legacy", Some(schema), installed_by);
     }
-    if schema != 3 {
+    if !matches!(schema, 3 | 4) || (schema == 4 && receipt_identity.is_none()) {
         return ("unsupported", Some(schema), installed_by);
     }
 
@@ -2275,6 +2642,34 @@ fn available_version_reports(
                 });
             }
         }
+        RuntimeMetadataKind::Declarative => {
+            let home = pinset_home()?;
+            let registry = effective_provider_registry(&home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            let locked = pinset_core::DeclarativeProviderClient::official()?.resolve_tool(
+                manifest,
+                "latest",
+                &registry.signer_fingerprint,
+            )?;
+            reports.push(AvailableVersionReport {
+                tool: tool.to_owned(),
+                version: locked.version,
+                details: BTreeMap::from([
+                    ("provider".to_owned(), manifest.id.clone()),
+                    (
+                        "released-at".to_owned(),
+                        locked.released_at.unwrap_or_default(),
+                    ),
+                ]),
+            });
+        }
     }
     Ok(reports)
 }
@@ -2352,7 +2747,7 @@ fn selected_runtimes_for_outdated(
     let mut selected = Vec::new();
     let mut seen = BTreeSet::new();
     if !global_only && let Some(path) = find_optional_project_config(cwd)? {
-        let config = load_project_config(&path)?;
+        let config = load_effective_project_config(&path)?;
         let lock_path = lockfile_path(&path);
         for (selected_tool, requested) in config.tools {
             if tool.is_some_and(|tool| tool != selected_tool.as_str()) {
@@ -2443,9 +2838,9 @@ fn run_uninstall(
     json: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (tool, version) = parse_tool_selection(selection, catalog)?;
-    validate_exact_tool_version(&tool, &version)?;
+    let (tool, requested_version) = parse_tool_selection(selection, catalog)?;
     let home = pinset_home()?;
+    let version = resolve_uninstall_identity(&home, &tool, &requested_version)?;
     let cwd = effective_cwd(cwd)?;
     if dry_run {
         let uninstall = plan_uninstall_tool_version(&home, &cwd, &tool, &version, force)?;
@@ -2587,6 +2982,34 @@ fn run_lock_command(
             }
             Ok(if action_required { 1 } else { 0 })
         }
+    }
+}
+
+fn resolve_uninstall_identity(
+    home: &Path,
+    tool: &str,
+    requested: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let installed = list_installed_tool_versions(home, tool)?;
+    if installed.iter().any(|entry| entry.version == requested) {
+        return Ok(requested.to_owned());
+    }
+    let matches = installed
+        .iter()
+        .filter(|entry| entry.resolved_version == requested)
+        .map(|entry| entry.version.as_str())
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [identity] => Ok((*identity).to_owned()),
+        [] => {
+            validate_exact_tool_version(tool, requested)?;
+            Ok(requested.to_owned())
+        }
+        _ => Err(format!(
+            "multiple {tool}@{requested} installations exist; choose one installation identity: {}",
+            matches.join(", ")
+        )
+        .into()),
     }
 }
 
@@ -2773,18 +3196,1161 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
             );
         }
+        CacheCommands::Prefetch { cwd, jobs, json } => {
+            let report = prefetch_project_artifacts(&effective_cwd(cwd)?, jobs)?;
+            if json {
+                print_json_success("cache.prefetch", report)?;
+            } else {
+                println!(
+                    "prefetched={} reused={} bytes={}",
+                    report.prefetched, report.reused, report.bytes
+                );
+            }
+        }
     }
     Ok(())
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache run exec x doctor venv shim env trust activate completions source provider self";
+#[derive(Debug, Serialize)]
+struct PrefetchReport {
+    artifacts: usize,
+    prefetched: usize,
+    reused: usize,
+    bytes: u64,
+    jobs: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PrefetchItem {
+    tool: String,
+    artifact: ArtifactSpec,
+}
+
+fn prefetch_project_artifacts(
+    cwd: &Path,
+    jobs: usize,
+) -> Result<PrefetchReport, Box<dyn std::error::Error>> {
+    if !(1..=16).contains(&jobs) {
+        return Err("--jobs must be between 1 and 16".into());
+    }
+    let home = pinset_home()?;
+    let config_path = find_project_config(cwd)?;
+    let config = load_effective_project_config(&config_path)?;
+    let lock_path = lockfile_path(&config_path);
+    let lock = load_lockfile(&lock_path)?;
+    validate_lock_matches_tools(&lock, &config.tools, &config_path)?;
+    validate_lock_matches_tool_options(&lock, &config.tool_options, &config_path)?;
+    let sources = load_source_config(&source_config_path(&home))?;
+    let items = locked_prefetch_items(&lock, &sources)?;
+    let total = items.len();
+    let queue = Arc::new(Mutex::new(VecDeque::from(items)));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(total.max(1)) {
+            let queue = Arc::clone(&queue);
+            let results = Arc::clone(&results);
+            let home = home.clone();
+            scope.spawn(move || {
+                loop {
+                    let item = queue.lock().expect("prefetch queue").pop_front();
+                    let Some(item) = item else { break };
+                    let result = match Installer::new(InstallLimits::for_tool(&item.tool)) {
+                        Ok(installer) => installer.prefetch(&home, &item.artifact),
+                        Err(error) => Err(error),
+                    }
+                    .map_err(|error| format!("{}: {error}", item.tool));
+                    results.lock().expect("prefetch results").push(result);
+                }
+            });
+        }
+    });
+    let results = Arc::try_unwrap(results)
+        .expect("prefetch workers finished")
+        .into_inner()?;
+    let failures = results
+        .iter()
+        .filter_map(|result| result.as_ref().err())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(format!(
+            "prefetch failed for {} artifact(s): {}",
+            failures.len(),
+            failures.join("; ")
+        )
+        .into());
+    }
+    let outcomes = results
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    Ok(PrefetchReport {
+        artifacts: total,
+        prefetched: outcomes
+            .iter()
+            .filter(|value| !value.reused_existing)
+            .count(),
+        reused: outcomes
+            .iter()
+            .filter(|value| value.reused_existing)
+            .count(),
+        bytes: outcomes.iter().map(|value| value.bytes_downloaded).sum(),
+        jobs,
+    })
+}
+
+fn locked_prefetch_items(
+    lock: &Lockfile,
+    sources: &pinset_core::SourceConfig,
+) -> Result<Vec<PrefetchItem>, Box<dyn std::error::Error>> {
+    let mut items = Vec::new();
+    let mut identities = BTreeSet::new();
+    for tool in &lock.tools {
+        let target = current_target_for_tool(&tool.name);
+        let Some(artifact) = tool.artifacts.iter().find(|value| value.target == target) else {
+            continue;
+        };
+        let identity = artifact.artifact_integrity()?.canonical();
+        if identities.insert(identity.clone()) {
+            items.push(PrefetchItem {
+                tool: tool.name.clone(),
+                artifact: ArtifactSpec {
+                    canonical_url: artifact.canonical_url.clone(),
+                    sources: artifact_sources(
+                        &tool.name,
+                        &artifact.artifact_path,
+                        &artifact.canonical_url,
+                        sources,
+                    )?,
+                    integrity: identity,
+                    format: artifact_format(artifact.format),
+                },
+            });
+        }
+        for overlay in &artifact.overlays {
+            let identity = overlay.artifact_integrity()?.canonical();
+            if identities.insert(identity.clone()) {
+                items.push(PrefetchItem {
+                    tool: tool.name.clone(),
+                    artifact: ArtifactSpec {
+                        canonical_url: overlay.canonical_url.clone(),
+                        sources: artifact_sources(
+                            &tool.name,
+                            &overlay.artifact_path,
+                            &overlay.canonical_url,
+                            sources,
+                        )?,
+                        integrity: identity,
+                        format: artifact_format(overlay.format),
+                    },
+                });
+            }
+        }
+    }
+    Ok(items)
+}
+
+fn artifact_sources(
+    tool: &str,
+    artifact_path: &str,
+    canonical_url: &str,
+    config: &pinset_core::SourceConfig,
+) -> Result<Vec<ArtifactSource>, Box<dyn std::error::Error>> {
+    if SUPPORTED_SOURCE_PROVIDERS.contains(&tool) {
+        return Ok(config
+            .resolve_artifact_sources(tool, artifact_path)?
+            .into_iter()
+            .map(|source| ArtifactSource {
+                id: source.alias,
+                url: source.url,
+                kind: match source.kind {
+                    SourceKind::Official => ArtifactSourceKind::Official,
+                    SourceKind::Custom => ArtifactSourceKind::Mirror,
+                },
+            })
+            .collect());
+    }
+    Ok(vec![ArtifactSource {
+        id: "official".to_owned(),
+        url: canonical_url.to_owned(),
+        kind: ArtifactSourceKind::Official,
+    }])
+}
+
+fn artifact_format(format: pinset_core::LockedArtifactFormat) -> ArtifactFormat {
+    match format {
+        pinset_core::LockedArtifactFormat::Binary => ArtifactFormat::Binary,
+        pinset_core::LockedArtifactFormat::Zip => ArtifactFormat::Zip,
+        pinset_core::LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
+        pinset_core::LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
+    }
+}
+
+fn run_bundle(command: BundleCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    match command {
+        BundleCommands::Export {
+            cwd,
+            output,
+            target,
+            json,
+        } => {
+            let config = find_project_config(&effective_cwd(cwd)?)?;
+            let target = target.unwrap_or_else(pinset_core::current_target);
+            let outcome = bundle::export(
+                &home,
+                &lockfile_path(&config),
+                &absolutize(&output)?,
+                &target,
+            )?;
+            if json {
+                print_json_success("bundle.export", outcome)?;
+            } else {
+                println!(
+                    "exported {} artifact(s) for {} ({})",
+                    outcome.artifacts,
+                    outcome.target,
+                    format_bytes(outcome.bytes)
+                );
+            }
+        }
+        BundleCommands::Import { bundle: path, json } => {
+            let outcome =
+                bundle::import(&home, &absolutize(&path)?, &pinset_core::current_target())?;
+            if json {
+                print_json_success("bundle.import", outcome)?;
+            } else {
+                println!(
+                    "imported {} artifact(s) for {} ({})",
+                    outcome.artifacts,
+                    outcome.target,
+                    format_bytes(outcome.bytes)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceMemberReport {
+    member: String,
+    root: PathBuf,
+    tools: Vec<WorkspaceToolReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceToolReport {
+    tool: String,
+    requested: String,
+    source: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceCheckReport {
+    member: String,
+    report: diagnostics::DiagnosticReport,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceUpdateReport {
+    member: String,
+    changes: Vec<UpdateReport>,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateTarget {
+    member: String,
+    root: PathBuf,
+    config_path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidatePrepareReport {
+    member: String,
+    candidate_id: String,
+    candidate_path: PathBuf,
+    changed_tools: Vec<String>,
+    installed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateStatusReport {
+    member: String,
+    candidate: candidate::CandidateRecord,
+    candidate_sha256: String,
+}
+
+fn run_candidate_command(
+    command: CandidateCommands,
+    profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
+    match command {
+        CandidateCommands::Prepare {
+            tool,
+            workspace,
+            no_install,
+            json,
+        } => {
+            if let Some(tool) = &tool {
+                require_provider(tool)?;
+            }
+            let mut reports = Vec::new();
+            for target in candidate_targets(workspace)? {
+                let effective = load_effective_project_config(&target.config_path)?;
+                if let Some(tool) = &tool
+                    && !effective.tools.contains_key(tool)
+                {
+                    return Err(format!(
+                        "workspace member {} does not select provider {tool:?}",
+                        target.member
+                    )
+                    .into());
+                }
+                let current = load_lockfile(&lockfile_path(&target.config_path))?;
+                validate_lock_matches_tools(&current, &effective.tools, &target.config_path)?;
+                validate_lock_matches_tool_options(
+                    &current,
+                    &effective.tool_options,
+                    &target.config_path,
+                )?;
+                let mut candidate_lock = current.clone();
+                let mut changed_tools = Vec::new();
+                for (selected_tool, requested) in &effective.tools {
+                    if tool
+                        .as_deref()
+                        .is_some_and(|limited| limited != selected_tool)
+                    {
+                        continue;
+                    }
+                    let resolved = resolve_locked_tool_with_options(
+                        selected_tool,
+                        requested,
+                        effective.tool_options.get(selected_tool),
+                    )?;
+                    let previous = candidate_lock
+                        .tool(selected_tool)
+                        .expect("validated lock contains selected tool");
+                    if previous.version != resolved.version || previous.options != resolved.options
+                    {
+                        changed_tools.push(selected_tool.clone());
+                    }
+                    candidate_lock.upsert_tool(resolved)?;
+                }
+                candidate_lock.generated_by =
+                    format!("pinset {} candidate", pinset_core::pinset_version());
+                validate_project_lock_policy(
+                    &effective,
+                    &candidate_lock,
+                    std::time::SystemTime::now(),
+                )?;
+                let project_id = effective
+                    .project_id
+                    .clone()
+                    .ok_or("candidate projects require project-id")?;
+                let record = candidate::new_record(
+                    target.config_path.clone(),
+                    project_id,
+                    candidate::capture_baseline(&target.config_path)?,
+                    candidate_lock,
+                )?;
+                let candidate_path = candidate::save_active(&home, &record)?;
+                if !no_install {
+                    for provider in pinset_core::selected_provider_order(&effective.tools)? {
+                        install_tool_from_lock_with_output(
+                            &home,
+                            &record.lock,
+                            provider.tool,
+                            false,
+                            false,
+                            !json,
+                            catalog,
+                        )?;
+                    }
+                }
+                reports.push(CandidatePrepareReport {
+                    member: target.member,
+                    candidate_id: record.id,
+                    candidate_path,
+                    changed_tools,
+                    installed: !no_install,
+                });
+            }
+            if json {
+                print_json_success("candidate.prepare", &reports)?;
+            } else {
+                for report in reports {
+                    println!(
+                        "{}: candidate {} changes={} installed={}",
+                        report.member,
+                        report.candidate_id,
+                        if report.changed_tools.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            report.changed_tools.join(",")
+                        },
+                        report.installed
+                    );
+                }
+            }
+            Ok(0)
+        }
+        CandidateCommands::Test {
+            task,
+            workspace,
+            arguments,
+        } => {
+            for target in candidate_targets(workspace)? {
+                let project = load_effective_project_config(&target.config_path)?;
+                let project_id = project
+                    .project_id
+                    .as_deref()
+                    .ok_or("candidate projects require project-id")?;
+                let mut record = candidate::load_active(&home, &target.config_path, project_id)?;
+                candidate::verify_candidate_for_test(&record)?;
+                println!("{}: candidate {} test {task}", target.member, record.id);
+                let code = run_candidate_task(
+                    &home,
+                    &target,
+                    &project,
+                    &record,
+                    &task,
+                    &arguments,
+                    CandidateTaskOptions {
+                        profile,
+                        no_environment,
+                    },
+                )?;
+                let recorded_arguments = arguments
+                    .iter()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                candidate::record_test(&home, &mut record, &task, &recorded_arguments, code)?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+            Ok(0)
+        }
+        CandidateCommands::Status { workspace, json } => {
+            let mut reports = Vec::new();
+            for target in candidate_targets(workspace)? {
+                let project = load_effective_project_config(&target.config_path)?;
+                let project_id = project
+                    .project_id
+                    .as_deref()
+                    .ok_or("candidate projects require project-id")?;
+                let record = candidate::load_active(&home, &target.config_path, project_id)?;
+                reports.push(CandidateStatusReport {
+                    member: target.member,
+                    candidate_sha256: candidate::candidate_digest(&record.lock)?,
+                    candidate: record,
+                });
+            }
+            if json {
+                print_json_success("candidate.status", &reports)?;
+            } else {
+                for report in reports {
+                    let latest = report
+                        .candidate
+                        .tests
+                        .last()
+                        .map(|test| test.exit_code.to_string())
+                        .unwrap_or_else(|| "untested".to_owned());
+                    println!(
+                        "{}: candidate {} sha256={} latest-test={latest}",
+                        report.member, report.candidate.id, report.candidate_sha256
+                    );
+                }
+            }
+            Ok(0)
+        }
+        CandidateCommands::Apply { workspace, json } => {
+            let mut records = Vec::new();
+            for target in candidate_targets(workspace)? {
+                let project = load_effective_project_config(&target.config_path)?;
+                let project_id = project
+                    .project_id
+                    .as_deref()
+                    .ok_or("candidate projects require project-id")?;
+                records.push(candidate::load_active(
+                    &home,
+                    &target.config_path,
+                    project_id,
+                )?);
+            }
+            let histories = candidate::apply_records(&home, &records)?;
+            if json {
+                print_json_success("candidate.apply", &histories)?;
+            } else {
+                for history in histories {
+                    println!(
+                        "applied candidate {} to {} history={}",
+                        history.candidate_id,
+                        history.config_path.display(),
+                        history.id
+                    );
+                }
+            }
+            Ok(0)
+        }
+        CandidateCommands::History { json } => {
+            let target = current_candidate_target()?;
+            let project = load_effective_project_config(&target.config_path)?;
+            let project_id = project
+                .project_id
+                .as_deref()
+                .ok_or("candidate projects require project-id")?;
+            let history = candidate::list_history(&home, &target.config_path, project_id)?;
+            if json {
+                print_json_success("candidate.history", &history)?;
+            } else {
+                for record in history {
+                    println!(
+                        "{} candidate={} applied={} git={}",
+                        record.id,
+                        record.candidate_id,
+                        record.applied_unix_ms,
+                        record.tested_git_head.as_deref().unwrap_or("none")
+                    );
+                }
+            }
+            Ok(0)
+        }
+        CandidateCommands::Restore { history_id, json } => {
+            let target = current_candidate_target()?;
+            let project = load_effective_project_config(&target.config_path)?;
+            let project_id = project
+                .project_id
+                .as_deref()
+                .ok_or("candidate projects require project-id")?;
+            let history = candidate::restore_history(
+                &home,
+                &target.config_path,
+                project_id,
+                history_id.as_deref(),
+            )?;
+            if json {
+                print_json_success("candidate.restore", &history)?;
+            } else {
+                println!(
+                    "restored {} history={} from={}",
+                    target.config_path.display(),
+                    history.id,
+                    history.candidate_id
+                );
+            }
+            Ok(0)
+        }
+        CandidateCommands::Recover { json } => {
+            let recovered = candidate::recover_transactions(&home)?;
+            if json {
+                print_json_success(
+                    "candidate.recover",
+                    serde_json::json!({ "transactions": recovered }),
+                )?;
+            } else if recovered.is_empty() {
+                println!("no candidate transaction needs recovery");
+            } else {
+                println!("recovered candidate transactions: {}", recovered.join(", "));
+            }
+            Ok(0)
+        }
+    }
+}
+
+fn candidate_targets(workspace: bool) -> Result<Vec<CandidateTarget>, Box<dyn std::error::Error>> {
+    if !workspace {
+        return Ok(vec![current_candidate_target()?]);
+    }
+    let cwd = env::current_dir()?;
+    let root_config_path = find_workspace_config(&cwd)?;
+    Ok(workspace_members(&root_config_path)?
+        .into_iter()
+        .map(|member| CandidateTarget {
+            member: member.name,
+            root: member.root,
+            config_path: member.config_path,
+        })
+        .collect())
+}
+
+fn current_candidate_target() -> Result<CandidateTarget, Box<dyn std::error::Error>> {
+    let config_path = find_project_config(&env::current_dir()?)?;
+    let root = config_path
+        .parent()
+        .ok_or("project configuration has no parent")?
+        .to_path_buf();
+    Ok(CandidateTarget {
+        member: root.display().to_string(),
+        root,
+        config_path,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CandidateTaskOptions<'a> {
+    profile: Option<&'a str>,
+    no_environment: bool,
+}
+
+fn run_candidate_task(
+    home: &Path,
+    target: &CandidateTarget,
+    project: &ProjectConfig,
+    record: &candidate::CandidateRecord,
+    task_name: &str,
+    appended: &[OsString],
+    options: CandidateTaskOptions<'_>,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    if !project.tasks.contains_key(task_name) {
+        return Err(format!("project task {task_name:?} is not declared").into());
+    }
+    for current in pinset_core::project_task_order(project, task_name)? {
+        let arguments = if current == task_name { appended } else { &[] };
+        let code =
+            run_candidate_task_once(home, target, project, record, &current, arguments, options)?;
+        if code != 0 {
+            return Ok(code);
+        }
+    }
+    Ok(0)
+}
+
+fn run_candidate_task_once(
+    home: &Path,
+    target: &CandidateTarget,
+    project: &ProjectConfig,
+    record: &candidate::CandidateRecord,
+    task_name: &str,
+    appended: &[OsString],
+    options: CandidateTaskOptions<'_>,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let task = project
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| format!("project task {task_name:?} is not declared"))?;
+    let project_root = fs::canonicalize(&target.root)?;
+    let task_cwd = if let Some(relative) = &task.cwd {
+        let resolved = fs::canonicalize(project_root.join(relative))?;
+        if !resolved.starts_with(&project_root) || !resolved.is_dir() {
+            return Err(format!(
+                "task {task_name:?} cwd must be an existing directory within the project"
+            )
+            .into());
+        }
+        resolved
+    } else {
+        project_root
+    };
+    let mut arguments = task.command.iter().map(OsString::from).collect::<Vec<_>>();
+    arguments.extend_from_slice(appended);
+    let command_name = arguments
+        .first()
+        .and_then(|value| value.to_str())
+        .ok_or("candidate task command must be nonempty UTF-8")?;
+
+    let mut path_entries = Vec::new();
+    let mut runtime_environment = Vec::new();
+    for provider in pinset_core::selected_provider_order(&project.tools)? {
+        let locked = record
+            .lock
+            .tool(provider.tool)
+            .ok_or_else(|| Error::LockedToolMissing {
+                tool: provider.tool.to_owned(),
+            })?;
+        let install_dir = home
+            .join("installs")
+            .join(provider.tool)
+            .join(locked.installation_version())
+            .join(current_target_for_tool(provider.tool));
+        let command_dir = runtime_command_directory(provider.tool, &install_dir);
+        if !command_dir.is_dir() {
+            return Err(format!(
+                "candidate {} toolchain is not prepared: {}",
+                record.id,
+                command_dir.display()
+            )
+            .into());
+        }
+        path_entries.push(command_dir);
+        runtime_environment.extend(runtime_environment_for_install(provider.tool, &install_dir));
+    }
+
+    let mut candidate_python = None;
+    if let Some(locked) = record.lock.tool("python") {
+        let environment_name = task.python_environment.as_deref().unwrap_or("default");
+        let base_install = home
+            .join("installs")
+            .join("python")
+            .join(locked.installation_version())
+            .join(current_target_for_tool("python"));
+        let base_python = runtime_command_candidates("python", "python", &base_install)
+            .into_iter()
+            .find(|path| path.is_file())
+            .ok_or_else(|| format!("candidate Python {} is not installed", locked.version))?;
+        let directory =
+            candidate::candidate_directory(home, &record.config_path, &record.project_id)?;
+        let relative = format!("venvs/{}/{}", record.id, environment_name);
+        let environment = create_project_python_environment_for(
+            &directory.join("candidate-project.toml"),
+            environment_name,
+            &relative,
+            &base_python,
+            &locked.version,
+            &current_target_for_tool("python"),
+            false,
+        )?;
+        path_entries.retain(|entry| entry != &environment.command_directory);
+        path_entries.insert(0, environment.command_directory.clone());
+        runtime_environment.retain(|variable| variable.name != "VIRTUAL_ENV");
+        runtime_environment.push(pinset_core::RuntimeEnvironmentVariable {
+            name: "VIRTUAL_ENV",
+            value: environment.root.clone().into_os_string(),
+        });
+        candidate_python = Some(environment);
+    }
+
+    let shim_dir = home.join("shims");
+    if let Some(inherited) = env::var_os("PATH") {
+        for entry in env::split_paths(&inherited) {
+            if entry != shim_dir && !path_entries.iter().any(|existing| existing == &entry) {
+                path_entries.push(entry);
+            }
+        }
+    }
+    let candidate_path = env::join_paths(&path_entries)?;
+    let managed_tool = command_tool(command_name);
+    let executable = if let Some(tool) = managed_tool {
+        if tool == "python"
+            && let Some(environment) = &candidate_python
+        {
+            pinset_core::project_python_command_candidates(environment, command_name)
+                .into_iter()
+                .find(|path| path.is_file())
+                .ok_or_else(|| format!("candidate Python environment has no {command_name}"))?
+        } else {
+            let locked = record
+                .lock
+                .tool(tool)
+                .ok_or_else(|| Error::LockedToolMissing {
+                    tool: tool.to_owned(),
+                })?;
+            let install_dir = home
+                .join("installs")
+                .join(tool)
+                .join(locked.installation_version())
+                .join(current_target_for_tool(tool));
+            runtime_command_candidates(tool, command_name, &install_dir)
+                .into_iter()
+                .find(|path| path.is_file())
+                .ok_or_else(|| format!("candidate {} has no command {command_name}", record.id))?
+        }
+    } else if let Some(environment) = &candidate_python {
+        pinset_core::project_python_command_candidates(environment, command_name)
+            .into_iter()
+            .find(|path| path.is_file())
+            .or_else(|| candidate_path_executable(command_name, &task_cwd, &path_entries))
+            .ok_or_else(|| format!("candidate task command {command_name:?} was not found"))?
+    } else {
+        candidate_path_executable(command_name, &task_cwd, &path_entries)
+            .ok_or_else(|| format!("candidate task command {command_name:?} was not found"))?
+    };
+
+    let child_arguments = if let Some(tool) = managed_tool {
+        validate_managed_runtime_invocation(tool, command_name, &arguments[1..])?;
+        managed_runtime_arguments(tool, command_name, &arguments[1..])
+    } else {
+        arguments[1..].to_vec()
+    };
+    validate_windows_batch_arguments(&executable, &child_arguments)?;
+    let mut child = command_for_runtime(&executable);
+    child
+        .args(child_arguments)
+        .current_dir(&task_cwd)
+        .env("PATH", candidate_path)
+        .env("PINSET_CANDIDATE_ID", &record.id)
+        .env("PINSET_SELECTION_SOURCE", "candidate")
+        .env("PINSET_CONFIG_PATH", &record.config_path);
+    if let Some(tool) = managed_tool {
+        let locked = record
+            .lock
+            .tool(tool)
+            .expect("managed candidate command has a lock");
+        child
+            .env("PINSET_SELECTED_TOOL", tool)
+            .env("PINSET_SELECTED_VERSION", &locked.version);
+    }
+    let mut occupied_environment = env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .map(|name| name.to_ascii_uppercase())
+        .collect::<BTreeSet<_>>();
+    for variable in runtime_environment {
+        occupied_environment.insert(variable.name.to_ascii_uppercase());
+        child.env(variable.name, variable.value);
+    }
+    let task_profile = if options.profile.is_some() || env::var_os("PINSET_ENV_PROFILE").is_some() {
+        options.profile
+    } else {
+        task.profile.as_deref()
+    };
+    if !options.no_environment {
+        let (collision, encrypted) = environment::resolve_environment(&target.root, task_profile)?;
+        for (name, mut value) in encrypted {
+            let exists = occupied_environment.contains(&name.to_ascii_uppercase());
+            match (collision, exists) {
+                (pinset_core::EnvironmentCollision::Error, true) => {
+                    value.zeroize();
+                    return Err(format!(
+                        "encrypted environment variable {name} collides with the candidate environment"
+                    )
+                    .into());
+                }
+                (pinset_core::EnvironmentCollision::ProcessWins, true) => value.zeroize(),
+                _ => {
+                    child.env(&name, &value);
+                    value.zeroize();
+                }
+            }
+        }
+    }
+    for name in [
+        "PINSET_IDENTITY",
+        "PINSET_IDENTITY_FILE",
+        "PINSET_ENV_PROFILE",
+        "PINSET_ENV_DISABLE",
+        "PYTHONHOME",
+    ] {
+        child.env_remove(name);
+    }
+    Ok(child.status()?.code().unwrap_or(1))
+}
+
+fn candidate_path_executable(command: &str, cwd: &Path, path: &[PathBuf]) -> Option<PathBuf> {
+    let requested = Path::new(command);
+    if requested.is_absolute() || requested.components().count() > 1 {
+        let candidate = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            cwd.join(requested)
+        };
+        return candidate.is_file().then_some(candidate);
+    }
+    let extensions: &[&str] = if cfg!(windows) {
+        &["", ".exe", ".cmd", ".bat", ".com"]
+    } else {
+        &[""]
+    };
+    path.iter().find_map(|directory| {
+        extensions.iter().find_map(|extension| {
+            let candidate = directory.join(format!("{command}{extension}"));
+            candidate.is_file().then_some(candidate)
+        })
+    })
+}
+
+fn run_workspace_command(
+    command: WorkspaceCommands,
+    profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let cwd = env::current_dir()?;
+    let root_config_path = find_workspace_config(&cwd)?;
+    let root_config = load_project_config(&root_config_path)?;
+    match command {
+        WorkspaceCommands::Members { json } => {
+            let reports = workspace_member_reports(&root_config_path, &root_config)?;
+            if json {
+                print_json_success("workspace.members", reports)?;
+            } else {
+                for report in reports {
+                    let tools = report
+                        .tools
+                        .iter()
+                        .map(|tool| format!("{}@{} ({})", tool.tool, tool.requested, tool.source))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("{} {}: {}", report.member, report.root.display(), tools);
+                }
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::Install {
+            members,
+            changed_since,
+            offline,
+        } => {
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                println!("workspace member {}: install", member.name);
+                install_project(&member.root, offline, catalog)?;
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::Check {
+            members,
+            changed_since,
+            json,
+        } => {
+            let mut reports = Vec::new();
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                reports.push(WorkspaceCheckReport {
+                    member: member.name,
+                    report: diagnostics::collect(&member.root, false)?,
+                });
+            }
+            let passed = reports.iter().all(|report| report.report.summary.passed);
+            if json {
+                print_json_success("workspace.check", &reports)?;
+            } else {
+                for report in &reports {
+                    println!(
+                        "{}: {} errors={} warnings={}",
+                        report.member,
+                        if report.report.summary.passed {
+                            "ok"
+                        } else {
+                            "failed"
+                        },
+                        report.report.summary.errors,
+                        report.report.summary.warnings
+                    );
+                }
+            }
+            Ok(if passed { 0 } else { 1 })
+        }
+        WorkspaceCommands::Run {
+            task,
+            members,
+            changed_since,
+            arguments,
+        } => {
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                println!("workspace member {}: run {task}", member.name);
+                let code = run_project_task(
+                    &member.root,
+                    &task,
+                    &arguments,
+                    profile,
+                    no_environment,
+                    catalog,
+                )?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::UpdatePreview {
+            members,
+            changed_since,
+            json,
+        } => {
+            let mut reports = Vec::new();
+            for member in
+                selected_workspace_members(&root_config_path, &members, changed_since.as_deref())?
+            {
+                reports.push(workspace_update_preview(&member)?);
+            }
+            if json {
+                print_json_success("workspace.update", &reports)?;
+            } else {
+                for report in &reports {
+                    let changed = report
+                        .changes
+                        .iter()
+                        .filter(|change| change.changed)
+                        .count();
+                    println!("{}: {changed} update(s)", report.member);
+                    for change in report.changes.iter().filter(|change| change.changed) {
+                        println!(
+                            "  {}@{} -> {} requested={}",
+                            change.tool, change.previous, change.resolved, change.requested
+                        );
+                    }
+                }
+                println!("preview only: no workspace lockfile was changed");
+            }
+            Ok(0)
+        }
+        WorkspaceCommands::References { tool, json } => {
+            require_provider(&tool)?;
+            let reports = workspace_member_reports(&root_config_path, &root_config)?
+                .into_iter()
+                .filter_map(|member| {
+                    member
+                        .tools
+                        .into_iter()
+                        .find(|selected| selected.tool == tool)
+                        .map(|selected| {
+                            serde_json::json!({
+                                "member": member.member,
+                                "root": member.root,
+                                "requested": selected.requested,
+                                "source": selected.source,
+                            })
+                        })
+                })
+                .collect::<Vec<_>>();
+            if json {
+                print_json_success("workspace.references", &reports)?;
+            } else {
+                for report in reports {
+                    println!(
+                        "{} {}@{} ({})",
+                        report["member"].as_str().unwrap_or_default(),
+                        tool,
+                        report["requested"].as_str().unwrap_or_default(),
+                        report["source"].as_str().unwrap_or_default()
+                    );
+                }
+            }
+            Ok(0)
+        }
+    }
+}
+
+fn workspace_member_reports(
+    root_config_path: &Path,
+    root_config: &ProjectConfig,
+) -> Result<Vec<WorkspaceMemberReport>, Box<dyn std::error::Error>> {
+    workspace_members(root_config_path)?
+        .into_iter()
+        .map(|member| {
+            let local = load_project_config(&member.config_path)?;
+            let effective = load_effective_project_config(&member.config_path)?;
+            let tools = effective
+                .tools
+                .into_iter()
+                .map(|(tool, requested)| WorkspaceToolReport {
+                    source: if local.tools.contains_key(&tool) {
+                        "member"
+                    } else if root_config.tools.contains_key(&tool) {
+                        "root"
+                    } else {
+                        "member"
+                    },
+                    tool,
+                    requested,
+                })
+                .collect();
+            Ok(WorkspaceMemberReport {
+                member: member.name,
+                root: member.root,
+                tools,
+            })
+        })
+        .collect()
+}
+
+fn selected_workspace_members(
+    root_config_path: &Path,
+    requested: &[String],
+    changed_since: Option<&str>,
+) -> Result<Vec<pinset_core::WorkspaceMember>, Box<dyn std::error::Error>> {
+    let mut members = workspace_members(root_config_path)?;
+    for name in requested {
+        if !members
+            .iter()
+            .any(|member| member.name.eq_ignore_ascii_case(name))
+        {
+            return Err(format!("workspace member {name:?} is not declared").into());
+        }
+    }
+    if !requested.is_empty() {
+        members.retain(|member| {
+            requested
+                .iter()
+                .any(|name| member.name.eq_ignore_ascii_case(name))
+        });
+    }
+    if let Some(base) = changed_since {
+        let root = root_config_path
+            .parent()
+            .ok_or("workspace configuration has no parent")?;
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["diff", "--name-only", base, "--"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "git diff for {base:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
+        let changed = String::from_utf8(output.stdout)?;
+        let root_changed = changed
+            .lines()
+            .any(|path| path.eq_ignore_ascii_case(pinset_core::PROJECT_CONFIG_FILENAME));
+        if !root_changed {
+            members.retain(|member| {
+                let prefix = format!("{}/", member.name);
+                changed.lines().any(|path| {
+                    path.eq_ignore_ascii_case(&member.name)
+                        || path
+                            .get(..prefix.len())
+                            .is_some_and(|value| value.eq_ignore_ascii_case(&prefix))
+                })
+            });
+        }
+    }
+    Ok(members)
+}
+
+fn workspace_update_preview(
+    member: &pinset_core::WorkspaceMember,
+) -> Result<WorkspaceUpdateReport, Box<dyn std::error::Error>> {
+    let config = load_effective_project_config(&member.config_path)?;
+    let lock_path = lockfile_path(&member.config_path);
+    let lock = load_lockfile(&lock_path)?;
+    validate_lock_matches_tools(&lock, &config.tools, &member.config_path)?;
+    validate_lock_matches_tool_options(&lock, &config.tool_options, &member.config_path)?;
+    let mut changes = Vec::new();
+    for (tool, requested) in &config.tools {
+        let previous = lock
+            .tool(tool)
+            .expect("validated workspace lock contains configured tool");
+        let resolved =
+            resolve_locked_tool_with_options(tool, requested, config.tool_options.get(tool))?;
+        changes.push(UpdateReport {
+            scope: "workspace-member",
+            config: member.config_path.clone(),
+            tool: tool.clone(),
+            requested: requested.clone(),
+            changed: previous.version != resolved.version || previous.options != resolved.options,
+            previous: previous.version.clone(),
+            resolved: resolved.version,
+        });
+    }
+    Ok(WorkspaceUpdateReport {
+        member: member.name.clone(),
+        changes,
+    })
+}
+
+const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
-const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import";
+const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
+const COMPLETION_BUNDLE_COMMANDS: &str = "export import";
+const COMPLETION_CANDIDATE_COMMANDS: &str = "prepare test status apply history restore recover";
+const COMPLETION_WORKSPACE_COMMANDS: &str = "members install check run update references";
+const COMPLETION_EDITOR_COMMANDS: &str = "context";
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
-const COMPLETION_PROVIDER_COMMANDS: &str = "list verify";
+const COMPLETION_PROVIDER_COMMANDS: &str = "list verify status trust untrust validate scaffold";
 const COMPLETION_ENV_COMMANDS: &str =
     "init use reset set unset list reveal import export share unshare members recipient identity";
 const COMPLETION_TRUST_COMMANDS: &str = "add status revoke";
@@ -2820,7 +4386,7 @@ fn completion_script(shell: ActivationShell) -> String {
             detect) values="--cwd --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
-            install) values="__SELECTIONS__ --locked --global --cwd --repair --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
@@ -2832,8 +4398,12 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
+            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help" ;;
+            workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -2842,6 +4412,7 @@ fn completion_script(shell: ActivationShell) -> String {
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
             provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
+            editor) values="__EDITOR_COMMANDS__ --cwd --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -2862,7 +4433,7 @@ _pinset_completion() {
             detect) values="--cwd --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
-            install) values="__SELECTIONS__ --locked --global --cwd --repair --lang --help" ;;
+            install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
@@ -2874,8 +4445,12 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
+            bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
+            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help" ;;
+            workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
             env) values="__ENV_COMMANDS__ --profile --cwd --json --lang --help" ;;
@@ -2884,6 +4459,7 @@ _pinset_completion() {
             activate|completions) values="__SHELLS__ --lang --help" ;;
             source) values="__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help" ;;
             provider) values="__PROVIDER_COMMANDS__ --json --lang --help" ;;
+            editor) values="__EDITOR_COMMANDS__ --cwd --json --lang --help" ;;
             *) values="--lang --help" ;;
         esac
     fi
@@ -2894,10 +4470,13 @@ compdef _pinset_completion pinset"#
         ActivationShell::Fish => {
             r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__ -C --cwd -e --profile --no-env'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --global --cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --offline --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--available --long'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from bundle' -a '__BUNDLE_COMMANDS__ --cwd --output --target --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from candidate' -a '__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from workspace' -a '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from lock' -a '__LOCK_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '__SHIM_COMMANDS__ __PROVIDERS__'
@@ -2905,16 +4484,18 @@ complete -c pinset -f -n '__fish_seen_subcommand_from shim' -a '--provider --all
 complete -c pinset -f -n '__fish_seen_subcommand_from activate completions' -a '__SHELLS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from source' -a '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from provider' -a '__PROVIDER_COMMANDS__ --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from editor' -a '__EDITOR_COMMANDS__ --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from env' -a '__ENV_COMMANDS__ --profile --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from trust' -a '__TRUST_COMMANDS__ --cwd --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from self' -a '__SELF_COMMANDS__ --channel --version --json'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect paths which current list outdated update migrate uninstall prune doctor lock cache provider env trust self' -a '--json'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect paths which current list outdated update migrate uninstall prune doctor status check lock cache provider env trust self' -a '--json'
 complete -c pinset -f -n '__fish_seen_subcommand_from which current' -a '--explain'
-complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor lock' -a '--cwd'
+complete -c pinset -f -n '__fish_seen_subcommand_from detect import install which current outdated update migrate uninstall prune doctor status check lock' -a '--cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-install'
 complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -n '__fish_seen_subcommand_from doctor' -a '--deep'
+complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -2927,7 +4508,7 @@ complete -c pinset -f -a '--help --lang'"#
         'detect' { '--cwd --json --lang --help' -split ' ' }
         'import' { '--cwd --force --no-install --lang --help' -split ' ' }
         'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
-        'install' { '__SELECTIONS__ --locked --global --cwd --repair --lang --help' -split ' ' }
+        'install' { '__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help' -split ' ' }
         'paths' { '__PROVIDERS__ --json --lang --help' -split ' ' }
         'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
         'unset' { '__PROVIDERS__ --global --cwd --lang --help' -split ' ' }
@@ -2939,8 +4520,12 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --deep --json --lang --help' -split ' ' }
+        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
+        'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
+        'candidate' { '__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help' -split ' ' }
+        'workspace' { '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help' -split ' ' }
         'env' { '__ENV_COMMANDS__ --profile --cwd --json --lang --help' -split ' ' }
@@ -2949,6 +4534,7 @@ complete -c pinset -f -a '--help --lang'"#
         { $_ -in @('activate', 'completions') } { '__SHELLS__ --lang --help' -split ' ' }
         'source' { '__SOURCE_COMMANDS__ __SOURCE_PROVIDERS__ --lang --help' -split ' ' }
         'provider' { '__PROVIDER_COMMANDS__ --json --lang --help' -split ' ' }
+        'editor' { '__EDITOR_COMMANDS__ --cwd --json --lang --help' -split ' ' }
         default { '__COMMANDS__ -C --cwd -e --profile --no-env --help --version --lang' -split ' ' }
     }
     $values |
@@ -2964,6 +4550,10 @@ complete -c pinset -f -a '--help --lang'"#
         .replace("__SHELLS__", COMPLETION_SHELLS)
         .replace("__LOCK_COMMANDS__", COMPLETION_LOCK_COMMANDS)
         .replace("__CACHE_COMMANDS__", COMPLETION_CACHE_COMMANDS)
+        .replace("__BUNDLE_COMMANDS__", COMPLETION_BUNDLE_COMMANDS)
+        .replace("__CANDIDATE_COMMANDS__", COMPLETION_CANDIDATE_COMMANDS)
+        .replace("__WORKSPACE_COMMANDS__", COMPLETION_WORKSPACE_COMMANDS)
+        .replace("__EDITOR_COMMANDS__", COMPLETION_EDITOR_COMMANDS)
         .replace("__VENV_COMMANDS__", COMPLETION_VENV_COMMANDS)
         .replace("__SHIM_COMMANDS__", COMPLETION_SHIM_COMMANDS)
         .replace("__SOURCE_COMMANDS__", COMPLETION_SOURCE_COMMANDS)
@@ -3020,6 +4610,12 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Dotnet => {
             validate_exact_dotnet_version(version)?;
         }
+        RuntimeMetadataKind::Declarative => {
+            semver::Version::parse(version).map_err(|_| Error::InvalidToolVersion {
+                tool: tool.to_owned(),
+                version: version.to_owned(),
+            })?;
+        }
     }
     Ok(())
 }
@@ -3027,6 +4623,14 @@ fn validate_exact_tool_version(
 fn resolve_locked_tool(
     tool: &str,
     selector: &str,
+) -> Result<LockedTool, Box<dyn std::error::Error>> {
+    resolve_locked_tool_with_options(tool, selector, None)
+}
+
+fn resolve_locked_tool_with_options(
+    tool: &str,
+    selector: &str,
+    options: Option<&pinset_core::ToolOptions>,
 ) -> Result<LockedTool, Box<dyn std::error::Error>> {
     let provider = runtime_provider(tool).expect("validated provider");
     let mut locked = match provider.capabilities.metadata {
@@ -3050,9 +4654,30 @@ fn resolve_locked_tool(
             flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?
         }
         RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Java => JavaMetadataClient::official()?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Rust => RustMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Java => {
+            JavaMetadataClient::official()?.resolve_tool_with_options(selector, options)?
+        }
+        RuntimeMetadataKind::Rust => {
+            RustMetadataClient::official()?.resolve_tool_with_options(selector, options)?
+        }
         RuntimeMetadataKind::Dotnet => DotnetMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Declarative => {
+            let home = pinset_home()?;
+            let registry = effective_provider_registry(&home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            pinset_core::DeclarativeProviderClient::official()?.resolve_tool(
+                manifest,
+                selector,
+                &registry.signer_fingerprint,
+            )?
+        }
     };
     locked.requested = selector.to_owned();
     Ok(locked)
@@ -3110,9 +4735,9 @@ fn select_tools(
 
     if !no_install {
         let installation = if global {
-            install_global(&home, catalog)
+            install_global(&home, false, catalog)
         } else {
-            install_project(cwd, catalog)
+            install_project(cwd, false, catalog)
         };
         if let Err(error) = installation {
             let localized = catalog.command_error(error.as_ref());
@@ -3202,7 +4827,8 @@ where
             load_optional_lockfile_for_target_refresh(&lock_path)?
                 .unwrap_or_else(|| (new_lockfile(), Vec::new()));
         if !legacy_target_tools.is_empty() {
-            validate_lock_matches_tools(&lockfile, &project.tools, &config_path)?;
+            let effective = effective_project_config(&config_path, &project)?;
+            validate_lock_matches_tools(&lockfile, &effective.tools, &config_path)?;
             let explicitly_replaced = resolved
                 .iter()
                 .map(|(tool, _, _)| tool.clone())
@@ -3216,9 +4842,40 @@ where
         }
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         apply_resolved_selections(&mut project.tools, &mut lockfile, resolved)?;
+        synchronize_effective_project_lock(&config_path, &project, &mut lockfile)?;
         save_project_state_locked(home, &config_path, &project, &lockfile)?;
         Ok(("project", lock_path))
     }
+}
+
+fn synchronize_effective_project_lock(
+    config_path: &Path,
+    project: &ProjectConfig,
+    lockfile: &mut Lockfile,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let effective = effective_project_config(config_path, project)?;
+    lockfile
+        .tools
+        .retain(|locked| effective.tools.contains_key(&locked.name));
+    for (tool, requested) in &effective.tools {
+        let expected_options = effective
+            .tool_options
+            .get(tool)
+            .map(pinset_core::ToolOptions::lock_options)
+            .unwrap_or_default();
+        let current_matches = lockfile.tool(tool).is_some_and(|locked| {
+            locked.requested == *requested && locked.options == expected_options
+        });
+        if !current_matches {
+            let resolved = resolve_locked_tool_with_options(
+                tool,
+                requested,
+                effective.tool_options.get(tool),
+            )?;
+            lockfile.upsert_tool(resolved)?;
+        }
+    }
+    Ok(())
 }
 
 fn load_optional_lockfile_for_target_refresh(
@@ -3601,7 +5258,7 @@ fn run_project_import(
         return Ok(());
     }
 
-    if let Err(error) = install_project(&report.start, catalog) {
+    if let Err(error) = install_project(&report.start, false, catalog) {
         let localized = catalog.command_error(error.as_ref());
         let detail = localized
             .strip_prefix("error: ")
@@ -3650,7 +5307,10 @@ fn load_project_import_state(
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: Default::default(),
             tools: BTreeMap::new(),
+            tool_options: BTreeMap::new(),
             tasks: BTreeMap::new(),
+            python: None,
+            workspace: None,
             environment: None,
         }
     };
@@ -3761,7 +5421,7 @@ fn run_update(
             &selected_config_path,
         )?)
     };
-    let (scope, config_path, tools, mut lockfile, legacy_target_tools) = if global {
+    let (scope, config_path, tools, tool_options, mut lockfile, legacy_target_tools) = if global {
         let config_path = selected_config_path;
         let config = load_global_config(&config_path)?;
         let (lockfile, legacy_target_tools) =
@@ -3771,19 +5431,22 @@ fn run_update(
             "global",
             config_path,
             config.tools,
+            BTreeMap::new(),
             lockfile,
             legacy_target_tools,
         )
     } else {
         let config_path = selected_config_path;
-        let config = load_project_config(&config_path)?;
+        let config = load_effective_project_config(&config_path)?;
         let (lockfile, legacy_target_tools) =
             load_lockfile_for_provider_refresh(&lockfile_path(&config_path))?;
         validate_lock_matches_tools(&lockfile, &config.tools, &config_path)?;
+        validate_lock_matches_tool_options(&lockfile, &config.tool_options, &config_path)?;
         (
             "project",
             config_path,
             config.tools,
+            config.tool_options,
             lockfile,
             legacy_target_tools,
         )
@@ -3808,18 +5471,22 @@ fn run_update(
         if tool.is_some_and(|tool| tool != selected_tool) {
             continue;
         }
-        let previous = lockfile
+        let previous_tool = lockfile
             .tool(selected_tool)
-            .expect("validated lock contains configured tool")
-            .version
-            .clone();
-        let resolved = resolve_locked_tool(selected_tool, requested)?;
+            .expect("validated lock contains configured tool");
+        let previous = previous_tool.version.clone();
+        let previous_options = previous_tool.options.clone();
+        let resolved = resolve_locked_tool_with_options(
+            selected_tool,
+            requested,
+            tool_options.get(selected_tool),
+        )?;
         let report = UpdateReport {
             scope,
             config: config_path.clone(),
             tool: selected_tool.clone(),
             requested: requested.clone(),
-            changed: previous != resolved.version,
+            changed: previous != resolved.version || previous_options != resolved.options,
             previous,
             resolved: resolved.version.clone(),
         };
@@ -3836,7 +5503,7 @@ fn run_update(
     }
 
     if !global {
-        let config = load_project_config(&config_path)?;
+        let config = load_effective_project_config(&config_path)?;
         validate_project_lock_policy(&config, &lockfile, std::time::SystemTime::now())?;
     }
 
@@ -4048,7 +5715,7 @@ fn install_tool_selection(
     }
     let mut lockfile = new_lockfile();
     lockfile.upsert_tool(locked_tool)?;
-    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, true, catalog)
+    install_tool_from_lock(&pinset_home()?, &lockfile, &tool, true, false, catalog)
 }
 
 fn unset_tool(
@@ -4124,7 +5791,9 @@ fn unset_tool(
     let lock_path = lockfile_path(&config_path);
     let lockfile = load_optional_lockfile_for_target_refresh(&lock_path)?;
     if let Some((lockfile, _)) = &lockfile {
-        validate_lock_matches_tools(lockfile, &config.tools, &config_path)?;
+        let effective = effective_project_config(&config_path, &config)?;
+        validate_lock_matches_tools(lockfile, &effective.tools, &config_path)?;
+        validate_lock_matches_tool_options(lockfile, &effective.tool_options, &config_path)?;
     }
     config.tools.remove(tool);
     if let Some((mut lockfile, legacy_target_tools)) = lockfile {
@@ -4140,6 +5809,7 @@ fn unset_tool(
             &BTreeSet::new(),
             &mut resolver,
         )?;
+        synchronize_effective_project_lock(&config_path, &config, &mut lockfile)?;
         lockfile.generated_by = format!("pinset {}", pinset_core::pinset_version());
         let remove_empty_lock = lockfile.tools.is_empty();
         save_project_state_locked(&home, &config_path, &config, &lockfile)?;
@@ -4147,7 +5817,13 @@ fn unset_tool(
             fs::remove_file(&lock_path)?;
         }
     } else {
-        save_project_config(&config_path, &config)?;
+        let mut lockfile = new_lockfile();
+        synchronize_effective_project_lock(&config_path, &config, &mut lockfile)?;
+        if lockfile.tools.is_empty() {
+            save_project_config(&config_path, &config)?;
+        } else {
+            save_project_state_locked(&home, &config_path, &config, &lockfile)?;
+        }
     }
     println!(
         "{}",
@@ -4199,7 +5875,7 @@ fn requested_help_command(arguments: &[OsString]) -> Option<Option<&str>> {
 }
 
 fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
-    const COMMANDS: [&str; 31] = [
+    const COMMANDS: [&str; 35] = [
         "init",
         "detect",
         "import",
@@ -4214,6 +5890,8 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "migrate",
         "exec",
         "doctor",
+        "status",
+        "check",
         "shim",
         "activate",
         "completions",
@@ -4223,6 +5901,8 @@ fn command_from_arguments(arguments: &[OsString]) -> Option<&str> {
         "prune",
         "lock",
         "cache",
+        "bundle",
+        "candidate",
         "venv",
         "paths",
         "env",
@@ -4257,24 +5937,55 @@ fn resolve_language(requested: Option<Language>) -> Result<Language, Box<dyn std
         .map_err(Into::into)
 }
 
-fn install_project(cwd: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
-    install_project_with_venv(cwd, false, catalog)
+fn install_project(
+    cwd: &Path,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    install_project_with_venv(cwd, false, offline, catalog)
 }
 
 fn install_project_with_venv(
     cwd: &Path,
     recreate_venv: bool,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    install_project_with_python_environment(
+        cwd,
+        "default",
+        pinset_core::PYTHON_ENVIRONMENT_DIR,
+        recreate_venv,
+        offline,
+        catalog,
+    )
+}
+
+fn install_project_with_python_environment(
+    cwd: &Path,
+    environment_name: &str,
+    environment_path: &str,
+    recreate_venv: bool,
+    offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
     let lock_path = lockfile_path(&config_path);
     let home = pinset_home()?;
     let policy_lock = load_lockfile(&lock_path)?;
     validate_lock_matches_tools(&policy_lock, &project.tools, &config_path)?;
+    validate_lock_matches_tool_options(&policy_lock, &project.tool_options, &config_path)?;
     validate_project_lock_policy(&project, &policy_lock, std::time::SystemTime::now())?;
     register_project_config(&home, &config_path)?;
-    install_locked_selection(&home, &project.tools, &config_path, &lock_path, catalog)?;
+    install_locked_selection(
+        &home,
+        &project.tools,
+        &config_path,
+        &lock_path,
+        offline,
+        catalog,
+    )?;
     if let Some(requested) = project.tools.get("python") {
         let distribution = selected_version_from_lock(
             "python",
@@ -4283,7 +5994,14 @@ fn install_project_with_venv(
             &config_path,
             &lock_path,
         )?;
-        ensure_project_python_environment(&home, &config_path, &distribution, recreate_venv)?;
+        ensure_project_python_environment(
+            &home,
+            &config_path,
+            environment_name,
+            environment_path,
+            &distribution,
+            recreate_venv,
+        )?;
     }
     Ok(())
 }
@@ -4292,13 +6010,14 @@ fn run_venv_command(
     command: VenvCommands,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (cwd, action) = match command {
-        VenvCommands::Create { cwd } => (effective_cwd(cwd)?, "create"),
-        VenvCommands::Status { cwd } => (effective_cwd(cwd)?, "status"),
-        VenvCommands::Recreate { cwd } => (effective_cwd(cwd)?, "recreate"),
+    let (cwd, name, action) = match command {
+        VenvCommands::Create { name, cwd } => (effective_cwd(cwd)?, name, "create"),
+        VenvCommands::Status { name, cwd } => (effective_cwd(cwd)?, name, "status"),
+        VenvCommands::Recreate { name, cwd } => (effective_cwd(cwd)?, name, "recreate"),
     };
     let config_path = find_project_config(&cwd)?;
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
+    let environment_path = python_environment_relative_path(&project, &name)?.to_owned();
     let requested =
         project
             .tools
@@ -4315,20 +6034,36 @@ fn run_venv_command(
     )?;
     if action == "status" {
         let target = current_target_for_tool("python");
-        let environment = load_project_python_environment(&config_path, &distribution, &target)?;
+        let environment = load_project_python_environment_for(
+            &config_path,
+            &name,
+            &environment_path,
+            &distribution,
+            &target,
+        )?;
         println!(
-            "python@{} project environment {}",
+            "python@{} project environment {} at {}",
             environment.distribution,
+            environment.name,
             environment.root.display()
         );
         return Ok(());
     }
-    install_project_with_venv(&cwd, action == "recreate", catalog)
+    install_project_with_python_environment(
+        &cwd,
+        &name,
+        &environment_path,
+        action == "recreate",
+        false,
+        catalog,
+    )
 }
 
 fn ensure_project_python_environment(
     home: &Path,
     config_path: &Path,
+    environment_name: &str,
+    environment_path: &str,
     distribution: &str,
     recreate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4352,22 +6087,29 @@ fn ensure_project_python_environment(
                 .collect::<Vec<_>>()
                 .join(", "),
         })?;
-    let environment = create_project_python_environment(
+    let environment = create_project_python_environment_for(
         config_path,
+        environment_name,
+        environment_path,
         base_python,
         distribution,
         &target,
         recreate,
     )?;
     println!(
-        "python@{} project environment ready at {}",
+        "python@{} project environment {} ready at {}",
         environment.distribution,
+        environment.name,
         environment.root.display()
     );
     Ok(())
 }
 
-fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::error::Error>> {
+fn install_global(
+    home: &Path,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = global_config_path(home);
     let config: GlobalConfig = load_global_config(&config_path)?;
     install_locked_selection(
@@ -4375,6 +6117,7 @@ fn install_global(home: &Path, catalog: Catalog) -> Result<(), Box<dyn std::erro
         &config.tools,
         &config_path,
         &global_lockfile_path(home),
+        offline,
         catalog,
     )
 }
@@ -4384,12 +6127,51 @@ fn install_locked_selection(
     configured: &std::collections::BTreeMap<String, String>,
     config_path: &Path,
     lock_path: &Path,
+    offline: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lockfile = load_lockfile(lock_path)?;
     validate_lock_matches_tools(&lockfile, configured, config_path)?;
+    if offline {
+        validate_offline_artifacts(home, &lockfile)?;
+    }
     for provider in pinset_core::selected_provider_order(configured)? {
-        install_tool_from_lock(home, &lockfile, provider.tool, true, catalog)?;
+        install_tool_from_lock(home, &lockfile, provider.tool, true, offline, catalog)?;
+    }
+    Ok(())
+}
+
+fn validate_offline_artifacts(
+    home: &Path,
+    lockfile: &Lockfile,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source_config = load_source_config(&source_config_path(home))?;
+    let items = locked_prefetch_items(lockfile, &source_config)?;
+    let mut missing = Vec::new();
+    for item in items {
+        let identity = ArtifactIntegrity::parse(&item.artifact.integrity)?;
+        let path = home
+            .join("downloads")
+            .join(identity.algorithm().as_str())
+            .join(format!("{}.archive", identity.cache_key()));
+        if !path.is_file() {
+            missing.push(format!("{}:{}", item.tool, identity.canonical()));
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "offline cache is missing {} artifact(s): {}",
+            missing.len(),
+            missing.join(", ")
+        )
+        .into());
+    }
+    let verification = verify_download_cache(home)?;
+    if verification.corrupt > 0 {
+        return Err(Error::DownloadCacheCorrupt {
+            entries: verification.corrupt,
+        }
+        .into());
     }
     Ok(())
 }
@@ -4399,6 +6181,19 @@ fn install_tool_from_lock(
     lockfile: &Lockfile,
     tool: &str,
     register_shims: bool,
+    offline: bool,
+    catalog: Catalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    install_tool_from_lock_with_output(home, lockfile, tool, register_shims, offline, true, catalog)
+}
+
+fn install_tool_from_lock_with_output(
+    home: &Path,
+    lockfile: &Lockfile,
+    tool: &str,
+    register_shims: bool,
+    offline: bool,
+    print_outcome: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let locked_tool = lockfile
@@ -4407,6 +6202,8 @@ fn install_tool_from_lock(
             tool: tool.to_owned(),
         })?;
     let installer = Installer::new(InstallLimits::for_tool(tool))?
+        .with_offline(offline)
+        .with_install_identity(locked_tool.installation_version())
         .with_progress_reporter(download_progress_reporter(catalog));
     let target = current_target_for_tool(tool);
     let provider = runtime_provider(tool).expect("locked tool provider exists");
@@ -4433,7 +6230,29 @@ fn install_tool_from_lock(
         RuntimeInstallKind::Dotnet => {
             install_locked_dotnet(&installer, home, locked_tool, &target)?
         }
+        RuntimeInstallKind::Declarative => {
+            let registry = effective_provider_registry(home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            install_locked_declarative_provider(
+                &installer,
+                home,
+                manifest,
+                &registry.signer_fingerprint,
+                locked_tool,
+                &target,
+            )?
+        }
     };
+    if !print_outcome {
+        return Ok(());
+    }
     if outcome.reused_existing {
         if tool == "node" {
             println!(
@@ -4768,7 +6587,7 @@ fn print_project_override(
     let Some(config_path) = find_optional_project_config(cwd)? else {
         return Ok(());
     };
-    let project = load_project_config(&config_path)?;
+    let project = load_effective_project_config(&config_path)?;
     let Some(project_version) = project.tools.get("node") else {
         return Ok(());
     };
@@ -4896,10 +6715,41 @@ fn run_project_task(
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let config = load_project_config(&config_path)?;
+    let config = load_effective_project_config(&config_path)?;
     if config.schema < PROJECT_CONFIG_SCHEMA {
         return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
     }
+    if !config.tasks.contains_key(task_name) {
+        return Err(format!("project task {task_name:?} is not declared").into());
+    }
+    let order = pinset_core::project_task_order(&config, task_name)?;
+    for current in order {
+        let arguments = if current == task_name { appended } else { &[] };
+        let code = run_project_task_once(
+            &config_path,
+            &config,
+            &current,
+            arguments,
+            explicit_profile,
+            no_environment,
+            catalog,
+        )?;
+        if code != 0 {
+            return Ok(code);
+        }
+    }
+    Ok(0)
+}
+
+fn run_project_task_once(
+    config_path: &Path,
+    config: &ProjectConfig,
+    task_name: &str,
+    appended: &[OsString],
+    explicit_profile: Option<&str>,
+    no_environment: bool,
+    catalog: Catalog,
+) -> Result<i32, Box<dyn std::error::Error>> {
     let task = config
         .tasks
         .get(task_name)
@@ -4935,9 +6785,46 @@ fn run_project_task(
         false,
         task_profile,
         no_environment,
-        true,
+        SelectedExecution::external(task.python_environment.as_deref()),
         catalog,
     )
+}
+
+fn python_environment_relative_path<'a>(
+    config: &'a ProjectConfig,
+    name: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    if name == "default" {
+        return Ok(pinset_core::PYTHON_ENVIRONMENT_DIR);
+    }
+    config
+        .python
+        .as_ref()
+        .and_then(|python| python.environments.get(name))
+        .map(|environment| environment.path.as_str())
+        .ok_or_else(|| format!("Python environment {name:?} is not declared").into())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SelectedExecution<'a> {
+    allow_external: bool,
+    python_environment: Option<&'a str>,
+}
+
+impl<'a> SelectedExecution<'a> {
+    const fn managed() -> Self {
+        Self {
+            allow_external: false,
+            python_environment: None,
+        }
+    }
+
+    const fn external(python_environment: Option<&'a str>) -> Self {
+        Self {
+            allow_external: true,
+            python_environment,
+        }
+    }
 }
 
 fn execute_selected(
@@ -4946,9 +6833,20 @@ fn execute_selected(
     install_ephemeral: bool,
     environment_profile: Option<&str>,
     no_environment: bool,
-    allow_external: bool,
+    options: SelectedExecution<'_>,
     catalog: Catalog,
 ) -> Result<i32, Box<dyn std::error::Error>> {
+    let allow_external = options.allow_external;
+    let python_environment = options.python_environment;
+    let python_environment_path = python_environment
+        .map(|name| {
+            let config_path = find_project_config(cwd)?;
+            let config = load_effective_project_config(&config_path)?;
+            Ok::<String, Box<dyn std::error::Error>>(
+                python_environment_relative_path(&config, name)?.to_owned(),
+            )
+        })
+        .transpose()?;
     let (ephemeral_selection, mut command) = command
         .first()
         .and_then(|value| value.to_str())
@@ -5022,7 +6920,18 @@ fn execute_selected(
                 environment,
             )
         } else {
-            let resolution = if allow_external {
+            let resolution = if allow_external
+                && let (Some(environment_name), Some(relative_path)) =
+                    (python_environment, python_environment_path.as_deref())
+            {
+                resolve_execution_command_for_python_environment(
+                    command_name,
+                    cwd,
+                    &home,
+                    environment_name,
+                    relative_path,
+                )?
+            } else if allow_external {
                 pinset_core::resolve_execution_command(command_name, cwd, &home)?
             } else if command_tool(command_name).is_some() {
                 resolve_command(command_name, cwd, &home)?
@@ -5038,7 +6947,52 @@ fn execute_selected(
                 Vec::new(),
             )
         };
-    let execution = pinset_core::execution_context(&tool, &executable, cwd, &home)?;
+    let mut execution = pinset_core::execution_context(&tool, &executable, cwd, &home)?;
+    if let (Some(environment_name), Some(relative_path)) =
+        (python_environment, python_environment_path.as_deref())
+    {
+        let selection = resolve_tool_selection("python", cwd, &home)?;
+        if selection.source != pinset_core::SelectionSource::Project {
+            return Err(Error::PythonEnvironmentSelectionMissing {
+                path: cwd.to_path_buf(),
+            }
+            .into());
+        }
+        let environment = load_project_python_environment_for(
+            &selection.config_path,
+            environment_name,
+            relative_path,
+            &selection.version,
+            &current_target_for_tool("python"),
+        )?;
+        let previous_virtual_environment = execution
+            .environment
+            .iter()
+            .find(|variable| variable.name == "VIRTUAL_ENV")
+            .map(|variable| PathBuf::from(&variable.value));
+        let mut path_entries = vec![environment.command_directory.clone()];
+        path_entries.extend(env::split_paths(&execution.path).filter(|entry| {
+            if entry == &environment.command_directory {
+                return false;
+            }
+            previous_virtual_environment.as_ref().is_none_or(|root| {
+                entry != &root.join(if cfg!(windows) { "Scripts" } else { "bin" })
+            })
+        }));
+        execution.path = env::join_paths(path_entries)?;
+        execution
+            .environment
+            .retain(|variable| variable.name != "VIRTUAL_ENV");
+        execution
+            .environment
+            .push(pinset_core::RuntimeEnvironmentVariable {
+                name: "VIRTUAL_ENV",
+                value: environment.root.into_os_string(),
+            });
+        if !execution.remove_environment.contains(&"PYTHONHOME") {
+            execution.remove_environment.push("PYTHONHOME");
+        }
+    }
     if source != "system" {
         validate_managed_runtime_invocation(&tool, command_name, &command[1..])?;
     }
@@ -5161,7 +7115,7 @@ fn install_ephemeral_selection(
                 &selection.config_path,
             )?;
             if selection.source == pinset_core::SelectionSource::Project {
-                let config = load_project_config(&selection.config_path)?;
+                let config = load_effective_project_config(&selection.config_path)?;
                 validate_project_lock_policy(
                     &config,
                     &dependency_lock,
@@ -5178,7 +7132,7 @@ fn install_ephemeral_selection(
         lockfile.upsert_tool(locked_tool)?;
     }
     for provider in providers {
-        install_tool_from_lock(home, &lockfile, provider.tool, false, catalog)?;
+        install_tool_from_lock(home, &lockfile, provider.tool, false, false, catalog)?;
     }
     Ok(())
 }
@@ -5198,6 +7152,45 @@ fn runtime_command_path(command_dir: &Path, command: &str) -> PathBuf {
 
 fn command_for_runtime(executable: &Path) -> Command {
     Command::new(executable)
+}
+
+fn run_diagnostic_command(
+    command: &'static str,
+    cwd: Option<PathBuf>,
+    json: bool,
+    save: Option<PathBuf>,
+    compare: Option<PathBuf>,
+    repair_preview: bool,
+    strict: bool,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let cwd = effective_cwd(cwd)?;
+    let report = diagnostics::collect(&cwd, repair_preview)?;
+    let comparison = compare
+        .as_deref()
+        .map(diagnostics::load)
+        .transpose()?
+        .as_ref()
+        .map(|previous| diagnostics::compare(previous, &report));
+    if let Some(path) = save.as_deref() {
+        diagnostics::save(path, &report)?;
+    }
+    let failed = !report.summary.passed
+        || comparison
+            .as_ref()
+            .is_some_and(|comparison| comparison.changed);
+    let output = diagnostics::DiagnosticOutput {
+        report,
+        comparison,
+        saved: save.map(|path| path.display().to_string()),
+    };
+    if json {
+        print_json_success(command, output)?;
+    } else {
+        for line in diagnostics::human_lines(&output) {
+            println!("{line}");
+        }
+    }
+    Ok(if strict && failed { 1 } else { 0 })
 }
 
 #[derive(Debug, Serialize)]
@@ -6117,7 +8110,8 @@ fn run_source_command(
                     RuntimeMetadataKind::Java
                     | RuntimeMetadataKind::Rust
                     | RuntimeMetadataKind::Dotnet
-                    | RuntimeMetadataKind::Npm,
+                    | RuntimeMetadataKind::Npm
+                    | RuntimeMetadataKind::Declarative,
                 )
                 | None => {
                     return Err(format!(
@@ -6141,18 +8135,148 @@ fn run_source_command(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct EditorContextReport {
+    protocol_schema: u32,
+    minimum_extension_version: &'static str,
+    cli_version: &'static str,
+    requires_workspace_trust: bool,
+    folder: String,
+    project_root: Option<String>,
+    config: Option<String>,
+    workspace_members: Vec<String>,
+    environment: EditorEnvironmentReport,
+    tasks: Vec<EditorTaskReport>,
+    diagnostics: diagnostics::DiagnosticReport,
+}
+
+#[derive(Debug, Serialize)]
+struct EditorEnvironmentReport {
+    profiles: Vec<String>,
+    selected: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EditorTaskReport {
+    name: String,
+    description: Option<String>,
+    depends_on: Vec<String>,
+    profile: Option<String>,
+    cwd: Option<String>,
+    python_environment: Option<String>,
+}
+
+fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        EditorCommands::Context { cwd, json } => {
+            let cwd = effective_cwd(cwd)?;
+            let config_path = find_optional_project_config(&cwd)?;
+            let config = config_path
+                .as_deref()
+                .map(load_effective_project_config)
+                .transpose()?;
+            let home = pinset_home()?;
+            let environment = if let (Some(path), Some(config)) = (&config_path, &config) {
+                let selection = pinset_core::environment_selection(&home, path, config, None)?;
+                EditorEnvironmentReport {
+                    profiles: config
+                        .environment
+                        .as_ref()
+                        .map(|environment| environment.profiles.keys().cloned().collect())
+                        .unwrap_or_default(),
+                    selected: selection.profile,
+                    source: selection.source.to_owned(),
+                }
+            } else {
+                EditorEnvironmentReport {
+                    profiles: Vec::new(),
+                    selected: None,
+                    source: "none".to_owned(),
+                }
+            };
+            let tasks = config
+                .as_ref()
+                .map(|config| {
+                    config
+                        .tasks
+                        .iter()
+                        .map(|(name, task)| EditorTaskReport {
+                            name: name.clone(),
+                            description: task.description.clone(),
+                            depends_on: task.depends_on.clone(),
+                            profile: task.profile.clone(),
+                            cwd: task.cwd.clone(),
+                            python_environment: task.python_environment.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let workspace_members = match (&config_path, &config) {
+                (Some(path), Some(config)) if config.workspace.is_some() => {
+                    workspace_members(path)?
+                        .into_iter()
+                        .map(|member| member.name)
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            let report = EditorContextReport {
+                protocol_schema: 1,
+                minimum_extension_version: "1.0.0",
+                cli_version: pinset_core::pinset_version(),
+                requires_workspace_trust: true,
+                folder: cwd.display().to_string(),
+                project_root: config_path
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map(|path| path.display().to_string()),
+                config: config_path.map(|path| path.display().to_string()),
+                workspace_members,
+                environment,
+                tasks,
+                diagnostics: diagnostics::collect(&cwd, false)?,
+            };
+            if json {
+                print_json_success("editor.context", report)?;
+            } else {
+                println!(
+                    "Pinset editor protocol={} CLI={} tasks={} profiles={} diagnostics={}",
+                    report.protocol_schema,
+                    report.cli_version,
+                    report.tasks.len(),
+                    report.environment.profiles.len(),
+                    if report.diagnostics.summary.passed {
+                        "passed"
+                    } else {
+                        "attention"
+                    }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         ProviderCommands::List { json } => {
-            let verified = pinset_core::embedded_provider_registry()?;
+            let home = pinset_home()?;
+            let active_path = provider_registry_path(&home);
+            let active = fs::symlink_metadata(&active_path).is_ok();
+            let verified = effective_provider_registry(&home)?;
             if json {
-                print_json_success("provider.list", verified)?;
+                print_json_success(
+                    "provider.list",
+                    serde_json::json!({ "active": active, "registry": verified }),
+                )?;
             } else {
                 println!(
-                    "registry={} schema={} signer={}",
+                    "registry={} schema={} signer={} source={}",
                     verified.document.registry,
                     verified.document.schema,
-                    verified.signer_fingerprint
+                    verified.signer_fingerprint,
+                    if active { "trusted-file" } else { "embedded" }
                 );
                 for provider in &verified.document.providers {
                     let dependencies = if provider.dependencies.is_empty() {
@@ -6169,9 +8293,11 @@ fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::er
                         .collect::<Vec<_>>()
                         .join(",");
                     println!(
-                        "{} id={} commands={} dependencies={} verification={} activation=built-in-only",
+                        "{} id={} revision={} enabled={} commands={} dependencies={} verification={}",
                         provider.tool,
                         provider.id,
+                        provider.revision,
+                        !provider.disabled,
                         provider.commands.join(","),
                         dependencies,
                         methods
@@ -6188,13 +8314,149 @@ fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::er
                 print_json_success("provider.verify", verified)?;
             } else {
                 println!(
-                    "Provider Registry verified: registry={} schema={} providers={} signer={} activation=none",
+                    "Provider Registry verified: registry={} schema={} providers={} signer={}",
                     verified.document.registry,
                     verified.document.schema,
                     verified.document.providers.len(),
                     verified.signer_fingerprint
                 );
             }
+        }
+        ProviderCommands::Status { json } => {
+            let home = pinset_home()?;
+            let path = provider_registry_path(&home);
+            let active = fs::symlink_metadata(&path).is_ok();
+            let verified = effective_provider_registry(&home)?;
+            let report = serde_json::json!({
+                "active": active,
+                "path": path,
+                "registry": verified.document.registry,
+                "schema": verified.document.schema,
+                "providers": verified.document.providers.len(),
+                "signer": verified.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.status", report)?;
+            } else {
+                println!(
+                    "Provider Registry: source={} path={} schema={} providers={} signer={}",
+                    if active { "trusted-file" } else { "embedded" },
+                    path.display(),
+                    verified.document.schema,
+                    verified.document.providers.len(),
+                    verified.signer_fingerprint
+                );
+            }
+        }
+        ProviderCommands::Trust { registry, json } => {
+            let source = pinset_core::load_signed_provider_registry(&registry)?;
+            pinset_core::validate_runtime_provider_declarations(&source.document)?;
+            let content = fs::read_to_string(&registry)?;
+            let verified = pinset_core::verify_signed_provider_registry(&content)?;
+            pinset_core::validate_runtime_provider_declarations(&verified.document)?;
+            let path = provider_registry_path(&pinset_home()?);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = AtomicWriteFile::options().open(&path)?;
+            output.write_all(content.as_bytes())?;
+            output.commit()?;
+            let installed = pinset_core::load_signed_provider_registry(&path)?;
+            pinset_core::validate_runtime_provider_declarations(&installed.document)?;
+            let report = serde_json::json!({
+                "active": true,
+                "path": path,
+                "registry": installed.document.registry,
+                "schema": installed.document.schema,
+                "providers": installed.document.providers.len(),
+                "signer": installed.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.trust", report)?;
+            } else {
+                println!("Activated verified Provider Registry at {}", path.display());
+            }
+        }
+        ProviderCommands::Untrust { json } => {
+            let path = provider_registry_path(&pinset_home()?);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(source.into()),
+            }
+            let verified = pinset_core::embedded_provider_registry()?;
+            let report = serde_json::json!({
+                "active": false,
+                "path": path,
+                "registry": verified.document.registry,
+                "schema": verified.document.schema,
+                "providers": verified.document.providers.len(),
+                "signer": verified.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.untrust", report)?;
+            } else {
+                println!("Using the Provider Registry embedded in this Pinset build");
+            }
+        }
+        ProviderCommands::Validate { registry, json } => {
+            let metadata = fs::symlink_metadata(&registry)?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.len() > 256 * 1024
+            {
+                return Err(
+                    "Provider Registry must be a regular JSON file of at most 256 KiB".into(),
+                );
+            }
+            let document =
+                pinset_core::validate_provider_registry_json(&fs::read_to_string(&registry)?)?;
+            if json {
+                print_json_success("provider.validate", document)?;
+            } else {
+                println!(
+                    "Provider Registry is structurally valid: schema={} providers={}",
+                    document.schema,
+                    document.providers.len()
+                );
+            }
+        }
+        ProviderCommands::Scaffold {
+            tool,
+            repository,
+            command,
+        } => {
+            let command = command.unwrap_or_else(|| tool.clone());
+            let manifest = serde_json::json!({
+                "id": format!("community/{tool}"),
+                "tool": tool,
+                "commands": [command],
+                "dependencies": [],
+                "revision": 1,
+                "disabled": false,
+                "capabilities": {
+                    "command-layout": "root",
+                    "metadata": "github-release-binary",
+                    "installer": "github-release-binary",
+                    "environment": "none",
+                    "lock-audit": "artifact-receipt",
+                    "provenance": { "methods": ["https-checksum"], "release-time": true }
+                },
+                "backend": {
+                    "kind": "github-release-binary",
+                    "repository": repository,
+                    "tag-prefix": "v",
+                    "checksum-asset": "sha256sum.txt",
+                    "assets": {
+                        "windows-x86_64": format!("{tool}-windows-amd64.exe"),
+                        "macos-aarch64": format!("{tool}-macos-arm64"),
+                        "macos-x86_64": format!("{tool}-macos-amd64"),
+                        "linux-x86_64": format!("{tool}-linux-amd64"),
+                        "linux-aarch64": format!("{tool}-linux-arm64")
+                    }
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
         }
     }
     Ok(())
@@ -6351,7 +8613,11 @@ fn manual_shim_commands(
         tools.insert(provider.to_owned());
     } else {
         if let Some(config_path) = find_optional_project_config(cwd)? {
-            tools.extend(load_project_config(&config_path)?.tools.into_keys());
+            tools.extend(
+                load_effective_project_config(&config_path)?
+                    .tools
+                    .into_keys(),
+            );
         }
         if let Some(config) = load_optional_global_config(&global_config_path(home))? {
             tools.extend(config.tools.into_keys());
@@ -6391,7 +8657,7 @@ fn repair_tool_selection(
     let install_dir = home
         .join("installs")
         .join(&tool)
-        .join(&locked_tool.version)
+        .join(locked_tool.installation_version())
         .join(&target);
     if !install_dir.is_dir() {
         return Err(format!(
@@ -6402,15 +8668,22 @@ fn repair_tool_selection(
     }
     let receipt_path = install_dir.join(".pinset-install.toml");
     let receipt: toml::Value = toml::from_str(&fs::read_to_string(&receipt_path)?)?;
+    let receipt_schema = receipt
+        .get("schema")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or_default();
+    let receipt_install_identity = receipt
+        .get("install_identity")
+        .and_then(toml::Value::as_str);
     let owned = receipt.get("complete").and_then(toml::Value::as_bool) == Some(true)
         && receipt.get("tool").and_then(toml::Value::as_str) == Some(tool.as_str())
         && receipt.get("version").and_then(toml::Value::as_str)
             == Some(locked_tool.version.as_str())
+        && receipt_install_identity.unwrap_or(&locked_tool.version)
+            == locked_tool.installation_version()
         && receipt.get("target").and_then(toml::Value::as_str) == Some(target.as_str())
-        && receipt
-            .get("schema")
-            .and_then(toml::Value::as_integer)
-            .is_some_and(|schema| matches!(schema, 1..=3));
+        && matches!(receipt_schema, 1..=4)
+        && (receipt_schema < 4 || receipt_install_identity.is_some());
     if !owned {
         return Err(
             "refusing to repair an installation without a matching Pinset ownership receipt".into(),
@@ -6437,7 +8710,7 @@ fn repair_tool_selection(
     lockfile.upsert_tool(locked_tool)?;
     let backup = expected_parent.join(format!(".{target}.repair-backup-{}", uuid::Uuid::new_v4()));
     fs::rename(&install_dir, &backup)?;
-    if let Err(error) = install_tool_from_lock(&home, &lockfile, &tool, true, catalog) {
+    if let Err(error) = install_tool_from_lock(&home, &lockfile, &tool, true, false, catalog) {
         if install_dir.exists() {
             return Err(format!(
                 "repair failed and the unexpected replacement prevents rollback; original remains at {}: {error}",
@@ -6692,7 +8965,7 @@ mod tests {
         fs::write(
             install_dir.join(".pinset-install.toml"),
             format!(
-                "complete = true\ntool = \"node\"\nversion = \"24.0.0\"\ntarget = \"{target}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
+                "schema = 3\ncomplete = true\ntool = \"node\"\nversion = \"24.0.0\"\ntarget = \"{target}\"\nselected_source = \"fixture\"\nartifact_sha256 = \"{}\"\n",
                 "ab".repeat(32)
             ),
         )
@@ -6705,6 +8978,7 @@ mod tests {
             provider: "nodejs".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: pinset_core::MVP_NODE_TARGETS
                 .into_iter()
                 .map(|target| {
@@ -6765,6 +9039,7 @@ mod tests {
             provider: "pnpm-npm".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         };
 
@@ -6897,6 +9172,7 @@ mod tests {
         .unwrap();
         let installed = pinset_core::InstalledToolVersion {
             tool: "node".to_owned(),
+            resolved_version: "24.0.0".to_owned(),
             version: "24.0.0".to_owned(),
             targets: vec!["windows-x86_64".to_owned()],
         };
@@ -6950,7 +9226,10 @@ mod tests {
                 ("go".to_owned(), "1.24.0".to_owned()),
                 ("node".to_owned(), "22.0.0".to_owned()),
             ]),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
+            workspace: None,
             environment: None,
         };
         let node = LockedTool {
@@ -6960,6 +9239,7 @@ mod tests {
             provider: "nodejs-official".to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         };
 
@@ -7163,7 +9443,10 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tool_options: Default::default(),
                 tasks: BTreeMap::new(),
+                python: None,
+                workspace: None,
                 environment: None,
             },
         )
@@ -7499,7 +9782,10 @@ mod tests {
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
                 tools: BTreeMap::new(),
+                tool_options: Default::default(),
                 tasks: BTreeMap::new(),
+                python: None,
+                workspace: None,
                 environment: None,
             },
         )
@@ -7632,6 +9918,7 @@ mod tests {
                     provider: format!("{tool}-npm"),
                     released_at: None,
                     metadata: BTreeMap::new(),
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -7672,6 +9959,7 @@ mod tests {
                     provider: "go-official".to_owned(),
                     released_at: None,
                     metadata: BTreeMap::new(),
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -7749,6 +10037,7 @@ mod tests {
                     provider: "adoptium-temurin".to_owned(),
                     released_at: None,
                     metadata,
+                    options: Default::default(),
                     artifacts,
                 }
             }
@@ -7776,6 +10065,7 @@ mod tests {
             provider: provider.to_owned(),
             released_at: None,
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: Vec::new(),
         }
     }

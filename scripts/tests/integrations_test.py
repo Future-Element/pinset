@@ -36,7 +36,7 @@ def require_text(path: pathlib.Path, values: tuple[str, ...]) -> None:
             raise AssertionError(f"{display} is missing {value!r}")
 
 
-for schema_name in ("pinset.schema.json", "pinset-lock.schema.json"):
+for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic-report.schema.json", "bundle-manifest.schema.json"):
     schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["additionalProperties"] is False
@@ -56,6 +56,9 @@ require_text(
         "pinset install --locked",
         "trust-project-id",
         "pinset trust add --project-id",
+        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+        "pinset-action-home/downloads",
+        "pinset cache verify",
     ),
 )
 action = (ROOT / "action.yml").read_text(encoding="utf-8")
@@ -74,6 +77,7 @@ require_text(
         "dist/pinset.rb",
         "dist/install.ps1",
         "dist/pinset-env.cdx.json",
+        "dist/pinset-vscode-1.0.0.vsix",
     ),
 )
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -92,6 +96,12 @@ require_text(
 website_package = json.loads((ROOT / "website/package.json").read_text(encoding="utf-8"))
 assert website_package["version"] == WORKSPACE_VERSION
 assert website_package["packageManager"] == "pnpm@10.15.0"
+extension_package = json.loads((ROOT / "editors/vscode/package.json").read_text(encoding="utf-8"))
+assert extension_package["version"] == "1.0.0"
+require_text(
+    ROOT / "editors/vscode/package.json",
+    ("pinset.refresh", "pinset.selectEnvironment", "pinset.runTask", "pinset.checkDiagnostics"),
+)
 require_text(
     ROOT / "examples/devcontainer/.devcontainer/Dockerfile",
     (f"ARG PINSET_VERSION={WORKSPACE_VERSION}", "SHA256SUMS", "sha256sum"),

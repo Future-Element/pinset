@@ -31,6 +31,7 @@ sboms = {f"{name}.cdx.json" for name in ("pinset-cli", "pinset-core", "pinset-en
 assets = archives | sboms | {
     "install.sh", "install.ps1", "uninstall.sh", "uninstall.ps1",
     "pinset-winget.yaml", "pinset-scoop.json", "pinset.rb", "SHA256SUMS",
+    "pinset-vscode-1.0.0.vsix",
 }
 release = json.loads(run("gh", "api", f"repos/{repository}/releases/tags/{tag}"))
 assert release["tag_name"] == tag and not release["draft"]
@@ -58,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
     for name in sboms:
         document = json.loads((downloaded / name).read_text())
         assert document["bomFormat"] == "CycloneDX" and document["specVersion"]
-    for name in archives | {"SHA256SUMS"}:
+    for name in archives | {"SHA256SUMS", "pinset-vscode-1.0.0.vsix"}:
         run("gh", "attestation", "verify", str(downloaded / name), "--repo", repository,
             "--source-digest", commit, "--source-ref", f"refs/tags/{tag}",
             "--signer-workflow", f"{repository}/.github/workflows/release.yml")
@@ -72,7 +73,11 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
             with tarfile.open(downloaded / name) as packed:
                 assert set(packed.getnames()) == expected
                 assert all(member.isfile() for member in packed.getmembers())
-    print(f"Verified {tag}: signed commit, 16 assets, 15 checksums, four SBOMs and archive provenance")
+    with zipfile.ZipFile(downloaded / "pinset-vscode-1.0.0.vsix") as packed:
+        names = set(packed.namelist())
+        assert "extension/dist/extension.js" in names
+        assert not any(name.startswith(("extension/src/", "extension/test/", "extension/node_modules/")) for name in names)
+    print(f"Verified {tag}: signed commit, 17 assets, 16 checksums, four SBOMs, VSIX and provenance")
 
     suffix = ".exe" if os.name == "nt" else ""
     installed = root / "install with spaces"

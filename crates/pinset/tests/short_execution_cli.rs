@@ -67,9 +67,11 @@ fn environment_probe_task(profile: &str) -> ProjectTask {
     ];
     ProjectTask {
         command,
+        depends_on: Vec::new(),
         cwd: None,
         profile: Some(profile.to_owned()),
         description: Some("Print the selected test profile".to_owned()),
+        python_environment: None,
     }
 }
 

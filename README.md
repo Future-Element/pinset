@@ -8,7 +8,7 @@
 
 Pinset is a predictable, project-boundary-aware runtime version manager for polyglot projects.
 
-It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, and `flutter` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
+It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, Flutter/Dart, and declarative development CLIs through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, `flutter`, and `jq` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
 
 ```text
 pinset.toml  ──selection intent, project policy, environment profiles
@@ -41,6 +41,7 @@ pinset.toml  ──selection intent, project policy, environment profiles
 | Rust stable | `rustc`, `cargo`, `rustdoc`, `rustfmt`, Clippy | ✓ | ✓ | ✓ | ✓ |
 | .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
 | Flutter / bundled Dart | `flutter`, `dart` | ✓ | ✓ | — | ✓ |
+| jq (declarative) | `jq` | ✓ | ✓ | ✓ | ✓ |
 
 Flutter does not publish an official Linux ARM64 SDK archive compatible with the current installation model, so Pinset returns an explicit unsupported-target error instead of downloading an x64 artifact. External components such as Android SDK, Visual Studio Build Tools, and Windows SDK are diagnosed by `doctor` but are not installed by Pinset.
 
@@ -72,6 +73,8 @@ pinset paths
 pinset paths flutter
 pinset list --long
 pinset doctor --deep
+pinset status --save diagnostic.json
+pinset check --compare diagnostic.json
 ```
 
 ## Install
@@ -88,7 +91,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.3.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.11.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -103,7 +106,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.3.0
+.\install.ps1 -Version 2.11.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -174,7 +177,7 @@ pnpm --version
 python --version
 ```
 
-`pinset.toml` stores selection intent, tasks, environment contracts, and policy; `pinset.lock` stores exact versions and platform artifacts. Project configuration uses schema 5 while the runtime lock remains schema 3. Encrypted environments do not participate in runtime artifact resolution.
+`pinset.toml` stores selection intent, structured tool options, tasks, environment contracts, and policy; `pinset.lock` stores exact versions, options, and platform artifacts. Project configuration uses schema 5 and the current development lock uses schema 4. Older locks remain readable until an explicit migration. Encrypted environments do not participate in runtime artifact resolution.
 
 ### 3. Run another version temporarily
 
@@ -200,6 +203,9 @@ pinset import
 Declare argument arrays instead of shell strings so Pinset preserves boundaries and child exit status:
 
 ```toml
+[tasks.prepare]
+command = ["pnpm", "install", "--frozen-lockfile"]
+
 [tasks.dev]
 command = ["pnpm", "dev"]
 profile = "development"
@@ -209,6 +215,7 @@ description = "Start the development server"
 command = ["pnpm", "test"]
 cwd = "packages/app"
 profile = "test"
+depends-on = ["prepare"]
 ```
 
 ```sh
@@ -304,10 +311,11 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
+          cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
 ```
@@ -322,10 +330,15 @@ pinset current --explain
 pinset which node --explain
 pinset paths node
 pinset doctor --deep
+pinset check --repair-preview
 
 # Check locks, cache bytes, and installation ownership
 pinset lock audit --json
 pinset cache verify
+pinset cache prefetch --jobs 4
+pinset bundle export --output project.pinset-bundle.tar.gz
+pinset bundle import project.pinset-bundle.tar.gz
+pinset install --locked --offline
 
 # Repair a damaged installation with a matching ownership receipt
 pinset install node@24.0.0 --repair
@@ -438,23 +451,70 @@ pinset env check --profile test
 pinset env diff development test
 ```
 
-Schema 5 adds `[tasks.<name>]` and `[environment.variables.<name>]`. Tasks can declare an argument array, project-relative directory, profile, and description. Contracts support `string`, `integer`, `boolean`, `url`, and `enum`, required fields, profile filters, and defaults for non-secret values. Schema 4 projects remain readable and keep working until `pinset migrate` explicitly enables schema 5.
+Schema 5 adds `[tasks.<name>]` and `[environment.variables.<name>]`. Tasks can declare an argument array, project-relative directory, profile, description, and `depends-on` list. Dependencies run once in declaration order before the selected task; cycles and missing dependencies are configuration errors, and the first nonzero exit stops the graph. Contracts support `string`, `integer`, `boolean`, `url`, and `enum`, required fields, profile filters, and defaults for non-secret values. Schema 4 projects remain readable and keep working until `pinset migrate` explicitly enables schema 5.
 
-### Future directions
+### Workspaces
 
-Pinset's next steps focus on making project environments easier to diagnose, deliver, and upgrade. The features below are planned and are not available in the current release.
+Schema 5 can declare explicit projects that share root defaults while keeping a separate `pinset.toml` and `pinset.lock` for every member:
 
-| Direction | Planned capabilities |
-| --- | --- |
-| Environment diagnostics and comparison | Unified status and checks, shareable reports without secret values, local/CI comparisons, and repair previews. |
-| Deeper language support | Rust components, compilation targets, and date-pinned nightly toolchains; Java distributions and JDK/JRE selection; named Python environments. |
-| Workspaces and multiple projects | Explicit members, shared tool defaults with member overrides, batch installation and checks, and tool-reference visibility. |
-| Offline delivery and caching | Artifact prefetching, verified offline bundles, explicit offline installation, broader mirror support, concurrent downloads, and CI caching. |
-| Candidate upgrades and recovery | Prepare candidate locks, test with candidate toolchains, apply verified selections, and restore previous toolchain configuration. |
-| A constrained Provider ecosystem | Declarative Providers for development CLIs, explicit source trust, manifest validation, and contributor tooling. |
-| Editor integration | VS Code toolchain status, environment selection, diagnostics, and task execution. |
+```toml
+[workspace]
+members = ["apps/web", "services/api"]
 
-Planned compatible releases are 2.4 diagnostics/CI, 2.5 offline delivery, 2.6 Rust/tool identity, 2.7 Java/Python, 2.8 workspaces, 2.9 candidate upgrades/recovery, 2.10 Providers, and 2.11 editor integration. These are delivery targets without promised dates. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
+[tools]
+node = "24"
+```
+
+```sh
+pinset workspace members
+pinset workspace install
+pinset workspace check --changed-since origin/main
+pinset workspace run test -- --watch
+pinset workspace update
+pinset workspace references node
+```
+
+A member selector replaces the root selector for that tool. Its complete `[tool-options.<tool>]` table also replaces the root table, so arrays never merge implicitly. Root tasks and environment defaults are inherited unless the member declares the same task or its own complete environment section. Batch update is a preview and does not modify member locks.
+
+### Candidate upgrades and recovery
+
+Prepare and test an exact candidate toolchain without changing the current project lock:
+
+```sh
+pinset candidate prepare
+pinset candidate test test
+pinset candidate apply
+pinset candidate history
+pinset candidate restore
+pinset candidate recover
+```
+
+Add `--workspace` to `prepare`, `test`, `status`, or `apply` to process every explicit member. Candidate records bind the raw and effective configuration, current lock, project identity, task definitions, Git HEAD, and worktree cleanliness. Apply accepts only the exact lock from the latest passing test and refuses conflicting configuration, lock, or Git changes. Recovery covers Pinset-managed lock state; commands run during tests may still change application files or external systems.
+
+### Declarative Providers
+
+Registry schema 2 can install development CLIs distributed as platform binaries in GitHub Releases. A Provider declares a fixed repository, target-to-asset map, checksum asset, commands, and revision. Manifests cannot contain scripts, hooks, shell fragments, arbitrary URLs, or environment code. `jq` is the first Provider delivered through this generic backend:
+
+```sh
+pinset use jq@1.8
+pinset -- jq --version
+pinset provider status
+pinset provider validate registry/providers.json
+pinset provider scaffold jq --repository jqlang/jq --command jq
+```
+
+Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 file, downloaded bytes, installation receipt, and active Provider revision before routing a command. `provider trust` activates a clear-signed snapshot from Pinset's pinned signer; `provider untrust` returns to the snapshot embedded in the binary. A signed revision can disable a Provider, and existing locks then fail closed.
+
+### VS Code integration
+
+The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.11.0. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
+
+```sh
+code --install-extension pinset-vscode-1.0.0.vsix
+pinset editor context --json
+```
+
+The extension starts no Pinset or project process until VS Code marks the workspace trusted. It checks the protocol and minimum extension version before using context, keeps each workspace folder's state separate, and terminates the launched process tree when a task terminal is cancelled.
 
 ## Contributing and license
 

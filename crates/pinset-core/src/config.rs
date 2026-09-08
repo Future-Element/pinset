@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
 };
@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "project-write")]
 use std::io::Write;
 
-use crate::{Error, MinimumReleaseAge, Result, VerificationStrength};
+use crate::{Error, MinimumReleaseAge, PYTHON_ENVIRONMENT_DIR, Result, VerificationStrength};
 
 #[cfg(feature = "lockfile")]
 use crate::Lockfile;
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 use crate::{
     acquire_project_state_write_lock, lockfile_path, register_project_config, save_lockfile,
-    validate_lock_matches_tools,
+    validate_lock_matches_tool_options, validate_lock_matches_tools,
 };
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
@@ -36,10 +36,67 @@ pub struct ProjectConfig {
     pub policy: ProjectPolicy,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+    /// Identity-affecting options for a configured tool. Plain string selections remain valid.
+    #[serde(
+        default,
+        rename = "tool-options",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub tool_options: BTreeMap<String, ToolOptions>,
     #[serde(default)]
     pub tasks: BTreeMap<String, ProjectTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<ProjectPython>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ProjectWorkspace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ToolOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+}
+
+impl ToolOptions {
+    pub fn lock_options(&self) -> BTreeMap<String, String> {
+        let mut options = BTreeMap::new();
+        if let Some(value) = &self.profile {
+            options.insert("profile".to_owned(), value.clone());
+        }
+        if !self.components.is_empty() {
+            let mut values = self.components.clone();
+            values.sort();
+            options.insert("components".to_owned(), values.join(","));
+        }
+        if !self.targets.is_empty() {
+            let mut values = self.targets.clone();
+            values.sort();
+            options.insert("targets".to_owned(), values.join(","));
+        }
+        if let Some(value) = &self.date {
+            options.insert("date".to_owned(), value.clone());
+        }
+        if let Some(value) = &self.distribution {
+            options.insert("distribution".to_owned(), value.clone());
+        }
+        if let Some(value) = &self.package {
+            options.insert("package".to_owned(), value.clone());
+        }
+        options
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -68,12 +125,42 @@ pub struct ProjectEnvironment {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProjectTask {
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_environment: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectPython {
+    #[serde(default)]
+    pub environments: BTreeMap<String, ProjectPythonEnvironmentConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectPythonEnvironmentConfig {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectWorkspace {
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMember {
+    pub name: String,
+    pub root: PathBuf,
+    pub config_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +353,12 @@ fn ancestors_through<'a>(start: &'a Path, boundary: &'a Path) -> impl Iterator<I
 }
 
 pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
+    let config = parse_project_config(path)?;
+    effective_project_config(path, &config)?;
+    Ok(config)
+}
+
+fn parse_project_config(path: &Path) -> Result<ProjectConfig> {
     let content = fs::read_to_string(path).map_err(|source| Error::ReadProjectConfig {
         path: path.to_path_buf(),
         source,
@@ -282,9 +375,121 @@ pub fn load_project_config(path: &Path) -> Result<ProjectConfig> {
         });
     }
 
-    validate_environment_config(&config)?;
-
     Ok(config)
+}
+
+pub fn load_effective_project_config(path: &Path) -> Result<ProjectConfig> {
+    let config = parse_project_config(path)?;
+    effective_project_config(path, &config)
+}
+
+pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<ProjectConfig> {
+    let Some((_, root)) = workspace_root_for_member(path)? else {
+        validate_environment_config(member)?;
+        return Ok(member.clone());
+    };
+    if member.workspace.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "a workspace member cannot declare a nested workspace".to_owned(),
+        });
+    }
+    let mut effective = root;
+    effective.project_id = member.project_id.clone();
+    effective.policy = member.policy.clone();
+    for tool in member.tools.keys() {
+        effective.tool_options.remove(tool);
+    }
+    effective.tools.extend(member.tools.clone());
+    effective.tool_options.extend(member.tool_options.clone());
+    effective.tasks.extend(member.tasks.clone());
+    if member.python.is_some() {
+        effective.python = member.python.clone();
+    }
+    if member.environment.is_some() {
+        effective.environment = member.environment.clone();
+    }
+    effective.workspace = None;
+    validate_environment_config(&effective)?;
+    Ok(effective)
+}
+
+pub fn workspace_members(root_config_path: &Path) -> Result<Vec<WorkspaceMember>> {
+    let root_config = parse_project_config(root_config_path)?;
+    validate_environment_config(&root_config)?;
+    let workspace = root_config
+        .workspace
+        .as_ref()
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!(
+                "{} does not declare a workspace",
+                root_config_path.display()
+            ),
+        })?;
+    let root = root_config_path.parent().unwrap_or_else(|| Path::new("."));
+    workspace
+        .members
+        .iter()
+        .map(|name| {
+            let member_root = root.join(name);
+            let config_path = member_root.join(PROJECT_CONFIG_FILENAME);
+            if !config_path.is_file() {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("workspace member {name:?} has no {}", config_path.display()),
+                });
+            }
+            Ok(WorkspaceMember {
+                name: name.clone(),
+                root: member_root,
+                config_path,
+            })
+        })
+        .collect()
+}
+
+pub fn find_workspace_config(start: &Path) -> Result<PathBuf> {
+    let config_path = find_project_config(start)?;
+    if parse_project_config(&config_path)?.workspace.is_some() {
+        return Ok(config_path);
+    }
+    workspace_root_for_member(&config_path)?
+        .map(|(path, _)| path)
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!(
+                "{} is not part of a Pinset workspace",
+                config_path.display()
+            ),
+        })
+}
+
+fn workspace_root_for_member(path: &Path) -> Result<Option<(PathBuf, ProjectConfig)>> {
+    let member_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_member =
+        fs::canonicalize(member_root).unwrap_or_else(|_| member_root.to_path_buf());
+    let boundary = nearest_git_root(member_root).unwrap_or_else(|| filesystem_root(member_root));
+    for ancestor in member_root
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .take_while(|ancestor| ancestor.starts_with(&boundary))
+    {
+        let candidate = ancestor.join(PROJECT_CONFIG_FILENAME);
+        if !candidate.is_file() {
+            continue;
+        }
+        let root = parse_project_config(&candidate)?;
+        validate_environment_config(&root)?;
+        let Some(workspace) = &root.workspace else {
+            continue;
+        };
+        let matches = workspace.members.iter().any(|member| {
+            let declared = ancestor.join(member);
+            fs::canonicalize(&declared).unwrap_or(declared) == canonical_member
+        });
+        if matches {
+            return Ok(Some((candidate, root)));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(feature = "project-write")]
@@ -329,7 +534,6 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
             actual: config.schema,
         });
     }
-    validate_environment_config(config)?;
     let mut normalized = config.clone();
     // Preserve schema 4 until the user explicitly runs `pinset migrate`. Schemas 1-3
     // keep the established automatic upgrade to schema 4 for compatibility.
@@ -337,6 +541,7 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
     if normalized.project_id.is_none() {
         normalized.project_id = Some(uuid::Uuid::new_v4().to_string());
     }
+    effective_project_config(path, &normalized)?;
     let serialized = serialize_project_config_preserving_comments(path, &normalized)?;
     let mut file =
         AtomicWriteFile::options()
@@ -359,6 +564,18 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             reason: "tasks require schema 5; run `pinset migrate`".to_owned(),
         });
     }
+    if config.schema < PROJECT_CONFIG_SCHEMA && config.python.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "named Python environments require schema 5; run `pinset migrate`".to_owned(),
+        });
+    }
+    if config.schema < PROJECT_CONFIG_SCHEMA && config.workspace.is_some() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "workspaces require schema 5; run `pinset migrate`".to_owned(),
+        });
+    }
+    validate_tool_options(config)?;
+    validate_workspace_config(config)?;
     if config.schema < 4 {
         if config.project_id.is_some() || config.environment.is_some() {
             return Err(Error::InvalidProjectConfig {
@@ -380,6 +597,11 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         });
     }
 
+    if config.tasks.len() > 256 {
+        return Err(Error::InvalidProjectConfig {
+            reason: "a project may declare at most 256 tasks".to_owned(),
+        });
+    }
     for (name, task) in &config.tasks {
         if !valid_task_name(name)
             || task.command.is_empty()
@@ -407,7 +629,29 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
                 });
             }
         }
+        if task.depends_on.len() > 64 {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} may depend on at most 64 tasks"),
+            });
+        }
+        let mut dependencies = BTreeSet::new();
+        for dependency in &task.depends_on {
+            if !valid_task_name(dependency)
+                || !dependencies.insert(dependency)
+                || !config.tasks.contains_key(dependency)
+            {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "task {name} has an invalid, duplicate or undeclared dependency {dependency}"
+                    ),
+                });
+            }
+        }
     }
+    for name in config.tasks.keys() {
+        project_task_order(config, name)?;
+    }
+    validate_python_environments(config)?;
     let Some(environment) = &config.environment else {
         if let Some((name, _)) = config.tasks.iter().find(|(_, task)| task.profile.is_some()) {
             return Err(Error::InvalidProjectConfig {
@@ -497,6 +741,231 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
             return Err(Error::InvalidProjectConfig {
                 reason: format!("task {name} references undeclared profile {profile}"),
             });
+        }
+    }
+    Ok(())
+}
+
+pub fn project_task_order(config: &ProjectConfig, task_name: &str) -> Result<Vec<String>> {
+    if !config.tasks.contains_key(task_name) {
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("project task {task_name:?} is not declared"),
+        });
+    }
+    let mut visiting = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut order = Vec::new();
+    visit_project_task(config, task_name, &mut visiting, &mut visited, &mut order)?;
+    Ok(order)
+}
+
+fn visit_project_task(
+    config: &ProjectConfig,
+    task_name: &str,
+    visiting: &mut Vec<String>,
+    visited: &mut BTreeSet<String>,
+    order: &mut Vec<String>,
+) -> Result<()> {
+    if visited.contains(task_name) {
+        return Ok(());
+    }
+    if let Some(position) = visiting.iter().position(|name| name == task_name) {
+        let mut cycle = visiting[position..].to_vec();
+        cycle.push(task_name.to_owned());
+        return Err(Error::InvalidProjectConfig {
+            reason: format!("task dependency cycle: {}", cycle.join(" -> ")),
+        });
+    }
+    visiting.push(task_name.to_owned());
+    let task = config
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| Error::InvalidProjectConfig {
+            reason: format!("project task {task_name:?} is not declared"),
+        })?;
+    for dependency in &task.depends_on {
+        visit_project_task(config, dependency, visiting, visited, order)?;
+    }
+    visiting.pop();
+    visited.insert(task_name.to_owned());
+    order.push(task_name.to_owned());
+    Ok(())
+}
+
+fn validate_workspace_config(config: &ProjectConfig) -> Result<()> {
+    let Some(workspace) = &config.workspace else {
+        return Ok(());
+    };
+    if workspace.members.is_empty() {
+        return Err(Error::InvalidProjectConfig {
+            reason: "workspace.members must declare at least one member".to_owned(),
+        });
+    }
+    let mut members = std::collections::BTreeSet::new();
+    for member in &workspace.members {
+        let components = member.split('/').collect::<Vec<_>>();
+        if member.contains(['\\', ':'])
+            || components
+                .iter()
+                .any(|component| component.is_empty() || matches!(*component, "." | ".."))
+            || !members.insert(member.to_ascii_lowercase())
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!(
+                    "workspace member {member:?} must be a unique portable project-relative path"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_python_environments(config: &ProjectConfig) -> Result<()> {
+    let declared = config.python.as_ref().map(|python| &python.environments);
+    if declared.is_some_and(|environments| !environments.is_empty())
+        && !config.tools.contains_key("python")
+    {
+        return Err(Error::InvalidProjectConfig {
+            reason: "python environments require tools.python".to_owned(),
+        });
+    }
+    let mut paths = std::collections::BTreeSet::from([PYTHON_ENVIRONMENT_DIR.to_owned()]);
+    if let Some(environments) = declared {
+        for (name, environment) in environments {
+            if name == "default" || !valid_task_name(name) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "invalid Python environment name {name:?}; default is reserved for .venv"
+                    ),
+                });
+            }
+            let path = Path::new(&environment.path);
+            let components = environment
+                .path
+                .split('/')
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            let portable_path = components.join("/");
+            if path.as_os_str().is_empty()
+                || path.is_absolute()
+                || environment.path.contains(['\\', ':'])
+                || components.iter().any(|component| {
+                    component.is_empty() || matches!(component.as_str(), "." | "..")
+                })
+                || !paths.insert(portable_path)
+            {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!(
+                        "Python environment {name} path must be unique and stay within the project"
+                    ),
+                });
+            }
+        }
+    }
+    for (name, task) in &config.tasks {
+        let Some(environment_name) = task.python_environment.as_deref() else {
+            continue;
+        };
+        if environment_name != "default"
+            && declared.is_none_or(|environments| !environments.contains_key(environment_name))
+        {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!(
+                    "task {name} references undeclared Python environment {environment_name}"
+                ),
+            });
+        }
+        if !config.tools.contains_key("python") {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("task {name} binds a Python environment without tools.python"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_options(config: &ProjectConfig) -> Result<()> {
+    for (tool, options) in &config.tool_options {
+        if !config.tools.contains_key(tool) {
+            return Err(Error::InvalidProjectConfig {
+                reason: format!("tool-options.{tool} requires tools.{tool}"),
+            });
+        }
+        for values in [&options.components, &options.targets] {
+            let unique = values.iter().collect::<std::collections::BTreeSet<_>>();
+            if unique.len() != values.len() || values.iter().any(|value| value.trim().is_empty()) {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("tool-options.{tool} contains empty or duplicate values"),
+                });
+            }
+        }
+        match tool.as_str() {
+            "rust" => {
+                if options
+                    .profile
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "minimal" | "default" | "complete"))
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust profile must be minimal, default or complete".to_owned(),
+                    });
+                }
+                if options.distribution.is_some() || options.package.is_some() {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust tool options do not accept distribution or package"
+                            .to_owned(),
+                    });
+                }
+                if options.date.as_deref().is_some_and(|date| {
+                    let bytes = date.as_bytes();
+                    bytes.len() != 10
+                        || bytes[4] != b'-'
+                        || bytes[7] != b'-'
+                        || bytes
+                            .iter()
+                            .enumerate()
+                            .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
+                }) {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Rust nightly date must use YYYY-MM-DD".to_owned(),
+                    });
+                }
+            }
+            "java" => {
+                if options
+                    .distribution
+                    .as_deref()
+                    .is_some_and(|value| value != "temurin")
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java distribution must be temurin".to_owned(),
+                    });
+                }
+                if options
+                    .package
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "jdk" | "jre"))
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java package must be jdk or jre".to_owned(),
+                    });
+                }
+                if options.profile.is_some()
+                    || options.date.is_some()
+                    || !options.components.is_empty()
+                    || !options.targets.is_empty()
+                {
+                    return Err(Error::InvalidProjectConfig {
+                        reason: "Java tool options accept only distribution and package".to_owned(),
+                    });
+                }
+            }
+            _ if options != &ToolOptions::default() => {
+                return Err(Error::InvalidProjectConfig {
+                    reason: format!("tool-options.{tool} is not supported"),
+                });
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -645,9 +1114,11 @@ pub fn save_project_state_locked(
     config: &ProjectConfig,
     lockfile: &Lockfile,
 ) -> Result<()> {
-    crate::validate_provider_selections(&config.tools)?;
-    validate_lock_matches_tools(lockfile, &config.tools, path)?;
-    validate_project_lock_policy(config, lockfile, std::time::SystemTime::now())?;
+    let effective = effective_project_config(path, config)?;
+    crate::validate_provider_selections(&effective.tools)?;
+    validate_lock_matches_tools(lockfile, &effective.tools, path)?;
+    validate_lock_matches_tool_options(lockfile, &effective.tool_options, path)?;
+    validate_project_lock_policy(&effective, lockfile, std::time::SystemTime::now())?;
     register_project_config(pinset_home, path)?;
 
     // Commit the lock first. If the second atomic write is interrupted, the previous
@@ -820,6 +1291,59 @@ mod tests {
     }
 
     #[test]
+    fn task_dependencies_are_topological_and_cycles_fail_closed() {
+        let root = tempdir().expect("temp directory");
+        let config_path = root.path().join("pinset.toml");
+        fs::write(
+            &config_path,
+            r#"schema = 5
+project-id = "11111111-1111-4111-8111-111111111111"
+
+[tools]
+
+[tasks.setup]
+command = ["setup"]
+
+[tasks.build]
+command = ["build"]
+depends-on = ["setup"]
+
+[tasks.test]
+command = ["test"]
+depends-on = ["setup", "build"]
+"#,
+        )
+        .expect("config");
+        let config = load_project_config(&config_path).expect("task graph");
+        assert_eq!(
+            project_task_order(&config, "test").expect("order"),
+            ["setup", "build", "test"]
+        );
+
+        fs::write(
+            &config_path,
+            r#"schema = 5
+project-id = "11111111-1111-4111-8111-111111111111"
+
+[tools]
+
+[tasks.a]
+command = ["a"]
+depends-on = ["b"]
+
+[tasks.b]
+command = ["b"]
+depends-on = ["a"]
+"#,
+        )
+        .expect("cyclic config");
+        let error = load_project_config(&config_path).expect_err("cycle must fail");
+        assert!(
+            matches!(error, Error::InvalidProjectConfig { reason } if reason.contains("a -> b -> a") || reason.contains("b -> a -> b"))
+        );
+    }
+
+    #[test]
     fn schema_five_validates_tasks_and_variable_contracts() {
         let root = tempdir().expect("temp directory");
         let path = root.path().join(PROJECT_CONFIG_FILENAME);
@@ -875,6 +1399,124 @@ command = ["cargo", "test"]
     }
 
     #[test]
+    fn schema_five_validates_named_python_environments_and_task_bindings() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000027"
+
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+"#,
+        )
+        .expect("named environment config");
+        let config = load_project_config(&path).expect("valid named environment");
+        assert_eq!(
+            config.python.as_ref().expect("Python config").environments["docs"].path,
+            ".venv-docs"
+        );
+        assert_eq!(
+            config.tasks["docs"].python_environment.as_deref(),
+            Some("docs")
+        );
+
+        let invalid = fs::read_to_string(&path).expect("config").replace(
+            "python-environment = \"docs\"",
+            "python-environment = \"missing\"",
+        );
+        fs::write(&path, invalid).expect("invalid binding");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::InvalidProjectConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn workspace_members_inherit_root_defaults_with_whole_tool_option_overrides() {
+        let root = tempdir().expect("workspace");
+        fs::create_dir(root.path().join(".git")).expect("git boundary");
+        let member = root.path().join("apps/api");
+        fs::create_dir_all(&member).expect("member");
+        let root_config = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &root_config,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000028"
+
+[workspace]
+members = ["apps/api"]
+
+[tools]
+node = "24"
+python = "3.13"
+rust = "stable"
+
+[tool-options.rust]
+profile = "complete"
+components = ["rustfmt", "clippy"]
+
+[tasks.test]
+command = ["cargo", "test", "--workspace"]
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[environment.profiles.dev]
+file = ".env.dev.age"
+recipients = ["age1workspace"]
+"#,
+        )
+        .expect("root config");
+        let member_config = member.join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &member_config,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000029"
+
+[tools]
+rust = "1.97"
+
+[tasks.test]
+command = ["cargo", "test", "-p", "api"]
+profile = "dev"
+python-environment = "docs"
+"#,
+        )
+        .expect("member config");
+
+        let effective = load_effective_project_config(&member_config).expect("effective member");
+        load_project_config(&member_config).expect("contextually valid member");
+        assert_eq!(effective.tools["node"], "24");
+        assert_eq!(effective.tools["rust"], "1.97");
+        assert!(!effective.tool_options.contains_key("rust"));
+        assert_eq!(
+            effective.tasks["test"].command,
+            ["cargo", "test", "-p", "api"]
+        );
+        assert_eq!(effective.tasks["test"].profile.as_deref(), Some("dev"));
+        assert_eq!(
+            effective.tasks["test"].python_environment.as_deref(),
+            Some("docs")
+        );
+        assert_eq!(
+            find_workspace_config(&member).expect("workspace config"),
+            root_config
+        );
+        let members = workspace_members(&root_config).expect("members");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, "apps/api");
+    }
+
+    #[test]
     fn variable_contracts_reject_invalid_defaults_and_secret_defaults() {
         let contract = EnvironmentVariableContract {
             kind: EnvironmentVariableType::Integer,
@@ -905,6 +1547,39 @@ default = "unsafe"
             load_project_config(&path),
             Err(Error::InvalidProjectConfig { .. })
         ));
+    }
+
+    #[test]
+    fn schema_five_accepts_structured_rust_options_and_canonicalizes_identity_fields() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(PROJECT_CONFIG_FILENAME);
+        fs::write(
+            &path,
+            r#"schema = 5
+project-id = "4c5652e4-0000-4000-8000-000000000026"
+
+[tools]
+rust = "nightly"
+
+[tool-options.rust]
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+date = "2026-07-16"
+"#,
+        )
+        .expect("structured Rust config");
+
+        let config = load_project_config(&path).expect("valid structured Rust config");
+        assert_eq!(
+            config.tool_options["rust"].lock_options(),
+            BTreeMap::from([
+                ("components".to_owned(), "clippy,rustfmt".to_owned()),
+                ("date".to_owned(), "2026-07-16".to_owned()),
+                ("profile".to_owned(), "minimal".to_owned()),
+                ("targets".to_owned(), "wasm32-unknown-unknown".to_owned()),
+            ])
+        );
     }
 
     #[cfg(feature = "project-write")]
@@ -1005,7 +1680,10 @@ default = "unsafe"
             project_id: Some("4c5652e4-0000-4000-8000-000000000006".to_owned()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
+            workspace: None,
             environment: None,
         };
         save_project_config(&path, &config).expect("save schema four");
@@ -1060,7 +1738,10 @@ default = "unsafe"
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: ProjectPolicy::default(),
             tools: BTreeMap::new(),
+            tool_options: Default::default(),
             tasks: BTreeMap::new(),
+            python: None,
+            workspace: None,
             environment: None,
         };
         let lockfile = Lockfile {

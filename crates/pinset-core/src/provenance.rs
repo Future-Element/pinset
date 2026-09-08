@@ -399,6 +399,7 @@ mod tests {
             provider: "test".to_owned(),
             released_at: released_at.map(str::to_owned),
             metadata: BTreeMap::new(),
+            options: Default::default(),
             artifacts: vec![LockedArtifact {
                 target: "test".to_owned(),
                 canonical_url: "https://example.test/archive.tar.gz".to_owned(),

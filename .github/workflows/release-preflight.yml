@@ -47,6 +47,11 @@ jobs:
             echo "website/package.json version ${website_version} does not match workspace version ${workspace_version}" >&2
             exit 1
           fi
+          extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
+          if [[ "${extension_version}" != "1.0.0" ]]; then
+            echo "VS Code extension version ${extension_version} does not match the 2.11 release contract" >&2
+            exit 1
+          fi
           if ! grep -F "## ${workspace_version} " CHANGELOG.md >/dev/null; then
             echo "CHANGELOG.md does not contain a ${workspace_version} release heading" >&2
             exit 1
@@ -203,6 +208,34 @@ jobs:
         shell: bash
         run: if grep -R --exclude='404.html' --exclude='_not-found*' --exclude-dir='_not-found' "http://localhost:3000" out; then exit 1; fi
 
+  extension:
+    name: Validate release VS Code extension
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install locked extension dependencies
+        run: npm ci
+
+      - name: Type-check, test, and package extension
+        run: npm run package
+
+      - name: Inspect packaged files
+        shell: bash
+        run: |
+          unzip -l dist/pinset-vscode-1.0.0.vsix > vsix-files.txt
+          grep -F 'extension/dist/extension.js' vsix-files.txt
+          if grep -E 'extension/(src|test|node_modules)/' vsix-files.txt; then
+            echo "VSIX contains development files" >&2
+            exit 1
+          fi
+
   build:
     name: Preflight ${{ matrix.artifact }}
     if: github.ref_name == 'main'
@@ -279,6 +312,7 @@ jobs:
       - validate
       - windows_scripts
       - build
+      - extension
       - website
     if: always()
     runs-on: ubuntu-24.04
@@ -288,6 +322,7 @@ jobs:
         shell: bash
         env:
           BUILD_RESULT: ${{ needs.build.result }}
+          EXTENSION_RESULT: ${{ needs.extension.result }}
           REF_NAME: ${{ github.ref_name }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           WINDOWS_RESULT: ${{ needs.windows_scripts.result }}
@@ -307,6 +342,10 @@ jobs:
           fi
           if [[ "${BUILD_RESULT}" != "success" ]]; then
             echo "Release candidate builds failed: ${BUILD_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${EXTENSION_RESULT}" != "success" ]]; then
+            echo "Release VS Code extension validation failed: ${EXTENSION_RESULT}" >&2
             exit 1
           fi
           if [[ "${WEBSITE_RESULT}" != "success" ]]; then

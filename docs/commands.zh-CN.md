@@ -2,13 +2,55 @@
 
 [English](commands.md) | [简体中文](commands.zh-CN.md) · [README](../README.zh-CN.md)
 
-本文档描述 Pinset v2.2 命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
+本文档描述 Pinset 当前开发版本的命令行协议。可以运行 `pinset <command> --help` 查看当前二进制附带的精确参数帮助。
 
 ## 通用约定
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。schema 4 与 5 项目配置会保留这个请求选择器，schema 3 锁文件记录精确解析版本。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。项目配置保留请求选择器，锁 schema 4 记录精确解析版本、选项与平台制品。
+
+schema 5 项目可以在不改变字符串选择器的情况下声明结构化选项：
+
+```toml
+[tools]
+rust = "nightly"
+
+[tool-options.rust]
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+date = "2026-07-16"
+```
+
+Rust 支持 `minimal`、`default`、`complete` profile。`components` 在所选 profile 上增加经过验证的组件，`targets` 安装额外的 `rust-std` 编译目标。固定 nightly 可以使用 `rust = "nightly"` 配合 `date`，也可以使用 `rust = "nightly-YYYY-MM-DD"`；不带日期的浮动 nightly 会被拒绝。不同选项集合使用不同安装身份，没有结构化选项的项目继续使用原版本目录。
+
+Java 使用 Eclipse Temurin，并默认安装 JDK。schema 5 可以在不改变版本选择器的情况下选择体积更小的 JRE：
+
+```toml
+[tools]
+java = "lts"
+
+[tool-options.java]
+distribution = "temurin"
+package = "jre"
+```
+
+发行版和包类型都会进入锁与安装身份，因此同一精确版本的 JDK 与 JRE 可以共存。
+
+Python 继续兼容默认 `.venv`，并可声明额外的隔离环境供任务绑定：
+
+```toml
+[tools]
+python = "3.14"
+
+[python.environments.docs]
+path = ".venv-docs"
+
+[tasks.docs]
+command = ["mkdocs", "serve"]
+python-environment = "docs"
+```
 
 支持的工具为 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 和 Flutter。Dart 由所选 Flutter SDK 提供。项目发现默认在最近的 Git 根目录停止；没有 Git 标记时只检查起始目录。项目默认严格：未声明工具不会继承全局状态，也不会回退系统命令；只有 `[policy]` 显式启用 `inherit-global` 或 `system-fallback` 时才允许。项目之外仍按全局状态、系统 `PATH` 的顺序解析。
 
@@ -78,7 +120,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 3 `pinset.lock`。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 4 `pinset.lock`。 |
 | 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
 | 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
@@ -129,7 +171,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 安装一个显式精确运行时，或安装项目/全局锁中的全部目标。 |
-| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--global | --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。 |
+| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。`--offline` 只适用于项目或全局锁。 |
 | 修改状态 | **是。** 写入缓存、运行时文件、收据和命令路由；锁定的 Python 项目可能创建或验证 `.venv`。不会修改选择。 |
 | 示例 | `pinset install --locked --cwd ./app` |
 | JSON | 不支持。 |
@@ -202,7 +244,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时保持运行时锁为 schema 3；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
+| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时把运行时锁写为 schema 4；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -289,21 +331,47 @@
 | 退出码 | 诊断完成为 `0`；输入无法读取或验证为 `2`。诊断发现会写入数据，并不一定导致命令失败。 |
 | 关键错误 | 配置/锁无法读取、状态格式错误、路径不安全或文件系统失败。 |
 
+### `status` 与 `check`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 生成可移植的诊断报告 schema 1。`status` 负责展示，`check` 可作为 CI 策略门禁。 |
+| 语法与参数 | `pinset <status|check> [--cwd <路径>] [--json] [--save <文件>] [--compare <文件>] [--repair-preview]`。 |
+| 修改状态 | 只有 `--save` 会原子写入指定报告文件。修复预览不会执行命令。 |
+| 示例 | `pinset check --save .pinset-diagnostic.json --repair-preview` |
+| JSON | **支持**；命令名为 `status` 或 `check`。报告拥有独立于 CLI 外层封装的 schema 字段。 |
+| 退出码 | `status` 完成收集后返回 `0`；`check` 遇到错误、警告或基线变化返回 `1`；输入无效返回 `2`。 |
+| 隐私 | 报告省略文件系统路径、环境值、密文内容、校验和及秘密摘要；比较结果只包含变化的 JSON Pointer 路径。 |
+
 ## 下载缓存命令
 
-缓存按完整性标识保存已验证归档。缓存检查不会把文件名本身当作完整性证据。
+缓存按完整性标识保存已验证归档。缓存检查不会把文件名本身当作完整性证据。GitHub Action 只缓存 `PINSET_HOME/downloads`，每次恢复后会先执行 `pinset cache verify`，再安装锁定运行时；将 Action 的 `cache` 输入设为 `"false"` 可禁用缓存。
 
 ### `cache`
 
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合下载缓存检查、验证、修复、清理和离线导入操作。 |
-| 语法与参数 | `pinset cache <list|info|verify|repair|clean|import> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`；必须指定二级命令。 |
 | 修改状态 | 取决于二级命令：`repair`、`clean` 与 `import` 会修改缓存状态。 |
 | 示例 | `pinset cache info` |
 | JSON | 没有一级命令输出；`list`、`info`、`verify`、`repair` 与 `clean` 支持 `--json`。 |
 | 退出码 | 二级命令成功为 `0`；二级命令缺失/无效或缓存失败为 `2`。 |
 | 关键错误 | 二级命令缺失、缓存路径不安全、内容损坏、完整性值无效或文件系统失败。 |
+
+### `cache prefetch`
+
+根据项目锁将当前平台制品下载到经过验证的内容寻址缓存，不解压也不安装。`--jobs <1..16>` 限制并发下载数，默认四个。启动 worker 前先验证锁，全部 worker 失败会集中报告。
+
+```sh
+pinset cache prefetch --jobs 4
+```
+
+### `bundle export` 与 `bundle import`
+
+`pinset bundle export --output project.pinset-bundle.tar.gz [--target <target>]` 使用项目锁和已验证缓存生成 bundle schema 1；制品缺失或损坏时拒绝导出。`pinset bundle import <文件>` 在提交缓存前验证条目路径、格式、目标平台、锁身份、制品大小及密码学身份。Bundle 只传输字节，不授予项目或 Provider 信任。
+
+导入后执行 `pinset install --locked --offline` 不会发出网络请求，并会在改变安装状态前一次报告当前平台缺少的全部制品。
 
 ### `cache list`
 
@@ -379,14 +447,14 @@
 
 ## Python 环境命令
 
-只有当项目 `.venv` 的所有权标记与当前项目和所选 CPython 发行版一致时，Pinset 才认为它由自己所有。无法证明所有权时，破坏性操作会失败关闭。
+只有当项目 Python 环境的所有权标记与声明名称、路径、所选 CPython 发行版和目标一致时，Pinset 才认为它由自己所有。保留名称 `default` 继续对应 `.venv`；其他名称必须在 `[python.environments.<名称>]` 下声明。无法证明所有权时，破坏性操作会失败关闭。
 
 ### `venv`
 
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合项目所有的 Python 环境操作。 |
-| 语法与参数 | `pinset venv <create|status|recreate> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset venv <create|status|recreate> [名称] ...`；名称默认为 `default`。 |
 | 修改状态 | 取决于二级命令；`create` 与 `recreate` 会修改状态。 |
 | 示例 | `pinset venv status` |
 | JSON | 不支持。 |
@@ -397,10 +465,10 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 必要时安装所选 CPython，然后创建或验证项目 `.venv`。 |
-| 语法与参数 | `pinset venv create [--cwd <path>]`。 |
-| 修改状态 | **是。** 可能安装 Python，并创建 `.venv` 及其所有权标记。 |
-| 示例 | `pinset venv create --cwd ./app` |
+| 用途 | 必要时安装所选 CPython，然后创建或验证一个项目环境。 |
+| 语法与参数 | `pinset venv create [名称] [--cwd <path>]`。 |
+| 修改状态 | **是。** 可能安装 Python，并创建所选环境及其所有权标记。 |
+| 示例 | `pinset venv create docs --cwd ./app` |
 | JSON | 不支持。 |
 | 退出码 | 环境就绪为 `0`；Pinset 失败为 `2`。 |
 | 关键错误 | 项目未选择 Python、锁不匹配、目标不支持、安装失败、已存在外部 `.venv` 或标记不匹配。 |
@@ -410,7 +478,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 显示所选 CPython 发行版与受管项目环境路径。 |
-| 语法与参数 | `pinset venv status [--cwd <path>]`。 |
+| 语法与参数 | `pinset venv status [名称] [--cwd <path>]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset venv status` |
 | JSON | 不支持。 |
@@ -421,10 +489,10 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 在证明 Pinset 所有权后删除并重建项目 `.venv`。 |
-| 语法与参数 | `pinset venv recreate [--cwd <path>]`。 |
-| 修改状态 | **是。** 只替换具有正确标记、归 Pinset 所有的 `.venv`。 |
-| 示例 | `pinset venv recreate --cwd ./app` |
+| 用途 | 在证明 Pinset 所有权后删除并重建一个项目环境。 |
+| 语法与参数 | `pinset venv recreate [名称] [--cwd <path>]`。 |
+| 修改状态 | **是。** 只替换具有正确标记、归 Pinset 所有的环境。 |
+| 示例 | `pinset venv recreate docs --cwd ./app` |
 | JSON | 不支持。 |
 | 退出码 | 重建成功为 `0`；验证或重建失败为 `2`。 |
 | 关键错误 | 所有权标记缺失/无效、路径逃逸、所选 Python 不匹配、删除失败或 venv 创建失败。 |
@@ -593,17 +661,17 @@
 
 ## Provider Registry 命令
 
-v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖、共享 capability 和来源证明方法，但不能安装、激活或执行 Provider；只有编译进当前 Pinset 二进制的 Provider 才会生效。Registry 必须是大小受限的普通文件，并且只包含一个由 Pinset 固定 Registry 公钥验证通过的 cleartext OpenPGP 签名。
+Registry schema 2 支持受约束的 `github-release-binary` 后端，只能声明固定上游仓库、Release 标签前缀、校验文件、平台制品名、命令、修订号和禁用状态。manifest 不能包含脚本、钩子、Shell 片段、任意下载主机或环境代码。`jq` 是首个通过该通用后端完成解析和安装的 Provider。活动 Registry 必须是大小受限的普通文件，并且只包含一个由 Pinset 固定 Registry 公钥验证通过的 cleartext OpenPGP 签名。
 
 ### `provider list`
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并列出内嵌声明式 Provider Registry。 |
+| 用途 | 验证并列出当前活动的声明式 Provider Registry。 |
 | 语法与参数 | `pinset provider list [--json]`。 |
-| 修改状态 | 否。不联网、不安装运行时、不激活 Provider，也不执行 manifest 内容。 |
+| 修改状态 | 否。不联网、不安装运行时，也不执行 manifest 内容。 |
 | 示例 | `pinset provider list --json` |
-| JSON | **支持**；命令名为 `provider.list`，包含签名文档与签名者指纹。 |
+| JSON | **支持**；命令名为 `provider.list`，包含本机受信文件是否启用、签名文档与签名者指纹。 |
 | 退出码 | 签名、schema、capability、依赖图及内置声明全部验证通过为 `0`；否则为 `2`。 |
 | 关键错误 | 内嵌密钥/签名无效、capability 未知、命令重复、依赖缺失、循环或声明漂移。 |
 
@@ -618,6 +686,32 @@ v1.8 Registry 是只读预览。已验证 manifest 可以描述命令、依赖�
 | JSON | **支持**；命令名为 `provider.verify`，包含验证后的文档与签名者指纹。 |
 | 退出码 | 密码学、schema、capability 与依赖验证全部通过为 `0`；否则为 `2`。 |
 | 关键错误 | 符号链接/非文件、输入超过 256 KiB、未签名或多重签名、签名者不匹配、内容篡改、未知字段/capability、依赖缺失或循环。 |
+
+### `provider status`、`trust` 与 `untrust`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 查看当前快照、激活已验证的官方快照，或恢复使用二进制内嵌 Registry。 |
+| 语法与参数 | `pinset provider status [--json]`；`pinset provider trust <REGISTRY> [--json]`；`pinset provider untrust [--json]`。 |
+| 修改状态 | `status` 不修改。`trust` 仅在签名、schema、capability 和运行时声明全部通过后原子写入 `PINSET_HOME/config/provider-registry.asc`；`untrust` 删除该本机选择。 |
+| 示例 | `pinset provider trust registry/providers.json.asc` |
+| JSON | 三者均支持，命令名分别为 `provider.status`、`provider.trust`、`provider.untrust`。 |
+| 退出码 | 结果 Registry 验证通过为 `0`；否则为 `2`。 |
+| 关键错误 | 签名者不受信、内容篡改、声明漂移、Provider 修订缺失或被禁用、输入不安全、原子写入失败。 |
+
+### `provider validate` 与 `provider scaffold`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 在贡献过程中校验未签名 JSON，或生成受约束的 GitHub Release 二进制 Provider 模板；两者都不会授予信任。 |
+| 语法与参数 | `pinset provider validate <REGISTRY.json> [--json]`；`pinset provider scaffold <工具> --repository <所有者/仓库> [--command <命令>]`。 |
+| 修改状态 | 否。 |
+| 示例 | `pinset provider scaffold jq --repository jqlang/jq --command jq` |
+| JSON | `validate` 的命令名为 `provider.validate`；`scaffold` 直接输出 manifest JSON。 |
+| 退出码 | 有界文档验证成功或模板生成成功为 `0`；否则为 `2`。 |
+| 关键错误 | 未知字段/capability、以未知字段形式出现的脚本或钩子、不安全名称、目标映射不完整、命令重复、依赖缺失或循环。 |
+
+声明式 Provider 锁会记录 Provider id、修订号、Registry 签名者指纹、仓库、标签、五个平台制品和精确 SHA-256。CLI 与 shim 每次路由都会把锁与当前活动签名 manifest 比较，因此签名修订变化或禁用状态会明确拒绝旧锁，直到项目显式解析新锁。`pinset uninstall jq@1.8.2` 会解析唯一的修订绑定安装身份；如果同版本存在多个身份，Pinset 会要求使用 `pinset list jq` 显示的精确身份。
 
 ## 短执行入口（2.2）
 
@@ -637,9 +731,53 @@ Pinset 参数放在顶层 `--` 之前，之后的全部内容都传给子进程�
 
 ### `run`
 
-`pinset run <任务> [-- <追加参数...>]` 执行 `[tasks.<名称>]` 中声明的任务。任务包含非空 `command` 字符串数组，还可声明项目内相对 `cwd`、`profile` 和说明 `description`。`--` 后的参数不经过 Shell 解析，直接追加到命令数组；子进程退出状态保持不变。
+`pinset run <任务> [-- <追加参数...>]` 执行 `[tasks.<名称>]` 中声明的任务。任务包含非空 `command` 字符串数组，还可声明项目内相对 `cwd`、`profile`、说明 `description` 和 `depends-on` 字符串数组。依赖按深度优先和声明顺序在目标任务前各执行一次；依赖缺失、重复或成环属于配置错误；首个非零退出会终止任务图。`--` 后的参数只追加到目标任务，不经过 Shell 解析；子进程退出状态保持不变。
 
 任务环境按根参数 `-e`、`PINSET_ENV_PROFILE`、任务 profile、本机选择、项目默认值依次选择。`--no-env` 关闭注入。任务不存在时始终报错，不会回退执行系统程序。任务工作目录经过规范化后必须已经存在并位于项目内。
+
+### `editor context`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 返回编辑器集成使用的无秘密值、按文件夹隔离的上下文。 |
+| 语法与参数 | `pinset editor context [--cwd <路径>] [--json]`。 |
+| 修改状态 | 否。不会解密环境，也不会执行项目任务。 |
+| JSON | **支持**；命令名为 `editor.context`。`data` 包含编辑器协议 schema 1、最低扩展版本、CLI 版本、项目路径、工作区成员名称、环境 profile 名称与选择、无命令内容的任务元数据，以及诊断报告 schema 1。 |
+| 退出码 | 项目发现、配置、环境选择和诊断成功为 `0`；项目无效或不兼容为 `2`。 |
+| 关键错误 | 任务图无效、项目或工作区配置错误、环境 profile 路径不安全，或本机选择不可读。 |
+
+VS Code 扩展 1.0.0 会拒绝未知协议 schema，以及要求更高扩展版本的上下文。扩展为每个工作区文件夹单独保存上下文，并在 Workspace Trust 授予前不启动该命令。编辑器上下文不包含项目任务命令和环境变量值。
+
+### `workspace`
+
+schema 5 工作区在根 `pinset.toml` 中显式声明成员路径。每个成员各自保留 `pinset.toml` 与 `pinset.lock`。以下命令可以从工作区根目录或任一已声明成员执行：
+
+| 命令 | 行为 |
+| --- | --- |
+| `pinset workspace members [--json]` | 列出成员、有效工具选择器，以及选择器来自根配置还是成员配置。 |
+| `pinset workspace install [--member <路径>]... [--changed-since <git-ref>] [--offline]` | 安装每个已选成员独立锁定的有效工具集合。 |
+| `pinset workspace check [--member <路径>]... [--changed-since <git-ref>] [--json]` | 对成员执行严格诊断；任一成员失败时返回 `1`。 |
+| `pinset workspace run <任务> [--member <路径>]... [--changed-since <git-ref>] [-- <追加参数...>]` | 顺序执行具名任务，在第一个非零子进程退出码处停止。 |
+| `pinset workspace update [--member <路径>]... [--changed-since <git-ref>] [--json]` | 解析并报告候选更新，不修改成员锁文件。 |
+| `pinset workspace references <工具> [--json]` | 显示选择该工具的成员及选择器来源。 |
+
+根工具、任务、Python 环境和环境设置为成员提供默认值。成员工具选择器会连同完整的结构化选项表替换根选择，选项数组不会合并；同名成员任务替换根任务；成员 `[python]` 或 `[environment]` 整体替换对应的根配置。`--changed-since` 选择声明路径下存在 Git 变更的成员；根 `pinset.toml` 发生变化时选择全部成员。
+
+### `candidate`
+
+`pinset candidate` 在替换锁成为项目当前选择之前，先准备并验证精确候选锁：
+
+| 命令 | 行为 |
+| --- | --- |
+| `candidate prepare [工具] [--workspace] [--no-install] [--json]` | 重新解析全部选择器或指定工具，将候选记录保存到 `PINSET_HOME`；未设置 `--no-install` 时准备所有精确运行时。当前锁保持不变。 |
+| `candidate test <任务> [--workspace] [-- <追加参数...>]` | 使用候选运行时目录、环境变量和隔离的候选 Python 环境执行已声明任务，并保留、记录子进程退出码。 |
+| `candidate status [--workspace] [--json]` | 显示候选身份、精确锁摘要和测试记录。 |
+| `candidate apply [--workspace] [--json]` | 重新检查项目、锁与 Git 基线后，应用最新一次通过测试的精确候选。 |
+| `candidate history [--json]` | 列出当前项目本机保存的应用与恢复记录。 |
+| `candidate restore [历史 ID] [--json]` | 当前状态仍匹配时，从指定或最新历史恢复之前的锁。 |
+| `candidate recover [--json]` | 为已全部应用但中断的事务补齐历史，或把只应用了部分成员的 Workspace 事务整体恢复到原锁。 |
+
+候选应用在改写任何锁之前先写恢复日志，拒绝并发配置或锁冲突，并为每个成员生成确定的历史记录。候选历史只覆盖 Pinset 管理的锁状态；任务对源码、数据库或外部服务造成的副作用不在恢复范围内。
 
 `env init` 未指定 profile 或恢复方式时进入交互向导：选择 profile、恢复方式、新建或复用本机 identity。创建成功后记住本机环境，并单独询问是否信任项目。非交互调用必须提供 profile 和 `--recovery <路径>` 或显式 `--no-recovery`。新增位置参数 `env init dev` 和 `--identity <id>`，原有 `--profile`、`--identity-file` 保留；完全显式的初始化仍需用 `--auto` 设置共享默认，或另行 `env use` 设置本机默认。项目配置与锁文件 schema 不变。
 
@@ -970,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.3.0
+      - uses: Future-Element/pinset@v2.11.0
         with:
-          version: 2.3.0
+          version: 2.11.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -990,6 +1128,6 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 ## 稳定协议边界
 
-Pinset v2.3 写入 schema 5 项目配置，以及 schema 3 全局配置/运行时锁。schema 1–4 项目仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 3，同时继续读取 schema 1/2。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+当前开发版本写入 schema 5 项目配置，以及 schema 4 全局配置/运行时锁。schema 1–4 项目和 schema 1–3 锁仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
 
 v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

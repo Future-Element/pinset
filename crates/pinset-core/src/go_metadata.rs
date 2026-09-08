@@ -125,6 +125,7 @@ impl GoMetadataClient {
             // The official Go downloads JSON does not publish a release timestamp.
             released_at: None,
             metadata: BTreeMap::new(),
+            options: BTreeMap::new(),
             artifacts,
         })
     }

@@ -67,6 +67,7 @@ pub enum RuntimeMetadataKind {
     Python,
     Rust,
     Dotnet,
+    Declarative,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,7 @@ pub enum RuntimeInstallKind {
     Python,
     Rust,
     Dotnet,
+    Declarative,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +323,23 @@ const DOTNET_PROVIDER: RuntimeProvider = RuntimeProvider {
         },
     },
 };
+const JQ_PROVIDER: RuntimeProvider = RuntimeProvider {
+    tool: "jq",
+    commands: &["jq"],
+    dependencies: &[],
+    capabilities: RuntimeProviderCapabilities {
+        command_layout: RuntimeCommandLayout::Root,
+        metadata: RuntimeMetadataKind::Declarative,
+        installer: RuntimeInstallKind::Declarative,
+        environment: RuntimeEnvironmentKind::None,
+        discovery: &[],
+        lock_audit: RuntimeLockAuditKind::ArtifactReceipt,
+        provenance: RuntimeProvenanceCapabilities {
+            methods: CHECKSUM_METHODS,
+            release_time: true,
+        },
+    },
+};
 const PROVIDERS: &[RuntimeProvider] = &[
     NODE_PROVIDER,
     PNPM_PROVIDER,
@@ -331,6 +350,7 @@ const PROVIDERS: &[RuntimeProvider] = &[
     JAVA_PROVIDER,
     RUST_PROVIDER,
     DOTNET_PROVIDER,
+    JQ_PROVIDER,
 ];
 
 pub fn runtime_providers() -> &'static [RuntimeProvider] {
@@ -597,7 +617,7 @@ mod tests {
 
     #[test]
     fn every_provider_declares_the_complete_v18_capability_model() {
-        assert_eq!(runtime_providers().len(), 9);
+        assert_eq!(runtime_providers().len(), 10);
         for provider in runtime_providers() {
             assert_eq!(
                 provider.capabilities.lock_audit,
