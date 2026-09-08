@@ -9664,7 +9664,7 @@ mod tests {
             .retain(|artifact| artifact.target != "linux-aarch64");
         java.metadata.remove("signature_link.linux-aarch64");
         let legacy_lock = Lockfile {
-            schema: pinset_core::LOCKFILE_SCHEMA,
+            schema: 3,
             generated_by: "pinset 2.1.4".to_owned(),
             tools: vec![java],
         };

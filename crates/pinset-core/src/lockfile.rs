@@ -445,7 +445,10 @@ fn validate_lockfile_with_target_policy(
             });
         }
         validate_locked_tool_with_target_policy(tool, target_policy)?;
-        if lockfile.schema < LOCKFILE_SCHEMA && tool.requested != tool.version {
+        // Schema 3 introduced independent requested selectors (for example,
+        // `bun = "latest"`) while keeping the resolved version exact in the lock.
+        // Only schema 1/2 require the two values to be identical.
+        if lockfile.schema < 3 && tool.requested != tool.version {
             return Err(Error::InvalidLockfile {
                 reason: format!(
                     "schema {} requires {} requested and resolved versions to match",
@@ -1743,33 +1746,88 @@ mod tests {
     }
 
     #[test]
+    fn schema_three_provider_refresh_accepts_selectors_for_every_legacy_matrix() {
+        let root = tempdir().expect("temp directory");
+        let path = root.path().join(LOCKFILE_FILENAME);
+
+        for (name, requested) in [
+            ("node", "24"),
+            ("pnpm", "11"),
+            ("bun", "latest"),
+            ("go", "1.25"),
+            ("python", "3.14"),
+            ("java", "21"),
+            ("rust", "stable"),
+            ("dotnet", "10.0"),
+        ] {
+            let mut tool = locked_current_provider_tool(name);
+            tool.requested = requested.to_owned();
+            tool.artifacts
+                .retain(|artifact| artifact.target != "linux-aarch64");
+            if name == "node" {
+                tool.metadata.clear();
+                for artifact in &mut tool.artifacts {
+                    artifact.verification = "nodejs-shasums-https".to_owned();
+                }
+            } else if name == "java" {
+                tool.metadata.remove("signature_link.linux-aarch64");
+            }
+            let legacy = Lockfile {
+                schema: 3,
+                generated_by: "pinset 2.1.6".to_owned(),
+                tools: vec![tool],
+            };
+            fs::write(&path, toml::to_string_pretty(&legacy).expect("legacy TOML"))
+                .expect("legacy lockfile");
+
+            load_lockfile(&path).expect_err("strict loader rejects the old matrix");
+            let (loaded, refresh_tools) = load_lockfile_for_provider_refresh(&path)
+                .unwrap_or_else(|error| panic!("refresh loader rejected {name}: {error}"));
+            assert_eq!(refresh_tools, [name]);
+            assert_eq!(loaded.tools[0].requested, requested);
+        }
+    }
+
+    #[test]
     fn schema_three_separates_requested_selector_from_resolved_version() {
-        let artifacts = MVP_NODE_TARGETS
-            .into_iter()
-            .map(locked_artifact)
-            .collect::<Vec<_>>();
-        let mut lockfile = Lockfile::new_node(
-            "pinset 1.5.0".to_owned(),
-            "24.0.0".to_owned(),
-            "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356".to_owned(),
-            "official".to_owned(),
-            artifacts,
-        );
-        lockfile.tools[0].requested = "24".to_owned();
+        for (name, requested) in [
+            ("node", "24"),
+            ("pnpm", "11"),
+            ("bun", "latest"),
+            ("go", "1.25"),
+            ("flutter", "stable"),
+            ("python", "3.14"),
+            ("java", "21"),
+            ("rust", "stable"),
+            ("dotnet", "10.0"),
+        ] {
+            let mut tool = locked_current_provider_tool(name);
+            tool.requested = requested.to_owned();
+            let resolved = tool.version.clone();
+            let mut lockfile = Lockfile {
+                schema: 3,
+                generated_by: "pinset 1.5.0".to_owned(),
+                tools: vec![tool],
+            };
 
-        validate_lockfile(&lockfile).expect("schema 3 accepts a selector");
-        assert_eq!(
-            validate_lock_matches_selection(&lockfile, "24", Path::new("pinset.toml"))
-                .expect("selector matches")
-                .version,
-            "24.0.0"
-        );
+            validate_lockfile(&lockfile)
+                .unwrap_or_else(|error| panic!("schema 3 rejected {name} selector: {error}"));
+            assert_eq!(
+                validate_lock_matches_tool(&lockfile, name, requested, Path::new("pinset.toml"),)
+                    .unwrap_or_else(|error| panic!("{name} selector mismatch: {error}"))
+                    .version,
+                resolved
+            );
 
-        lockfile.schema = 2;
-        assert!(matches!(
-            validate_lockfile(&lockfile),
-            Err(Error::InvalidLockfile { .. })
-        ));
+            lockfile.schema = 2;
+            assert!(
+                matches!(
+                    validate_lockfile(&lockfile),
+                    Err(Error::InvalidLockfile { .. })
+                ),
+                "schema 2 unexpectedly accepted {name} selector"
+            );
+        }
     }
 
     #[test]
@@ -2254,6 +2312,23 @@ mod tests {
                 artifacts: GO_TARGETS
                     .into_iter()
                     .map(|target| locked_go_artifact("1.25.1", target))
+                    .collect(),
+            },
+            "flutter" => LockedTool {
+                name: "flutter".to_owned(),
+                requested: "3.47.0".to_owned(),
+                version: "3.47.0".to_owned(),
+                provider: "flutter-official".to_owned(),
+                released_at: None,
+                metadata: BTreeMap::from([
+                    ("channel".to_owned(), "stable".to_owned()),
+                    ("dart_version".to_owned(), "3.13.0".to_owned()),
+                    ("release_hash".to_owned(), "cd".repeat(20)),
+                ]),
+                options: Default::default(),
+                artifacts: FLUTTER_TARGETS
+                    .into_iter()
+                    .map(|target| locked_flutter_artifact("3.47.0", target))
                     .collect(),
             },
             "python" => LockedTool {

@@ -91,7 +91,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.11.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.11.1
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -106,7 +106,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.11.0
+.\install.ps1 -Version 2.11.1
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -311,9 +311,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.11.0
+      - uses: Future-Element/pinset@v2.11.1
         with:
-          version: 2.11.0
+          version: 2.11.1
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -507,7 +507,7 @@ Pinset 在路由命令前验证 Registry 签名、精确 Release 制品 URL、�
 
 ### VS Code 集成
 
-[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.11.0 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
+[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.11.1 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.11.1 - 2026-09-08
+
+- Restore the schema 3 selector contract for every built-in runtime Provider. Historical locks may keep selectors such as `lts`, `latest`, a major version, or a channel in `requested` while recording the exact resolved release in `version`.
+- Allow project/global migration and self-update compatibility repair to read those valid schema 3 locks, while continuing to reject selector mismatches in schema 1/2, configuration/lock disagreements, unknown Providers, malformed artifacts, and unsupported target gaps.
+- Add regression coverage for Node.js, pnpm, Bun, Go, Flutter, Python, Java, Rust, and .NET SDK selectors, every pre-1.0 Linux ARM64 target refresh, and the reported `pinset migrate --global` path.
+
+No configuration or lock schema changes are introduced. Explicit migration still upgrades schema 3 locks to schema 4 atomically and preserves both the requested selector and exact resolved version.
+
 ## 2.11.0 - 2026-09-08
 
 - Add portable `status` and strict `check` diagnostics, redacted report schema 1, saved-report comparison, repair previews, and verified GitHub Action cache restores.
