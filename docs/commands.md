@@ -661,17 +661,17 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 ## Provider Registry commands
 
-The v1.8 Registry is a read-only preview. A verified manifest describes commands, dependencies, shared capabilities, and provenance methods, but it cannot install, activate, or execute a Provider. Only Providers compiled into the current Pinset binary are active. Registry files must be bounded regular files containing exactly one valid cleartext OpenPGP signature from Pinset's pinned registry key.
+Registry schema 2 supports a constrained `github-release-binary` backend. It fixes the upstream repository, release tag prefix, checksum asset, platform asset names, commands, revision, and disable state. A manifest cannot contain scripts, hooks, shell fragments, arbitrary download hosts, or environment code. `jq` is the first Provider resolved and installed by this generic backend. Active Registry files must be bounded regular files containing exactly one valid cleartext OpenPGP signature from Pinset's pinned Registry key.
 
 ### `provider list`
 
 | Field | Description |
 | --- | --- |
-| Purpose | Verify and list the embedded declarative Provider Registry. |
+| Purpose | Verify and list the active declarative Provider Registry. |
 | Syntax and arguments | `pinset provider list [--json]`. |
-| Modifies state | No. It does not use the network, install runtimes, activate Providers, or execute manifest content. |
+| Modifies state | No. It does not use the network, install runtimes, or execute manifest content. |
 | Example | `pinset provider list --json` |
-| JSON | **Yes**; command name `provider.list`, including the signed document and signer fingerprint. |
+| JSON | **Yes**; command name `provider.list`, including whether a trusted file is active, the signed document, and signer fingerprint. |
 | Exit | `0` when signature, schema, capabilities, dependency graph, and built-in declarations all verify; `2` otherwise. |
 | Key errors | Invalid embedded key/signature, unknown capability, duplicate command, missing dependency, cycle, or declaration drift. |
 
@@ -686,6 +686,32 @@ The v1.8 Registry is a read-only preview. A verified manifest describes commands
 | JSON | **Yes**; command name `provider.verify`, including the verified document and signer fingerprint. |
 | Exit | `0` only after cryptographic, schema, capability, and dependency validation; `2` otherwise. |
 | Key errors | Symlink/non-file input, input over 256 KiB, unsigned or multiply-signed data, signer mismatch, tampering, unknown field/capability, missing dependency, or cycle. |
+
+### `provider status`, `trust`, and `untrust`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Inspect the active snapshot, activate a verified official snapshot, or return to the Registry embedded in the binary. |
+| Syntax and arguments | `pinset provider status [--json]`; `pinset provider trust <REGISTRY> [--json]`; `pinset provider untrust [--json]`. |
+| Modifies state | `status` does not. `trust` atomically writes `PINSET_HOME/config/provider-registry.asc` only after signature, schema, capability, and runtime-declaration validation. `untrust` removes that local selection. |
+| Example | `pinset provider trust registry/providers.json.asc` |
+| JSON | **Yes** for all three commands, using `provider.status`, `provider.trust`, and `provider.untrust`. |
+| Exit | `0` after the resulting active Registry has been verified; `2` otherwise. |
+| Key errors | Untrusted signer, tampering, declaration drift, disabled or missing Provider revision, unsafe input, or atomic write failure. |
+
+### `provider validate` and `provider scaffold`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Validate unsigned JSON during contribution, or generate a constrained GitHub release binary manifest template. Neither command grants trust. |
+| Syntax and arguments | `pinset provider validate <REGISTRY.json> [--json]`; `pinset provider scaffold <tool> --repository <owner/repository> [--command <name>]`. |
+| Modifies state | No. |
+| Example | `pinset provider scaffold jq --repository jqlang/jq --command jq` |
+| JSON | `validate` uses command name `provider.validate`; `scaffold` prints the manifest JSON directly. |
+| Exit | `0` for a valid bounded document or generated template; `2` otherwise. |
+| Key errors | Unknown fields or capabilities, scripts/hooks represented as unknown fields, unsafe names, incomplete target mapping, duplicate commands, missing dependencies, or cycles. |
+
+Locks for declarative Providers record the Provider id, revision, Registry signer fingerprint, repository, tag, five target assets, and exact SHA-256 identities. CLI and shim routing compare the lock to the active signed manifest every time. A signed revision change or disable flag therefore fails closed until the project explicitly resolves a new lock. `pinset uninstall jq@1.8.2` resolves a unique revision-bound installation identity; if multiple identities exist, Pinset asks for the exact identity shown by `pinset list jq`.
 
 ## Short execution (2.2)
 

@@ -70,6 +70,11 @@ pub fn install_locked_rust(
                         LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
                         LockedArtifactFormat::Zip => ArtifactFormat::Zip,
                         LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
+                        LockedArtifactFormat::Binary => {
+                            return Err(Error::InvalidLockfile {
+                                reason: "Rust overlay cannot use binary format".to_owned(),
+                            });
+                        }
                     },
                 },
                 strip_components: 2,

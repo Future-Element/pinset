@@ -441,7 +441,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
                 config.tool_options.get(tool),
                 SelectionSource::Project,
                 config_path,
-                lockfile_for_project(config_path),
+                (pinset_home, lockfile_for_project(config_path)),
             );
         }
         if !config.policy.inherit_global {
@@ -465,7 +465,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
                 None,
                 SelectionSource::Global,
                 &global_path,
-                lockfile_for_global(pinset_home),
+                (pinset_home, lockfile_for_global(pinset_home)),
             );
         }
         if config.policy.system_fallback {
@@ -488,7 +488,7 @@ pub fn resolve_tool_selection(tool: &str, cwd: &Path, pinset_home: &Path) -> Res
             None,
             SelectionSource::Global,
             &global_path,
-            lockfile_for_global(pinset_home),
+            (pinset_home, lockfile_for_global(pinset_home)),
         );
     }
 
@@ -527,8 +527,9 @@ fn selection_from_config(
     configured_options: Option<&crate::ToolOptions>,
     source: SelectionSource,
     config_path: &Path,
-    lockfile: Result<Option<crate::Lockfile>>,
+    state: (&Path, Result<Option<crate::Lockfile>>),
 ) -> Result<ToolSelection> {
+    let (pinset_home, lockfile) = state;
     let lockfile = lockfile?;
     let (version, installation_version) = if let Some(lockfile) = lockfile {
         let locked = validate_lock_matches_tool(&lockfile, tool, requested, config_path)?;
@@ -542,6 +543,10 @@ fn selection_from_config(
                 configured: format!("{requested} with structured options"),
                 locked: format!("{} with different structured options", locked.version),
             });
+        }
+        #[cfg(feature = "provider-registry")]
+        if locked.provider == "declarative-github-release" {
+            crate::validate_locked_declarative_provider(pinset_home, locked)?;
         }
         (locked.version.clone(), locked.installation_version())
     } else if config_schema < crate::PROJECT_CONFIG_SCHEMA {
@@ -580,7 +585,7 @@ fn selection_from_config(
     _configured_options: Option<&crate::ToolOptions>,
     source: SelectionSource,
     config_path: &Path,
-    _lockfile: (),
+    _state: (&Path, ()),
 ) -> Result<ToolSelection> {
     Ok(ToolSelection {
         tool: tool.to_owned(),

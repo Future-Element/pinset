@@ -1,4 +1,12 @@
 mod config;
+#[cfg(feature = "declarative-provider")]
+mod declarative_provider;
+#[cfg(all(
+    feature = "installer",
+    feature = "declarative-provider",
+    feature = "lockfile"
+))]
+mod declarative_runtime;
 #[cfg(feature = "dotnet-metadata")]
 mod dotnet_metadata;
 #[cfg(feature = "dotnet-provider")]
@@ -109,6 +117,14 @@ pub use config::{
 pub use config::{create_project_config, save_project_config};
 #[cfg(all(feature = "project-write", feature = "lockfile"))]
 pub use config::{save_project_state, save_project_state_locked};
+#[cfg(feature = "declarative-provider")]
+pub use declarative_provider::DeclarativeProviderClient;
+#[cfg(all(
+    feature = "installer",
+    feature = "declarative-provider",
+    feature = "lockfile"
+))]
+pub use declarative_runtime::install_locked_declarative_provider;
 #[cfg(feature = "dotnet-metadata")]
 pub use dotnet_metadata::{DotnetMetadataClient, DotnetRelease};
 #[cfg(feature = "dotnet-provider")]
@@ -229,9 +245,15 @@ pub use provenance::{
 };
 #[cfg(feature = "provider-registry")]
 pub use provider_registry::{
-    DeclarativeProvenanceCapabilities, DeclarativeProviderCapabilities,
-    DeclarativeProviderManifest, ProviderRegistryDocument, VerifiedProviderRegistry,
-    embedded_provider_registry, load_signed_provider_registry, verify_signed_provider_registry,
+    DeclarativeProvenanceCapabilities, DeclarativeProviderBackend, DeclarativeProviderCapabilities,
+    DeclarativeProviderManifest, PROVIDER_REGISTRY_FILENAME, ProviderRegistryDocument,
+    VerifiedProviderRegistry, effective_provider_registry, embedded_provider_registry,
+    load_signed_provider_registry, provider_registry_path, validate_provider_registry_json,
+    validate_runtime_provider_declarations, verify_signed_provider_registry,
+};
+#[cfg(all(feature = "provider-registry", feature = "lockfile"))]
+pub use provider_registry::{
+    validate_locked_declarative_provider, validate_locked_provider_manifest,
 };
 #[cfg(feature = "python-metadata")]
 pub use python_metadata::{PythonMetadataClient, PythonRelease};

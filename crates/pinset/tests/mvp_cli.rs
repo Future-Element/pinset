@@ -403,6 +403,7 @@ fn doctor_reports_all_provider_commands_and_path_shadowing() {
             "javac",
             "javadoc",
             "javap",
+            "jq",
             "jshell",
             "keytool",
             "node",

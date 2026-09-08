@@ -28,6 +28,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InstalledToolVersion {
     pub tool: String,
+    /// Exact upstream version recorded in the installation receipt.
+    pub resolved_version: String,
+    /// Stable on-disk identity, including structured options or Provider revision when needed.
     pub version: String,
     pub targets: Vec<String>,
 }
@@ -96,6 +99,7 @@ pub fn list_installed_tool_versions(
             continue;
         }
         let mut targets = Vec::new();
+        let mut resolved_version = None;
         for target_entry in
             fs::read_dir(entry.path()).map_err(|source| Error::ReadToolInstallDirectory {
                 tool: tool.to_owned(),
@@ -110,8 +114,13 @@ pub fn list_installed_tool_versions(
             })?;
             let target = target_entry.file_name().to_string_lossy().into_owned();
             if target_entry.path().is_dir()
-                && has_matching_complete_receipt(&target_entry.path(), tool, &version, &target)
+                && let Some(receipt) =
+                    matching_complete_receipt(&target_entry.path(), tool, &version, &target)
+                && resolved_version
+                    .as_ref()
+                    .is_none_or(|existing| existing == &receipt.version)
             {
+                resolved_version.get_or_insert(receipt.version);
                 targets.push(target);
             }
         }
@@ -119,6 +128,7 @@ pub fn list_installed_tool_versions(
         if !targets.is_empty() {
             versions.push(InstalledToolVersion {
                 tool: tool.to_owned(),
+                resolved_version: resolved_version.expect("owned targets have a receipt"),
                 version,
                 targets,
             });
@@ -450,15 +460,24 @@ fn has_matching_complete_receipt(
     version: &str,
     target: &str,
 ) -> bool {
+    matching_complete_receipt(directory, tool, version, target).is_some()
+}
+
+fn matching_complete_receipt(
+    directory: &Path,
+    tool: &str,
+    version: &str,
+    target: &str,
+) -> Option<InstallReceiptIdentity> {
     let Ok(content) = fs::read_to_string(directory.join(".pinset-install.toml")) else {
-        return false;
+        return None;
     };
     let Ok(receipt) = toml::from_str::<InstallReceiptIdentity>(&content) else {
-        return false;
+        return None;
     };
     // Legacy schema 1 receipts remain readable, but every identity field must still agree with
     // the directory being inspected before the directory is considered Pinset-owned.
-    matches!(receipt.schema, 1..=4)
+    (matches!(receipt.schema, 1..=4)
         && (receipt.schema < 4 || receipt.install_identity.is_some())
         && receipt.complete
         && receipt.tool == tool
@@ -467,7 +486,8 @@ fn has_matching_complete_receipt(
             .as_deref()
             .unwrap_or(&receipt.version)
             == version
-        && receipt.target == target
+        && receipt.target == target)
+        .then_some(receipt)
 }
 
 fn validate_tool_and_version(tool: &str, version: &str) -> Result<()> {

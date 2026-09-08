@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pinset.future-element.com/schemas/provider-registry.schema.json",
+  "title": "Pinset Provider Registry schema 2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "registry", "generated-at", "providers"],
+  "properties": {
+    "schema": { "const": 2 },
+    "registry": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "generated-at": { "type": "string", "format": "date-time" },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/provider" }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tool", "commands", "dependencies", "capabilities"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,63}$" },
+        "tool": { "$ref": "#/$defs/name" },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "revision": { "type": "integer", "minimum": 1, "default": 1 },
+        "disabled": { "type": "boolean", "default": false },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "backend": { "$ref": "#/$defs/githubReleaseBinary" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command-layout", "metadata", "installer", "environment", "lock-audit", "provenance"],
+      "properties": {
+        "command-layout": { "enum": ["node-native", "python", "java", "root", "bin"] },
+        "metadata": { "enum": ["node", "npm", "go", "flutter", "java", "python", "rust", "dotnet", "github-release-binary"] },
+        "installer": { "enum": ["node", "npm", "go", "flutter", "java", "python", "rust", "dotnet", "github-release-binary"] },
+        "environment": { "enum": ["none", "go", "flutter", "java", "python", "dotnet"] },
+        "lock-audit": { "const": "artifact-receipt" },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["methods", "release-time"],
+          "properties": {
+            "methods": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["https-checksum", "open-pgp-signed-checksum", "npm-registry-signature", "minisign-signed-checksum", "sigstore-bundle", "github-attestation", "slsa-provenance"] }
+            },
+            "release-time": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "assetName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "githubReleaseBinary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "repository", "tag-prefix", "checksum-asset", "assets"],
+      "properties": {
+        "kind": { "const": "github-release-binary" },
+        "repository": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,63}$" },
+        "tag-prefix": { "type": "string", "maxLength": 32, "pattern": "^[A-Za-z0-9._-]*$" },
+        "checksum-asset": { "$ref": "#/$defs/assetName" },
+        "assets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64", "linux-aarch64"],
+          "properties": {
+            "windows-x86_64": { "$ref": "#/$defs/assetName" },
+            "macos-aarch64": { "$ref": "#/$defs/assetName" },
+            "macos-x86_64": { "$ref": "#/$defs/assetName" },
+            "linux-x86_64": { "$ref": "#/$defs/assetName" },
+            "linux-aarch64": { "$ref": "#/$defs/assetName" }
+          }
+        }
+      }
+    }
+  }
+}

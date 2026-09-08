@@ -8,7 +8,7 @@
 
 Pinset 是一个行为可预测、理解项目边界的多语言运行时版本管理器。
 
-它使用一份项目配置和一份精确锁文件管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET 与 Flutter/Dart。进入项目后可以直接运行 `node`、`python`、`cargo`、`flutter` 等命令；Pinset shim 会选择项目锁定的运行时，并在项目受信任时注入选定的 age 加密环境 profile。
+它使用一份项目配置和一份精确锁文件管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET、Flutter/Dart 与声明式开发 CLI。进入项目后可以直接运行 `node`、`python`、`cargo`、`flutter`、`jq` 等命令；Pinset shim 会选择项目锁定的运行时，并在项目受信任时注入选定的 age 加密环境 profile。
 
 ```text
 pinset.toml  ──用户意图、项目策略、环境 profile
@@ -41,6 +41,7 @@ pinset.toml  ──用户意图、项目策略、环境 profile
 | Rust stable | `rustc`、`cargo`、`rustdoc`、`rustfmt`、Clippy | ✓ | ✓ | ✓ | ✓ |
 | .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
 | Flutter / 内置 Dart | `flutter`、`dart` | ✓ | ✓ | — | ✓ |
+| jq（声明式） | `jq` | ✓ | ✓ | ✓ | ✓ |
 
 Flutter 没有提供符合当前安装模型的官方 Linux ARM64 SDK 归档，因此 Pinset 会明确返回不支持，而不会下载 x64 制品。外部 Android SDK、Visual Studio Build Tools、Windows SDK 等系统依赖只由 `doctor` 诊断，不由 Pinset 安装。
 
@@ -486,21 +487,29 @@ pinset candidate recover
 
 为 `prepare`、`test`、`status` 或 `apply` 增加 `--workspace`，即可处理所有显式成员。候选记录绑定原始配置、有效配置、当前锁、项目身份、任务定义、Git HEAD 和工作区整洁状态。只有最新一次测试通过的精确候选锁可以应用；配置、锁或 Git 基线冲突时拒绝覆盖。恢复仅覆盖 Pinset 管理的锁状态，测试命令对业务文件或外部系统产生的副作用仍由项目自行处理。
 
+### 声明式 Provider
+
+Registry schema 2 可以安装通过 GitHub Release 发布平台二进制文件的开发 CLI。Provider 只声明固定仓库、目标与制品映射、校验和文件、命令和修订号，不能包含脚本、钩子、Shell 片段、任意 URL 或环境代码。`jq` 是首个完整使用通用后端的 Provider：
+
+```sh
+pinset use jq@1.8
+pinset -- jq --version
+pinset provider status
+pinset provider validate registry/providers.json
+pinset provider scaffold jq --repository jqlang/jq --command jq
+```
+
+Pinset 在路由命令前验证 Registry 签名、精确 Release 制品 URL、上游 SHA-256 文件、下载内容、安装收据和当前 Provider 修订号。`provider trust` 激活由 Pinset 固定签名者签署的快照，`provider untrust` 恢复使用二进制内嵌快照。签名修订可以禁用 Provider，已有锁随后会明确拒绝执行。
+
 ### 未来方向
 
-Pinset 接下来会围绕项目环境的诊断、交付和升级展开。以下能力仍在规划中，当前版本尚不支持。
+Pinset 剩余的 2.x 规划聚焦编辑器集成。
 
 | 方向 | 计划能力 |
 | --- | --- |
-| 环境诊断与差异比较 | 统一状态与检查、不含密钥值的可分享报告、本地与 CI 比较，以及修复预览。 |
-| 语言能力深化 | Rust 组件、编译目标与固定日期 nightly；Java 发行版及 JDK/JRE 选择；Python 具名环境。 |
-| Workspace 与多项目 | 显式成员、共享工具默认值与成员覆盖、批量安装检查，以及工具引用关系查看。 |
-| 离线交付与缓存 | 制品预下载、可验证离线包、显式离线安装、更多镜像支持、并发下载与 CI 缓存。 |
-| 候选升级与恢复 | 准备候选锁、使用候选工具链测试、应用已验证的选择，以及恢复之前的工具链配置。 |
-| 受约束的 Provider 生态 | 开发辅助 CLI 的声明式 Provider、显式来源信任、清单验证与贡献者工具。 |
 | 编辑器集成 | VS Code 工具链状态、环境选择、诊断和任务执行。 |
 
-后续按兼容的 2.x 功能版本推进：2.4 诊断与 CI，2.5 离线交付，2.6 Rust 与工具身份，2.7 Java/Python，2.8 Workspace，2.9 候选升级与恢复，2.10 Provider，2.11 编辑器集成。版本号是交付目标，不承诺发布日期；破坏公开兼容性的变更另立 3.0 计划。Pinset 继续保持明确的项目边界、制品验证和本地优先原则。
+剩余的兼容目标是 2.11 编辑器集成；破坏公开兼容性的变更另立 3.0 计划。Pinset 继续保持明确的项目边界、制品验证和本地优先原则。
 
 ## 贡献与许可证
 

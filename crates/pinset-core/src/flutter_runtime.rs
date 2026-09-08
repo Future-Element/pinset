@@ -58,6 +58,11 @@ pub fn install_locked_flutter(
                         reason: format!("Flutter artifact {target} cannot use tar.gz"),
                     });
                 }
+                LockedArtifactFormat::Binary => {
+                    return Err(Error::InvalidLockfile {
+                        reason: format!("Flutter artifact {target} cannot use binary format"),
+                    });
+                }
             },
         },
         strip_components: 1,

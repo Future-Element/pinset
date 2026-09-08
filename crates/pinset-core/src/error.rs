@@ -340,6 +340,30 @@ pub enum Error {
     #[error("Provider Registry is invalid: {reason}")]
     ProviderRegistryInvalid { reason: String },
 
+    #[cfg(feature = "declarative-provider")]
+    #[error("declarative Provider metadata contains no stable release matching \"{selector}\"")]
+    DeclarativeProviderVersionNotFound { selector: String },
+
+    #[cfg(feature = "declarative-provider")]
+    #[error("failed to request declarative Provider metadata {url}: {source}")]
+    DeclarativeProviderMetadataRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[cfg(feature = "declarative-provider")]
+    #[error("failed to read declarative Provider metadata {url}: {source}")]
+    DeclarativeProviderMetadataRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "declarative-provider")]
+    #[error("invalid declarative Provider metadata: {reason}")]
+    DeclarativeProviderMetadataInvalid { reason: String },
+
     #[cfg(feature = "sources")]
     #[error("invalid source alias \"{alias}\"; use lowercase letters, digits, '.', '_' or '-'")]
     InvalidSourceAlias { alias: String },

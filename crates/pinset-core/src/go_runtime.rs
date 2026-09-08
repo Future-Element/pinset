@@ -58,6 +58,11 @@ pub fn install_locked_go(
                         reason: format!("Go artifact {target} cannot use tar.xz"),
                     });
                 }
+                LockedArtifactFormat::Binary => {
+                    return Err(Error::InvalidLockfile {
+                        reason: format!("Go artifact {target} cannot use binary format"),
+                    });
+                }
             },
         },
         strip_components: 1,

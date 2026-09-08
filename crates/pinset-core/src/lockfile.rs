@@ -88,6 +88,8 @@ pub struct LockedArtifactOverlay {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LockedArtifactFormat {
+    #[serde(rename = "binary")]
+    Binary,
     #[serde(rename = "zip")]
     Zip,
     #[serde(rename = "tar.xz")]
@@ -99,6 +101,7 @@ pub enum LockedArtifactFormat {
 impl LockedArtifactFormat {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Binary => "binary",
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
             Self::TarGz => "tar.gz",
@@ -165,6 +168,13 @@ impl LockedTool {
     /// Stable on-disk identity. Legacy locks keep the historical version-only layout.
     pub fn installation_version(&self) -> String {
         let mut identity_options = self.options.clone();
+        if self.provider == "declarative-github-release" {
+            for key in ["provider-id", "provider-revision", "registry-fingerprint"] {
+                if let Some(value) = self.metadata.get(key) {
+                    identity_options.insert(format!("provider.{key}"), value.clone());
+                }
+            }
+        }
         if self
             .metadata
             .get("channel")
@@ -472,18 +482,23 @@ fn validate_locked_tool_with_target_policy(
             reason: format!("{} has an invalid released-at timestamp", tool.name),
         });
     }
-    let provider_supported = matches!(
-        (tool.name.as_str(), tool.provider.as_str()),
-        ("node", "nodejs-official")
-            | ("pnpm", "pnpm-npm")
-            | ("bun", "bun-npm")
-            | ("go", "go-official")
-            | ("flutter", "flutter-official")
-            | ("java", "adoptium-temurin")
-            | ("rust", "rust-official")
-            | ("dotnet", "microsoft-dotnet-sdk")
-            | ("python", "python-build-standalone")
-    );
+    let declarative_provider = tool.provider == "declarative-github-release"
+        && crate::runtime_provider(&tool.name).is_some_and(|provider| {
+            provider.capabilities.metadata == crate::RuntimeMetadataKind::Declarative
+        });
+    let provider_supported = declarative_provider
+        || matches!(
+            (tool.name.as_str(), tool.provider.as_str()),
+            ("node", "nodejs-official")
+                | ("pnpm", "pnpm-npm")
+                | ("bun", "bun-npm")
+                | ("go", "go-official")
+                | ("flutter", "flutter-official")
+                | ("java", "adoptium-temurin")
+                | ("rust", "rust-official")
+                | ("dotnet", "microsoft-dotnet-sdk")
+                | ("python", "python-build-standalone")
+        );
     if !provider_supported {
         return Err(Error::InvalidLockfile {
             reason: format!(
@@ -503,6 +518,7 @@ fn validate_locked_tool_with_target_policy(
         && tool.name != "python"
         && tool.name != "rust"
         && tool.name != "dotnet"
+        && !declarative_provider
         && !tool.metadata.is_empty()
     {
         return Err(Error::InvalidLockfile {
@@ -525,6 +541,7 @@ fn validate_locked_tool_with_target_policy(
             "dotnet" => validate_locked_dotnet_artifact(tool, artifact)?,
             "python" => validate_locked_python_artifact(&tool.version, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
+            _ if declarative_provider => validate_locked_declarative_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
         }
     }
@@ -644,6 +661,26 @@ fn validate_locked_tool_with_target_policy(
         if targets.len() != DOTNET_TARGETS.len() && !pre_v1_target_matrix {
             return Err(Error::InvalidLockfile {
                 reason: ".NET SDK lock contains an unsupported artifact target".to_owned(),
+            });
+        }
+    } else if declarative_provider {
+        validate_declarative_metadata(tool)?;
+        for target in [
+            "windows-x86_64",
+            "macos-aarch64",
+            "macos-x86_64",
+            "linux-x86_64",
+            "linux-aarch64",
+        ] {
+            if !targets.contains(target) {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("missing {} declarative artifact for {target}", tool.name),
+                });
+            }
+        }
+        if targets.len() != 5 {
+            return Err(Error::InvalidLockfile {
+                reason: format!("{} lock contains an unsupported artifact target", tool.name),
             });
         }
     } else {
@@ -979,6 +1016,96 @@ fn validate_dotnet_metadata(tool: &LockedTool) -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn validate_declarative_metadata(tool: &LockedTool) -> Result<()> {
+    let expected = [
+        "provider-id",
+        "provider-revision",
+        "registry-fingerprint",
+        "repository",
+        "tag",
+    ];
+    let provider_id = tool.metadata.get("provider-id");
+    let revision = tool
+        .metadata
+        .get("provider-revision")
+        .and_then(|value| value.parse::<u32>().ok());
+    let fingerprint = tool.metadata.get("registry-fingerprint");
+    let repository = tool.metadata.get("repository");
+    let tag = tool.metadata.get("tag");
+    if !is_exact_numeric_triplet(&tool.version)
+        || !tool.options.is_empty()
+        || tool.released_at.is_none()
+        || tool.metadata.len() != expected.len()
+        || expected.iter().any(|key| !tool.metadata.contains_key(*key))
+        || provider_id.is_none_or(|value| !valid_scoped_name(value))
+        || revision.is_none_or(|value| value == 0)
+        || fingerprint.is_none_or(|value| {
+            value.len() != 40
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'A'..=b'F'))
+        })
+        || repository.is_none_or(|value| !valid_scoped_name(value))
+        || tag.is_none_or(|value| !valid_lock_component(value))
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "{} declarative lock metadata must identify one Provider revision, signer, repository and release tag",
+                tool.name
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_locked_declarative_artifact(
+    tool: &LockedTool,
+    artifact: &LockedArtifact,
+) -> Result<()> {
+    let repository = &tool.metadata["repository"];
+    let tag = &tool.metadata["tag"];
+    let expected_url = format!(
+        "https://github.com/{repository}/releases/download/{tag}/{}",
+        artifact.artifact_path
+    );
+    let integrity = artifact.artifact_integrity()?;
+    if artifact.format != LockedArtifactFormat::Binary
+        || !artifact.archive_root.is_empty()
+        || artifact.verification != "https-checksum"
+        || !artifact.overlays.is_empty()
+        || !valid_lock_component(&artifact.artifact_path)
+        || artifact.canonical_url != expected_url
+        || integrity.algorithm() != crate::IntegrityAlgorithm::Sha256
+        || integrity.cache_key() != artifact.sha256
+    {
+        return Err(Error::InvalidLockfile {
+            reason: format!(
+                "{} declarative artifact {} does not match its verified binary identity",
+                tool.name, artifact.target
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn valid_scoped_name(value: &str) -> bool {
+    let mut parts = value.split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(owner), Some(name), None)
+            if valid_lock_component(owner) && valid_lock_component(name)
+    )
+}
+
+fn valid_lock_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('.')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_release_date(value: &str) -> bool {

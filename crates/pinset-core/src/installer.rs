@@ -35,6 +35,7 @@ const DOWNLOAD_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
+    Binary,
     Zip,
     TarXz,
     TarGz,
@@ -43,6 +44,7 @@ pub enum ArtifactFormat {
 impl ArtifactFormat {
     fn receipt_name(self) -> &'static str {
         match self {
+            Self::Binary => "binary",
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
             Self::TarGz => "tar.gz",
@@ -420,6 +422,19 @@ impl Installer {
         include_prefixes: &[PathBuf],
     ) -> Result<()> {
         match format {
+            ArtifactFormat::Binary => {
+                debug_assert_eq!(strip_components, 0);
+                debug_assert!(include_prefixes.is_empty());
+                let output_path = staging_dir.join("binary");
+                fs::copy(&selected.path, &output_path).map_err(|source| {
+                    Error::ExtractArchiveEntry {
+                        entry: "binary".to_owned(),
+                        path: output_path,
+                        source,
+                    }
+                })?;
+                Ok(())
+            }
             ArtifactFormat::Zip => {
                 debug_assert!(include_prefixes.is_empty());
                 self.extract_zip(&selected.path, staging_dir, strip_components)
@@ -975,7 +990,9 @@ impl Installer {
         let reader: Box<dyn Read> = match format {
             ArtifactFormat::TarXz => Box::new(XzDecoder::new(file)),
             ArtifactFormat::TarGz => Box::new(GzDecoder::new(file)),
-            ArtifactFormat::Zip => unreachable!("ZIP archives use extract_zip"),
+            ArtifactFormat::Binary | ArtifactFormat::Zip => {
+                unreachable!("binary and ZIP artifacts do not use extract_tar")
+            }
         };
         let mut archive = tar::Archive::new(reader);
         let entries = archive.entries().map_err(|source| Error::ReadTarArchive {
@@ -1282,6 +1299,13 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
     validate_artifact_request(&request.artifact, request.strip_components)?;
+    if request.artifact.format == ArtifactFormat::Binary
+        && (request.strip_components != 0 || !request.include_prefixes.is_empty())
+    {
+        return Err(Error::InvalidStripComponents {
+            value: request.strip_components,
+        });
+    }
     debug_assert!(
         request.artifact.format != ArtifactFormat::Zip || request.include_prefixes.is_empty()
     );
@@ -1868,6 +1892,40 @@ mod tests {
             Err(Error::InstallAlreadyExists { .. })
         ));
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn installs_a_verified_binary_with_an_atomic_command_alias() {
+        let binary = b"portable executable fixture".to_vec();
+        let (url, server) = serve_once(binary.clone(), binary.len());
+        let root = tempdir().expect("temp root");
+        let mut request = request(root.path(), url, sha256_hex(&binary));
+        request.tool = "jq".to_owned();
+        request.version = "1.8.2".to_owned();
+        request.artifact.canonical_url =
+            "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64".to_owned();
+        request.artifact.format = ArtifactFormat::Binary;
+        request.required_paths = vec![PathBuf::from("binary")];
+        request.executable_paths = vec![PathBuf::from("binary")];
+        request.aliases = vec![InstallAlias {
+            source: PathBuf::from("binary"),
+            destination: PathBuf::from("jq"),
+        }];
+
+        let outcome = test_installer().install(&request).expect("install binary");
+        server.join().expect("server");
+
+        assert_eq!(
+            fs::read(outcome.install_dir.join("binary")).expect("binary"),
+            binary
+        );
+        assert_eq!(
+            fs::read(outcome.install_dir.join("jq")).expect("command alias"),
+            b"portable executable fixture"
+        );
+        let receipt =
+            fs::read_to_string(outcome.install_dir.join(".pinset-install.toml")).expect("receipt");
+        assert!(receipt.contains("artifact_format = \"binary\""));
     }
 
     #[test]

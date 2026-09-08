@@ -17,6 +17,7 @@ mod environment;
 mod i18n;
 mod self_update;
 
+use atomic_write_file::AtomicWriteFile;
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use pinset_core::{
     ArtifactFormat, ArtifactIntegrity, ArtifactSource, ArtifactSourceKind, ArtifactSpec,
@@ -29,11 +30,12 @@ use pinset_core::{
     acquire_global_state_write_lock, acquire_project_state_write_lock, audit_global_lock,
     audit_project_lock, clean_download_cache, command_tool, create_project_config,
     create_project_python_environment_for, current_target_for_tool, download_cache_info,
-    effective_project_config, ensure_shims, find_optional_project_config, find_project_config,
-    find_project_context, find_workspace_config, global_config_path, global_lockfile_path,
-    import_download_cache, import_download_cache_with_integrity, install_locked_dotnet,
-    install_locked_flutter, install_locked_go, install_locked_java, install_locked_node,
-    install_locked_npm_tool, install_locked_python, install_locked_rust,
+    effective_project_config, effective_provider_registry, ensure_shims,
+    find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
+    global_config_path, global_lockfile_path, import_download_cache,
+    import_download_cache_with_integrity, install_locked_declarative_provider,
+    install_locked_dotnet, install_locked_flutter, install_locked_go, install_locked_java,
+    install_locked_node, install_locked_npm_tool, install_locked_python, install_locked_rust,
     install_payload_statistics, is_managed_command_shim, list_all_installed_tool_versions,
     list_download_cache, list_installed_tool_versions, load_effective_project_config,
     load_global_config, load_lockfile, load_lockfile_for_provider_refresh,
@@ -41,17 +43,17 @@ use pinset_core::{
     load_project_python_environment, load_project_python_environment_for, load_source_config,
     load_user_settings, lockfile_path, managed_runtime_arguments, pinset_home,
     plan_prune_tool_versions, plan_uninstall_tool_version, project_python_environment_path,
-    provider_dependency_order, register_project_config, repair_download_cache, resolve_command,
-    resolve_execution_command_for_python_environment, resolve_project_python_command,
-    resolve_tool_selection, runtime_command_candidates, runtime_command_directory,
-    runtime_environment_for_install, runtime_provider, save_global_config,
-    save_global_state_locked, save_project_config, save_project_state_locked, save_source_config,
-    save_user_settings, scan_project_sources, source_config_path, uninstall_node_version,
-    uninstall_tool_version, user_settings_path, validate_exact_dotnet_version,
-    validate_exact_flutter_version, validate_exact_go_version, validate_exact_java_version,
-    validate_exact_node_version, validate_exact_npm_tool_version, validate_exact_python_version,
-    validate_exact_rust_version, validate_lock_matches_selection, validate_lock_matches_tool,
-    validate_lock_matches_tool_options, validate_lock_matches_tools,
+    provider_dependency_order, provider_registry_path, register_project_config,
+    repair_download_cache, resolve_command, resolve_execution_command_for_python_environment,
+    resolve_project_python_command, resolve_tool_selection, runtime_command_candidates,
+    runtime_command_directory, runtime_environment_for_install, runtime_provider,
+    save_global_config, save_global_state_locked, save_project_config, save_project_state_locked,
+    save_source_config, save_user_settings, scan_project_sources, source_config_path,
+    uninstall_node_version, uninstall_tool_version, user_settings_path,
+    validate_exact_dotnet_version, validate_exact_flutter_version, validate_exact_go_version,
+    validate_exact_java_version, validate_exact_node_version, validate_exact_npm_tool_version,
+    validate_exact_python_version, validate_exact_rust_version, validate_lock_matches_selection,
+    validate_lock_matches_tool, validate_lock_matches_tool_options, validate_lock_matches_tools,
     validate_managed_runtime_invocation, validate_project_lock_policy,
     validate_windows_batch_arguments, verify_download_cache, workspace_members,
 };
@@ -137,7 +139,7 @@ enum Commands {
     },
     /// Clear a project or global runtime selection without uninstalling anything.
     Unset {
-        /// Tool to clear: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
+        /// Tool to clear: node, pnpm, bun, go, python, flutter, java, rust, dotnet or jq.
         tool: String,
         /// Clear the global default instead of the nearest project selection.
         #[arg(long, conflicts_with = "cwd")]
@@ -199,7 +201,7 @@ enum Commands {
     },
     /// List installed or officially available runtime versions.
     List {
-        /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust or dotnet.
+        /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust, dotnet or jq.
         tool: Option<String>,
         /// Query the official provider index instead of local installations.
         #[arg(long, requires = "tool", conflicts_with = "long")]
@@ -770,7 +772,7 @@ enum SourceCommands {
 
 #[derive(Debug, Subcommand)]
 enum ProviderCommands {
-    /// List manifests from the embedded signed Registry.
+    /// List manifests from the active signed Registry.
     List {
         /// Emit the verified Registry using the stable JSON envelope.
         #[arg(long)]
@@ -783,6 +785,36 @@ enum ProviderCommands {
         /// Emit the verified Registry using the stable JSON envelope.
         #[arg(long)]
         json: bool,
+    },
+    /// Show which signed Registry is active.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify and activate an official signed Registry snapshot.
+    Trust {
+        registry: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return to the Registry embedded in this Pinset build.
+    Untrust {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate an unsigned Registry document for contributor feedback.
+    Validate {
+        registry: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a constrained GitHub release binary Provider manifest template.
+    Scaffold {
+        tool: String,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        command: Option<String>,
     },
 }
 
@@ -859,6 +891,10 @@ impl ProviderCommands {
         match self {
             Self::List { json: true } => Some("provider.list"),
             Self::Verify { json: true, .. } => Some("provider.verify"),
+            Self::Status { json: true } => Some("provider.status"),
+            Self::Trust { json: true, .. } => Some("provider.trust"),
+            Self::Untrust { json: true } => Some("provider.untrust"),
+            Self::Validate { json: true, .. } => Some("provider.validate"),
             _ => None,
         }
     }
@@ -1123,6 +1159,7 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::RustSelectorNotFound { .. }
         | Error::DotnetSelectorNotFound { .. }
         | Error::NpmToolSelectorNotFound { .. }
+        | Error::DeclarativeProviderVersionNotFound { .. }
         | Error::ToolSelectionNotFound { .. }
         | Error::CommandSelectionNotFound { .. }
         | Error::ToolNotConfigured { .. }
@@ -1171,6 +1208,8 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::DotnetMetadataRead { .. }
         | Error::NpmMetadataRequest { .. }
         | Error::NpmMetadataRead { .. }
+        | Error::DeclarativeProviderMetadataRequest { .. }
+        | Error::DeclarativeProviderMetadataRead { .. }
         | Error::HttpClient { .. } => "metadata_request_failed",
         Error::NodeMetadataTooLarge { .. }
         | Error::NodeIndexTooLarge { .. }
@@ -1190,7 +1229,8 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::DotnetMetadataTooLarge { .. }
         | Error::InvalidDotnetIndex { .. }
         | Error::NpmMetadataTooLarge { .. }
-        | Error::InvalidNpmMetadata { .. } => "metadata_invalid",
+        | Error::InvalidNpmMetadata { .. }
+        | Error::DeclarativeProviderMetadataInvalid { .. } => "metadata_invalid",
         Error::NodeSignatureInvalid { .. }
         | Error::NodeTrustStoreInvalid { .. }
         | Error::NpmSignatureVerification { .. } => "signature_invalid",
@@ -2575,6 +2615,34 @@ fn available_version_reports(
                 });
             }
         }
+        RuntimeMetadataKind::Declarative => {
+            let home = pinset_home()?;
+            let registry = effective_provider_registry(&home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            let locked = pinset_core::DeclarativeProviderClient::official()?.resolve_tool(
+                manifest,
+                "latest",
+                &registry.signer_fingerprint,
+            )?;
+            reports.push(AvailableVersionReport {
+                tool: tool.to_owned(),
+                version: locked.version,
+                details: BTreeMap::from([
+                    ("provider".to_owned(), manifest.id.clone()),
+                    (
+                        "released-at".to_owned(),
+                        locked.released_at.unwrap_or_default(),
+                    ),
+                ]),
+            });
+        }
     }
     Ok(reports)
 }
@@ -2743,9 +2811,9 @@ fn run_uninstall(
     json: bool,
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (tool, version) = parse_tool_selection(selection, catalog)?;
-    validate_exact_tool_version(&tool, &version)?;
+    let (tool, requested_version) = parse_tool_selection(selection, catalog)?;
     let home = pinset_home()?;
+    let version = resolve_uninstall_identity(&home, &tool, &requested_version)?;
     let cwd = effective_cwd(cwd)?;
     if dry_run {
         let uninstall = plan_uninstall_tool_version(&home, &cwd, &tool, &version, force)?;
@@ -2887,6 +2955,34 @@ fn run_lock_command(
             }
             Ok(if action_required { 1 } else { 0 })
         }
+    }
+}
+
+fn resolve_uninstall_identity(
+    home: &Path,
+    tool: &str,
+    requested: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let installed = list_installed_tool_versions(home, tool)?;
+    if installed.iter().any(|entry| entry.version == requested) {
+        return Ok(requested.to_owned());
+    }
+    let matches = installed
+        .iter()
+        .filter(|entry| entry.resolved_version == requested)
+        .map(|entry| entry.version.as_str())
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [identity] => Ok((*identity).to_owned()),
+        [] => {
+            validate_exact_tool_version(tool, requested)?;
+            Ok(requested.to_owned())
+        }
+        _ => Err(format!(
+            "multiple {tool}@{requested} installations exist; choose one installation identity: {}",
+            matches.join(", ")
+        )
+        .into()),
     }
 }
 
@@ -3256,6 +3352,7 @@ fn artifact_sources(
 
 fn artifact_format(format: pinset_core::LockedArtifactFormat) -> ArtifactFormat {
     match format {
+        pinset_core::LockedArtifactFormat::Binary => ArtifactFormat::Binary,
         pinset_core::LockedArtifactFormat::Zip => ArtifactFormat::Zip,
         pinset_core::LockedArtifactFormat::TarXz => ArtifactFormat::TarXz,
         pinset_core::LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
@@ -4202,7 +4299,7 @@ const COMPLETION_WORKSPACE_COMMANDS: &str = "members install check run update re
 const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
-const COMPLETION_PROVIDER_COMMANDS: &str = "list verify";
+const COMPLETION_PROVIDER_COMMANDS: &str = "list verify status trust untrust validate scaffold";
 const COMPLETION_ENV_COMMANDS: &str =
     "init use reset set unset list reveal import export share unshare members recipient identity";
 const COMPLETION_TRUST_COMMANDS: &str = "add status revoke";
@@ -4457,6 +4554,12 @@ fn validate_exact_tool_version(
         RuntimeMetadataKind::Dotnet => {
             validate_exact_dotnet_version(version)?;
         }
+        RuntimeMetadataKind::Declarative => {
+            semver::Version::parse(version).map_err(|_| Error::InvalidToolVersion {
+                tool: tool.to_owned(),
+                version: version.to_owned(),
+            })?;
+        }
     }
     Ok(())
 }
@@ -4502,6 +4605,23 @@ fn resolve_locked_tool_with_options(
             RustMetadataClient::official()?.resolve_tool_with_options(selector, options)?
         }
         RuntimeMetadataKind::Dotnet => DotnetMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Declarative => {
+            let home = pinset_home()?;
+            let registry = effective_provider_registry(&home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            pinset_core::DeclarativeProviderClient::official()?.resolve_tool(
+                manifest,
+                selector,
+                &registry.signer_fingerprint,
+            )?
+        }
     };
     locked.requested = selector.to_owned();
     Ok(locked)
@@ -6053,6 +6173,25 @@ fn install_tool_from_lock_with_output(
         RuntimeInstallKind::Rust => install_locked_rust(&installer, home, locked_tool, &target)?,
         RuntimeInstallKind::Dotnet => {
             install_locked_dotnet(&installer, home, locked_tool, &target)?
+        }
+        RuntimeInstallKind::Declarative => {
+            let registry = effective_provider_registry(home)?;
+            let manifest = registry
+                .document
+                .providers
+                .iter()
+                .find(|manifest| manifest.tool == tool)
+                .ok_or_else(|| Error::UnsupportedRuntimeProvider {
+                    provider: tool.to_owned(),
+                })?;
+            install_locked_declarative_provider(
+                &installer,
+                home,
+                manifest,
+                &registry.signer_fingerprint,
+                locked_tool,
+                &target,
+            )?
         }
     };
     if !print_outcome {
@@ -7884,7 +8023,8 @@ fn run_source_command(
                     RuntimeMetadataKind::Java
                     | RuntimeMetadataKind::Rust
                     | RuntimeMetadataKind::Dotnet
-                    | RuntimeMetadataKind::Npm,
+                    | RuntimeMetadataKind::Npm
+                    | RuntimeMetadataKind::Declarative,
                 )
                 | None => {
                     return Err(format!(
@@ -7911,15 +8051,22 @@ fn run_source_command(
 fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         ProviderCommands::List { json } => {
-            let verified = pinset_core::embedded_provider_registry()?;
+            let home = pinset_home()?;
+            let active_path = provider_registry_path(&home);
+            let active = fs::symlink_metadata(&active_path).is_ok();
+            let verified = effective_provider_registry(&home)?;
             if json {
-                print_json_success("provider.list", verified)?;
+                print_json_success(
+                    "provider.list",
+                    serde_json::json!({ "active": active, "registry": verified }),
+                )?;
             } else {
                 println!(
-                    "registry={} schema={} signer={}",
+                    "registry={} schema={} signer={} source={}",
                     verified.document.registry,
                     verified.document.schema,
-                    verified.signer_fingerprint
+                    verified.signer_fingerprint,
+                    if active { "trusted-file" } else { "embedded" }
                 );
                 for provider in &verified.document.providers {
                     let dependencies = if provider.dependencies.is_empty() {
@@ -7936,9 +8083,11 @@ fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::er
                         .collect::<Vec<_>>()
                         .join(",");
                     println!(
-                        "{} id={} commands={} dependencies={} verification={} activation=built-in-only",
+                        "{} id={} revision={} enabled={} commands={} dependencies={} verification={}",
                         provider.tool,
                         provider.id,
+                        provider.revision,
+                        !provider.disabled,
                         provider.commands.join(","),
                         dependencies,
                         methods
@@ -7955,13 +8104,149 @@ fn run_provider_command(command: ProviderCommands) -> Result<(), Box<dyn std::er
                 print_json_success("provider.verify", verified)?;
             } else {
                 println!(
-                    "Provider Registry verified: registry={} schema={} providers={} signer={} activation=none",
+                    "Provider Registry verified: registry={} schema={} providers={} signer={}",
                     verified.document.registry,
                     verified.document.schema,
                     verified.document.providers.len(),
                     verified.signer_fingerprint
                 );
             }
+        }
+        ProviderCommands::Status { json } => {
+            let home = pinset_home()?;
+            let path = provider_registry_path(&home);
+            let active = fs::symlink_metadata(&path).is_ok();
+            let verified = effective_provider_registry(&home)?;
+            let report = serde_json::json!({
+                "active": active,
+                "path": path,
+                "registry": verified.document.registry,
+                "schema": verified.document.schema,
+                "providers": verified.document.providers.len(),
+                "signer": verified.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.status", report)?;
+            } else {
+                println!(
+                    "Provider Registry: source={} path={} schema={} providers={} signer={}",
+                    if active { "trusted-file" } else { "embedded" },
+                    path.display(),
+                    verified.document.schema,
+                    verified.document.providers.len(),
+                    verified.signer_fingerprint
+                );
+            }
+        }
+        ProviderCommands::Trust { registry, json } => {
+            let source = pinset_core::load_signed_provider_registry(&registry)?;
+            pinset_core::validate_runtime_provider_declarations(&source.document)?;
+            let content = fs::read_to_string(&registry)?;
+            let verified = pinset_core::verify_signed_provider_registry(&content)?;
+            pinset_core::validate_runtime_provider_declarations(&verified.document)?;
+            let path = provider_registry_path(&pinset_home()?);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = AtomicWriteFile::options().open(&path)?;
+            output.write_all(content.as_bytes())?;
+            output.commit()?;
+            let installed = pinset_core::load_signed_provider_registry(&path)?;
+            pinset_core::validate_runtime_provider_declarations(&installed.document)?;
+            let report = serde_json::json!({
+                "active": true,
+                "path": path,
+                "registry": installed.document.registry,
+                "schema": installed.document.schema,
+                "providers": installed.document.providers.len(),
+                "signer": installed.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.trust", report)?;
+            } else {
+                println!("Activated verified Provider Registry at {}", path.display());
+            }
+        }
+        ProviderCommands::Untrust { json } => {
+            let path = provider_registry_path(&pinset_home()?);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(source.into()),
+            }
+            let verified = pinset_core::embedded_provider_registry()?;
+            let report = serde_json::json!({
+                "active": false,
+                "path": path,
+                "registry": verified.document.registry,
+                "schema": verified.document.schema,
+                "providers": verified.document.providers.len(),
+                "signer": verified.signer_fingerprint,
+            });
+            if json {
+                print_json_success("provider.untrust", report)?;
+            } else {
+                println!("Using the Provider Registry embedded in this Pinset build");
+            }
+        }
+        ProviderCommands::Validate { registry, json } => {
+            let metadata = fs::symlink_metadata(&registry)?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.len() > 256 * 1024
+            {
+                return Err(
+                    "Provider Registry must be a regular JSON file of at most 256 KiB".into(),
+                );
+            }
+            let document =
+                pinset_core::validate_provider_registry_json(&fs::read_to_string(&registry)?)?;
+            if json {
+                print_json_success("provider.validate", document)?;
+            } else {
+                println!(
+                    "Provider Registry is structurally valid: schema={} providers={}",
+                    document.schema,
+                    document.providers.len()
+                );
+            }
+        }
+        ProviderCommands::Scaffold {
+            tool,
+            repository,
+            command,
+        } => {
+            let command = command.unwrap_or_else(|| tool.clone());
+            let manifest = serde_json::json!({
+                "id": format!("community/{tool}"),
+                "tool": tool,
+                "commands": [command],
+                "dependencies": [],
+                "revision": 1,
+                "disabled": false,
+                "capabilities": {
+                    "command-layout": "root",
+                    "metadata": "github-release-binary",
+                    "installer": "github-release-binary",
+                    "environment": "none",
+                    "lock-audit": "artifact-receipt",
+                    "provenance": { "methods": ["https-checksum"], "release-time": true }
+                },
+                "backend": {
+                    "kind": "github-release-binary",
+                    "repository": repository,
+                    "tag-prefix": "v",
+                    "checksum-asset": "sha256sum.txt",
+                    "assets": {
+                        "windows-x86_64": format!("{tool}-windows-amd64.exe"),
+                        "macos-aarch64": format!("{tool}-macos-arm64"),
+                        "macos-x86_64": format!("{tool}-macos-amd64"),
+                        "linux-x86_64": format!("{tool}-linux-amd64"),
+                        "linux-aarch64": format!("{tool}-linux-arm64")
+                    }
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
         }
     }
     Ok(())
@@ -8677,6 +8962,7 @@ mod tests {
         .unwrap();
         let installed = pinset_core::InstalledToolVersion {
             tool: "node".to_owned(),
+            resolved_version: "24.0.0".to_owned(),
             version: "24.0.0".to_owned(),
             targets: vec!["windows-x86_64".to_owned()],
         };

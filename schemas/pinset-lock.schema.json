@@ -20,19 +20,7 @@
       "additionalProperties": false,
       "required": ["name", "requested", "version", "provider", "artifact"],
       "properties": {
-        "name": {
-          "enum": [
-            "node",
-            "pnpm",
-            "bun",
-            "go",
-            "flutter",
-            "python",
-            "java",
-            "rust",
-            "dotnet"
-          ]
-        },
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
         "requested": { "type": "string", "minLength": 1 },
         "version": { "type": "string", "minLength": 1 },
         "provider": { "type": "string", "minLength": 1 },
@@ -76,7 +64,7 @@
           "type": "string",
           "pattern": "^(sha256|sha512):[0-9a-f]+$"
         },
-        "format": { "enum": ["zip", "tar.xz", "tar.gz"] },
+        "format": { "enum": ["binary", "zip", "tar.xz", "tar.gz"] },
         "archive_root": { "type": "string" },
         "verification": { "type": "string", "minLength": 1 },
         "overlay": { "type": "array", "items": { "$ref": "#/$defs/overlay" } }

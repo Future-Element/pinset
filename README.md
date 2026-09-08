@@ -8,7 +8,7 @@
 
 Pinset is a predictable, project-boundary-aware runtime version manager for polyglot projects.
 
-It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, and Flutter/Dart through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, and `flutter` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
+It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, Flutter/Dart, and declarative development CLIs through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, `flutter`, and `jq` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
 
 ```text
 pinset.toml  ──selection intent, project policy, environment profiles
@@ -41,6 +41,7 @@ pinset.toml  ──selection intent, project policy, environment profiles
 | Rust stable | `rustc`, `cargo`, `rustdoc`, `rustfmt`, Clippy | ✓ | ✓ | ✓ | ✓ |
 | .NET SDK | `dotnet` | ✓ | ✓ | ✓ | ✓ |
 | Flutter / bundled Dart | `flutter`, `dart` | ✓ | ✓ | — | ✓ |
+| jq (declarative) | `jq` | ✓ | ✓ | ✓ | ✓ |
 
 Flutter does not publish an official Linux ARM64 SDK archive compatible with the current installation model, so Pinset returns an explicit unsupported-target error instead of downloading an x64 artifact. External components such as Android SDK, Visual Studio Build Tools, and Windows SDK are diagnosed by `doctor` but are not installed by Pinset.
 
@@ -486,21 +487,29 @@ pinset candidate recover
 
 Add `--workspace` to `prepare`, `test`, `status`, or `apply` to process every explicit member. Candidate records bind the raw and effective configuration, current lock, project identity, task definitions, Git HEAD, and worktree cleanliness. Apply accepts only the exact lock from the latest passing test and refuses conflicting configuration, lock, or Git changes. Recovery covers Pinset-managed lock state; commands run during tests may still change application files or external systems.
 
+### Declarative Providers
+
+Registry schema 2 can install development CLIs distributed as platform binaries in GitHub Releases. A Provider declares a fixed repository, target-to-asset map, checksum asset, commands, and revision. Manifests cannot contain scripts, hooks, shell fragments, arbitrary URLs, or environment code. `jq` is the first Provider delivered through this generic backend:
+
+```sh
+pinset use jq@1.8
+pinset -- jq --version
+pinset provider status
+pinset provider validate registry/providers.json
+pinset provider scaffold jq --repository jqlang/jq --command jq
+```
+
+Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 file, downloaded bytes, installation receipt, and active Provider revision before routing a command. `provider trust` activates a clear-signed snapshot from Pinset's pinned signer; `provider untrust` returns to the snapshot embedded in the binary. A signed revision can disable a Provider, and existing locks then fail closed.
+
 ### Future directions
 
-Pinset's next steps focus on making project environments easier to diagnose, deliver, and upgrade. The features below are planned and are not available in the current release.
+Pinset's remaining planned 2.x work focuses on editor integration.
 
 | Direction | Planned capabilities |
 | --- | --- |
-| Environment diagnostics and comparison | Unified status and checks, shareable reports without secret values, local/CI comparisons, and repair previews. |
-| Deeper language support | Rust components, compilation targets, and date-pinned nightly toolchains; Java distributions and JDK/JRE selection; named Python environments. |
-| Workspaces and multiple projects | Explicit members, shared tool defaults with member overrides, batch installation and checks, and tool-reference visibility. |
-| Offline delivery and caching | Artifact prefetching, verified offline bundles, explicit offline installation, broader mirror support, concurrent downloads, and CI caching. |
-| Candidate upgrades and recovery | Prepare candidate locks, test with candidate toolchains, apply verified selections, and restore previous toolchain configuration. |
-| A constrained Provider ecosystem | Declarative Providers for development CLIs, explicit source trust, manifest validation, and contributor tooling. |
 | Editor integration | VS Code toolchain status, environment selection, diagnostics, and task execution. |
 
-Planned compatible releases are 2.4 diagnostics/CI, 2.5 offline delivery, 2.6 Rust/tool identity, 2.7 Java/Python, 2.8 workspaces, 2.9 candidate upgrades/recovery, 2.10 Providers, and 2.11 editor integration. These are delivery targets without promised dates. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
+The remaining compatible target is 2.11 editor integration. Breaking public contracts would require a separate 3.0 plan. Pinset will preserve explicit project boundaries, verified artifacts, and local-first operation.
 
 ## Contributing and license
 
