@@ -9,6 +9,7 @@
 - Add Eclipse Temurin JDK/JRE selection with package-aware metadata, lock, install identities, archive validation, and runtime command checks.
 - Add isolated named Python environments, ownership marker schema 2, `venv <command> [name]`, and task-level `python-environment` binding while preserving the default `.venv` contract.
 - Add schema 5 explicit workspaces with root defaults, whole-option member overrides, independent member locks, batch install/check/task/update-preview commands, changed-member filtering, and tool-reference reports.
+- Add exact candidate lock preparation, isolated candidate task execution, baseline-bound test records, conflict-safe apply/history/restore, and recoverable multi-member workspace transactions.
 
 Project configuration remains schema 5. Runtime locks migrate explicitly to schema 4; schema 1-3 locks remain readable. Installations without structured options retain their historical version-only directory identity, and receipt schemas 1-3 remain readable.
 

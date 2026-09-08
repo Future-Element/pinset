@@ -724,6 +724,22 @@ schema 5 工作区在根 `pinset.toml` 中显式声明成员路径。每个成�
 
 根工具、任务、Python 环境和环境设置为成员提供默认值。成员工具选择器会连同完整的结构化选项表替换根选择，选项数组不会合并；同名成员任务替换根任务；成员 `[python]` 或 `[environment]` 整体替换对应的根配置。`--changed-since` 选择声明路径下存在 Git 变更的成员；根 `pinset.toml` 发生变化时选择全部成员。
 
+### `candidate`
+
+`pinset candidate` 在替换锁成为项目当前选择之前，先准备并验证精确候选锁：
+
+| 命令 | 行为 |
+| --- | --- |
+| `candidate prepare [工具] [--workspace] [--no-install] [--json]` | 重新解析全部选择器或指定工具，将候选记录保存到 `PINSET_HOME`；未设置 `--no-install` 时准备所有精确运行时。当前锁保持不变。 |
+| `candidate test <任务> [--workspace] [-- <追加参数...>]` | 使用候选运行时目录、环境变量和隔离的候选 Python 环境执行已声明任务，并保留、记录子进程退出码。 |
+| `candidate status [--workspace] [--json]` | 显示候选身份、精确锁摘要和测试记录。 |
+| `candidate apply [--workspace] [--json]` | 重新检查项目、锁与 Git 基线后，应用最新一次通过测试的精确候选。 |
+| `candidate history [--json]` | 列出当前项目本机保存的应用与恢复记录。 |
+| `candidate restore [历史 ID] [--json]` | 当前状态仍匹配时，从指定或最新历史恢复之前的锁。 |
+| `candidate recover [--json]` | 为已全部应用但中断的事务补齐历史，或把只应用了部分成员的 Workspace 事务整体恢复到原锁。 |
+
+候选应用在改写任何锁之前先写恢复日志，拒绝并发配置或锁冲突，并为每个成员生成确定的历史记录。候选历史只覆盖 Pinset 管理的锁状态；任务对源码、数据库或外部服务造成的副作用不在恢复范围内。
+
 `env init` 未指定 profile 或恢复方式时进入交互向导：选择 profile、恢复方式、新建或复用本机 identity。创建成功后记住本机环境，并单独询问是否信任项目。非交互调用必须提供 profile 和 `--recovery <路径>` 或显式 `--no-recovery`。新增位置参数 `env init dev` 和 `--identity <id>`，原有 `--profile`、`--identity-file` 保留；完全显式的初始化仍需用 `--auto` 设置共享默认，或另行 `env use` 设置本机默认。项目配置与锁文件 schema 不变。
 
 ### `env`

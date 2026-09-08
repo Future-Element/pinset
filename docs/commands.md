@@ -724,6 +724,22 @@ Schema 5 workspaces declare explicit member paths in the root `pinset.toml`. Eve
 
 Root tools, tasks, Python environments, and environment settings provide member defaults. A member tool selector replaces the root selector and its complete structured options table; option arrays are never merged. A same-name member task replaces the root task. A member `[python]` or `[environment]` section replaces the corresponding root section. `--changed-since` selects members with Git changes below their declared paths; changing the root `pinset.toml` selects every member.
 
+### `candidate`
+
+`pinset candidate` prepares and verifies an exact replacement lock before it becomes the active project selection:
+
+| Command | Behavior |
+| --- | --- |
+| `candidate prepare [tool] [--workspace] [--no-install] [--json]` | Re-resolve all selectors or one tool, save a candidate record under `PINSET_HOME`, and prepare every exact runtime unless `--no-install` is set. The active lock is unchanged. |
+| `candidate test <task> [--workspace] [-- <arguments...>]` | Run a declared task with the candidate runtime directories, variables, and an isolated candidate Python environment; preserve and record the child exit code. |
+| `candidate status [--workspace] [--json]` | Show candidate identity, exact-lock digest, and test records. |
+| `candidate apply [--workspace] [--json]` | Apply the exact candidate from the latest passing test after rechecking project, lock, and Git baselines. |
+| `candidate history [--json]` | List local application and restoration records for the current project. |
+| `candidate restore [history-id] [--json]` | Restore the previous lock from the selected or latest history entry when the current state still matches it. |
+| `candidate recover [--json]` | Complete history for fully applied interrupted transactions or roll a partially applied workspace transaction back to every previous member lock. |
+
+Candidate apply writes a recovery journal before changing any lock. It rejects concurrent configuration or lock changes and uses one deterministic history entry per member. Candidate history covers Pinset-managed lock state only; task side effects in source files, databases, or external services are outside recovery.
+
 The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
 
 ### `env`

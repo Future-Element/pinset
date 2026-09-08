@@ -471,6 +471,21 @@ pinset workspace references node
 
 A member selector replaces the root selector for that tool. Its complete `[tool-options.<tool>]` table also replaces the root table, so arrays never merge implicitly. Root tasks and environment defaults are inherited unless the member declares the same task or its own complete environment section. Batch update is a preview and does not modify member locks.
 
+### Candidate upgrades and recovery
+
+Prepare and test an exact candidate toolchain without changing the current project lock:
+
+```sh
+pinset candidate prepare
+pinset candidate test test
+pinset candidate apply
+pinset candidate history
+pinset candidate restore
+pinset candidate recover
+```
+
+Add `--workspace` to `prepare`, `test`, `status`, or `apply` to process every explicit member. Candidate records bind the raw and effective configuration, current lock, project identity, task definitions, Git HEAD, and worktree cleanliness. Apply accepts only the exact lock from the latest passing test and refuses conflicting configuration, lock, or Git changes. Recovery covers Pinset-managed lock state; commands run during tests may still change application files or external systems.
+
 ### Future directions
 
 Pinset's next steps focus on making project environments easier to diagnose, deliver, and upgrade. The features below are planned and are not available in the current release.

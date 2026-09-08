@@ -471,6 +471,21 @@ pinset workspace references node
 
 成员声明某个工具后，会整体替换该工具的根选择器及 `[tool-options.<tool>]`；数组不会跨层隐式合并。根任务与环境默认值会被继承，除非成员声明同名任务或完整的环境配置。批量更新仅生成预览，不修改成员锁文件。
 
+### 候选升级与恢复
+
+先准备并测试精确的候选工具链，期间不修改当前项目锁：
+
+```sh
+pinset candidate prepare
+pinset candidate test test
+pinset candidate apply
+pinset candidate history
+pinset candidate restore
+pinset candidate recover
+```
+
+为 `prepare`、`test`、`status` 或 `apply` 增加 `--workspace`，即可处理所有显式成员。候选记录绑定原始配置、有效配置、当前锁、项目身份、任务定义、Git HEAD 和工作区整洁状态。只有最新一次测试通过的精确候选锁可以应用；配置、锁或 Git 基线冲突时拒绝覆盖。恢复仅覆盖 Pinset 管理的锁状态，测试命令对业务文件或外部系统产生的副作用仍由项目自行处理。
+
 ### 未来方向
 
 Pinset 接下来会围绕项目环境的诊断、交付和升级展开。以下能力仍在规划中，当前版本尚不支持。
