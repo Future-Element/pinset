@@ -1,8 +1,9 @@
 import Link from "next/link";
-import type { CommandGroup } from "@/lib/commands";
+import { commandNavigation, type CommandGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
 import { localePrefix } from "@/lib/site";
 import { DocsShell } from "./docs-shell";
+import { LatestReleaseVersion } from "./latest-release";
 
 export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: CommandGroup[] }) {
   const zh = locale === "zh-CN";
@@ -10,12 +11,12 @@ export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: C
   const count = groups.reduce((total, group) => total + group.commands.length, 0);
 
   return (
-    <DocsShell groups={groups} locale={locale}>
+    <DocsShell groups={commandNavigation(groups)} locale={locale}>
       <article className="docPage commandIndexPage">
         <header className="docHeader compactHeader">
           <div className="breadcrumbs"><Link href={prefix || "/"}>{zh ? "文档" : "Documentation"}</Link><span>/</span>{zh ? "命令" : "Commands"}</div>
           <h1>{zh ? "命令参考" : "Command reference"}</h1>
-          <p>{zh ? `Pinset 2.1 的 ${count} 个公开 CLI 命令。每页包含语法、状态修改、JSON 支持、退出码和关键错误。` : `${count} public CLI commands in Pinset 2.1. Each page covers syntax, state changes, JSON support, exit codes, and key errors.`}</p>
+          <p>{zh ? <>Pinset <LatestReleaseVersion fallback="最新版本" /> 的 {count} 个公开 CLI 命令。每页包含语法、状态修改、JSON 支持、退出码和关键错误。</> : <>{count} public CLI commands in Pinset <LatestReleaseVersion fallback="latest" />. Each page covers syntax, state changes, JSON support, exit codes, and key errors.</>}</p>
         </header>
         <div className="commandDirectory">
           {groups.map((group) => (
@@ -27,7 +28,7 @@ export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: C
             </section>
           ))}
         </div>
-        <footer className="pageFooter"><span>Pinset 2.1 CLI</span><Link href={prefix || "/"}>{zh ? "返回介绍" : "Back to introduction"} →</Link></footer>
+        <footer className="pageFooter"><span>Pinset <LatestReleaseVersion fallback={zh ? "最新版本" : "latest"} /> CLI</span><Link href={prefix || "/"}>{zh ? "返回首页" : "Back to home"} →</Link></footer>
       </article>
     </DocsShell>
   );

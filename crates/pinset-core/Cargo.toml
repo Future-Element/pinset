@@ -30,7 +30,7 @@ rust-metadata = ["lockfile", "dep:reqwest", "dep:sha2"]
 rust-provider = []
 dotnet-metadata = ["lockfile", "dep:reqwest", "dep:serde_json"]
 dotnet-provider = []
-python-metadata = ["lockfile", "sources", "dep:reqwest", "dep:serde_json"]
+python-metadata = ["lockfile", "sources", "dep:md5", "dep:reqwest", "dep:serde_json", "dep:sha2", "dep:tempfile"]
 python-provider = ["sources"]
 lockfile = ["node-provider", "go-provider", "flutter-provider", "java-provider", "rust-provider", "dotnet-provider", "python-provider", "dep:atomic-write-file", "dep:base64", "dep:hex"]
 node-metadata = ["lockfile", "dep:pgp", "dep:reqwest", "dep:serde_json"]
@@ -59,6 +59,7 @@ base64 = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 json5 = { workspace = true, optional = true }
+md5 = { workspace = true, optional = true }
 fs4 = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 p256 = { workspace = true, optional = true }

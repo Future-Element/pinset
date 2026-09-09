@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.97"
-version = "2.12.0"
+version = "2.12.1"
 authors = ["Future Element"]
 
 [workspace.dependencies]
@@ -20,6 +20,7 @@ base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
 flate2 = "1"
 hex = "0.4"
+md5 = "0.8"
 json5 = "0.4"
 keyring = "4.1.6"
 fs4 = "1.1.0"

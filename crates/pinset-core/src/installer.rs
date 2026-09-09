@@ -9,13 +9,14 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
+    process::Command,
     sync::Arc,
     time::Duration,
 };
 
 use flate2::read::GzDecoder;
 use reqwest::{
-    StatusCode,
+    StatusCode, Url,
     blocking::Client,
     header::{CONTENT_RANGE, RANGE},
 };
@@ -36,6 +37,7 @@ const DOWNLOAD_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactFormat {
     Binary,
+    Msi,
     Zip,
     TarXz,
     TarGz,
@@ -45,6 +47,7 @@ impl ArtifactFormat {
     fn receipt_name(self) -> &'static str {
         match self {
             Self::Binary => "binary",
+            Self::Msi => "msi",
             Self::Zip => "zip",
             Self::TarXz => "tar.xz",
             Self::TarGz => "tar.gz",
@@ -292,7 +295,7 @@ impl Installer {
             self.extract_selected(
                 &selected,
                 &staging_dir,
-                base.artifact.format,
+                &base.artifact,
                 base.strip_components,
                 &base.include_prefixes,
             )?;
@@ -304,7 +307,7 @@ impl Installer {
         self.extract_selected(
             &selected,
             &staging_dir,
-            request.artifact.format,
+            &request.artifact,
             request.strip_components,
             &request.include_prefixes,
         )?;
@@ -417,11 +420,11 @@ impl Installer {
         &self,
         selected: &SelectedArtifact,
         staging_dir: &Path,
-        format: ArtifactFormat,
+        artifact: &ArtifactSpec,
         strip_components: usize,
         include_prefixes: &[PathBuf],
     ) -> Result<()> {
-        match format {
+        match artifact.format {
             ArtifactFormat::Binary => {
                 debug_assert_eq!(strip_components, 0);
                 debug_assert!(include_prefixes.is_empty());
@@ -435,6 +438,38 @@ impl Installer {
                 })?;
                 Ok(())
             }
+            ArtifactFormat::Msi => {
+                debug_assert_eq!(strip_components, 0);
+                debug_assert!(include_prefixes.is_empty());
+                let filename = Url::parse(&artifact.canonical_url)
+                    .ok()
+                    .and_then(|url| {
+                        url.path_segments()
+                            .and_then(|mut segments| segments.next_back())
+                            .map(str::to_owned)
+                    })
+                    .filter(|name| name.to_ascii_lowercase().ends_with(".msi"))
+                    .ok_or_else(|| Error::InvalidArtifactUrl {
+                        url: artifact.canonical_url.clone(),
+                    })?;
+                let input_dir = staging_dir
+                    .parent()
+                    .expect("staging payload has a transaction parent")
+                    .join("msi-inputs");
+                fs::create_dir_all(&input_dir).map_err(|source| Error::CreateInstallStaging {
+                    path: input_dir.clone(),
+                    source,
+                })?;
+                let input_path = input_dir.join(filename);
+                fs::copy(&selected.path, &input_path).map_err(|source| {
+                    Error::ExtractArchiveEntry {
+                        entry: "<msi-input>".to_owned(),
+                        path: input_path.clone(),
+                        source,
+                    }
+                })?;
+                self.extract_msi(&input_path, staging_dir)
+            }
             ArtifactFormat::Zip => {
                 debug_assert!(include_prefixes.is_empty());
                 self.extract_zip(&selected.path, staging_dir, strip_components)
@@ -443,10 +478,46 @@ impl Installer {
                 &selected.path,
                 staging_dir,
                 strip_components,
-                format,
+                artifact.format,
                 include_prefixes,
             ),
         }
+    }
+
+    #[cfg(windows)]
+    fn extract_msi(&self, archive_path: &Path, destination: &Path) -> Result<()> {
+        // Administrative extraction keeps the package isolated in Pinset's private staging
+        // directory and does not register or install Python into Windows.
+        let target_dir = format!("TARGETDIR={}", destination.display());
+        let status = Command::new("msiexec.exe")
+            .arg("/a")
+            .arg(archive_path)
+            .arg("/qn")
+            .arg("/norestart")
+            .arg(target_dir)
+            .status()
+            .map_err(|source| Error::NativeArchiveExtract {
+                format: "MSI".to_owned(),
+                path: archive_path.to_path_buf(),
+                source,
+            })?;
+        if !status.success() {
+            return Err(Error::NativeArchiveExtractFailed {
+                format: "MSI".to_owned(),
+                path: archive_path.to_path_buf(),
+                code: status.code().unwrap_or(1),
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn extract_msi(&self, archive_path: &Path, _destination: &Path) -> Result<()> {
+        Err(Error::NativeArchiveExtractFailed {
+            format: "MSI".to_owned(),
+            path: archive_path.to_path_buf(),
+            code: 1,
+        })
     }
 
     fn cached_artifact_is_valid(
@@ -990,7 +1061,7 @@ impl Installer {
         let reader: Box<dyn Read> = match format {
             ArtifactFormat::TarXz => Box::new(XzDecoder::new(file)),
             ArtifactFormat::TarGz => Box::new(GzDecoder::new(file)),
-            ArtifactFormat::Binary | ArtifactFormat::Zip => {
+            ArtifactFormat::Binary | ArtifactFormat::Msi | ArtifactFormat::Zip => {
                 unreachable!("binary and ZIP artifacts do not use extract_tar")
             }
         };
@@ -1299,8 +1370,10 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
     validate_segment("version", &request.version)?;
     validate_segment("target", &request.target)?;
     validate_artifact_request(&request.artifact, request.strip_components)?;
-    if request.artifact.format == ArtifactFormat::Binary
-        && (request.strip_components != 0 || !request.include_prefixes.is_empty())
+    if matches!(
+        request.artifact.format,
+        ArtifactFormat::Binary | ArtifactFormat::Msi
+    ) && (request.strip_components != 0 || !request.include_prefixes.is_empty())
     {
         return Err(Error::InvalidStripComponents {
             value: request.strip_components,

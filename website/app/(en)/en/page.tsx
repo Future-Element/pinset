@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/en", languages: languageAlternates("/", "/en") },
   openGraph: {
     locale: "en_US",
+    alternateLocale: "zh_CN",
     siteName: siteConfig.name,
     type: "website",
     url: "/en",

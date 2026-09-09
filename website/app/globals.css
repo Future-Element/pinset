@@ -212,3 +212,225 @@ kbd { min-width: 24px; height: 20px; display: inline-flex; align-items: center; 
   html { scroll-behavior: auto; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* Product website: typography, precise borders, and the Pinset indigo identity. */
+:focus-visible { outline: 3px solid var(--brand); outline-offset: 4px; }
+.skipLink { position: fixed; top: -80px; left: 16px; z-index: 500; padding: 10px 18px; background: var(--ink); color: white; }
+.skipLink:focus { top: 12px; }
+.brandMark { width: 32px; height: 35px; flex: none; }
+.topbar { border-top: 0; }
+.docsFrame .navHeading { font-size: 11px; color: #637083; }
+.docsFrame .navLink { font-size: 13px; }
+.docsFrame .navLink code { font-size: 12px; }
+.docsFrame .sidebarFooter { font-size: 11px; }
+.searchResults code { font-size: 12px; }
+.searchResults span { font-size: 12px; }
+.searchField input { min-width: 0; }
+.landingFrame { --ink: #20212b; --ink-soft: #50505c; --muted: #6a6a75; --line: #e1e1e7; --paper: #fff; --canvas: #f7f7fa; --code: #20212b; --topbar: 80px; }
+.landingFrame .topbar { grid-template-columns: 1fr auto 1fr; padding: 0 max(32px, calc((100vw - 1200px) / 2)); height: 80px; background: #fff; backdrop-filter: none; }
+.landingFrame .brand { padding: 0; gap: 10px; font-size: 27px; }
+.landingFrame .brandMark { width: 36px; height: 40px; }
+.landingFrame .topnav { gap: 32px; }
+.landingFrame .topnav a { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
+.landingFrame .topnav a:hover { color: var(--brand); }
+.landingFrame .topActions { padding: 0; justify-self: end; gap: 12px; }
+.landingFrame .searchButton { width: 40px; height: 40px; border-radius: 0; background: white; padding: 0; justify-content: center; }
+.landingFrame .searchButton span, .landingFrame .searchButton kbd { display: none; }
+.landingFrame .languageLink { font-size: 12px; }
+.landingFrame .sidebar { display: none; }
+.landingFrame .mainContent { margin-left: 0; }
+.landingPage { width: min(1200px, calc(100% - 64px)); margin: 0 auto; }
+.landingHero { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); align-items: center; gap: 64px; padding: 94px 0 80px; }
+.releaseLink { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 14px; color: var(--muted); font: 11px/1.5 Consolas, monospace; letter-spacing: .04em; }
+.releaseLink > span:first-child { padding: 4px 8px; background: var(--brand-soft); color: var(--brand-dark); font-weight: 700; }
+.releaseLink:hover { color: var(--brand); }
+.heroCopy h1 { margin: 28px 0 24px; font-size: clamp(48px, 4.9vw, 72px); letter-spacing: -.055em; line-height: 1.1; font-weight: 800; }
+.heroCopy h1 em { font-style: normal; color: var(--brand); }
+.heroDescription { max-width: 535px; color: var(--ink-soft); font-size: 17px; line-height: 1.8; margin: 0 0 30px; }
+.installPanel { margin: 32px 0 22px; scroll-margin-top: 110px; }
+.installHeading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; font-size: 12px; }
+.installHeading strong span { color: var(--muted); font-size: 11px; margin-left: 5px; font-weight: 400; }
+.installHeading > span { color: var(--muted); font-size: 10px; }
+.platformSwitch { display: flex; gap: 0; }
+.platformSwitch button { border: 1px solid var(--line); border-bottom: 0; padding: 6px 14px; background: white; font-size: 11px; cursor: pointer; color: var(--ink-soft); }
+.platformSwitch button + button { border-left: 0; }
+.platformSwitch button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: white; }
+.installCommand { display: flex; gap: 12px; align-items: flex-start; padding: 18px 14px; background: var(--ink); color: #f8f8fa; min-height: 95px; }
+.installCommand pre { margin: 0; flex: 1; min-width: 0; font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminalPrompt { color: #b9baff; font-family: monospace; }
+.installCommand .copyButton { color: #cbceda; padding: 5px 2px; flex: none; }
+.installCommand .copyButton span { max-width: 68px; }
+.installLinks { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+.installLinks a:hover { color: var(--brand); text-decoration: underline; }
+.textCta { display: inline-flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 650; text-underline-offset: 5px; }
+.textCta:hover { color: var(--brand); text-decoration: underline; }
+.projectPreview { align-self: center; border: 1px solid #d6d6df; box-shadow: 10px 10px 0 #f1f1f8; min-width: 0; background: var(--canvas); }
+.previewTitle { height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--line); color: var(--muted); font: 10px Consolas, monospace; }
+.previewTitle > span:first-child { display: flex; gap: 5px; }
+.previewTitle i { width: 6px; height: 6px; border: 1px solid #a8a8b7; border-radius: 50%; }
+.previewTabs { display: flex; border-bottom: 1px solid var(--line); background: #fff; }
+.previewTabs button { position: relative; flex: 1; padding: 14px 8px; border: 0; border-right: 1px solid var(--line); background: #fff; color: var(--muted); font: 11px Consolas, monospace; cursor: pointer; }
+.previewTabs button:last-child { border-right: 0; }
+.previewTabs button[aria-pressed="true"] { background: var(--canvas); color: var(--brand); }
+.previewTabs button[aria-pressed="true"]::before { position: absolute; content: ""; top: 0; inset-inline: 0; height: 2px; background: var(--brand); }
+.previewCode { min-height: 264px; padding: 24px 18px 10px; margin: 0; font-size: 12px; line-height: 2.1; overflow-x: auto; }
+.previewLine { display: flex; gap: 18px; }
+.lineNumber { color: #777786; user-select: none; }
+.codeSection { color: var(--brand); }
+.codeValue { color: #365d51; }
+.previewNote { min-height: 52px; margin: 0; padding: 10px 18px 16px; color: var(--muted); font-size: 10px; }
+.previewFooter { display: flex; align-items: center; gap: 9px; padding: 16px 18px; border-top: 1px solid var(--line); background: white; font-size: 11px; color: var(--ink-soft); }
+.previewFooter > span:last-child { margin-left: auto; color: var(--brand); }
+.precisionDot { width: 7px; height: 7px; background: var(--brand); }
+.toolStrip { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 25px 0 30px; text-align: center; }
+.toolStrip p { margin: 0 0 20px; color: var(--muted); font: 10px Consolas, monospace; letter-spacing: .1em; }
+.toolStrip > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; }
+.toolStrip a { color: #666671; font-size: 17px; font-weight: 650; letter-spacing: -.03em; }
+.toolStrip a:hover { color: var(--brand); }
+.landingSection { padding: 96px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 80px; }
+.eyebrow { color: var(--brand); font: 11px/1.6 Consolas, monospace; font-weight: 700; letter-spacing: .08em; }
+.landingSection h2 { font-size: clamp(30px, 3.3vw, 45px); line-height: 1.22; letter-spacing: -.04em; margin: 16px 0 22px; }
+.sectionIntro h2 span { color: #777782; }
+.sectionIntro > p, .sectionIntroSplit > p, .workflowIntro > p, .boundarySection p { color: var(--ink-soft); font-size: 15px; line-height: 1.9; max-width: 630px; }
+.sectionIntroSplit { display: flex; justify-content: space-between; align-items: flex-end; gap: 70px; }
+.sectionIntroSplit > div { max-width: 660px; }
+.sectionIntroSplit > p { max-width: 380px; }
+.sectionIntroSplit > .textCta { flex: none; margin-bottom: 22px; }
+.featureGrid { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 44px; border: 1px solid var(--line); }
+.featureGrid article { min-width: 0; display: flex; flex-direction: column; padding: 30px; }
+.featureGrid article + article { border-left: 1px solid var(--line); }
+.featureNumber { font: 11px Consolas, monospace; color: var(--brand); }
+.featureGrid h3 { margin: 26px 0 12px; font-size: 21px; letter-spacing: -.03em; }
+.featureGrid p { margin: 0 0 28px; font-size: 13px; color: var(--ink-soft); line-height: 1.9; }
+.featureGrid a { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 20px; border-top: 1px solid var(--line); margin-top: auto; font-size: 11px; color: var(--brand); }
+.featureGrid a code { overflow-wrap: anywhere; }
+.workflowSection { display: grid; grid-template-columns: .8fr 1.2fr; gap: 90px; }
+.workflowSignature { margin-top: 48px; display: flex; align-items: center; gap: 22px; color: var(--muted); font: 12px/1.9 Consolas, monospace; }
+.workflowSteps { min-width: 0; }
+.workflowSteps article { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 20px; }
+.workflowSteps article + article { margin-top: 32px; }
+.stepNumber { font: 12px Consolas, monospace; color: var(--brand); border-top: 2px solid var(--brand); padding-top: 12px; }
+.workflowSteps h3 { margin: 5px 0 8px; font-size: 19px; line-height: 1.5; }
+.workflowSteps p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+.workflowSteps .codeBlock { margin-top: 18px; border-radius: 0; box-shadow: none; }
+.workflowSteps .codeBlock pre { padding: 18px; font-size: 11px; }
+.workflowSteps .codeHeader { color: #c0c3cf; }
+.workflowSteps .copyButton { color: #c0c3cf; font-size: 10px; }
+.toolchainGrid { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 32px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.toolchainGrid > * { min-width: 0; padding: 22px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.toolchainIndex { font: 10px Consolas, monospace; color: var(--muted); }
+.toolchainGrid h3 { font-size: 18px; margin: 20px 0 3px; letter-spacing: -.025em; }
+.toolchainGrid code, .moreTools > span:last-child { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.toolchainGrid .moreTools { background: var(--brand-soft); }
+.toolchainGrid .moreTools h3, .moreTools > span:last-child { color: var(--brand-dark); }
+.moreTools:hover { background: #e0e1fa; }
+.supportNote { margin-top: 18px; color: var(--muted); font-size: 11px; }
+.supportNote a { text-decoration: underline; text-underline-offset: 3px; }
+.boundarySection { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; }
+.boundarySection h2 { font-size: 34px; }
+.verificationList { border-top: 1px solid var(--line); }
+.verificationList a { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 23px 0; border-bottom: 1px solid var(--line); }
+.verificationList code { font-size: 13px; color: var(--brand); }
+.verificationList span { grid-row: 2; color: var(--muted); font-size: 12px; }
+.verificationList b { grid-column: 2; grid-row: 1 / 3; align-self: center; font-weight: 400; }
+.commandGrid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); margin-top: 24px; }
+.commandGrid a { padding: 23px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 5px 18px; }
+.commandGrid a:hover { background: var(--canvas); }
+.commandGrid span { font-size: 14px; font-weight: 600; }
+.commandGrid small { grid-column: 1; color: var(--muted); font-size: 11px; }
+.commandGrid b { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--brand); }
+.faqSection { display: grid; grid-template-columns: .75fr 1.25fr; gap: 80px; }
+.faqSection details { border-top: 1px solid var(--line); }
+.faqSection details:last-child { border-bottom: 1px solid var(--line); }
+.faqSection summary { list-style: none; display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 24px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
+.faqSection summary::-webkit-details-marker { display: none; }
+.faqSection summary span { color: var(--brand); font-size: 20px; font-weight: 400; }
+.faqSection details[open] summary span { transform: rotate(45deg); }
+.faqSection details p { margin: 0 0 24px; color: var(--ink-soft); font-size: 13px; line-height: 1.9; }
+.closingSection { padding: 85px 24px; margin: 48px 0; text-align: center; background: #f5f5fb; }
+.closingSection > img { margin: 0 auto 24px; }
+.closingSection h2 { margin: 0 auto 16px; max-width: 780px; font-size: clamp(28px, 3.1vw, 43px); line-height: 1.3; letter-spacing: -.04em; }
+.closingSection p { margin-bottom: 28px; font-size: 14px; color: var(--ink-soft); }
+.solidCta { display: inline-flex; align-items: center; justify-content: space-between; gap: 40px; padding: 13px 23px; background: var(--brand); color: white; font-size: 13px; font-weight: 600; }
+.solidCta:hover { background: var(--brand-dark); }
+.closingSection > .textCta { margin-left: 25px; }
+.landingFooter { display: grid; grid-template-columns: 1fr auto; gap: 32px; padding: 32px 0 25px; }
+.landingFooter .brand { height: auto; }
+.landingFooter p { font-size: 12px; color: var(--muted); margin-top: 10px; }
+.landingFooter nav { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; font-size: 12px; }
+.landingFooter a:hover { color: var(--brand); }
+.footerCredit { display: flex; justify-content: space-between; grid-column: 1 / -1; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+@media (max-width: 1100px) {
+  .landingHero { gap: 36px; }
+  .landingFrame .topbar { padding-inline: 32px; }
+  .workflowSection { gap: 48px; }
+  .featureGrid article { padding: 24px; }
+  .toolchainGrid { grid-template-columns: repeat(5, 1fr); }
+  .toolchainGrid > * { padding: 18px 12px; }
+  .toolchainGrid h3 { font-size: 15px; }
+  .sectionIntroSplit { gap: 32px; }
+}
+@media (max-width: 900px) {
+  .landingFrame .topbar { grid-template-columns: 1fr auto; }
+  .landingFrame .sidebar { display: flex; }
+  .landingFrame .sidebar:not(.open) { visibility: hidden; }
+  .landingHero { grid-template-columns: 1fr; gap: 48px; padding-top: 60px; }
+  .heroCopy h1 { font-size: clamp(48px, 8vw, 72px); }
+  .heroDescription { max-width: 650px; }
+  .installPanel { max-width: 650px; }
+  .projectPreview { width: 100%; max-width: 650px; }
+  .previewCode { min-height: 242px; }
+  .toolStrip > div { justify-content: center; gap: 18px 32px; }
+  .featureGrid { grid-template-columns: 1fr; }
+  .featureGrid article + article { border-left: 0; border-top: 1px solid var(--line); }
+  .featureGrid h3 { margin-top: 12px; }
+  .workflowSection, .boundarySection { grid-template-columns: 1fr; gap: 36px; }
+  .workflowSignature { display: none; }
+  .toolchainGrid { grid-template-columns: repeat(2, 1fr); }
+  .toolchainGrid > * { padding: 22px; }
+  .toolchainGrid h3 { font-size: 19px; }
+  .sectionIntroSplit { display: block; }
+  .sectionIntroSplit > p { max-width: 650px; }
+  .commandGrid { grid-template-columns: repeat(2, 1fr); }
+  .faqSection { grid-template-columns: 1fr; gap: 20px; }
+  .landingFooter { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .landingFrame { --topbar: 68px; }
+  .landingFrame .topbar { height: 68px; padding: 0 20px; }
+  .landingFrame .brand { font-size: 24px; }
+  .landingFrame .brandMark { width: 30px; height: 33px; }
+  .landingFrame .topActions { gap: 7px; }
+  .landingFrame .topActions > .iconLink { display: none; }
+  .landingFrame .searchButton { width: 34px; height: 34px; }
+  .landingPage { width: calc(100% - 40px); }
+  .landingHero { padding: 44px 0 48px; }
+  .heroCopy h1 { font-size: clamp(39px, 10vw, 58px); margin-top: 24px; }
+  .heroDescription { font-size: 15px; }
+  .releaseLink { font-size: 10px; gap: 9px; }
+  .installCommand { gap: 9px; padding: 14px 12px; }
+  .installCommand pre { font-size: 11px; }
+  .installHeading > span { font-size: 9px; }
+  .installLinks { font-size: 10px; }
+  .toolStrip > div { gap: 14px 22px; }
+  .toolStrip a { font-size: 15px; }
+  .landingSection { padding: 58px 0; scroll-margin-top: 68px; }
+  .landingSection h2 { font-size: 31px; }
+  .featureGrid { margin-top: 28px; }
+  .workflowSteps article { gap: 10px; grid-template-columns: 26px minmax(0, 1fr); }
+  .workflowSteps h3 { font-size: 17px; }
+  .workflowSteps .codeBlock pre { padding: 13px; font-size: 10px; }
+  .commandGrid { grid-template-columns: 1fr; }
+  .closingSection { padding: 48px 18px; margin: 28px 0; }
+  .closingSection h2 { font-size: 28px; }
+  .closingSection p { font-size: 13px; }
+  .closingSection > .textCta { margin-left: 18px; }
+  .landingFooter nav { gap: 15px 22px; }
+  .footerCredit { gap: 20px; }
+}
+.closeSearch { padding: 4px 8px; border: 1px solid var(--line); background: white; color: var(--muted); font-size: 10px; cursor: pointer; }
+.docsFrame .directoryList code { font-size: 12px; }
+.docsFrame .directoryList span { font-size: 12px; line-height: 1.65; }
+@media (max-width: 900px) {
+  .docsFrame .sidebar:not(.open) { visibility: hidden; }
+}

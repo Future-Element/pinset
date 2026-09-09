@@ -25,7 +25,7 @@ pub struct PythonArtifactPlan {
 }
 
 pub fn plan_python_artifact(
-    config: &SourceConfig,
+    _config: &SourceConfig,
     distribution: &str,
     target: &str,
 ) -> Result<PythonArtifactPlan> {
@@ -34,8 +34,14 @@ pub fn plan_python_artifact(
     let filename =
         format!("cpython-{python_version}+{build_id}-{platform}-{PYTHON_VARIANT}.tar.gz");
     let artifact_path = format!("{build_id}/{filename}");
-    let canonical_url = config.official_artifact_url("python", &artifact_path)?;
-    let sources = config.resolve_artifact_sources("python", &artifact_path)?;
+    let canonical_url = format!(
+        "https://github.com/astral-sh/python-build-standalone/releases/download/{artifact_path}"
+    );
+    let sources = vec![ResolvedArtifactSource {
+        alias: "python-build-standalone".to_owned(),
+        kind: crate::SourceKind::Official,
+        url: canonical_url.clone(),
+    }];
 
     Ok(PythonArtifactPlan {
         distribution: distribution.to_owned(),
@@ -52,7 +58,11 @@ pub fn plan_python_artifact(
 }
 
 pub fn validate_exact_python_version(version: &str) -> Result<()> {
-    parse_python_distribution(version).map(|_| ())
+    if is_exact_python_version(version) {
+        Ok(())
+    } else {
+        parse_python_distribution(version).map(|_| ())
+    }
 }
 
 pub fn parse_python_distribution(distribution: &str) -> Result<(String, String)> {
@@ -81,6 +91,20 @@ pub fn is_exact_python_version(version: &str) -> bool {
                 && part.bytes().all(|byte| byte.is_ascii_digit())
                 && part.parse::<u64>().is_ok()
         })
+}
+
+pub fn python_supports_stdlib_venv(distribution: &str) -> bool {
+    let version = distribution
+        .split_once('+')
+        .map_or(distribution, |(version, _)| version);
+    let mut parts = version.split('.');
+    let Some(major) = parts.next().and_then(|value| value.parse::<u64>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|value| value.parse::<u64>().ok()) else {
+        return false;
+    };
+    major > 3 || (major == 3 && minor >= 3)
 }
 
 fn python_platform(target: &str) -> Result<&'static str> {
@@ -120,21 +144,24 @@ mod tests {
 
     #[test]
     fn rejects_unlocked_versions_and_unknown_targets() {
-        for version in [
-            "3",
-            "3.14",
-            "3.14.7",
-            "v3.14.7+20260807",
-            "3.15.0rc1+20260807",
-        ] {
+        for version in ["3", "3.14", "v3.14.7+20260807", "3.15.0rc1+20260807"] {
             assert!(matches!(
                 validate_exact_python_version(version),
                 Err(Error::InvalidPythonVersion { .. })
             ));
         }
+        validate_exact_python_version("3.14.7").expect("official CPython version");
         let linux_arm =
             plan_python_artifact(&SourceConfig::default(), "3.14.7+20260807", "linux-aarch64")
                 .expect("Linux ARM64 plan");
         assert_eq!(linux_arm.platform, "aarch64-unknown-linux-gnu");
+    }
+
+    #[test]
+    fn recognizes_versions_with_standard_library_venv_support() {
+        assert!(!python_supports_stdlib_venv("2.7.18"));
+        assert!(!python_supports_stdlib_venv("3.2.6+20240101"));
+        assert!(python_supports_stdlib_venv("3.3.0"));
+        assert!(python_supports_stdlib_venv("3.14.7+20260807"));
     }
 }

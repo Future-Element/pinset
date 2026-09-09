@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ArtifactFormat, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error, InstallOutcome,
-    InstallRequest, Installer, LockedArtifactFormat, LockedTool, Result, SourceConfig, SourceKind,
-    plan_python_artifact,
+    ArtifactFormat, ArtifactInstallSpec, ArtifactSource, ArtifactSourceKind, ArtifactSpec, Error,
+    InstallOutcome, InstallRequest, Installer, LockedArtifactFormat, LockedTool, Result,
+    SourceConfig, SourceKind, plan_python_artifact,
 };
 
 pub fn install_locked_python(
@@ -13,7 +13,12 @@ pub fn install_locked_python(
     locked_python: &LockedTool,
     target: &str,
 ) -> Result<InstallOutcome> {
-    if locked_python.name != "python" || locked_python.provider != "python-build-standalone" {
+    if locked_python.name != "python"
+        || !matches!(
+            locked_python.provider.as_str(),
+            "python.org-cpython" | "python-build-standalone"
+        )
+    {
         return Err(Error::InvalidLockfile {
             reason: format!(
                 "{}/{} is not the built-in CPython provider",
@@ -28,24 +33,82 @@ pub fn install_locked_python(
             version: locked_python.version.clone(),
             target: target.to_owned(),
         })?;
-    let plan = plan_python_artifact(source_config, &locked_python.version, target)?;
-    let sources = plan
-        .sources
-        .into_iter()
-        .map(|source| ArtifactSource {
-            id: source.alias,
-            url: source.url,
-            kind: match source.kind {
-                SourceKind::Official => ArtifactSourceKind::Official,
-                SourceKind::Custom => ArtifactSourceKind::Mirror,
-            },
-        })
-        .collect();
-    if artifact.format != LockedArtifactFormat::TarGz {
-        return Err(Error::InvalidLockfile {
-            reason: format!("Python artifact {target} must use tar.gz"),
-        });
-    }
+    let mut base_artifacts = Vec::new();
+    let (sources, format, strip_components) = if locked_python.provider == "python.org-cpython" {
+        let sources = source_config
+            .resolve_artifact_sources("python", &artifact.artifact_path)?
+            .into_iter()
+            .map(|source| ArtifactSource {
+                id: source.alias,
+                url: source.url,
+                kind: match source.kind {
+                    SourceKind::Official => ArtifactSourceKind::Official,
+                    SourceKind::Custom => ArtifactSourceKind::Mirror,
+                },
+            })
+            .collect();
+        let format = match (
+            locked_python
+                .metadata
+                .get("install_kind")
+                .map(String::as_str),
+            artifact.format,
+        ) {
+            (Some("full-zip"), LockedArtifactFormat::Zip) => ArtifactFormat::Zip,
+            (Some("embeddable-zip"), LockedArtifactFormat::Zip) => ArtifactFormat::Zip,
+            (Some("msi"), LockedArtifactFormat::Binary) => ArtifactFormat::Msi,
+            (Some("msi-bundle"), LockedArtifactFormat::Binary) => {
+                for overlay in &artifact.overlays {
+                    let sources = source_config
+                        .resolve_artifact_sources("python", &overlay.artifact_path)?
+                        .into_iter()
+                        .map(|source| ArtifactSource {
+                            id: source.alias,
+                            url: source.url,
+                            kind: match source.kind {
+                                SourceKind::Official => ArtifactSourceKind::Official,
+                                SourceKind::Custom => ArtifactSourceKind::Mirror,
+                            },
+                        })
+                        .collect();
+                    base_artifacts.push(ArtifactInstallSpec {
+                        artifact: ArtifactSpec {
+                            canonical_url: overlay.canonical_url.clone(),
+                            sources,
+                            integrity: overlay.artifact_integrity()?.canonical(),
+                            format: ArtifactFormat::Msi,
+                        },
+                        strip_components: 0,
+                        include_prefixes: Vec::new(),
+                        required_paths: Vec::new(),
+                    });
+                }
+                ArtifactFormat::Msi
+            }
+            _ => {
+                return Err(Error::InvalidLockfile {
+                    reason: format!("unsupported official Python artifact for {target}"),
+                });
+            }
+        };
+        (sources, format, 0)
+    } else {
+        let _plan = plan_python_artifact(source_config, &locked_python.version, target)?;
+        if artifact.format != LockedArtifactFormat::TarGz {
+            return Err(Error::InvalidLockfile {
+                reason: format!("Python standalone artifact {target} must use tar.gz"),
+            });
+        }
+        (
+            vec![ArtifactSource {
+                id: "python-build-standalone".to_owned(),
+                url: artifact.canonical_url.clone(),
+                kind: ArtifactSourceKind::Official,
+            }],
+            ArtifactFormat::TarGz,
+            1,
+        )
+    };
     let required_paths = required_python_paths(target)?;
     let request = InstallRequest {
         pinset_home: pinset_home.to_path_buf(),
@@ -56,12 +119,12 @@ pub fn install_locked_python(
             canonical_url: artifact.canonical_url.clone(),
             sources,
             integrity: artifact.artifact_integrity()?.canonical(),
-            format: ArtifactFormat::TarGz,
+            format,
         },
-        strip_components: 1,
+        strip_components,
         include_prefixes: Vec::new(),
         required_paths: required_paths.clone(),
-        base_artifacts: Vec::new(),
+        base_artifacts,
         executable_paths: if target.starts_with("windows-") {
             Vec::new()
         } else {

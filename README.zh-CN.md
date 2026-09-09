@@ -1,5 +1,9 @@
 # Pinset
 
+<p align="center">
+  <img src="docs/assets/pinset-logo.png" alt="Pinset 标志" width="640" />
+</p>
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
@@ -44,6 +48,10 @@ pinset.toml  ──用户意图、项目策略、环境 profile
 | jq（声明式） | `jq` | ✓ | ✓ | ✓ | ✓ |
 
 Flutter 没有提供符合当前安装模型的官方 Linux ARM64 SDK 归档，因此 Pinset 会明确返回不支持，而不会下载 x64 制品。外部 Android SDK、Visual Studio Build Tools、Windows SDK 等系统依赖只由 `doctor` 诊断，不由 Pinset 安装。
+
+默认解析遵循“语言/项目官方发布归档优先”。Node.js 使用 nodejs.org `dist`，Go 使用 go.dev 下载归档，Python 使用 python.org CPython 归档，Flutter 使用官方 Google Storage 发布索引，Rust 使用 static.rust-lang.org，.NET 使用 Microsoft 发布元数据，Java 使用 Eclipse Temurin 官方发行 API，pnpm 与 Bun 使用项目在 npm 官方注册表发布的独立可执行包。用户显式 `source use` 一个带 `--trust-metadata` 的 HTTPS 镜像后，顺序为“所选可信源 → 官方源 → 兼容发行物”；仅仅 `source add` 的其他源不会被访问。`source fallback` 只增加用户显式指定的制品下载重试，不参与元数据选择。
+
+Python 会先使用 python.org 的完整 ZIP、MSI 组件归档或历史单体 MSI；只有官方没有当前目标可用的隔离制品时，才回退到 `python-build-standalone`。Pinset 自行下载并校验制品，不调用 uv、pyenv、nvm 等外部版本管理器。Python 3.2 及更早版本没有标准库 `venv`，因此仍可选择和直接运行受管解释器，但不能创建 Pinset 项目虚拟环境。
 
 ## 安装目录是怎样组织的
 
@@ -91,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.1
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -106,7 +114,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.12.0
+.\install.ps1 -Version 2.12.1
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -311,9 +319,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.0
+      - uses: Future-Element/pinset@v2.12.1
         with:
-          version: 2.12.0
+          version: 2.12.1
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -507,7 +515,7 @@ Pinset 在路由命令前验证 Registry 签名、精确 Release 制品 URL、�
 
 ### VS Code 集成
 
-[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.12.0 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
+[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.12.1 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

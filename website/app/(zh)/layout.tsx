@@ -6,5 +6,5 @@ export const metadata = createRootMetadata("zh-CN");
 export const viewport = siteViewport;
 
 export default function ChineseRootLayout({ children }: { children: ReactNode }) {
-  return <html lang="zh-CN"><body>{children}</body></html>;
+  return <html lang="zh-CN" data-scroll-behavior="smooth"><body>{children}</body></html>;
 }

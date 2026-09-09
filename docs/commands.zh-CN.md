@@ -212,6 +212,7 @@ python-environment = "docs"
 | 语法与参数 | `pinset list [tool] [--remote] [--json]`。`--remote` 查询官方远端索引且必须同时指定 `tool`；`--available` 继续作为兼容别名。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset list java --remote --json` |
+| Python 详情 | 远端列表表示 python.org 官方归档已发布的版本；目标平台兼容性由 `use` 解析，不能把“已归档”误报为“所有平台均可安装”。 |
 | JSON | **支持**；命令名为 `list`，版本位于 `data.versions`。 |
 | 退出码 | 成功为 `0`；参数或元数据失败为 `2`。 |
 | 关键错误 | Provider 不支持、网络/元数据失败、签名元数据无效或不受信任、响应超限。 |
@@ -449,6 +450,8 @@ pinset cache prefetch --jobs 4
 
 只有当项目 Python 环境的所有权标记与声明名称、路径、所选 CPython 发行版和目标一致时，Pinset 才认为它由自己所有。保留名称 `default` 继续对应 `.venv`；其他名称必须在 `[python.environments.<名称>]` 下声明。无法证明所有权时，破坏性操作会失败关闭。
 
+Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use` 与 `exec` 会直接路由到 Pinset 从 python.org 官方归档安装的解释器；`venv create/recreate` 会明确返回版本不支持，而不会调用第三方环境工具。
+
 ### `venv`
 
 | 字段 | 说明 |
@@ -573,7 +576,7 @@ pinset cache prefetch --jobs 4
 
 ## 下载源命令
 
-自定义源配置目前适用于 Node.js、Go、Python 和 Flutter。制品镜像与可信元数据镜像拥有不同安全权限：只有指定 `--trust-metadata`，自定义 HTTPS 源才可以决定版本或完整性元数据。对于 Node.js，可信元数据源还必须提供签名清单。
+自定义源配置目前适用于 Node.js、Go、Python 和 Flutter，默认使用官方发布归档。用户把带 `--trust-metadata` 的自定义 HTTPS 源设为 active 后，元数据先访问该源，再自动访问官方源。其他只是被添加的源不会被访问，即使它们也带有 `trust-metadata`。`source fallback` 只是一份显式的制品下载重试列表，不参与元数据选择。Node.js 可信元数据仍必须通过 Provider 的 OpenPGP 校验。Python 的归档 API 与制品镜像布局不同，因此元数据仍固定来自 python.org。
 
 ### `source`
 
@@ -604,7 +607,7 @@ pinset cache prefetch --jobs 4
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 添加具名自定义制品源，并可选择授予可信元数据权限。 |
-| 语法与参数 | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`。HTTP 必须指定 `--allow-insecure`，且该选项与元数据权限冲突。 |
+| 语法与参数 | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`。HTTP 必须指定 `--allow-insecure`，且与元数据权限冲突。使用 `source use` 选择可信源后，该源会成为首选。 |
 | 修改状态 | **是。** 写入本机 `sources.toml`；项目锁文件不变。 |
 | 示例 | `pinset source add node mirror --base-url https://mirror.example/node` |
 | JSON | 不支持。 |
@@ -627,10 +630,10 @@ pinset cache prefetch --jobs 4
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 替换一个 Provider 的有序回退源列表。 |
+| 用途 | 替换一个 Provider 的显式制品下载重试列表；这些源排在 active 源和自动官方兜底之后，不提供元数据。 |
 | 语法与参数 | `pinset source fallback <provider> [alias]...`；不传别名会清空列表。 |
 | 修改状态 | **是。** 替换本机回退顺序。 |
-| 示例 | `pinset source fallback python mirror-a mirror-b official` |
+| 示例 | `pinset source fallback python mirror-a mirror-b`（官方源已经自动加入） |
 | JSON | 不支持。 |
 | 退出码 | 成功为 `0`；验证/写入失败为 `2`。 |
 | 关键错误 | 别名未知或重复、与活动源冲突、Provider 不支持或配置格式错误。 |
@@ -1108,9 +1111,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.0
+      - uses: Future-Element/pinset@v2.12.1
         with:
-          version: 2.12.0
+          version: 2.12.1
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

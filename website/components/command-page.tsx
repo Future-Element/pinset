@@ -1,8 +1,9 @@
 import Link from "next/link";
-import type { CommandDoc, CommandGroup } from "@/lib/commands";
+import { commandNavigation, type CommandDoc, type CommandGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
-import { localePrefix, siteConfig } from "@/lib/site";
+import { localePrefix, siteConfig, siteUrl } from "@/lib/site";
 import { DocsShell } from "./docs-shell";
+import { LatestReleaseVersion } from "./latest-release";
 import { Markdown } from "./markdown";
 
 export function CommandPage({ locale, groups, command }: { locale: Locale; groups: CommandGroup[]; command: CommandDoc }) {
@@ -16,16 +17,29 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "TechArticle",
+    "@id": `${siteUrl}${path}#article`,
+    url: `${siteUrl}${path}`,
     headline: `pinset ${command.title}`,
     description: command.description,
     inLanguage: locale,
-    isPartOf: { "@type": "WebSite", name: siteConfig.name },
-    about: { "@type": "SoftwareApplication", name: siteConfig.name, softwareVersion: siteConfig.version },
+    isPartOf: { "@id": `${siteUrl}/#website` },
+    about: { "@id": `${siteUrl}/#software` },
+    author: { "@type": "Organization", name: siteConfig.organization.name, url: siteConfig.organization.url },
+    dateModified: siteConfig.contentUpdatedAt,
+  };
+  const breadcrumb = {
+    "@context": "https://schema.org", "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Pinset", item: `${siteUrl}${prefix || "/"}` },
+      { "@type": "ListItem", position: 2, name: zh ? "命令参考" : "Command reference", item: `${siteUrl}${prefix}/docs/commands` },
+      { "@type": "ListItem", position: 3, name: `pinset ${command.title}`, item: `${siteUrl}${path}` },
+    ],
   };
 
   return (
-    <DocsShell groups={groups} locale={locale}>
+    <DocsShell groups={commandNavigation(groups)} locale={locale}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb).replace(/</g, "\\u003c") }} />
       <article className="docPage commandPage">
         <header className="docHeader compactHeader">
           <div className="breadcrumbs"><Link href={prefix || "/"}>{zh ? "文档" : "Documentation"}</Link><span>/</span><Link href={`${prefix}/docs/commands`}>{zh ? "命令" : "Commands"}</Link><span>/</span>{command.title}</div>
@@ -39,7 +53,7 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
           {previous ? <Link className="previous" href={`${prefix}/docs/commands/${previous.slug}`}><small>{zh ? "上一个" : "Previous"}</small><code>← pinset {previous.title}</code></Link> : <span />}
           {next ? <Link className="next" href={`${prefix}/docs/commands/${next.slug}`}><small>{zh ? "下一个" : "Next"}</small><code>pinset {next.title} →</code></Link> : <span />}
         </nav>
-        <div className="pageMeta"><span>{path}</span><span>Pinset 2.1</span></div>
+        <div className="pageMeta"><span>{path}</span><span>Pinset <LatestReleaseVersion fallback={zh ? "最新版本" : "latest"} /></span></div>
       </article>
     </DocsShell>
   );

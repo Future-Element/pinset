@@ -2251,6 +2251,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2734,7 +2740,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinset-cli"
-version = "2.12.0"
+version = "2.12.1"
 dependencies = [
  "atomic-write-file",
  "clap",
@@ -2761,7 +2767,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-core"
-version = "2.12.0"
+version = "2.12.1"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -2769,6 +2775,7 @@ dependencies = [
  "fs4",
  "hex",
  "json5",
+ "md5",
  "p256",
  "pgp",
  "reqwest",
@@ -2790,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-env"
-version = "2.12.0"
+version = "2.12.1"
 dependencies = [
  "age",
  "atomic-write-file",
@@ -2808,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-shim"
-version = "2.12.0"
+version = "2.12.1"
 dependencies = [
  "pinset-core",
  "tempfile",
