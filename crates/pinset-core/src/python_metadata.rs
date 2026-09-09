@@ -201,40 +201,38 @@ impl PythonMetadataClient {
                 target: target.to_owned(),
             });
         }
-        if !selector.contains('+') {
-            if let Some(release) = select_cpython_release(&self.cpython_releases()?, selector)? {
-                let files = self.cpython_release_files(&release.release_id)?;
-                if let Some(file) = self.windows_full_zip(&release, &files, target)? {
-                    return self.lock_official_release(
-                        &release,
-                        file,
-                        OfficialInstallKind::FullZip,
-                        target,
-                        pinset_home,
-                    );
-                }
-                if let Some(locked) =
-                    self.lock_official_msi_bundle(&release, target, pinset_home)?
-                {
-                    return Ok(locked);
-                }
-                if let Some((file, install_kind)) = select_official_artifact(&files, target) {
-                    return self.lock_official_release(
-                        &release,
-                        file,
-                        install_kind,
-                        target,
-                        pinset_home,
-                    );
-                }
-                if let Ok(fallback) = select_release(self.supported_releases()?, &release.version) {
-                    return lock_standalone_release(fallback);
-                }
-                return Err(Error::PythonDistributionUnavailable {
-                    version: release.version,
-                    distribution: target.to_owned(),
-                });
+        if !selector.contains('+')
+            && let Some(release) = select_cpython_release(&self.cpython_releases()?, selector)?
+        {
+            let files = self.cpython_release_files(&release.release_id)?;
+            if let Some(file) = self.windows_full_zip(&release, &files, target)? {
+                return self.lock_official_release(
+                    &release,
+                    file,
+                    OfficialInstallKind::FullZip,
+                    target,
+                    pinset_home,
+                );
             }
+            if let Some(locked) = self.lock_official_msi_bundle(&release, target, pinset_home)? {
+                return Ok(locked);
+            }
+            if let Some((file, install_kind)) = select_official_artifact(&files, target) {
+                return self.lock_official_release(
+                    &release,
+                    file,
+                    install_kind,
+                    target,
+                    pinset_home,
+                );
+            }
+            if let Ok(fallback) = select_release(self.supported_releases()?, &release.version) {
+                return lock_standalone_release(fallback);
+            }
+            return Err(Error::PythonDistributionUnavailable {
+                version: release.version,
+                distribution: target.to_owned(),
+            });
         }
         lock_standalone_release(select_release(self.supported_releases()?, selector)?)
     }

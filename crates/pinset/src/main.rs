@@ -2550,7 +2550,9 @@ fn available_version_reports(
     match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
             let clients = node_metadata_clients(&pinset_home()?)?;
-            for release in first_metadata_result(&clients, |client| client.available_releases())? {
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 let mut details = BTreeMap::new();
                 details.insert("date".to_owned(), release.date);
                 details.insert("security".to_owned(), release.security.to_string());
@@ -2575,7 +2577,9 @@ fn available_version_reports(
         }
         RuntimeMetadataKind::Go => {
             let clients = go_metadata_clients(&pinset_home()?)?;
-            for release in first_metadata_result(&clients, |client| client.available_releases())? {
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
                     version: release.version,
@@ -2588,7 +2592,9 @@ fn available_version_reports(
         }
         RuntimeMetadataKind::Flutter => {
             let clients = flutter_metadata_clients(&pinset_home()?)?;
-            for release in first_metadata_result(&clients, |client| client.available_releases())? {
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
                     version: release.version,
@@ -4667,7 +4673,9 @@ fn resolve_locked_tool_with_options(
             let clients = node_metadata_clients(&pinset_home()?)?;
             let generated_by = format!("pinset {}", pinset_core::pinset_version());
             let lockfile = first_metadata_result(&clients, |client| {
-                client.resolve_lock(selector, &generated_by)
+                client
+                    .resolve_lock(selector, &generated_by)
+                    .map_err(Box::new)
             })?;
             lockfile
                 .tool("node")
@@ -4681,11 +4689,15 @@ fn resolve_locked_tool_with_options(
         }
         RuntimeMetadataKind::Go => {
             let clients = go_metadata_clients(&pinset_home()?)?;
-            first_metadata_result(&clients, |client| client.resolve_tool(selector))?
+            first_metadata_result(&clients, |client| {
+                client.resolve_tool(selector).map_err(Box::new)
+            })?
         }
         RuntimeMetadataKind::Flutter => {
             let clients = flutter_metadata_clients(&pinset_home()?)?;
-            first_metadata_result(&clients, |client| client.resolve_tool(selector))?
+            first_metadata_result(&clients, |client| {
+                client.resolve_tool(selector).map_err(Box::new)
+            })?
         }
         RuntimeMetadataKind::Python => {
             let home = pinset_home()?;
@@ -8616,8 +8628,8 @@ fn print_sources(sources: &[SourceView], catalog: Catalog) {
 
 fn first_metadata_result<C, T>(
     clients: &[C],
-    mut operation: impl FnMut(&C) -> std::result::Result<T, Error>,
-) -> std::result::Result<T, Error> {
+    mut operation: impl FnMut(&C) -> std::result::Result<T, Box<Error>>,
+) -> std::result::Result<T, Box<Error>> {
     let mut first_error = None;
     for client in clients {
         match operation(client) {
@@ -9417,9 +9429,9 @@ mod tests {
             if *source == "official" {
                 Ok(source.to_string())
             } else {
-                Err(Error::UnsupportedSourceProvider {
+                Err(Box::new(Error::UnsupportedSourceProvider {
                     provider: source.to_string(),
-                })
+                }))
             }
         })
         .expect("trusted fallback succeeds");

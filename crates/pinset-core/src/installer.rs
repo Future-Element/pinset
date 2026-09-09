@@ -9,10 +9,12 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
-    process::Command,
     sync::Arc,
     time::Duration,
 };
+
+#[cfg(windows)]
+use std::process::Command;
 
 use flate2::read::GzDecoder;
 use reqwest::{
