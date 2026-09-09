@@ -265,20 +265,12 @@ fn parse_indexes(
 
     let mut supported = Vec::new();
     for (version, mut artifacts) in grouped {
-        if !FLUTTER_TARGETS
-            .iter()
-            .all(|target| artifacts.contains_key(*target))
-        {
-            continue;
-        }
         let first = artifacts
             .values()
             .next()
-            .expect("four required Flutter artifacts");
+            .expect("grouped Flutter release has an artifact");
         if artifacts.values().any(|artifact| {
-            artifact.hash != first.hash
-                || artifact.dart_sdk_version != first.dart_sdk_version
-                || artifact.release_date != first.release_date
+            artifact.hash != first.hash || artifact.dart_sdk_version != first.dart_sdk_version
         }) {
             continue;
         }
@@ -288,11 +280,10 @@ fn parse_indexes(
             crate::valid_release_time(&first.release_date).then(|| first.release_date.clone());
         let artifacts = FLUTTER_TARGETS
             .iter()
-            .map(|target| {
-                (
-                    (*target).to_owned(),
-                    artifacts.remove(*target).expect("checked target"),
-                )
+            .filter_map(|target| {
+                artifacts
+                    .remove(*target)
+                    .map(|artifact| ((*target).to_owned(), artifact))
             })
             .collect();
         supported.push(SupportedFlutterRelease {
@@ -370,7 +361,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn combines_only_stable_releases_available_for_all_targets() {
+    fn combines_stable_releases_with_their_available_targets() {
         let (linux, windows, macos) = release_fixtures("3.47.0", true);
         let releases = parse_indexes(&linux, &windows, &macos).expect("indexes");
         assert_eq!(releases.len(), 1);
@@ -379,11 +370,9 @@ mod tests {
         assert_eq!(releases[0].artifacts.len(), FLUTTER_TARGETS.len());
 
         let (linux, windows, macos) = release_fixtures("3.47.0", false);
-        assert!(
-            parse_indexes(&linux, &windows, &macos)
-                .expect("incomplete indexes")
-                .is_empty()
-        );
+        let partial = parse_indexes(&linux, &windows, &macos).expect("incomplete indexes");
+        assert_eq!(partial.len(), 1);
+        assert_eq!(partial[0].artifacts.len(), FLUTTER_TARGETS.len() - 1);
     }
 
     #[test]

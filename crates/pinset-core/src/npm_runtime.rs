@@ -24,6 +24,7 @@ pub fn install_locked_npm_tool(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: locked_tool.name.clone(),
+            version: locked_tool.version.clone(),
             target: target.to_owned(),
         })?;
     let target_manifest = tool_targets(&locked_tool.name)?
@@ -31,6 +32,7 @@ pub fn install_locked_npm_tool(
         .find(|candidate| candidate.target == target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: locked_tool.name.clone(),
+            version: locked_tool.version.clone(),
             target: target.to_owned(),
         })?;
     let format = match artifact.format {

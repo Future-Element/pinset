@@ -24,6 +24,7 @@ pub fn install_locked_java(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "java".to_owned(),
+            version: locked_java.version.clone(),
             target: target.to_owned(),
         })?;
     let release_name =

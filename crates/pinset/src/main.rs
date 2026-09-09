@@ -203,8 +203,13 @@ enum Commands {
     List {
         /// Tool to list: node, pnpm, bun, go, python, flutter, java, rust, dotnet or jq.
         tool: Option<String>,
-        /// Query the official provider index instead of local installations.
-        #[arg(long, requires = "tool", conflicts_with = "long")]
+        /// Query the remote official provider index instead of local installations.
+        #[arg(
+            long = "remote",
+            visible_alias = "available",
+            requires = "tool",
+            conflicts_with = "long"
+        )]
         available: bool,
         /// Emit a stable machine-readable result.
         #[arg(long)]
@@ -244,7 +249,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Upgrade project configuration to schema 5 and runtime lock data to schema 4.
+    /// Upgrade project configuration and runtime lock data to their current schemas.
     Migrate {
         /// Migrate the global selection state instead of a project.
         #[arg(long, conflicts_with = "cwd")]
@@ -2236,7 +2241,7 @@ fn run_list(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if available {
-        let tool = tool.ok_or("list --available requires a runtime provider")?;
+        let tool = tool.ok_or("list --remote requires a runtime provider")?;
         require_provider(tool)?;
         let releases = available_version_reports(tool)?;
         if json {
@@ -2572,7 +2577,10 @@ fn available_version_reports(
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
                     version: release.version,
-                    details: BTreeMap::new(),
+                    details: BTreeMap::from([(
+                        "installable".to_owned(),
+                        release.installable.to_string(),
+                    )]),
                 });
             }
         }
@@ -2590,12 +2598,18 @@ fn available_version_reports(
         }
         RuntimeMetadataKind::Python => {
             for release in PythonMetadataClient::official()?.available_releases()? {
+                let version = if release.build_id.is_empty() {
+                    release.version
+                } else {
+                    format!("{}+{}", release.version, release.build_id)
+                };
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
-                    version: format!("{}+{}", release.version, release.build_id),
+                    version,
                     details: BTreeMap::from([
                         ("date".to_owned(), release.date),
                         ("distribution".to_owned(), release.distribution),
+                        ("installable".to_owned(), release.installable.to_string()),
                     ]),
                 });
             }
@@ -2653,22 +2667,19 @@ fn available_version_reports(
                 .ok_or_else(|| Error::UnsupportedRuntimeProvider {
                     provider: tool.to_owned(),
                 })?;
-            let locked = pinset_core::DeclarativeProviderClient::official()?.resolve_tool(
-                manifest,
-                "latest",
-                &registry.signer_fingerprint,
-            )?;
-            reports.push(AvailableVersionReport {
-                tool: tool.to_owned(),
-                version: locked.version,
-                details: BTreeMap::from([
-                    ("provider".to_owned(), manifest.id.clone()),
-                    (
-                        "released-at".to_owned(),
-                        locked.released_at.unwrap_or_default(),
-                    ),
-                ]),
-            });
+            for release in
+                pinset_core::DeclarativeProviderClient::official()?.available_releases(manifest)?
+            {
+                let mut details = BTreeMap::from([("provider".to_owned(), manifest.id.clone())]);
+                if let Some(released_at) = release.published_at {
+                    details.insert("released-at".to_owned(), released_at);
+                }
+                reports.push(AvailableVersionReport {
+                    tool: tool.to_owned(),
+                    version: release.version,
+                    details,
+                });
+            }
         }
     }
     Ok(reports)
@@ -4390,7 +4401,7 @@ fn completion_script(shell: ActivationShell) -> String {
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
-            list) values="__PROVIDERS__ --available --long --json --lang --help" ;;
+            list) values="__PROVIDERS__ --remote --available --long --json --lang --help" ;;
             current) values="__PROVIDERS__ --cwd --explain --json --lang --help" ;;
             outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
             update) values="__PROVIDERS__ --global --cwd --dry-run --json --lang --help" ;;
@@ -4437,7 +4448,7 @@ _pinset_completion() {
             paths) values="__PROVIDERS__ --json --lang --help" ;;
             uninstall) values="__SELECTIONS__ --force --cwd --dry-run --json --lang --help" ;;
             unset) values="__PROVIDERS__ --global --cwd --lang --help" ;;
-            list) values="__PROVIDERS__ --available --long --json --lang --help" ;;
+            list) values="__PROVIDERS__ --remote --available --long --json --lang --help" ;;
             current) values="__PROVIDERS__ --cwd --explain --json --lang --help" ;;
             outdated) values="__PROVIDERS__ --global --cwd --json --lang --help" ;;
             update) values="__PROVIDERS__ --global --cwd --dry-run --json --lang --help" ;;
@@ -4472,7 +4483,7 @@ compdef _pinset_completion pinset"#
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --offline --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
-complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--available --long'
+complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--remote --available --long'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from bundle' -a '__BUNDLE_COMMANDS__ --cwd --output --target --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from candidate' -a '__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json'
@@ -4512,7 +4523,7 @@ complete -c pinset -f -a '--help --lang'"#
         'paths' { '__PROVIDERS__ --json --lang --help' -split ' ' }
         'uninstall' { '__SELECTIONS__ --force --cwd --dry-run --json --lang --help' -split ' ' }
         'unset' { '__PROVIDERS__ --global --cwd --lang --help' -split ' ' }
-        'list' { '__PROVIDERS__ --available --long --json --lang --help' -split ' ' }
+        'list' { '__PROVIDERS__ --remote --available --long --json --lang --help' -split ' ' }
         'current' { '__PROVIDERS__ --cwd --explain --json --lang --help' -split ' ' }
         'outdated' { '__PROVIDERS__ --global --cwd --json --lang --help' -split ' ' }
         'update' { '__PROVIDERS__ --global --cwd --dry-run --json --lang --help' -split ' ' }
@@ -4703,6 +4714,19 @@ fn select_tools(
     catalog: Catalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resolved = resolve_tool_selection_batch(selections, catalog, resolve_locked_tool)?;
+    if !no_install {
+        for (tool, _, locked_tool) in &resolved {
+            let target = current_target_for_tool(tool);
+            if locked_tool.artifact(&target).is_none() {
+                return Err(Error::LockedArtifactMissing {
+                    tool: tool.clone(),
+                    version: locked_tool.version.clone(),
+                    target,
+                }
+                .into());
+            }
+        }
+    }
     let home = pinset_home()?;
     let (scope, lock_path) = save_resolved_selection_batch(&home, cwd, global, &resolved)?;
 
@@ -4730,6 +4754,22 @@ fn select_tools(
                 locked_tool.artifacts.len(),
                 lock_path.display()
             );
+        }
+        if locked_tool
+            .metadata
+            .get("support_phase")
+            .is_some_and(|phase| phase == "eol")
+        {
+            match catalog.language() {
+                Language::English => println!(
+                    "warning: {tool}@{} is end-of-life upstream; the explicit historical selection remains allowed",
+                    locked_tool.version
+                ),
+                Language::SimplifiedChinese => println!(
+                    "警告：{tool}@{} 已结束上游支持；Pinset 仍允许显式选择该历史版本",
+                    locked_tool.version
+                ),
+            }
         }
     }
 
@@ -9283,6 +9323,22 @@ mod tests {
     }
 
     #[test]
+    fn remote_list_keeps_available_as_a_compatible_alias() {
+        for flag in ["--remote", "--available"] {
+            let cli =
+                Cli::try_parse_from(["pinset", "list", "node", flag]).expect("remote list flag");
+            assert!(matches!(
+                cli.command,
+                Some(Commands::List {
+                    tool: Some(tool),
+                    available: true,
+                    ..
+                }) if tool == "node"
+            ));
+        }
+    }
+
+    #[test]
     fn parses_variable_length_global_and_project_selection_batches() {
         let global = Cli::try_parse_from([
             "pinset",
@@ -9656,26 +9712,26 @@ mod tests {
     }
 
     #[test]
-    fn legacy_target_refresh_preserves_requested_selector_and_exact_version() {
+    fn current_partial_target_lock_does_not_trigger_legacy_refresh() {
         let root = tempfile::tempdir().expect("temporary root");
         let path = root.path().join("pinset.lock");
         let mut java = persistable_selection_lock("java", "21", "21.0.8+9");
         java.artifacts
             .retain(|artifact| artifact.target != "linux-aarch64");
         java.metadata.remove("signature_link.linux-aarch64");
-        let legacy_lock = Lockfile {
-            schema: 3,
+        let current_lock = Lockfile {
+            schema: pinset_core::LOCKFILE_SCHEMA,
             generated_by: "pinset 2.1.4".to_owned(),
             tools: vec![java],
         };
         fs::write(
             &path,
-            toml::to_string_pretty(&legacy_lock).expect("legacy lock TOML"),
+            toml::to_string_pretty(&current_lock).expect("current lock TOML"),
         )
-        .expect("legacy lockfile");
+        .expect("current lockfile");
 
         let (mut lockfile, legacy_target_tools) =
-            load_lockfile_for_provider_refresh(&path).expect("legacy schema 3 lock");
+            load_lockfile_for_provider_refresh(&path).expect("current partial lock");
         let mut seen_selector = None;
         refresh_legacy_target_records(
             &mut lockfile,
@@ -9686,13 +9742,14 @@ mod tests {
                 Ok(persistable_selection_lock(tool, selector, selector))
             },
         )
-        .expect("refresh exact Java version");
+        .expect("partial Java lock remains valid");
 
-        let java = lockfile.tool("java").expect("refreshed Java lock");
-        assert_eq!(seen_selector.as_deref(), Some("21.0.8+9"));
+        let java = lockfile.tool("java").expect("partial Java lock");
+        assert!(legacy_target_tools.is_empty());
+        assert_eq!(seen_selector, None);
         assert_eq!(java.requested, "21");
         assert_eq!(java.version, "21.0.8+9");
-        assert!(java.artifact("linux-aarch64").is_some());
+        assert!(java.artifact("linux-aarch64").is_none());
     }
 
     #[test]

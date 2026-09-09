@@ -92,7 +92,8 @@ depends-on = ["setup"]
         .expect("restore");
     assert!(
         restored.status.success(),
-        "{}",
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&restored.stdout),
         String::from_utf8_lossy(&restored.stderr)
     );
     let restored: serde_json::Value =

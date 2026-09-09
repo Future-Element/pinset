@@ -784,7 +784,10 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert_eq!(preview["data"]["from_config_schema"], 2);
     assert_eq!(preview["data"]["from_lock_schema"], 2);
     assert_eq!(preview["data"]["to_config_schema"], 5);
-    assert_eq!(preview["data"]["to_lock_schema"], 4);
+    assert_eq!(
+        preview["data"]["to_lock_schema"],
+        pinset_core::LOCKFILE_SCHEMA
+    );
     assert!(
         fs::read_to_string(&config_path)
             .expect("unchanged config")
@@ -806,7 +809,7 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
     assert!(
         fs::read_to_string(lock_path)
             .expect("migrated lock")
-            .starts_with("schema = 4")
+            .starts_with(&format!("schema = {}", pinset_core::LOCKFILE_SCHEMA))
     );
 }
 

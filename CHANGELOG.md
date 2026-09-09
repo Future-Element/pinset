@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.12.0 - 2026-09-09
+
+- Expose stable historical releases from each Provider's official metadata without requiring every Pinset target to have an artifact. `pinset list <tool> --remote` is now the primary remote-index spelling, while `--available` remains a compatible alias.
+- Upgrade runtime locks to schema 5 so each exact release records only the verified artifacts that upstream actually published. Schema 1-4 locks remain readable, and their historical complete-matrix validation and migration behavior are preserved.
+- Fail before changing project or global selection state when the chosen release has no artifact for the current machine. Errors now distinguish a missing target artifact from a version that is absent upstream.
+- Extend historical metadata compatibility across Node.js, Go, Flutter, Python, Eclipse Temurin, Rust, .NET, pnpm, Bun, and declarative GitHub-release Providers, including older manifest, package-name, tag, and support-phase shapes.
+- Merge the published CPython archive into Python remote listings and identify releases that have no installable `python-build-standalone` distribution. Retain .NET end-of-life SDKs for explicit selection with a warning while keeping floating `latest`, `current`, and `lts` selectors on supported channels.
+
+Project configuration remains schema 5. Runtime locks migrate to schema 5 when a selection is written; the lock contains only upstream-published target artifacts and never substitutes repackaged binaries for a missing official distribution.
+
 ## 2.11.1 - 2026-09-08
 
 - Restore the schema 3 selector contract for every built-in runtime Provider. Historical locks may keep selectors such as `lts`, `latest`, a major version, or a channel in `requested` while recording the exact resolved release in `version`.

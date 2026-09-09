@@ -15,6 +15,7 @@ const GO_VERIFICATION: &str = "go-download-json-sha256";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoRelease {
     pub version: String,
+    pub installable: bool,
 }
 
 #[derive(Debug)]
@@ -86,6 +87,7 @@ impl GoMetadataClient {
             .into_iter()
             .map(|release| GoRelease {
                 version: release.version,
+                installable: !release.files.is_empty(),
             })
             .collect())
     }
@@ -96,6 +98,11 @@ impl GoMetadataClient {
 
     pub fn resolve_tool(&self, selector: &str) -> Result<LockedTool> {
         let release = self.resolve_release(selector)?;
+        if release.files.is_empty() {
+            return Err(Error::GoArtifactsUnverifiable {
+                version: release.version,
+            });
+        }
         let artifacts = release
             .files
             .into_iter()
@@ -229,7 +236,6 @@ fn parse_index(body: &str) -> Result<Vec<SupportedGoRelease>> {
             continue;
         };
         let mut files = Vec::with_capacity(GO_TARGETS.len());
-        let mut supported = true;
         for target in GO_TARGETS {
             let plan = plan_go_artifact(&SourceConfig::default(), &version, target)?;
             let matching = entry.files.iter().find(|file| {
@@ -241,15 +247,11 @@ fn parse_index(body: &str) -> Result<Vec<SupportedGoRelease>> {
                     && file.size > 0
                     && valid_sha256(&file.sha256)
             });
-            let Some(file) = matching else {
-                supported = false;
-                break;
-            };
-            files.push((target.to_owned(), file.clone()));
+            if let Some(file) = matching {
+                files.push((target.to_owned(), file.clone()));
+            }
         }
-        if supported {
-            releases.push(SupportedGoRelease { version, files });
-        }
+        releases.push(SupportedGoRelease { version, files });
     }
     releases.sort_by_key(|release| Reverse(version_tuple(&release.version).unwrap_or_default()));
     releases.dedup_by(|left, right| left.version == right.version);
@@ -299,7 +301,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_only_stable_releases_with_every_pinset_target() {
+    fn parses_stable_releases_with_their_available_targets() {
         let body = go_index_fixture("go1.25.1", true, true);
         let releases = parse_index(&body).expect("index");
         assert_eq!(releases.len(), 1);
@@ -307,11 +309,9 @@ mod tests {
         assert_eq!(releases[0].files.len(), GO_TARGETS.len());
 
         let incomplete = go_index_fixture("go1.25.1", true, false);
-        assert!(
-            parse_index(&incomplete)
-                .expect("incomplete index")
-                .is_empty()
-        );
+        let partial = parse_index(&incomplete).expect("incomplete index");
+        assert_eq!(partial.len(), 1);
+        assert_eq!(partial[0].files.len(), GO_TARGETS.len() - 1);
         let unstable = go_index_fixture("go1.26rc1", false, true);
         assert!(parse_index(&unstable).expect("unstable index").is_empty());
     }

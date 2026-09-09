@@ -15,6 +15,8 @@ use crate::{
 
 const OFFICIAL_PYTHON_INDEX_URL: &str =
     "https://raw.githubusercontent.com/astral-sh/versions/main/v1/python-build-standalone.ndjson";
+const OFFICIAL_CPYTHON_RELEASES_URL: &str =
+    "https://www.python.org/api/v2/downloads/release/?is_published=true";
 const MAX_PYTHON_INDEX_BYTES: u64 = 32 * 1024 * 1024;
 const PYTHON_VERIFICATION: &str = "python-build-standalone-versions-sha256";
 
@@ -24,6 +26,7 @@ pub struct PythonRelease {
     pub build_id: String,
     pub distribution: String,
     pub date: String,
+    pub installable: bool,
 }
 
 #[derive(Debug)]
@@ -47,6 +50,14 @@ struct RegistryArtifact {
     url: String,
     archive_format: String,
     sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CpythonReleaseEntry {
+    name: String,
+    release_date: String,
+    #[serde(default)]
+    pre_release: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +91,7 @@ impl PythonMetadataClient {
 
     pub fn available_releases(&self) -> Result<Vec<PythonRelease>> {
         let mut versions = HashSet::new();
-        Ok(self
+        let mut releases = self
             .supported_releases()?
             .into_iter()
             .filter(|release| versions.insert(release.python_version.clone()))
@@ -89,8 +100,17 @@ impl PythonMetadataClient {
                 build_id: release.build_id,
                 distribution: release.distribution,
                 date: release.date,
+                installable: true,
             })
-            .collect())
+            .collect::<Vec<_>>();
+        for release in self.cpython_releases()? {
+            if versions.insert(release.version.clone()) {
+                releases.push(release);
+            }
+        }
+        releases
+            .sort_by_key(|release| Reverse(version_tuple(&release.version).unwrap_or_default()));
+        Ok(releases)
     }
 
     pub fn resolve_version_selector(&self, selector: &str) -> Result<String> {
@@ -139,7 +159,21 @@ impl PythonMetadataClient {
     }
 
     fn resolve_release(&self, selector: &str) -> Result<SupportedPythonRelease> {
-        select_release(self.supported_releases()?, selector)
+        match select_release(self.supported_releases()?, selector) {
+            Ok(release) => Ok(release),
+            Err(Error::PythonSelectorNotFound { .. }) => {
+                if let Some(version) = select_cpython_release(&self.cpython_releases()?, selector) {
+                    return Err(Error::PythonDistributionUnavailable {
+                        version,
+                        distribution: "astral-sh/python-build-standalone".to_owned(),
+                    });
+                }
+                Err(Error::PythonSelectorNotFound {
+                    selector: selector.to_owned(),
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn supported_releases(&self) -> Result<Vec<SupportedPythonRelease>> {
@@ -182,6 +216,86 @@ impl PythonMetadataClient {
             reason: "index is not UTF-8".to_owned(),
         })
     }
+
+    fn cpython_releases(&self) -> Result<Vec<PythonRelease>> {
+        let url = Url::parse(OFFICIAL_CPYTHON_RELEASES_URL).expect("official CPython API URL");
+        let display_url = url.to_string();
+        let mut response = self
+            .client
+            .get(url)
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(|source| Error::PythonMetadataRequest {
+                url: display_url.clone(),
+                source,
+            })?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_PYTHON_INDEX_BYTES)
+        {
+            return Err(Error::PythonMetadataTooLarge {
+                limit: MAX_PYTHON_INDEX_BYTES,
+            });
+        }
+        let mut bytes = Vec::new();
+        (&mut response)
+            .take(MAX_PYTHON_INDEX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| Error::PythonMetadataRead {
+                url: display_url,
+                source,
+            })?;
+        if bytes.len() as u64 > MAX_PYTHON_INDEX_BYTES {
+            return Err(Error::PythonMetadataTooLarge {
+                limit: MAX_PYTHON_INDEX_BYTES,
+            });
+        }
+        let entries: Vec<CpythonReleaseEntry> =
+            serde_json::from_slice(&bytes).map_err(|source| Error::InvalidPythonIndex {
+                reason: format!("python.org releases: {source}"),
+            })?;
+        let mut releases = entries
+            .into_iter()
+            .filter(|release| !release.pre_release)
+            .filter_map(|release| {
+                let version = release.name.strip_prefix("Python ")?;
+                is_exact_python_version(version).then(|| PythonRelease {
+                    version: version.to_owned(),
+                    build_id: String::new(),
+                    distribution: "python.org/cpython".to_owned(),
+                    date: release.release_date,
+                    installable: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        releases
+            .sort_by_key(|release| Reverse(version_tuple(&release.version).unwrap_or_default()));
+        releases.dedup_by(|left, right| left.version == right.version);
+        Ok(releases)
+    }
+}
+
+fn select_cpython_release(releases: &[PythonRelease], selector: &str) -> Option<String> {
+    let normalized = selector.trim().to_ascii_lowercase();
+    let parts = normalized.split('.').collect::<Vec<_>>();
+    let numeric = matches!(parts.len(), 1..=3)
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    if !numeric {
+        return None;
+    }
+    let requested = parts
+        .iter()
+        .map(|part| part.parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    releases.iter().find_map(|release| {
+        let tuple = version_tuple(&release.version)?;
+        (tuple.0 == requested[0]
+            && (requested.len() < 2 || tuple.1 == requested[1])
+            && (requested.len() < 3 || tuple.2 == requested[2]))
+            .then(|| release.version.clone())
+    })
 }
 
 fn parse_index(body: &str) -> Result<Vec<SupportedPythonRelease>> {
@@ -204,7 +318,6 @@ fn parse_index(body: &str) -> Result<Vec<SupportedPythonRelease>> {
             continue;
         }
         let mut artifacts = Vec::with_capacity(PYTHON_TARGETS.len());
-        let mut complete = true;
         for target in PYTHON_TARGETS {
             let distribution = format!("{python_version}+{build_id}");
             let plan = plan_python_artifact(&SourceConfig::default(), &distribution, target)?;
@@ -215,13 +328,11 @@ fn parse_index(body: &str) -> Result<Vec<SupportedPythonRelease>> {
                     && valid_sha256(&artifact.sha256)
                     && valid_official_artifact_url(&artifact.url, &plan.artifact_path)
             });
-            let Some(artifact) = matching else {
-                complete = false;
-                break;
-            };
-            artifacts.push((target.to_owned(), artifact.clone()));
+            if let Some(artifact) = matching {
+                artifacts.push((target.to_owned(), artifact.clone()));
+            }
         }
-        if complete {
+        if !artifacts.is_empty() {
             releases.push(SupportedPythonRelease {
                 python_version: python_version.to_owned(),
                 build_id: build_id.to_owned(),
@@ -328,16 +439,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_only_stable_complete_install_only_releases() {
+    fn parses_stable_install_only_releases_with_available_targets() {
         let complete = fixture_release("3.14.7+20260807", true);
         let prerelease = fixture_release("3.15.0rc1+20260807", true);
         let incomplete = fixture_release("3.13.14+20260807", false);
         let releases =
             parse_index(&format!("{complete}\n{prerelease}\n{incomplete}\n")).expect("index");
-        assert_eq!(releases.len(), 1);
+        assert_eq!(releases.len(), 2);
         assert_eq!(releases[0].python_version, "3.14.7");
         assert_eq!(releases[0].build_id, "20260807");
         assert_eq!(releases[0].artifacts.len(), PYTHON_TARGETS.len());
+        assert_eq!(releases[1].artifacts.len(), PYTHON_TARGETS.len() - 1);
     }
 
     #[test]
@@ -375,6 +487,35 @@ mod tests {
                 .build_id,
             "20260701"
         );
+    }
+
+    #[test]
+    fn identifies_archived_cpython_history_without_claiming_an_installable_distribution() {
+        let releases = vec![
+            PythonRelease {
+                version: "3.4.10".to_owned(),
+                build_id: String::new(),
+                distribution: "python.org/cpython".to_owned(),
+                date: "2019-03-18T16:10:00Z".to_owned(),
+                installable: false,
+            },
+            PythonRelease {
+                version: "2.7.18".to_owned(),
+                build_id: String::new(),
+                distribution: "python.org/cpython".to_owned(),
+                date: "2020-04-20T14:18:29Z".to_owned(),
+                installable: false,
+            },
+        ];
+        assert_eq!(
+            select_cpython_release(&releases, "2.7").as_deref(),
+            Some("2.7.18")
+        );
+        assert_eq!(
+            select_cpython_release(&releases, "3.4.10").as_deref(),
+            Some("3.4.10")
+        );
+        assert!(select_cpython_release(&releases, "latest").is_none());
     }
 
     fn fixture_release(distribution: &str, complete: bool) -> String {

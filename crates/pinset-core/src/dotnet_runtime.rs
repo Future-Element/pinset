@@ -24,6 +24,7 @@ pub fn install_locked_dotnet(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "dotnet".to_owned(),
+            version: locked_dotnet.version.clone(),
             target: target.to_owned(),
         })?;
     let plan = plan_dotnet_artifact(&locked_dotnet.version, target, &artifact.canonical_url)?;

@@ -61,7 +61,10 @@ fn migrates_a_schema_three_global_bun_selector() {
     .expect("historical global lock");
 
     let migrated = pinset(&project, &home, &["migrate", "--global"]);
-    assert_success_contains(&migrated, "lock-schema=3 -> 4");
+    assert_success_contains(
+        &migrated,
+        &format!("lock-schema=3 -> {}", pinset_core::LOCKFILE_SCHEMA),
+    );
 
     let config = pinset_core::load_global_config(&state.join("global.toml"))
         .expect("migrated global config");

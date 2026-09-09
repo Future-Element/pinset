@@ -25,6 +25,7 @@ pub fn install_locked_go(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "go".to_owned(),
+            version: locked_go.version.clone(),
             target: target.to_owned(),
         })?;
     let plan = plan_go_artifact(source_config, &locked_go.version, target)?;

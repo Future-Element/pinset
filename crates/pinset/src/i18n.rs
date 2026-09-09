@@ -330,7 +330,7 @@ impl Catalog {
                 "显示当前版本、来源和安装路径。\n\n用法：pinset current [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--cwd <目录>] [--json]"
             }
             Some("list") => {
-                "列出本机已安装或官方可用的运行时版本；不传 Provider 时列出全部受管版本。\n\n用法：pinset list [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--available] [--json]"
+                "列出本机已安装或远端官方可用的运行时版本；不传 Provider 时列出全部受管版本。\n\n用法：pinset list [node|pnpm|bun|go|python|flutter|java|rust|dotnet] [--remote|--available] [--json]"
             }
             Some("outdated") => {
                 "检查当前项目与全局选择是否落后于最新稳定版本。\n\n用法：pinset outdated [工具] [--global|--cwd <目录>] [--json]"

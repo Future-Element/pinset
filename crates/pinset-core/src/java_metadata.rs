@@ -393,11 +393,16 @@ fn parse_release(release: ApiRelease, lts: bool, image_type: &str) -> Option<Sup
     let version_string = version.to_string();
     let mut artifacts = Vec::with_capacity(JAVA_TARGETS.len());
     for target in JAVA_TARGETS {
-        let binary = release
+        let Some(binary) = release
             .binaries
             .iter()
-            .find(|binary| binary_matches_target(binary, target, image_type))?;
-        let signature_link = binary.package.signature_link.as_deref()?;
+            .find(|binary| binary_matches_target(binary, target, image_type))
+        else {
+            continue;
+        };
+        let Some(signature_link) = binary.package.signature_link.as_deref() else {
+            continue;
+        };
         if !valid_sha256(&binary.package.checksum)
             || plan_java_artifact_with_package(
                 &version_string,
@@ -410,7 +415,7 @@ fn parse_release(release: ApiRelease, lts: bool, image_type: &str) -> Option<Sup
             .is_err()
             || !valid_signature_link(&binary.package.link, signature_link)
         {
-            return None;
+            continue;
         }
         artifacts.push(SupportedJavaArtifact {
             target: target.to_owned(),
@@ -420,7 +425,7 @@ fn parse_release(release: ApiRelease, lts: bool, image_type: &str) -> Option<Sup
             signature_link: signature_link.to_owned(),
         });
     }
-    Some(SupportedJavaRelease {
+    (!artifacts.is_empty()).then_some(SupportedJavaRelease {
         version,
         lts,
         release_name: release.release_name,
@@ -521,17 +526,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_only_complete_temurin_jdk_releases() {
+    fn parses_temurin_jdk_releases_with_available_targets() {
         let complete: ApiRelease = serde_json::from_value(fixture_release("21.0.8+9", true, "jdk"))
             .expect("complete fixture");
         let incomplete: ApiRelease =
             serde_json::from_value(fixture_release("21.0.7+6", false, "jdk"))
                 .expect("incomplete fixture");
         let releases = parse_feature_releases(vec![complete, incomplete], true, "jdk");
-        assert_eq!(releases.len(), 1);
+        assert_eq!(releases.len(), 2);
         assert_eq!(releases[0].version.to_string(), "21.0.8+9");
         assert!(releases[0].lts);
         assert_eq!(releases[0].artifacts.len(), JAVA_TARGETS.len());
+        assert_eq!(releases[1].artifacts.len(), JAVA_TARGETS.len() - 1);
     }
 
     #[test]

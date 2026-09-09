@@ -30,6 +30,7 @@ pub fn install_locked_declarative_provider(
         .get(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: locked.name.clone(),
+            version: locked.version.clone(),
             target: target.to_owned(),
         })?;
     let artifact = locked
@@ -38,6 +39,7 @@ pub fn install_locked_declarative_provider(
         .find(|artifact| artifact.target == target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: locked.name.clone(),
+            version: locked.version.clone(),
             target: target.to_owned(),
         })?;
     let expected_url = format!(

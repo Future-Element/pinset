@@ -24,6 +24,7 @@ pub fn install_locked_rust(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "rust".to_owned(),
+            version: locked_rust.version.clone(),
             target: target.to_owned(),
         })?;
     let manifest_date =

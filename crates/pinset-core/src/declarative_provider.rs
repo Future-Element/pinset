@@ -11,10 +11,18 @@ use crate::{
 
 const MAX_RELEASE_METADATA_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 256 * 1024;
+const GITHUB_RELEASE_PAGE_SIZE: usize = 100;
+const MAX_GITHUB_RELEASE_PAGES: usize = 20;
 
 #[derive(Debug, Clone)]
 pub struct DeclarativeProviderClient {
     http: Client,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarativeProviderRelease {
+    pub version: String,
+    pub published_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,15 +78,7 @@ impl DeclarativeProviderClient {
             .ok_or_else(|| Error::DeclarativeProviderMetadataInvalid {
                 reason: format!("Provider {} has no declarative backend", manifest.id),
             })?;
-        let releases_url =
-            format!("https://api.github.com/repos/{repository}/releases?per_page=100");
-        let releases_bytes = self.get_limited(&releases_url, MAX_RELEASE_METADATA_BYTES)?;
-        let releases: Vec<GitHubRelease> =
-            serde_json::from_slice(&releases_bytes).map_err(|source| {
-                Error::DeclarativeProviderMetadataInvalid {
-                    reason: format!("GitHub release payload is invalid: {source}"),
-                }
-            })?;
+        let releases = self.github_releases(repository)?;
         let (release, version) = select_release(&releases, selector, tag_prefix)?;
         let mut release_assets = BTreeMap::new();
         for asset in &release.assets {
@@ -109,18 +109,13 @@ impl DeclarativeProviderClient {
         let checksums = parse_checksums(checksum_text)?;
         let mut locked_artifacts = Vec::with_capacity(assets.len());
         for (target, asset_name) in assets {
-            let asset = release_assets
-                .get(asset_name.as_str())
-                .copied()
-                .ok_or_else(|| Error::DeclarativeProviderMetadataInvalid {
-                    reason: format!("release {} has no asset {asset_name}", release.tag_name),
-                })?;
+            let Some(asset) = release_assets.get(asset_name.as_str()).copied() else {
+                continue;
+            };
             validate_release_asset_url(repository, &release.tag_name, asset)?;
-            let sha256 = checksums.get(asset_name).ok_or_else(|| {
-                Error::DeclarativeProviderMetadataInvalid {
-                    reason: format!("checksum asset has no SHA-256 for {asset_name}"),
-                }
-            })?;
+            let Some(sha256) = checksums.get(asset_name) else {
+                continue;
+            };
             locked_artifacts.push(LockedArtifact {
                 target: target.clone(),
                 canonical_url: asset.browser_download_url.clone(),
@@ -168,6 +163,71 @@ impl DeclarativeProviderClient {
         })
     }
 
+    pub fn available_releases(
+        &self,
+        manifest: &DeclarativeProviderManifest,
+    ) -> Result<Vec<DeclarativeProviderRelease>> {
+        if manifest.disabled {
+            return invalid(format!(
+                "Provider {} revision {} is disabled",
+                manifest.id, manifest.revision
+            ));
+        }
+        let DeclarativeProviderBackend::GitHubReleaseBinary {
+            repository,
+            tag_prefix,
+            ..
+        } = manifest
+            .backend
+            .as_ref()
+            .ok_or_else(|| Error::DeclarativeProviderMetadataInvalid {
+                reason: format!("Provider {} has no declarative backend", manifest.id),
+            })?;
+        let mut releases = self
+            .github_releases(repository)?
+            .into_iter()
+            .filter(|release| !release.draft && !release.prerelease)
+            .filter_map(|release| {
+                let version = release
+                    .tag_name
+                    .strip_prefix(tag_prefix)
+                    .and_then(parse_stable_version)?;
+                Some((
+                    version,
+                    DeclarativeProviderRelease {
+                        version: release.tag_name[tag_prefix.len()..].to_owned(),
+                        published_at: release.published_at,
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        releases.sort_by(|left, right| right.0.cmp(&left.0));
+        releases.dedup_by(|left, right| left.0 == right.0);
+        Ok(releases.into_iter().map(|(_, release)| release).collect())
+    }
+
+    fn github_releases(&self, repository: &str) -> Result<Vec<GitHubRelease>> {
+        let mut releases = Vec::new();
+        for page in 1..=MAX_GITHUB_RELEASE_PAGES {
+            let releases_url = format!(
+                "https://api.github.com/repos/{repository}/releases?per_page={GITHUB_RELEASE_PAGE_SIZE}&page={page}"
+            );
+            let releases_bytes = self.get_limited(&releases_url, MAX_RELEASE_METADATA_BYTES)?;
+            let mut page_releases: Vec<GitHubRelease> = serde_json::from_slice(&releases_bytes)
+                .map_err(|source| Error::DeclarativeProviderMetadataInvalid {
+                    reason: format!("GitHub release payload is invalid: {source}"),
+                })?;
+            let page_len = page_releases.len();
+            releases.append(&mut page_releases);
+            if page_len < GITHUB_RELEASE_PAGE_SIZE {
+                return Ok(releases);
+            }
+        }
+        invalid(format!(
+            "GitHub repository {repository} exceeds {MAX_GITHUB_RELEASE_PAGES} release pages"
+        ))
+    }
+
     fn get_limited(&self, url: &str, limit: usize) -> Result<Vec<u8>> {
         let mut response = self
             .http
@@ -212,7 +272,7 @@ fn select_release<'a>(
             release
                 .tag_name
                 .strip_prefix(tag_prefix)
-                .and_then(|value| Version::parse(value).ok())
+                .and_then(parse_stable_version)
                 .filter(|version| selector_matches(selector, version))
                 .map(|version| (release, version))
         })
@@ -223,6 +283,19 @@ fn select_release<'a>(
         .ok_or_else(|| Error::DeclarativeProviderVersionNotFound {
             selector: selector.to_owned(),
         })
+}
+
+fn parse_stable_version(value: &str) -> Option<Version> {
+    if let Ok(version) = Version::parse(value) {
+        return (version.pre.is_empty() && version.build.is_empty()).then_some(version);
+    }
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(Version::new(major, minor, 0))
 }
 
 fn selector_matches(selector: &str, version: &Version) -> bool {

@@ -399,13 +399,24 @@ fn resolve_manifest_tool(
     let profile = manifest
         .profiles
         .get(profile_name)
+        .cloned()
+        .or_else(|| {
+            (profile_name == RUST_PROFILE && manifest.profiles.is_empty()).then(|| {
+                vec![
+                    "rustc".to_owned(),
+                    "cargo".to_owned(),
+                    "rust-std".to_owned(),
+                    "rust-docs".to_owned(),
+                ]
+            })
+        })
         .ok_or_else(|| Error::InvalidRustIndex {
             reason: format!("release manifest has no {profile_name} profile"),
         })?;
-    if profile_name == RUST_PROFILE {
+    if profile_name == RUST_PROFILE && !manifest.profiles.is_empty() {
         validate_default_profile(&manifest.profiles)?;
     }
-    let mut components = profile.clone();
+    let mut components = profile;
     if let Some(extra_components) = options.map(|value| &value.components) {
         components.extend(extra_components.iter().cloned());
     }
@@ -425,50 +436,45 @@ fn resolve_manifest_tool(
         requested_version
     };
     let overlays = rust_target_overlays(&manifest, options, artifact_channel, &manifest.date)?;
-    let artifacts = RUST_TARGETS
-        .into_iter()
-        .map(|target| {
-            let triple = rust_target_triple(target)?;
-            let artifact = package
-                .target
-                .get(triple)
-                .filter(|artifact| artifact.available)
-                .ok_or_else(|| Error::InvalidRustIndex {
-                    reason: format!("Rust {requested_version} has no {triple} toolchain"),
-                })?;
-            let url = artifact
-                .xz_url
-                .as_deref()
-                .ok_or_else(|| Error::InvalidRustIndex {
-                    reason: format!("Rust {requested_version} {triple} has no tar.xz URL"),
-                })?;
-            let hash = artifact
-                .xz_hash
-                .as_deref()
-                .filter(|hash| valid_sha256(hash))
-                .ok_or_else(|| Error::InvalidRustIndex {
-                    reason: format!("Rust {requested_version} {triple} has no valid SHA-256"),
-                })?;
-            let plan = if channel == "nightly" {
-                plan_rust_nightly_artifact(requested_version, &manifest.date, target, url)?
-            } else {
-                plan_rust_artifact(requested_version, &manifest.date, target, url)?
-            };
-            Ok(LockedArtifact {
-                target: target.to_owned(),
-                canonical_url: plan.canonical_url,
-                artifact_path: plan.artifact_path,
-                sha256: hash.to_ascii_lowercase(),
-                integrity: None,
-                format: match plan.format {
-                    RustArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
-                },
-                archive_root: plan.archive_root,
-                verification: RUST_VERIFICATION.to_owned(),
-                overlays: overlays.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut artifacts = Vec::new();
+    for target in RUST_TARGETS {
+        let triple = rust_target_triple(target)?;
+        let Some(artifact) = package
+            .target
+            .get(triple)
+            .filter(|artifact| artifact.available)
+        else {
+            continue;
+        };
+        let Some(url) = artifact.xz_url.as_deref() else {
+            continue;
+        };
+        let Some(hash) = artifact
+            .xz_hash
+            .as_deref()
+            .filter(|hash| valid_sha256(hash))
+        else {
+            continue;
+        };
+        let plan = if channel == "nightly" {
+            plan_rust_nightly_artifact(requested_version, &manifest.date, target, url)?
+        } else {
+            plan_rust_artifact(requested_version, &manifest.date, target, url)?
+        };
+        artifacts.push(LockedArtifact {
+            target: target.to_owned(),
+            canonical_url: plan.canonical_url,
+            artifact_path: plan.artifact_path,
+            sha256: hash.to_ascii_lowercase(),
+            integrity: None,
+            format: match plan.format {
+                RustArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
+            },
+            archive_root: plan.archive_root,
+            verification: RUST_VERIFICATION.to_owned(),
+            overlays: overlays.clone(),
+        });
+    }
     Ok(LockedTool {
         name: "rust".to_owned(),
         requested: requested_version.to_owned(),

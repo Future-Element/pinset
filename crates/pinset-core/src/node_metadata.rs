@@ -11,14 +11,6 @@ use crate::{
 const OFFICIAL_NODE_DIST_URL: &str = "https://nodejs.org/dist/";
 const MAX_SHASUMS_BYTES: u64 = 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024;
-const REQUIRED_INDEX_FILES: [&str; 5] = [
-    "win-x64-zip",
-    "linux-x64",
-    "linux-arm64",
-    "osx-x64-tar",
-    "osx-arm64-tar",
-];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRelease {
     pub version: String,
@@ -31,8 +23,6 @@ pub struct NodeRelease {
 struct NodeIndexEntry {
     version: String,
     date: String,
-    #[serde(default)]
-    files: Vec<String>,
     #[serde(default)]
     lts: serde_json::Value,
     #[serde(default)]
@@ -109,42 +99,39 @@ impl NodeMetadataClient {
         manifest: &str,
         signer_fingerprint: &str,
     ) -> Result<Lockfile> {
-        let plans = MVP_NODE_TARGETS
-            .into_iter()
-            .map(|target| plan_node_artifact(&SourceConfig::default(), version, target))
-            .collect::<Result<Vec<_>>>()?;
         let checksums = parse_shasums(manifest)?;
-        let artifacts =
-            plans
-                .into_iter()
-                .map(|plan| {
-                    let filename = plan
-                        .artifact_path
-                        .rsplit('/')
-                        .next()
-                        .expect("artifact path contains a filename");
-                    let sha256 = checksums.get(filename).cloned().ok_or_else(|| {
-                        Error::NodeChecksumMissing {
-                            version: version.to_owned(),
-                            filename: filename.to_owned(),
-                        }
-                    })?;
-                    Ok(LockedArtifact {
-                        target: plan.target,
-                        canonical_url: plan.canonical_url,
-                        artifact_path: plan.artifact_path,
-                        sha256,
-                        integrity: None,
-                        format: match plan.format {
-                            NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
-                            NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
-                        },
-                        archive_root: plan.archive_root,
-                        verification: self.verification.clone(),
-                        overlays: Vec::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
+        let mut artifacts = Vec::new();
+        for target in MVP_NODE_TARGETS {
+            let plan = plan_node_artifact(&SourceConfig::default(), version, target)?;
+            let filename = plan
+                .artifact_path
+                .rsplit('/')
+                .next()
+                .expect("artifact path contains a filename");
+            let Some(sha256) = checksums.get(filename).cloned() else {
+                continue;
+            };
+            artifacts.push(LockedArtifact {
+                target: plan.target,
+                canonical_url: plan.canonical_url,
+                artifact_path: plan.artifact_path,
+                sha256,
+                integrity: None,
+                format: match plan.format {
+                    NodeArchiveFormat::Zip => LockedArtifactFormat::Zip,
+                    NodeArchiveFormat::TarXz => LockedArtifactFormat::TarXz,
+                },
+                archive_root: plan.archive_root,
+                verification: self.verification.clone(),
+                overlays: Vec::new(),
+            });
+        }
+        if artifacts.is_empty() {
+            return Err(Error::NodeChecksumMissing {
+                version: version.to_owned(),
+                filename: "a supported Node.js binary archive".to_owned(),
+            });
+        }
 
         let lockfile = Lockfile::new_node(
             generated_by.to_owned(),
@@ -325,12 +312,6 @@ fn parse_index(body: &str) -> Result<Vec<NodeRelease>> {
         let Some(tuple) = parse_version_tuple(version) else {
             continue;
         };
-        if !REQUIRED_INDEX_FILES
-            .iter()
-            .all(|required| entry.files.iter().any(|file| file == required))
-        {
-            continue;
-        }
         let lts = match entry.lts {
             serde_json::Value::Bool(false) | serde_json::Value::Null => None,
             serde_json::Value::String(name) if !name.trim().is_empty() => Some(name),
@@ -358,8 +339,7 @@ fn parse_index(body: &str) -> Result<Vec<NodeRelease>> {
     }
     if releases.is_empty() {
         return Err(Error::InvalidNodeIndex {
-            reason: "index contains no stable releases for every supported Pinset target"
-                .to_owned(),
+            reason: "index contains no stable releases".to_owned(),
         });
     }
     Ok(releases.into_iter().map(|(_, release)| release).collect())
@@ -515,6 +495,34 @@ mod tests {
         assert_eq!(releases[0].version, "24.0.0");
         assert_eq!(releases[1].lts.as_deref(), Some("Jod"));
         assert!(releases[1].security);
+    }
+
+    #[test]
+    fn keeps_stable_releases_when_other_targets_are_missing() {
+        let index = r#"[
+            {"version":"v14.21.3","date":"2023-02-16","files":["win-x64-zip","linux-x64","linux-arm64","osx-x64-tar"],"lts":"Fermium","security":true}
+        ]"#;
+        let releases = parse_index(index).expect("partial historical release");
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].version, "14.21.3");
+    }
+
+    #[test]
+    fn locks_only_artifacts_present_in_a_verified_manifest() {
+        let plan = plan_node_artifact(&SourceConfig::default(), "14.21.3", "windows-x86_64")
+            .expect("Windows plan");
+        let filename = plan.artifact_path.rsplit('/').next().expect("filename");
+        let lockfile = test_client("http://127.0.0.1:9/")
+            .lock_from_verified_manifest(
+                "14.21.3",
+                "pinset test",
+                &format!("{}  {filename}", "a".repeat(64)),
+                "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+            )
+            .expect("partial lock");
+        let node = lockfile.tool("node").expect("Node lock");
+        assert_eq!(node.artifacts.len(), 1);
+        assert_eq!(node.artifacts[0].target, "windows-x86_64");
     }
 
     #[test]

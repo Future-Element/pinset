@@ -16,6 +16,7 @@ pub fn install_locked_node(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "node".to_owned(),
+            version: locked_node.version.clone(),
             target: target.to_owned(),
         })?;
     let sources = source_config

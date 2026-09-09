@@ -8,8 +8,8 @@ use std::{
 
 use atomic_write_file::AtomicWriteFile;
 use pinset_core::{
-    Lockfile, ProjectConfig, acquire_project_state_write_lock, effective_project_config,
-    load_lockfile, load_project_config, lockfile_path, save_lockfile,
+    LOCKFILE_SCHEMA, Lockfile, ProjectConfig, acquire_project_state_write_lock,
+    effective_project_config, load_lockfile, load_project_config, lockfile_path, save_lockfile,
     validate_lock_matches_tool_options, validate_lock_matches_tools, validate_project_lock_policy,
 };
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,9 @@ pub fn new_record(
 }
 
 pub fn candidate_digest(lock: &Lockfile) -> Result<String, serde_json::Error> {
-    hash_serialized(lock)
+    let mut normalized = lock.clone();
+    normalized.schema = LOCKFILE_SCHEMA;
+    hash_serialized(&normalized)
 }
 
 pub fn candidate_directory(

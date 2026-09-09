@@ -25,6 +25,7 @@ pub fn install_locked_flutter(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "flutter".to_owned(),
+            version: locked_flutter.version.clone(),
             target: target.to_owned(),
         })?;
     let plan = plan_flutter_artifact(source_config, &locked_flutter.version, target)?;

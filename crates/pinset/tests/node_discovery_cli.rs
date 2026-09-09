@@ -39,7 +39,7 @@ fn local_node_listing_and_help_are_localized() {
     assert_success_contains(&empty, "尚未安装任何 Node.js 版本");
 
     let help = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "--help"]);
-    assert_success_contains(&help, "列出本机已安装或官方可用的运行时版本");
+    assert_success_contains(&help, "列出本机已安装或远端官方可用的运行时版本");
 
     let python = pinset(&workspace, &home, &["--lang", "zh-CN", "list", "python"]);
     assert_success_contains(&python, "no Pinset-managed python versions are installed");

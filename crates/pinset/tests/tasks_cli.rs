@@ -211,9 +211,10 @@ fn task_dependencies_run_once_in_order_and_stop_on_failure() {
         .output()
         .expect("run dependency graph");
     success(&output);
+    let order = fs::read_to_string(project.join("order.txt")).expect("task order");
     assert_eq!(
-        fs::read_to_string(project.join("order.txt")).expect("task order"),
-        "setup\nbuild\ntest\n"
+        order.lines().collect::<Vec<_>>(),
+        ["setup", "build", "test"]
     );
 
     let failed = cli(&project, &home)

@@ -161,7 +161,7 @@ impl NpmMetadataClient {
         let package = wrapper_package(tool)?;
         let document: PackageDocument =
             self.download_json_abbreviated(self.package_url(package)?)?;
-        let targets = tool_targets(tool)?;
+        tool_targets(tool)?;
         let mut releases = Vec::new();
         for (declared_version, manifest) in document.versions {
             let Ok(version) = Version::parse(&declared_version) else {
@@ -169,11 +169,8 @@ impl NpmMetadataClient {
             };
             if manifest.version != declared_version
                 || manifest.name != package
-                || !supported_version(tool, &version)
                 || !version.pre.is_empty()
-                || !targets
-                    .iter()
-                    .all(|target| manifest.optional_dependencies.contains_key(target.package))
+                || !version.build.is_empty()
             {
                 continue;
             }
@@ -188,8 +185,7 @@ impl NpmMetadataClient {
         if releases.is_empty() {
             return Err(Error::InvalidNpmMetadata {
                 package: package.to_owned(),
-                reason: "package contains no stable release for every supported Pinset target"
-                    .to_owned(),
+                reason: "package contains no stable release".to_owned(),
             });
         }
         Ok(releases.into_iter().map(|(_, release)| release).collect())
@@ -197,10 +193,7 @@ impl NpmMetadataClient {
 
     pub fn resolve_version_selector(&self, tool: &str, selector: &str) -> Result<String> {
         if let Ok(version) = Version::parse(selector) {
-            if version.pre.is_empty()
-                && version.build.is_empty()
-                && supported_version(tool, &version)
-            {
+            if version.pre.is_empty() && version.build.is_empty() {
                 return Ok(version.to_string());
             }
             return Err(Error::InvalidNpmToolSelector {
@@ -256,7 +249,7 @@ impl NpmMetadataClient {
             tool: tool.to_owned(),
             selector: version.to_owned(),
         })?;
-        if !parsed.pre.is_empty() || !parsed.build.is_empty() || !supported_version(tool, &parsed) {
+        if !parsed.pre.is_empty() || !parsed.build.is_empty() {
             return Err(Error::InvalidNpmToolSelector {
                 tool: tool.to_owned(),
                 selector: version.to_owned(),
@@ -285,23 +278,21 @@ impl NpmMetadataClient {
         };
         let mut artifacts = Vec::new();
         for target in tool_targets(tool)? {
-            let dependency = manifest
-                .optional_dependencies
-                .get(target.package)
-                .ok_or_else(|| Error::InvalidNpmMetadata {
-                    package: wrapper.to_owned(),
-                    reason: format!("{version} does not declare {}", target.package),
-                })?;
+            let Some((package, dependency)) =
+                target_package_dependency(tool, target, &manifest.optional_dependencies)
+            else {
+                continue;
+            };
             let package_version =
                 exact_dependency_version(dependency).ok_or_else(|| Error::InvalidNpmMetadata {
                     package: wrapper.to_owned(),
-                    reason: format!("{} has non-exact version {dependency:?}", target.package),
+                    reason: format!("{package} has non-exact version {dependency:?}"),
                 })?;
-            let platform = self.package_version(target.package, package_version)?;
-            validate_manifest_identity(target.package, package_version, &platform)?;
+            let platform = self.package_version(package, package_version)?;
+            validate_manifest_identity(package, package_version, &platform)?;
             verify_package_signature(&platform, &keys)?;
             let (canonical_url, artifact_path) =
-                official_tarball(target.package, package_version, &platform.dist)?;
+                official_tarball(package, package_version, &platform.dist)?;
             crate::ArtifactIntegrity::parse(&platform.dist.integrity)?;
             artifacts.push(LockedArtifact {
                 target: target.target.to_owned(),
@@ -451,7 +442,7 @@ pub fn validate_exact_npm_tool_version(tool: &str, version: &str) -> Result<()> 
         tool: tool.to_owned(),
         selector: version.to_owned(),
     })?;
-    if !parsed.pre.is_empty() || !parsed.build.is_empty() || !supported_version(tool, &parsed) {
+    if !parsed.pre.is_empty() || !parsed.build.is_empty() {
         return Err(Error::InvalidNpmToolSelector {
             tool: tool.to_owned(),
             selector: version.to_owned(),
@@ -470,12 +461,25 @@ fn wrapper_package(tool: &str) -> Result<&'static str> {
     }
 }
 
-fn supported_version(tool: &str, version: &Version) -> bool {
-    match tool {
-        "pnpm" => matches!(version.major, 10 | 11),
-        "bun" => version.major == 1,
-        _ => false,
-    }
+fn target_package_dependency<'a>(
+    tool: &str,
+    target: &NpmToolTarget,
+    dependencies: &'a BTreeMap<String, String>,
+) -> Option<(&'a str, &'a str)> {
+    let modern_pnpm = match target.target {
+        "windows-x86_64" => Some("@pnpm/exe.win32-x64"),
+        "linux-x86_64" => Some("@pnpm/exe.linux-x64"),
+        "linux-aarch64" => Some("@pnpm/exe.linux-arm64"),
+        "macos-aarch64" => Some("@pnpm/exe.darwin-arm64"),
+        _ => None,
+    };
+    std::iter::once(target.package)
+        .chain((tool == "pnpm").then_some(modern_pnpm).flatten())
+        .find_map(|package| {
+            dependencies
+                .get_key_value(package)
+                .map(|(name, version)| (name.as_str(), version.as_str()))
+        })
 }
 
 pub(crate) fn pnpm_uses_wrapper_overlay(version: &Version) -> bool {
@@ -572,12 +576,21 @@ mod tests {
     }
 
     #[test]
-    fn stable_support_windows_are_deliberately_narrow() {
-        assert!(supported_version("pnpm", &Version::new(10, 0, 0)));
-        assert!(supported_version("pnpm", &Version::new(11, 0, 0)));
-        assert!(!supported_version("pnpm", &Version::new(12, 0, 0)));
-        assert!(supported_version("bun", &Version::new(1, 3, 0)));
-        assert!(!supported_version("bun", &Version::new(2, 0, 0)));
+    fn target_package_lookup_accepts_legacy_and_current_pnpm_names() {
+        let target = PNPM_TARGETS
+            .iter()
+            .find(|target| target.target == "windows-x86_64")
+            .expect("Windows target");
+        let legacy = BTreeMap::from([("@pnpm/win-x64".to_owned(), "10.0.0".to_owned())]);
+        assert_eq!(
+            target_package_dependency("pnpm", target, &legacy).map(|(name, _)| name),
+            Some("@pnpm/win-x64")
+        );
+        let current = BTreeMap::from([("@pnpm/exe.win32-x64".to_owned(), "12.0.0".to_owned())]);
+        assert_eq!(
+            target_package_dependency("pnpm", target, &current).map(|(name, _)| name),
+            Some("@pnpm/exe.win32-x64")
+        );
     }
 
     #[test]
@@ -587,7 +600,6 @@ mod tests {
         assert!(validate_exact_npm_tool_version("bun", "1.3.14").is_ok());
         for (tool, version) in [
             ("pnpm", "10"),
-            ("pnpm", "12.0.0"),
             ("bun", "1.3.14-beta.1"),
             ("bun", "1.3.14+build"),
         ] {

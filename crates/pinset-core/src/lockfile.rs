@@ -19,7 +19,7 @@ use crate::{
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
-pub const LOCKFILE_SCHEMA: u32 = 4;
+pub const LOCKFILE_SCHEMA: u32 = 5;
 pub const MVP_NODE_TARGETS: [&str; 5] = [
     "windows-x86_64",
     "macos-aarch64",
@@ -417,7 +417,7 @@ fn validate_lockfile_with_target_policy(
     lockfile: &Lockfile,
     target_policy: TargetMatrixPolicy,
 ) -> Result<()> {
-    if !matches!(lockfile.schema, 1 | 2 | 3 | LOCKFILE_SCHEMA) {
+    if !matches!(lockfile.schema, 1 | 2 | 3 | 4 | LOCKFILE_SCHEMA) {
         return Err(Error::UnsupportedLockfileSchema {
             actual: lockfile.schema,
         });
@@ -427,9 +427,7 @@ fn validate_lockfile_with_target_policy(
             reason: "generated_by cannot be empty".to_owned(),
         });
     }
-    if lockfile.schema < LOCKFILE_SCHEMA
-        && lockfile.tools.iter().any(|tool| !tool.options.is_empty())
-    {
+    if lockfile.schema < 4 && lockfile.tools.iter().any(|tool| !tool.options.is_empty()) {
         return Err(Error::InvalidLockfile {
             reason: format!(
                 "lockfile schema {} cannot contain structured tool options",
@@ -448,6 +446,25 @@ fn validate_lockfile_with_target_policy(
         // Schema 3 introduced independent requested selectors (for example,
         // `bun = "latest"`) while keeping the resolved version exact in the lock.
         // Only schema 1/2 require the two values to be identical.
+        if lockfile.schema < LOCKFILE_SCHEMA
+            && !has_complete_target_matrix(tool)
+            && !(target_policy == TargetMatrixPolicy::AllowPreV1LinuxArm64Matrices
+                && has_pre_v1_target_matrix(tool))
+        {
+            return Err(Error::InvalidLockfile {
+                reason: if has_pre_v1_target_matrix(tool) {
+                    format!(
+                        "schema {} {} lock is missing the historical linux-aarch64 target; refresh the provider lock",
+                        lockfile.schema, tool.name
+                    )
+                } else {
+                    format!(
+                        "schema {} requires the historical complete target matrix for {}; refresh the provider lock",
+                        lockfile.schema, tool.name
+                    )
+                },
+            });
+        }
         if lockfile.schema < 3 && tool.requested != tool.version {
             return Err(Error::InvalidLockfile {
                 reason: format!(
@@ -558,150 +575,18 @@ fn validate_locked_tool_with_target_policy(
         } else {
             validate_node_metadata(tool)?;
         }
-        for target in MVP_NODE_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Node MVP artifact for {target}"),
-                });
-            }
-        }
-    } else if tool.name == "go" {
-        for target in GO_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Go artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != GO_TARGETS.len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: "Go lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if tool.name == "flutter" {
         validate_flutter_metadata(tool)?;
-        for target in FLUTTER_TARGETS {
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Flutter artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != FLUTTER_TARGETS.len() {
-            return Err(Error::InvalidLockfile {
-                reason: "Flutter lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if tool.name == "python" {
         validate_python_metadata(tool)?;
-        for target in PYTHON_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Python artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != PYTHON_TARGETS.len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: "Python lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if tool.name == "java" {
         validate_java_metadata(tool)?;
-        for target in JAVA_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Java artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != JAVA_TARGETS.len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: "Java lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if tool.name == "rust" {
         validate_rust_metadata(tool)?;
-        for target in RUST_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing Rust artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != RUST_TARGETS.len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: "Rust lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if tool.name == "dotnet" {
         validate_dotnet_metadata(tool)?;
-        for target in DOTNET_TARGETS {
-            if pre_v1_target_matrix && target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing .NET SDK artifact for {target}"),
-                });
-            }
-        }
-        if targets.len() != DOTNET_TARGETS.len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: ".NET SDK lock contains an unsupported artifact target".to_owned(),
-            });
-        }
     } else if declarative_provider {
         validate_declarative_metadata(tool)?;
-        for target in [
-            "windows-x86_64",
-            "macos-aarch64",
-            "macos-x86_64",
-            "linux-x86_64",
-            "linux-aarch64",
-        ] {
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing {} declarative artifact for {target}", tool.name),
-                });
-            }
-        }
-        if targets.len() != 5 {
-            return Err(Error::InvalidLockfile {
-                reason: format!("{} lock contains an unsupported artifact target", tool.name),
-            });
-        }
-    } else {
-        for (target, _) in npm_tool_targets(&tool.name) {
-            if pre_v1_target_matrix && *target == "linux-aarch64" {
-                continue;
-            }
-            if !targets.contains(target) {
-                return Err(Error::InvalidLockfile {
-                    reason: format!("missing {} artifact for {target}", tool.name),
-                });
-            }
-        }
-        if targets.len() != npm_tool_targets(&tool.name).len() && !pre_v1_target_matrix {
-            return Err(Error::InvalidLockfile {
-                reason: format!("{} lock contains an unsupported artifact target", tool.name),
-            });
-        }
     }
     if tool.artifacts.is_empty() {
         return Err(Error::InvalidLockfile {
@@ -745,6 +630,29 @@ fn has_pre_v1_target_matrix(tool: &LockedTool) -> bool {
             .artifacts
             .iter()
             .all(|artifact| expected.contains(&artifact.target.as_str()))
+}
+
+fn has_complete_target_matrix(tool: &LockedTool) -> bool {
+    let expected = match tool.name.as_str() {
+        "node" => MVP_NODE_TARGETS.as_slice(),
+        "go" => GO_TARGETS.as_slice(),
+        "flutter" => FLUTTER_TARGETS.as_slice(),
+        "python" => PYTHON_TARGETS.as_slice(),
+        "java" => JAVA_TARGETS.as_slice(),
+        "rust" => RUST_TARGETS.as_slice(),
+        "dotnet" => DOTNET_TARGETS.as_slice(),
+        "pnpm" | "bun" => {
+            return tool.artifacts.len() == npm_tool_targets(&tool.name).len()
+                && npm_tool_targets(&tool.name)
+                    .iter()
+                    .all(|(target, _)| tool.artifact(target).is_some());
+        }
+        _ => return true,
+    };
+    tool.artifacts.len() == expected.len()
+        && expected
+            .iter()
+            .all(|target| tool.artifact(target).is_some())
 }
 
 fn validate_node_metadata(tool: &LockedTool) -> Result<()> {
@@ -965,7 +873,12 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
             && !(tool.requested == "nightly"
                 && tool.options.get("date").is_some_and(|value| value == date)))
         || (channel == "stable" && tool.requested.starts_with("nightly"))
-        || (tool.options.is_empty() && (profile != RUST_PROFILE || components != RUST_COMPONENTS))
+        || (tool.options.is_empty()
+            && (profile != RUST_PROFILE
+                || !matches!(
+                    components.as_str(),
+                    RUST_COMPONENTS | "rustc,cargo,rust-std,rust-docs"
+                )))
     {
         return Err(Error::InvalidLockfile {
             reason: "Rust lock metadata does not match its selector and structured options"
@@ -1001,9 +914,9 @@ fn validate_dotnet_metadata(tool: &LockedTool) -> Result<()> {
     let support_phase = tool
         .metadata
         .get("support_phase")
-        .filter(|value| matches!(value.as_str(), "active" | "maintenance"))
+        .filter(|value| matches!(value.as_str(), "active" | "maintenance" | "eol"))
         .ok_or_else(|| Error::InvalidLockfile {
-            reason: ".NET SDK lock metadata is not in a supported phase".to_owned(),
+            reason: ".NET SDK lock metadata has an unknown support phase".to_owned(),
         })?;
     let expected = BTreeMap::from([
         ("channel".to_owned(), version.channel()),
@@ -1014,8 +927,7 @@ fn validate_dotnet_metadata(tool: &LockedTool) -> Result<()> {
     ]);
     if tool.metadata != expected {
         return Err(Error::InvalidLockfile {
-            reason: ".NET SDK lock metadata must identify one supported Microsoft GA SDK release"
-                .to_owned(),
+            reason: ".NET SDK lock metadata must identify one Microsoft GA SDK release".to_owned(),
         });
     }
     Ok(())
@@ -1509,13 +1421,18 @@ fn validate_locked_npm_artifact(tool: &LockedTool, artifact: &LockedArtifact) ->
         .ok_or_else(|| Error::InvalidLockfile {
             reason: format!("unsupported {} target {}", tool.name, artifact.target),
         })?;
-    let package_base = package.rsplit('/').next().expect("npm package is nonempty");
-    let artifact_path = format!("{package}/-/{package_base}-{}.tgz", tool.version);
-    let canonical_url = format!("https://registry.npmjs.org/{artifact_path}");
-    if artifact.archive_root != "package"
-        || artifact.canonical_url != canonical_url
-        || artifact.artifact_path != artifact_path
-    {
+    let packages = if tool.name == "pnpm" {
+        pnpm_target_packages(&artifact.target, package)
+    } else {
+        vec![package]
+    };
+    let valid_identity = packages.into_iter().any(|package| {
+        let package_base = package.rsplit('/').next().expect("npm package is nonempty");
+        let artifact_path = format!("{package}/-/{package_base}-{}.tgz", tool.version);
+        let canonical_url = format!("https://registry.npmjs.org/{artifact_path}");
+        artifact.canonical_url == canonical_url && artifact.artifact_path == artifact_path
+    });
+    if artifact.archive_root != "package" || !valid_identity {
         return Err(Error::InvalidLockfile {
             reason: format!("invalid npm artifact identity for {}", artifact.target),
         });
@@ -1564,12 +1481,22 @@ fn pnpm_uses_wrapper_overlay(version: &str) -> Result<bool> {
         .split_once('.')
         .and_then(|(major, _)| major.parse::<u64>().ok())
     {
-        Some(10) => Ok(false),
-        Some(11) => Ok(true),
-        _ => Err(Error::InvalidLockfile {
-            reason: format!("unsupported pnpm version {version}"),
+        Some(major) => Ok(major >= 11),
+        None => Err(Error::InvalidLockfile {
+            reason: format!("invalid pnpm version {version}"),
         }),
     }
+}
+
+fn pnpm_target_packages<'a>(target: &str, legacy: &'a str) -> Vec<&'a str> {
+    let modern = match target {
+        "windows-x86_64" => Some("@pnpm/exe.win32-x64"),
+        "linux-x86_64" => Some("@pnpm/exe.linux-x64"),
+        "linux-aarch64" => Some("@pnpm/exe.linux-arm64"),
+        "macos-aarch64" => Some("@pnpm/exe.darwin-arm64"),
+        _ => None,
+    };
+    std::iter::once(legacy).chain(modern).collect()
 }
 
 fn validate_pnpm_overlay(version: &str, overlay: &LockedArtifactOverlay) -> Result<()> {
@@ -1916,7 +1843,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_go_provider_identity_and_required_targets() {
+    fn validates_go_provider_identity_and_partial_targets() {
         let artifacts = GO_TARGETS
             .into_iter()
             .map(|target| locked_go_artifact("1.25.1", target))
@@ -1950,14 +1877,11 @@ mod tests {
             options: Default::default(),
             artifacts: artifacts.into_iter().skip(1).collect(),
         };
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&incomplete).expect("partial Go lock");
     }
 
     #[test]
-    fn validates_flutter_provider_metadata_identity_and_required_targets() {
+    fn validates_flutter_provider_metadata_identity_and_partial_targets() {
         let artifacts = FLUTTER_TARGETS
             .into_iter()
             .map(|target| locked_flutter_artifact("3.47.0", target))
@@ -1998,14 +1922,11 @@ mod tests {
 
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&incomplete).expect("partial Flutter lock");
     }
 
     #[test]
-    fn validates_python_distribution_metadata_and_required_targets() {
+    fn validates_python_distribution_metadata_and_partial_targets() {
         let distribution = "3.14.7+20260807";
         let artifacts = PYTHON_TARGETS
             .into_iter()
@@ -2043,14 +1964,11 @@ mod tests {
 
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&incomplete).expect("partial Python lock");
     }
 
     #[test]
-    fn validates_temurin_metadata_signatures_and_required_targets() {
+    fn validates_temurin_metadata_signatures_and_partial_targets() {
         let version = "21.0.8+9";
         let release_name = "jdk-21.0.8+9";
         let artifacts = JAVA_TARGETS
@@ -2121,14 +2039,14 @@ mod tests {
 
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        incomplete
+            .metadata
+            .retain(|key, _| !key.starts_with("signature_link.windows-x86_64"));
+        validate_locked_tool(&incomplete).expect("partial Java lock");
     }
 
     #[test]
-    fn validates_official_rust_manifest_identity_and_required_targets() {
+    fn validates_official_rust_manifest_identity_and_partial_targets() {
         let version = "1.97.1";
         let date = "2026-07-16";
         let artifacts = RUST_TARGETS
@@ -2177,10 +2095,7 @@ mod tests {
 
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&incomplete).expect("partial Rust lock");
     }
 
     #[test]
@@ -2216,7 +2131,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_official_dotnet_sdk_metadata_and_required_targets() {
+    fn validates_official_dotnet_sdk_metadata_and_partial_targets() {
         let version = "10.0.400";
         let artifacts = DOTNET_TARGETS
             .into_iter()
@@ -2244,17 +2159,11 @@ mod tests {
         invalid
             .metadata
             .insert("support_phase".to_owned(), "eol".to_owned());
-        assert!(matches!(
-            validate_locked_tool(&invalid),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&invalid).expect("EOL .NET lock");
 
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
-        assert!(matches!(
-            validate_locked_tool(&incomplete),
-            Err(Error::InvalidLockfile { .. })
-        ));
+        validate_locked_tool(&incomplete).expect("partial .NET lock");
     }
 
     fn locked_artifact(target: &str) -> LockedArtifact {

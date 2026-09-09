@@ -25,6 +25,7 @@ pub fn install_locked_python(
         .artifact(target)
         .ok_or_else(|| Error::LockedArtifactMissing {
             tool: "python".to_owned(),
+            version: locked_python.version.clone(),
             target: target.to_owned(),
         })?;
     let plan = plan_python_artifact(source_config, &locked_python.version, target)?;

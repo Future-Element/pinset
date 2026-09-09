@@ -8,7 +8,7 @@
 
 ### 选择器与作用域
 
-选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。项目配置保留请求选择器，锁 schema 4 记录精确解析版本、选项与平台制品。
+选择表达式格式为 `<tool>@<selector>`，例如 `node@22`、`pnpm@latest`、`java@lts` 或 `rust@stable`。项目配置保留请求选择器，锁 schema 5 记录精确解析版本、选项与上游实际发布的平台制品。
 
 schema 5 项目可以在不改变字符串选择器的情况下声明结构化选项：
 
@@ -120,7 +120,7 @@ python-environment = "docs"
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 4 `pinset.lock`。 |
+| 用途 | 重新扫描，并把所有可安全映射的传统选择导入 schema 5 `pinset.toml` 与 schema 5 `pinset.lock`。 |
 | 语法与参数 | `pinset import [--cwd <目录>] [--force] [--no-install]`。`--force` 只替换本次发现且现有请求选择器不同的工具。 |
 | 修改状态 | **是。** 解析元数据，先锁文件、后配置分别进行原子文件替换，并默认安装项目全部选择。`--no-install` 跳过运行时归档和 Python `.venv`，但仍解析并锁定元数据。 |
 | 示例 | `pinset import --no-install` |
@@ -209,9 +209,9 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 列出已安装版本，或查询一个 Provider 的官方可用版本。 |
-| 语法与参数 | `pinset list [tool] [--available] [--json]`。`--available` 必须同时指定 `tool`。 |
+| 语法与参数 | `pinset list [tool] [--remote] [--json]`。`--remote` 查询官方远端索引且必须同时指定 `tool`；`--available` 继续作为兼容别名。 |
 | 修改状态 | 否。 |
-| 示例 | `pinset list java --available --json` |
+| 示例 | `pinset list java --remote --json` |
 | JSON | **支持**；命令名为 `list`，版本位于 `data.versions`。 |
 | 退出码 | 成功为 `0`；参数或元数据失败为 `2`。 |
 | 关键错误 | Provider 不支持、网络/元数据失败、签名元数据无效或不受信任、响应超限。 |
@@ -244,7 +244,7 @@ python-environment = "docs"
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时把运行时锁写为 schema 4；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
+| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时把 schema 1–4 运行时锁写为 schema 5；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -1108,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.11.1
+      - uses: Future-Element/pinset@v2.12.0
         with:
-          version: 2.11.1
+          version: 2.12.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -1128,6 +1128,6 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 ## 稳定协议边界
 
-当前开发版本写入 schema 5 项目配置，以及 schema 4 全局配置/运行时锁。schema 1–4 项目和 schema 1–3 锁仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+当前开发版本写入 schema 5 项目配置、schema 3 全局配置与 schema 5 运行时锁。schema 1–4 项目和 schema 1–4 锁仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
 
 v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

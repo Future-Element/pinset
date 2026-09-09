@@ -168,7 +168,9 @@ pub enum Error {
     },
 
     #[cfg(feature = "lockfile")]
-    #[error("unsupported pinset.lock schema {actual}; this version supports schemas 1, 2 and 3")]
+    #[error(
+        "unsupported pinset.lock schema {actual}; this version supports schemas 1, 2, 3, 4 and 5"
+    )]
     UnsupportedLockfileSchema { actual: u32 },
 
     #[cfg(feature = "lockfile")]
@@ -195,8 +197,14 @@ pub enum Error {
     LockedToolMissing { tool: String },
 
     #[cfg(feature = "lockfile")]
-    #[error("pinset.lock does not contain {tool} artifact for {target}")]
-    LockedArtifactMissing { tool: String, target: String },
+    #[error(
+        "{tool}@{version} exists, but its official distribution has no installable artifact for {target}"
+    )]
+    LockedArtifactMissing {
+        tool: String,
+        version: String,
+        target: String,
+    },
 
     #[cfg(feature = "lockfile")]
     #[error(
@@ -474,6 +482,12 @@ pub enum Error {
 
     #[cfg(feature = "go-metadata")]
     #[error(
+        "Go {version} exists in the official archive, but its index publishes no verifiable SHA-256 artifact for a Pinset target"
+    )]
+    GoArtifactsUnverifiable { version: String },
+
+    #[cfg(feature = "go-metadata")]
+    #[error(
         "invalid Go selector \"{selector}\"; expected x.y.z, a major/minor prefix, latest or current"
     )]
     InvalidGoSelector { selector: String },
@@ -523,6 +537,15 @@ pub enum Error {
     #[cfg(feature = "python-provider")]
     #[error("unsupported Python target \"{target}\"")]
     UnsupportedPythonTarget { target: String },
+
+    #[cfg(feature = "python-metadata")]
+    #[error(
+        "Python {version} exists in the official CPython archive, but {distribution} has no installable artifact for it"
+    )]
+    PythonDistributionUnavailable {
+        version: String,
+        distribution: String,
+    },
 
     #[cfg(feature = "python-metadata")]
     #[error("invalid Python selector \"{selector}\"")]

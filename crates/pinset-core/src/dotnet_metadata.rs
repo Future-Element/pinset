@@ -69,7 +69,7 @@ struct ReleaseEntry {
     #[serde(default)]
     sdk: Option<SdkEntry>,
     #[serde(default)]
-    sdks: Vec<SdkEntry>,
+    sdks: Option<Vec<SdkEntry>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,9 +81,13 @@ struct SdkEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 struct SdkFile {
+    #[serde(default)]
     name: String,
+    #[serde(default)]
     rid: String,
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     hash: String,
 }
 
@@ -218,7 +222,7 @@ impl DotnetMetadataClient {
         }
         if releases.is_empty() {
             return Err(Error::InvalidDotnetIndex {
-                reason: "supported .NET channels contain no complete stable SDK release".to_owned(),
+                reason: "the .NET release index contains no stable SDK release".to_owned(),
             });
         }
         let mut releases = releases.into_values().collect::<Vec<_>>();
@@ -266,8 +270,11 @@ fn supported_channels(channels: Vec<ChannelIndex>) -> Result<Vec<ChannelIndex>> 
     let mut supported = channels
         .into_iter()
         .filter(|channel| {
-            matches!(channel.support_phase.as_str(), "active" | "maintenance")
-                && matches!(channel.release_type.as_str(), "lts" | "sts")
+            matches!(channel.release_type.as_str(), "lts" | "sts")
+                && matches!(
+                    channel.support_phase.as_str(),
+                    "active" | "maintenance" | "eol"
+                )
                 && valid_channel(&channel.channel)
         })
         .collect::<Vec<_>>();
@@ -276,7 +283,7 @@ fn supported_channels(channels: Vec<ChannelIndex>) -> Result<Vec<ChannelIndex>> 
     });
     if supported.is_empty() {
         return Err(Error::InvalidDotnetIndex {
-            reason: "releases index contains no supported GA LTS or STS channel".to_owned(),
+            reason: "releases index contains no GA LTS or STS channel".to_owned(),
         });
     }
     Ok(supported)
@@ -322,7 +329,11 @@ fn parse_channel_releases(
         {
             continue;
         }
-        let mut sdks = entry.sdk.into_iter().chain(entry.sdks).collect::<Vec<_>>();
+        let mut sdks = entry
+            .sdk
+            .into_iter()
+            .chain(entry.sdks.unwrap_or_default())
+            .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         sdks.retain(|sdk| seen.insert(sdk.version.clone()));
         for sdk in sdks {
@@ -341,14 +352,12 @@ fn parse_channel_releases(
                     .iter()
                     .find(|file| file.rid == rid && file.name == expected_name)
                 else {
-                    artifacts.clear();
-                    break;
+                    continue;
                 };
                 if !valid_sha512(&file.hash)
                     || plan_dotnet_artifact(&sdk.version, target, &file.url).is_err()
                 {
-                    artifacts.clear();
-                    break;
+                    continue;
                 }
                 artifacts.push(SupportedDotnetArtifact {
                     target: target.to_owned(),
@@ -356,7 +365,7 @@ fn parse_channel_releases(
                     hash: file.hash.clone(),
                 });
             }
-            if artifacts.len() == DOTNET_TARGETS.len() {
+            if !artifacts.is_empty() {
                 releases.push(SupportedDotnetRelease {
                     version,
                     channel: channel.channel.clone(),
@@ -380,7 +389,7 @@ fn select_release(
     if matches!(normalized.as_str(), "latest" | "current") {
         return releases
             .into_iter()
-            .next()
+            .find(|release| matches!(release.support_phase.as_str(), "active" | "maintenance"))
             .ok_or_else(|| Error::DotnetSelectorNotFound {
                 selector: selector.to_owned(),
             });
@@ -388,7 +397,10 @@ fn select_release(
     if normalized == "lts" {
         return releases
             .into_iter()
-            .find(|release| release.release_type == "lts")
+            .find(|release| {
+                release.release_type == "lts"
+                    && matches!(release.support_phase.as_str(), "active" | "maintenance")
+            })
             .ok_or_else(|| Error::DotnetSelectorNotFound {
                 selector: selector.to_owned(),
             });
@@ -471,7 +483,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn filters_eol_and_preview_channels() {
+    fn retains_eol_and_filters_preview_channels() {
         let channels = supported_channels(vec![
             channel("10.0", "lts", "active"),
             channel("9.0", "sts", "maintenance"),
@@ -484,7 +496,7 @@ mod tests {
                 .iter()
                 .map(|channel| channel.channel.as_str())
                 .collect::<Vec<_>>(),
-            ["10.0", "9.0"]
+            ["10.0", "9.0", "8.0"]
         );
     }
 
@@ -556,7 +568,7 @@ mod tests {
                     version: "10.0.400".to_owned(),
                     files,
                 }),
-                sdks: Vec::new(),
+                sdks: Some(Vec::new()),
             }],
         };
         let releases = parse_channel_releases(&channel, document).expect("releases");

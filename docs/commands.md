@@ -8,7 +8,7 @@ This document describes the current Pinset development command-line contract. Ru
 
 ### Selections and scope
 
-A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Project configuration keeps that requested selector and lock schema 4 records its exact resolved version, options, and platform artifacts.
+A selection has the form `<tool>@<selector>`, for example `node@22`, `pnpm@latest`, `java@lts`, or `rust@stable`. Project configuration keeps that requested selector and lock schema 5 records its exact resolved version, options, and upstream-published platform artifacts.
 
 Schema 5 projects may add structured options without changing the string selection:
 
@@ -120,7 +120,7 @@ Recognized selection sources include `.nvmrc`, `.node-version`, `.bun-version`, 
 
 | Field | Description |
 | --- | --- |
-| Purpose | Re-scan and import every safe traditional selection into schema 5 `pinset.toml` and schema 4 `pinset.lock`. |
+| Purpose | Re-scan and import every safe traditional selection into schema 5 `pinset.toml` and schema 5 `pinset.lock`. |
 | Syntax and arguments | `pinset import [--cwd <path>] [--force] [--no-install]`. `--force` replaces only discovered tools whose existing requested selector differs. |
 | Modifies state | **Yes.** Resolves metadata, atomically replaces the lock file and then the config file, and installs all project selections by default. `--no-install` skips runtime archives and Python `.venv`, but still resolves and locks metadata. |
 | Example | `pinset import --no-install` |
@@ -209,9 +209,9 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | List installed versions, or query official available versions for one Provider. |
-| Syntax and arguments | `pinset list [tool] [--available] [--json]`. `--available` requires `tool`. |
+| Syntax and arguments | `pinset list [tool] [--remote] [--json]`. `--remote` queries the official remote index and requires `tool`; `--available` remains a compatible alias. |
 | Modifies state | No. |
-| Example | `pinset list java --available --json` |
+| Example | `pinset list java --remote --json` |
 | JSON | **Yes**; command name `list`, with versions under `data.versions`. |
 | Exit | `0` success; `2` on argument or metadata failure. |
 | Key errors | Unsupported Provider, network/metadata failure, invalid or untrusted signed metadata, or response limit exceeded. |
@@ -244,7 +244,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 and runtime locks as schema 4. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
+| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 and schema 1–4 runtime locks as schema 5. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -1108,9 +1108,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.11.1
+      - uses: Future-Element/pinset@v2.12.0
         with:
-          version: 2.11.1
+          version: 2.12.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -1128,6 +1128,6 @@ Self updates use a cross-process lock and a 60-second HTTP timeout. Windows repl
 
 ## Stable protocol boundary
 
-The current development line writes schema 5 project configuration and schema 4 global configuration/runtime locks. Schema 1–4 projects and schema 1–3 locks remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 4 while schema 1–3 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
+The current development line writes schema 5 project configuration, schema 3 global configuration, and schema 5 runtime locks. Schema 1–4 projects and schema 1–4 locks remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 4 while schema 1–3 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
 
 The JSON schema 1 envelope remains unchanged in v2.0. New JSON commands include `paths`, `env.list`, `env.identity.list`, `trust.status`, and `self.outdated`. Automation should branch on stable command and reason/code fields, not human-facing messages. JSON output and errors never include environment values, identities, or passphrases.
