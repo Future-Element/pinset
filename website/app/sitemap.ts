@@ -6,9 +6,10 @@ export const dynamic = "force-static";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const updated = new Date(siteConfig.contentUpdatedAt);
+  const homepageUpdated = new Date(siteConfig.homepageUpdatedAt);
   const roots: MetadataRoute.Sitemap = [
-    { url: siteUrl, lastModified: updated, changeFrequency: "weekly", priority: 1, alternates: { languages: languageAlternates(siteUrl, `${siteUrl}/en`) } },
-    { url: `${siteUrl}/en`, lastModified: updated, changeFrequency: "weekly", priority: 0.9, alternates: { languages: languageAlternates(siteUrl, `${siteUrl}/en`) } },
+    { url: siteUrl, lastModified: homepageUpdated, changeFrequency: "weekly", priority: 1, alternates: { languages: languageAlternates(siteUrl, `${siteUrl}/en`) } },
+    { url: `${siteUrl}/en`, lastModified: homepageUpdated, changeFrequency: "weekly", priority: 0.9, alternates: { languages: languageAlternates(siteUrl, `${siteUrl}/en`) } },
     { url: `${siteUrl}/docs/commands`, lastModified: updated, changeFrequency: "weekly", priority: 0.9, alternates: { languages: languageAlternates(`${siteUrl}/docs/commands`, `${siteUrl}/en/docs/commands`) } },
     { url: `${siteUrl}/en/docs/commands`, lastModified: updated, changeFrequency: "weekly", priority: 0.8, alternates: { languages: languageAlternates(`${siteUrl}/docs/commands`, `${siteUrl}/en/docs/commands`) } },
   ];

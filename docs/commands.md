@@ -212,6 +212,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Syntax and arguments | `pinset list [tool] [--remote] [--json]`. `--remote` queries the official remote index and requires `tool`; `--available` remains a compatible alias. |
 | Modifies state | No. |
 | Example | `pinset list java --remote --json` |
+| Python details | The remote list represents releases published in the official python.org archive. Target compatibility is resolved by `use`; an archived version is not reported as universally installable. |
 | JSON | **Yes**; command name `list`, with versions under `data.versions`. |
 | Exit | `0` success; `2` on argument or metadata failure. |
 | Key errors | Unsupported Provider, network/metadata failure, invalid or untrusted signed metadata, or response limit exceeded. |
@@ -449,6 +450,8 @@ After import, `pinset install --locked --offline` makes no network requests. It 
 
 Pinset owns a project Python environment only when its ownership marker matches its declared name, path, selected CPython distribution, and target. The reserved `default` environment remains `.venv`; other names must be declared under `[python.environments.<name>]`. Destructive operations fail closed if ownership cannot be proven.
 
+The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.0–3.2, `use` and `exec` route directly to the interpreter Pinset installed from the official python.org archive; `venv create/recreate` returns an explicit unsupported-version error and never invokes a third-party environment tool.
+
 ### `venv`
 
 | Field | Description |
@@ -573,7 +576,7 @@ Pinset owns a project Python environment only when its ownership marker matches 
 
 ## Source commands
 
-Custom source configuration currently applies to Node.js, Go, Python, and Flutter. Archive mirrors and trusted metadata mirrors have different security authority: `--trust-metadata` is required before a custom HTTPS source may determine versions or integrity metadata. For Node.js, a trusted metadata source must also serve the signed manifest.
+Custom source configuration currently applies to Node.js, Go, Python, and Flutter. Official release archives are the default. An active custom HTTPS source granted `--trust-metadata` is tried first for metadata, followed automatically by the official source. Other sources that were only added are ignored, regardless of whether they also carry `trust-metadata`. `source fallback` is an explicit artifact-download retry list and never participates in metadata selection. Node.js trusted metadata must still pass the Provider's OpenPGP verification. Python metadata remains fixed to python.org because its archive API and artifact mirror layouts are separate.
 
 ### `source`
 
@@ -604,7 +607,7 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 | Field | Description |
 | --- | --- |
 | Purpose | Add a named custom archive source, optionally granting trusted metadata authority. |
-| Syntax and arguments | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`. HTTP requires `--allow-insecure`, which conflicts with metadata trust. |
+| Syntax and arguments | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`. HTTP requires `--allow-insecure`, which conflicts with metadata trust. Select a trusted source with `source use` to make it preferred. |
 | Modifies state | **Yes.** Writes local `sources.toml`; project lockfiles are unchanged. |
 | Example | `pinset source add node mirror --base-url https://mirror.example/node` |
 | JSON | No. |
@@ -627,10 +630,10 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 
 | Field | Description |
 | --- | --- |
-| Purpose | Replace the ordered fallback source list for one Provider. |
+| Purpose | Replace the explicit artifact-download retry list for one Provider. These sources are tried after the active source and automatic official fallback; they do not provide metadata. |
 | Syntax and arguments | `pinset source fallback <provider> [alias]...`; pass no aliases to clear the list. |
 | Modifies state | **Yes.** Replaces the local fallback order. |
-| Example | `pinset source fallback python mirror-a mirror-b official` |
+| Example | `pinset source fallback python mirror-a mirror-b` (the official source is already automatic) |
 | JSON | No. |
 | Exit | `0` success; `2` on validation/write failure. |
 | Key errors | Unknown or duplicate alias, active-source conflict, unsupported Provider, or malformed configuration. |
@@ -1108,9 +1111,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.0
+      - uses: Future-Element/pinset@v2.12.1
         with:
-          version: 2.12.0
+          version: 2.12.1
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

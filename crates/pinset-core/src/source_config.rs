@@ -1,8 +1,9 @@
 //! Local archive-source selection and the metadata trust boundary.
 //!
-//! Archive mirrors may transport bytes whose integrity is already locked. They do not become
-//! authorities for versions or checksums unless an HTTPS custom source is explicitly granted
-//! metadata trust; Provider-specific signature requirements still apply after that grant.
+//! Archive mirrors may transport bytes whose identity and integrity are already authenticated
+//! into a lockfile. An explicitly selected trusted HTTPS source may become the preferred metadata
+//! transport, with the official archive as its automatic fallback. Merely adding a source never
+//! makes it eligible. Provider-specific verification still applies.
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -173,7 +174,11 @@ impl SourceConfig {
         // INVARIANT: source order changes transport availability only. Artifact identity and
         // integrity remain the values already authenticated into the lockfile.
         std::iter::once(active)
+            .chain(std::iter::once(OFFICIAL_ALIAS).filter(|_| active != OFFICIAL_ALIAS))
             .chain(fallback.iter().map(String::as_str))
+            .scan(HashSet::new(), |seen, alias| {
+                seen.insert(alias).then_some(alias)
+            })
             .map(|alias| {
                 let (kind, base_url) = self.source_definition(provider, alias);
                 let url = join_artifact_url(alias, base_url, artifact_path)?;
@@ -236,13 +241,22 @@ impl SourceConfig {
     }
 
     pub fn metadata_source(&self, provider: &str) -> Result<SourceView> {
+        Ok(self
+            .metadata_sources(provider)?
+            .into_iter()
+            .next()
+            .expect("every Provider has the official metadata source"))
+    }
+
+    pub fn metadata_sources(&self, provider: &str) -> Result<Vec<SourceView>> {
+        validate_provider(provider)?;
         let active = self.source(provider, None)?;
-        // SAFETY: selecting an ordinary mirror must never silently delegate version or checksum
-        // authority to it; without the explicit HTTPS trust bit, metadata stays official.
+        let mut sources = Vec::with_capacity(2);
         if active.kind == SourceKind::Custom && active.trust_metadata {
-            return Ok(active);
+            sources.push(active);
         }
-        self.source(provider, Some(OFFICIAL_ALIAS))
+        sources.push(self.source(provider, Some(OFFICIAL_ALIAS))?);
+        Ok(sources)
     }
 
     pub fn use_source(&mut self, provider: &str, alias: &str) -> Result<()> {
@@ -563,7 +577,7 @@ fn official_base_url(provider: &str) -> &'static str {
     match provider {
         "node" => "https://nodejs.org/dist/",
         "go" => "https://go.dev/dl/",
-        "python" => "https://github.com/astral-sh/python-build-standalone/releases/download/",
+        "python" => "https://www.python.org/ftp/python/",
         "flutter" => "https://storage.googleapis.com/",
         _ => unreachable!(),
     }
@@ -603,7 +617,7 @@ mod tests {
                 "mirror-a",
                 "https://mirror.example/node",
                 false,
-                true,
+                false,
             )
             .expect("add source");
         config
@@ -656,6 +670,15 @@ mod tests {
         config
             .add(
                 "node",
+                "backup",
+                "https://backup.example/node/",
+                false,
+                false,
+            )
+            .expect("backup");
+        config
+            .add(
+                "node",
                 "unused",
                 "https://unused.example/node/",
                 false,
@@ -664,7 +687,7 @@ mod tests {
             .expect("unused");
         config.use_source("node", "primary").expect("active");
         config
-            .set_fallback("node", &["official".to_owned()])
+            .set_fallback("node", &["backup".to_owned()])
             .expect("fallback");
 
         let sources = config
@@ -682,6 +705,11 @@ mod tests {
                     alias: "official".to_owned(),
                     kind: SourceKind::Official,
                     url: "https://nodejs.org/dist/v24.0.0/node-v24.0.0-win-x64.zip".to_owned(),
+                },
+                ResolvedArtifactSource {
+                    alias: "backup".to_owned(),
+                    kind: SourceKind::Custom,
+                    url: "https://backup.example/node/v24.0.0/node-v24.0.0-win-x64.zip".to_owned(),
                 },
             ]
         );
@@ -846,21 +874,42 @@ mod tests {
     }
 
     #[test]
-    fn trusted_https_metadata_is_explicit_and_insecure_metadata_is_rejected() {
+    fn only_the_selected_trusted_source_precedes_official_metadata() {
         let mut config = SourceConfig::default();
-        config
-            .add(
-                "node",
-                "trusted",
-                "https://mirror.example/node/",
-                false,
-                true,
-            )
-            .expect("trusted source");
-        config.use_source("node", "trusted").expect("active");
-        let metadata = config.metadata_source("node").expect("metadata source");
-        assert_eq!(metadata.alias, "trusted");
-        assert!(metadata.trust_metadata);
+        for alias in ["first", "second", "third"] {
+            config
+                .add(
+                    "node",
+                    alias,
+                    &format!("https://{alias}.example/node/"),
+                    false,
+                    true,
+                )
+                .expect("trusted metadata source");
+        }
+        config.use_source("node", "second").expect("active");
+
+        let metadata = config.metadata_sources("node").expect("metadata sources");
+        assert_eq!(
+            metadata
+                .iter()
+                .map(|source| source.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "official"]
+        );
+        assert!(metadata[0].trust_metadata);
+        assert!(!metadata[1].trust_metadata);
+
+        let artifacts = config
+            .resolve_artifact_sources("node", "v24.0.0/node-v24.0.0-win-x64.zip")
+            .expect("artifact sources");
+        assert_eq!(
+            artifacts
+                .iter()
+                .map(|source| source.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "official"]
+        );
 
         let mut insecure = SourceConfig::default();
         assert!(matches!(

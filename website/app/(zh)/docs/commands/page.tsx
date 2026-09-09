@@ -6,7 +6,7 @@ import { languageAlternates, siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "命令参考",
-  description: "Pinset 2.1 完整 CLI 命令参考：语法、参数、状态修改、JSON、退出码与错误。",
+  description: "Pinset 完整 CLI 命令参考：语法、参数、状态修改、JSON、退出码与错误。",
   alternates: {
     canonical: "/docs/commands",
     languages: languageAlternates("/docs/commands", "/en/docs/commands"),
@@ -15,14 +15,14 @@ export const metadata: Metadata = {
     type: "website",
     siteName: siteConfig.name,
     url: "/docs/commands",
-    title: "Pinset 2.1 命令参考",
-    description: "Pinset 2.1 完整 CLI 命令参考：语法、参数、状态修改、JSON、退出码与错误。",
+    title: "Pinset 命令参考",
+    description: "Pinset 完整 CLI 命令参考：语法、参数、状态修改、JSON、退出码与错误。",
     images: [openGraphImage],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Pinset 2.1 命令参考",
-    description: "Pinset 2.1 完整 CLI 命令参考。",
+    title: "Pinset 命令参考",
+    description: "Pinset 完整 CLI 命令参考。",
     images: [twitterImage],
   },
 };

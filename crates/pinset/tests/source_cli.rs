@@ -101,7 +101,7 @@ fn removes_only_inactive_unreferenced_custom_sources() {
 
     let listed = pinset(&home, &["source", "list", "python"]);
     listed.assert_success_contains(
-        "python official official active https://github.com/astral-sh/python-build-standalone/releases/download/",
+        "python official official active https://www.python.org/ftp/python/",
     );
     assert!(!listed.stdout.contains("corp"));
     assert!(!home.join("installs").exists());

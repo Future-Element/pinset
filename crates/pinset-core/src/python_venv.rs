@@ -218,6 +218,11 @@ pub fn create_project_python_environment_for(
     }
 
     let mut command = command_for_python(base_python);
+    if !distribution.contains('+')
+        && let Some(install_root) = base_python.parent()
+    {
+        command.env("PYTHONHOME", install_root);
+    }
     let status = command
         .arg("-m")
         .arg("venv")

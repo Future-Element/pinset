@@ -165,6 +165,8 @@ pub fn verification_method(value: &str) -> Option<VerificationMethod> {
         "nodejs-shasums-https"
         | "go-download-json-sha256"
         | "flutter-release-json-sha256"
+        | "python-org-api-sha256"
+        | "python-org-https-sha256"
         | "python-build-standalone-versions-sha256"
         | "adoptium-api-sha256"
         | "rust-v2-manifest-sha256"

@@ -531,7 +531,7 @@ pub enum Error {
     UnsupportedFlutterTarget { target: String },
 
     #[cfg(feature = "python-provider")]
-    #[error("invalid exact Python distribution \"{version}\"; expected x.y.z+YYYYMMDD")]
+    #[error("invalid exact Python distribution \"{version}\"; expected x.y.z or x.y.z+YYYYMMDD")]
     InvalidPythonVersion { version: String },
 
     #[cfg(feature = "python-provider")]
@@ -540,7 +540,7 @@ pub enum Error {
 
     #[cfg(feature = "python-metadata")]
     #[error(
-        "Python {version} exists in the official CPython archive, but {distribution} has no installable artifact for it"
+        "Python {version} exists in the official CPython archive, but no supported artifact is available for {distribution}"
     )]
     PythonDistributionUnavailable {
         version: String,
@@ -734,6 +734,11 @@ pub enum Error {
 
     #[error("project Python environment requires a project-level Python selection in {path}")]
     PythonEnvironmentSelectionMissing { path: PathBuf },
+
+    #[error(
+        "Python {version} predates the standard-library venv module; Pinset routes the managed interpreter directly and cannot create a project venv"
+    )]
+    PythonEnvironmentUnsupported { version: String },
 
     #[error("failed to run the managed Python interpreter while creating {path}: {source}")]
     PythonEnvironmentCreate {
@@ -1223,6 +1228,27 @@ pub enum Error {
         path: PathBuf,
         #[source]
         source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("invalid artifact URL: {url}")]
+    InvalidArtifactUrl { url: String },
+
+    #[cfg(feature = "installer")]
+    #[error("failed to start {format} archive extraction for {path}: {source}")]
+    NativeArchiveExtract {
+        format: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[cfg(feature = "installer")]
+    #[error("{format} archive extraction failed for {path} with exit code {code}")]
+    NativeArchiveExtractFailed {
+        format: String,
+        path: PathBuf,
+        code: i32,
     },
 
     #[cfg(feature = "installer")]

@@ -146,15 +146,13 @@ impl Catalog {
                 format!("错误：Node.js 官方版本索引无效：{reason}")
             }
             Error::InvalidPythonVersion { version } => {
-                format!("错误：Python 精确发行版 {version:?} 无效，应为 x.y.z+YYYYMMDD")
+                format!("错误：Python 精确发行版 {version:?} 无效，应为 x.y.z 或 x.y.z+YYYYMMDD")
             }
             Error::InvalidPythonSelector { selector } => format!(
                 "错误：Python 选择器 {selector:?} 无效，可使用 x.y.z、主版本、主次版本、latest 或 current"
             ),
             Error::PythonSelectorNotFound { selector } => {
-                format!(
-                    "错误：官方注册表中没有与 {selector:?} 匹配且支持全部目标平台的稳定 Python 发行版"
-                )
+                format!("错误：Python 官方发布归档中没有与 {selector:?} 匹配的稳定版本")
             }
             Error::InvalidPythonIndex { reason } => {
                 format!("错误：Python 官方版本注册表无效：{reason}")
@@ -180,6 +178,9 @@ impl Catalog {
             Error::PythonEnvironmentSelectionMissing { path } => format!(
                 "错误：{} 中没有项目级 Python 选择，无法管理虚拟环境",
                 path.display()
+            ),
+            Error::PythonEnvironmentUnsupported { version } => format!(
+                "错误：Python {version} 尚未提供标准库 venv 模块；Pinset 会直接路由受管解释器，但不能为它创建项目虚拟环境"
             ),
             Error::NodeVersionNotInstalled { version } => {
                 format!("错误：Pinset 未安装 Node.js {version}")

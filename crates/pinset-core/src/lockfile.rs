@@ -13,9 +13,10 @@ use crate::{
     ArtifactIntegrity, DOTNET_TARGETS, DotnetArchiveFormat, DotnetVersion, Error, FLUTTER_TARGETS,
     FlutterArchiveFormat, GO_TARGETS, GoArchiveFormat, JAVA_TARGETS, JavaArchiveFormat,
     JavaVersion, NodeArchiveFormat, PYTHON_TARGETS, PYTHON_VARIANT, RUST_COMPONENTS, RUST_PROFILE,
-    RUST_TARGETS, Result, RustArchiveFormat, SourceConfig, parse_python_distribution,
-    plan_dotnet_artifact, plan_flutter_artifact, plan_go_artifact, plan_java_artifact_with_package,
-    plan_node_artifact, plan_python_artifact, plan_rust_artifact, plan_rust_nightly_artifact,
+    RUST_TARGETS, Result, RustArchiveFormat, SourceConfig, is_exact_python_version,
+    parse_python_distribution, plan_dotnet_artifact, plan_flutter_artifact, plan_go_artifact,
+    plan_java_artifact_with_package, plan_node_artifact, plan_python_artifact, plan_rust_artifact,
+    plan_rust_nightly_artifact,
 };
 
 pub const LOCKFILE_FILENAME: &str = "pinset.lock";
@@ -517,6 +518,7 @@ fn validate_locked_tool_with_target_policy(
                 | ("java", "adoptium-temurin")
                 | ("rust", "rust-official")
                 | ("dotnet", "microsoft-dotnet-sdk")
+                | ("python", "python.org-cpython")
                 | ("python", "python-build-standalone")
         );
     if !provider_supported {
@@ -559,7 +561,7 @@ fn validate_locked_tool_with_target_policy(
             "java" => validate_locked_java_artifact(tool, artifact)?,
             "rust" => validate_locked_rust_artifact(tool, artifact)?,
             "dotnet" => validate_locked_dotnet_artifact(tool, artifact)?,
-            "python" => validate_locked_python_artifact(&tool.version, artifact)?,
+            "python" => validate_locked_python_artifact(tool, artifact)?,
             "pnpm" | "bun" => validate_locked_npm_artifact(tool, artifact)?,
             _ if declarative_provider => validate_locked_declarative_artifact(tool, artifact)?,
             _ => unreachable!("provider pair checked above"),
@@ -706,6 +708,32 @@ fn validate_flutter_metadata(tool: &LockedTool) -> Result<()> {
 }
 
 fn validate_python_metadata(tool: &LockedTool) -> Result<()> {
+    if tool.provider == "python.org-cpython" {
+        let expected = BTreeMap::from([
+            ("distribution".to_owned(), "python.org/cpython".to_owned()),
+            (
+                "install_kind".to_owned(),
+                tool.metadata
+                    .get("install_kind")
+                    .filter(|value| {
+                        matches!(
+                            value.as_str(),
+                            "full-zip" | "embeddable-zip" | "msi" | "msi-bundle"
+                        )
+                    })
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            ("python_version".to_owned(), tool.version.clone()),
+        ]);
+        if !is_exact_python_version(&tool.version) || tool.metadata != expected {
+            return Err(Error::InvalidLockfile {
+                reason: "official Python lock metadata must identify the exact CPython version and python.org install kind"
+                    .to_owned(),
+            });
+        }
+        return Ok(());
+    }
     let (python_version, build_id) = parse_python_distribution(&tool.version)?;
     let expected = BTreeMap::from([
         ("build_id".to_owned(), build_id.to_owned()),
@@ -1179,31 +1207,111 @@ fn validate_locked_node_artifact(
     Ok(())
 }
 
-fn validate_locked_python_artifact(version: &str, artifact: &LockedArtifact) -> Result<()> {
-    let plan = plan_python_artifact(&SourceConfig::default(), version, &artifact.target)?;
-    if artifact.canonical_url != plan.canonical_url
-        || artifact.artifact_path != plan.artifact_path
-        || artifact.archive_root != plan.archive_root
-        || artifact.format != LockedArtifactFormat::TarGz
-    {
-        return Err(Error::InvalidLockfile {
-            reason: format!(
-                "artifact identity for {} does not match the built-in Python provider",
-                artifact.target
-            ),
-        });
+fn validate_locked_python_artifact(tool: &LockedTool, artifact: &LockedArtifact) -> Result<()> {
+    if tool.provider == "python.org-cpython" {
+        let expected_url =
+            SourceConfig::default().official_artifact_url("python", &artifact.artifact_path)?;
+        let expected_format = match tool.metadata.get("install_kind").map(String::as_str) {
+            Some("full-zip" | "embeddable-zip") => LockedArtifactFormat::Zip,
+            Some("msi" | "msi-bundle") => LockedArtifactFormat::Binary,
+            _ => {
+                return Err(Error::InvalidLockfile {
+                    reason: "official Python lock has an unsupported install kind".to_owned(),
+                });
+            }
+        };
+        if !PYTHON_TARGETS.contains(&artifact.target.as_str())
+            || artifact.canonical_url != expected_url
+            || !artifact
+                .artifact_path
+                .starts_with(&format!("{}/", tool.version))
+            || !artifact.archive_root.is_empty()
+            || artifact.format != expected_format
+        {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "artifact identity for {} does not match the official python.org provider",
+                    artifact.target
+                ),
+            });
+        }
+        if !matches!(
+            artifact.verification.as_str(),
+            "python-org-api-sha256" | "python-org-https-sha256"
+        ) {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "unsupported official Python verification for {}",
+                    artifact.target
+                ),
+            });
+        }
+    } else {
+        let plan = plan_python_artifact(&SourceConfig::default(), &tool.version, &artifact.target)?;
+        let expected_path = format!(
+            "/astral-sh/python-build-standalone/releases/download/{}",
+            plan.artifact_path
+        );
+        let url =
+            url::Url::parse(&artifact.canonical_url).map_err(|source| Error::InvalidLockfile {
+                reason: format!("invalid Python standalone artifact URL: {source}"),
+            })?;
+        if artifact.artifact_path != plan.artifact_path
+            || artifact.archive_root != plan.archive_root
+            || artifact.format != LockedArtifactFormat::TarGz
+            || url.scheme() != "https"
+            || url.host_str() != Some("github.com")
+            || (url.path() != expected_path && url.path() != expected_path.replace('+', "%2B"))
+            || artifact.verification != "python-build-standalone-versions-sha256"
+        {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "artifact identity for {} does not match the Python standalone fallback provider",
+                    artifact.target
+                ),
+            });
+        }
     }
     if artifact.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256 {
         return Err(Error::InvalidLockfile {
             reason: format!("invalid Python SHA-256 for {}", artifact.target),
         });
     }
-    if artifact.verification != "python-build-standalone-versions-sha256" {
-        return Err(Error::InvalidLockfile {
-            reason: format!("unsupported Python verification for {}", artifact.target),
-        });
-    }
-    if !artifact.overlays.is_empty() {
+    let msi_bundle = tool.provider == "python.org-cpython"
+        && tool.metadata.get("install_kind").map(String::as_str) == Some("msi-bundle");
+    if msi_bundle {
+        let expected = ["core.msi", "exe.msi"];
+        if !artifact.artifact_path.ends_with("/amd64/lib.msi")
+            || artifact.overlays.len() != expected.len()
+        {
+            return Err(Error::InvalidLockfile {
+                reason: format!(
+                    "official Python MSI bundle is incomplete for {}",
+                    artifact.target
+                ),
+            });
+        }
+        for (overlay, filename) in artifact.overlays.iter().zip(expected) {
+            let expected_url =
+                SourceConfig::default().official_artifact_url("python", &overlay.artifact_path)?;
+            if overlay.canonical_url != expected_url
+                || !overlay
+                    .artifact_path
+                    .ends_with(&format!("/amd64/{filename}"))
+                || overlay.format != LockedArtifactFormat::Binary
+                || !overlay.archive_root.is_empty()
+                || overlay.verification != "python-org-https-sha256"
+                || overlay.artifact_integrity()?.algorithm() != crate::IntegrityAlgorithm::Sha256
+            {
+                return Err(Error::InvalidLockfile {
+                    reason: format!(
+                        "invalid official Python MSI bundle component {filename} for {}",
+                        artifact.target
+                    ),
+                });
+            }
+        }
+    } else if !artifact.overlays.is_empty() {
         return Err(Error::InvalidLockfile {
             reason: format!(
                 "Python artifact {} cannot contain overlays",
@@ -1965,6 +2073,55 @@ mod tests {
         let mut incomplete = tool;
         incomplete.artifacts = artifacts.into_iter().skip(1).collect();
         validate_locked_tool(&incomplete).expect("partial Python lock");
+    }
+
+    #[test]
+    fn validates_official_python_archive_and_msi_bundle_identity() {
+        let artifact = LockedArtifact {
+            target: "windows-x86_64".to_owned(),
+            canonical_url: "https://www.python.org/ftp/python/3.12.10/amd64/lib.msi".to_owned(),
+            artifact_path: "3.12.10/amd64/lib.msi".to_owned(),
+            sha256: "a".repeat(64),
+            integrity: None,
+            format: LockedArtifactFormat::Binary,
+            archive_root: String::new(),
+            verification: "python-org-https-sha256".to_owned(),
+            overlays: ["core.msi", "exe.msi"]
+                .into_iter()
+                .map(|name| LockedArtifactOverlay {
+                    canonical_url: format!(
+                        "https://www.python.org/ftp/python/3.12.10/amd64/{name}"
+                    ),
+                    artifact_path: format!("3.12.10/amd64/{name}"),
+                    integrity: format!("sha256:{}", "b".repeat(64)),
+                    format: LockedArtifactFormat::Binary,
+                    archive_root: String::new(),
+                    verification: "python-org-https-sha256".to_owned(),
+                })
+                .collect(),
+        };
+        let tool = LockedTool {
+            name: "python".to_owned(),
+            requested: "3.12".to_owned(),
+            version: "3.12.10".to_owned(),
+            provider: "python.org-cpython".to_owned(),
+            released_at: Some("2025-04-08T14:08:52Z".to_owned()),
+            metadata: BTreeMap::from([
+                ("distribution".to_owned(), "python.org/cpython".to_owned()),
+                ("install_kind".to_owned(), "msi-bundle".to_owned()),
+                ("python_version".to_owned(), "3.12.10".to_owned()),
+            ]),
+            options: Default::default(),
+            artifacts: vec![artifact],
+        };
+        validate_locked_tool(&tool).expect("official Python MSI bundle lock");
+
+        let mut invalid = tool;
+        invalid.artifacts[0].canonical_url = "https://example.invalid/lib.msi".to_owned();
+        assert!(matches!(
+            validate_locked_tool(&invalid),
+            Err(Error::InvalidLockfile { .. })
+        ));
     }
 
     #[test]

@@ -1,5 +1,9 @@
 # Pinset
 
+<p align="center">
+  <img src="docs/assets/pinset-logo.png" alt="Pinset logo" width="640" />
+</p>
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/Future-Element/pinset/actions/workflows/ci.yml/badge.svg)](https://github.com/Future-Element/pinset/actions/workflows/ci.yml)
@@ -44,6 +48,10 @@ pinset.toml  ──selection intent, project policy, environment profiles
 | jq (declarative) | `jq` | ✓ | ✓ | ✓ | ✓ |
 
 Flutter does not publish an official Linux ARM64 SDK archive compatible with the current installation model, so Pinset returns an explicit unsupported-target error instead of downloading an x64 artifact. External components such as Android SDK, Visual Studio Build Tools, and Windows SDK are diagnosed by `doctor` but are not installed by Pinset.
+
+Default runtime resolution follows a language/project-official archive first policy. Node.js uses the nodejs.org `dist` archive, Go uses go.dev downloads, Python uses the python.org CPython archive, Flutter uses the official Google Storage release index, Rust uses static.rust-lang.org, .NET uses Microsoft release metadata, Java uses the Eclipse Temurin official release API, and pnpm/Bun use the standalone executable packages published by their projects in the official npm registry. After the user explicitly runs `source use` for an HTTPS mirror granted `--trust-metadata`, the order is “selected trusted source → official source → compatible distribution.” Other sources that were merely added are never contacted. `source fallback` adds only explicitly requested artifact-download retries and does not participate in metadata selection.
+
+Python first uses python.org full ZIPs, MSI component archives, or historical monolithic MSIs, and falls back to `python-build-standalone` only when the official archive has no isolated artifact for the current target. Pinset downloads and verifies artifacts itself; it does not invoke uv, pyenv, nvm, or another runtime manager. Python 3.2 and earlier predate the standard-library `venv` module, so their managed interpreter can still be selected and executed directly, but Pinset cannot create a project virtual environment for them.
 
 ## How the installation layout works
 
@@ -91,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.1
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -106,7 +114,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.12.0
+.\install.ps1 -Version 2.12.1
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -311,9 +319,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.0
+      - uses: Future-Element/pinset@v2.12.1
         with:
-          version: 2.12.0
+          version: 2.12.1
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -507,7 +515,7 @@ Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 
 
 ### VS Code integration
 
-The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.12.0. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
+The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.12.1. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

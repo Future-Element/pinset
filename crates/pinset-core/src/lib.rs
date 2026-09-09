@@ -260,7 +260,8 @@ pub use python_metadata::{PythonMetadataClient, PythonRelease};
 #[cfg(feature = "python-provider")]
 pub use python_provider::{
     PYTHON_TARGETS, PYTHON_VARIANT, PythonArtifactPlan, is_exact_python_version,
-    parse_python_distribution, plan_python_artifact, validate_exact_python_version,
+    parse_python_distribution, plan_python_artifact, python_supports_stdlib_venv,
+    validate_exact_python_version,
 };
 #[cfg(all(
     feature = "installer",

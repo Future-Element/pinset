@@ -5,7 +5,7 @@ export const openGraphImage = {
   url: `${siteUrl}/opengraph-image`,
   width: 1200,
   height: 630,
-  alt: "Pinset — One project. One runtime set.",
+  alt: "Pinset — Every runtime. Right in place.",
   type: "image/png",
 };
 
@@ -13,7 +13,7 @@ export const twitterImage = {
   url: `${siteUrl}/opengraph-image`,
   width: 1200,
   height: 630,
-  alt: "Pinset — One project. One runtime set.",
+  alt: "Pinset — Every runtime. Right in place.",
 };
 
 export function createRootMetadata(locale: Locale): Metadata {
@@ -78,6 +78,6 @@ export function createRootMetadata(locale: Locale): Metadata {
 export const siteViewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f8fafc",
+  themeColor: "#4f57d8",
   colorScheme: "light",
 };

@@ -15,6 +15,16 @@ export type CommandGroup = {
   commands: CommandDoc[];
 };
 
+export type CommandNavigationGroup = {
+  title: string;
+  commands: Pick<CommandDoc, "slug" | "title" | "description">[];
+};
+
+// Navigation and search do not need every command's full Markdown body.
+export function commandNavigation(groups: CommandGroup[]): CommandNavigationGroup[] {
+  return groups.map(({ title, commands }) => ({ title, commands: commands.map(({ slug, title, description }) => ({ slug, title, description })) }));
+}
+
 function docsPath(locale: Locale) {
   const filename = locale === "en" ? "commands.md" : "commands.zh-CN.md";
   return path.resolve(process.cwd(), "..", "docs", filename);

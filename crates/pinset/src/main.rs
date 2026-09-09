@@ -759,7 +759,7 @@ enum SourceCommands {
         /// Allow an HTTP source, intended only for explicitly trusted LAN services.
         #[arg(long)]
         allow_insecure: bool,
-        /// Trust this HTTPS source for provider metadata as well as archives.
+        /// Allow this HTTPS source to provide metadata when selected in source order.
         #[arg(long, conflicts_with = "allow_insecure")]
         trust_metadata: bool,
     },
@@ -2549,7 +2549,10 @@ fn available_version_reports(
     let mut reports = Vec::new();
     match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
-            for release in node_metadata_client(&pinset_home()?)?.available_releases()? {
+            let clients = node_metadata_clients(&pinset_home()?)?;
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 let mut details = BTreeMap::new();
                 details.insert("date".to_owned(), release.date);
                 details.insert("security".to_owned(), release.security.to_string());
@@ -2573,7 +2576,10 @@ fn available_version_reports(
             }
         }
         RuntimeMetadataKind::Go => {
-            for release in go_metadata_client(&pinset_home()?)?.available_releases()? {
+            let clients = go_metadata_clients(&pinset_home()?)?;
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
                     version: release.version,
@@ -2585,7 +2591,10 @@ fn available_version_reports(
             }
         }
         RuntimeMetadataKind::Flutter => {
-            for release in flutter_metadata_client(&pinset_home()?)?.available_releases()? {
+            let clients = flutter_metadata_clients(&pinset_home()?)?;
+            for release in first_metadata_result(&clients, |client| {
+                client.available_releases().map_err(Box::new)
+            })? {
                 reports.push(AvailableVersionReport {
                     tool: tool.to_owned(),
                     version: release.version,
@@ -2607,9 +2616,13 @@ fn available_version_reports(
                     tool: tool.to_owned(),
                     version,
                     details: BTreeMap::from([
+                        ("availability".to_owned(), "official-archive".to_owned()),
                         ("date".to_owned(), release.date),
                         ("distribution".to_owned(), release.distribution),
-                        ("installable".to_owned(), release.installable.to_string()),
+                        (
+                            "target-compatibility".to_owned(),
+                            "resolved-on-use".to_owned(),
+                        ),
                     ]),
                 });
             }
@@ -3889,10 +3902,20 @@ fn run_candidate_task_once(
         }
         path_entries.push(command_dir);
         runtime_environment.extend(runtime_environment_for_install(provider.tool, &install_dir));
+        if provider.tool == "python" && locked.provider == "python.org-cpython" {
+            runtime_environment.push(pinset_core::RuntimeEnvironmentVariable {
+                name: "PYTHONHOME",
+                value: install_dir.clone().into_os_string(),
+            });
+        }
     }
 
     let mut candidate_python = None;
-    if let Some(locked) = record.lock.tool("python") {
+    if let Some(locked) = record
+        .lock
+        .tool("python")
+        .filter(|locked| pinset_core::python_supports_stdlib_venv(&locked.version))
+    {
         let environment_name = task.python_environment.as_deref().unwrap_or("default");
         let base_install = home
             .join("installs")
@@ -3917,7 +3940,8 @@ fn run_candidate_task_once(
         )?;
         path_entries.retain(|entry| entry != &environment.command_directory);
         path_entries.insert(0, environment.command_directory.clone());
-        runtime_environment.retain(|variable| variable.name != "VIRTUAL_ENV");
+        runtime_environment
+            .retain(|variable| variable.name != "VIRTUAL_ENV" && variable.name != "PYTHONHOME");
         runtime_environment.push(pinset_core::RuntimeEnvironmentVariable {
             name: "VIRTUAL_ENV",
             value: environment.root.clone().into_os_string(),
@@ -4646,10 +4670,13 @@ fn resolve_locked_tool_with_options(
     let provider = runtime_provider(tool).expect("validated provider");
     let mut locked = match provider.capabilities.metadata {
         RuntimeMetadataKind::Node => {
-            let lockfile = node_metadata_client(&pinset_home()?)?.resolve_lock(
-                selector,
-                &format!("pinset {}", pinset_core::pinset_version()),
-            )?;
+            let clients = node_metadata_clients(&pinset_home()?)?;
+            let generated_by = format!("pinset {}", pinset_core::pinset_version());
+            let lockfile = first_metadata_result(&clients, |client| {
+                client
+                    .resolve_lock(selector, &generated_by)
+                    .map_err(Box::new)
+            })?;
             lockfile
                 .tool("node")
                 .expect("generated Node lock contains node")
@@ -4660,11 +4687,27 @@ fn resolve_locked_tool_with_options(
             let version = client.resolve_version_selector(tool, selector)?;
             client.resolve_tool(tool, &version)?
         }
-        RuntimeMetadataKind::Go => go_metadata_client(&pinset_home()?)?.resolve_tool(selector)?,
-        RuntimeMetadataKind::Flutter => {
-            flutter_metadata_client(&pinset_home()?)?.resolve_tool(selector)?
+        RuntimeMetadataKind::Go => {
+            let clients = go_metadata_clients(&pinset_home()?)?;
+            first_metadata_result(&clients, |client| {
+                client.resolve_tool(selector).map_err(Box::new)
+            })?
         }
-        RuntimeMetadataKind::Python => PythonMetadataClient::official()?.resolve_tool(selector)?,
+        RuntimeMetadataKind::Flutter => {
+            let clients = flutter_metadata_clients(&pinset_home()?)?;
+            first_metadata_result(&clients, |client| {
+                client.resolve_tool(selector).map_err(Box::new)
+            })?
+        }
+        RuntimeMetadataKind::Python => {
+            let home = pinset_home()?;
+            let target = current_target_for_tool("python");
+            PythonMetadataClient::official()?.resolve_tool_for_target(
+                selector,
+                &target,
+                Some(&home),
+            )?
+        }
         RuntimeMetadataKind::Java => {
             JavaMetadataClient::official()?.resolve_tool_with_options(selector, options)?
         }
@@ -6034,14 +6077,21 @@ fn install_project_with_python_environment(
             &config_path,
             &lock_path,
         )?;
-        ensure_project_python_environment(
-            &home,
-            &config_path,
-            environment_name,
-            environment_path,
-            &distribution,
-            recreate_venv,
-        )?;
+        if pinset_core::python_supports_stdlib_venv(&distribution) {
+            ensure_project_python_environment(
+                &home,
+                &config_path,
+                environment_name,
+                environment_path,
+                &distribution,
+                recreate_venv,
+            )?;
+        } else if environment_name != "default" || recreate_venv {
+            return Err(Error::PythonEnvironmentUnsupported {
+                version: distribution,
+            }
+            .into());
+        }
     }
     Ok(())
 }
@@ -6072,6 +6122,12 @@ fn run_venv_command(
         &config_path,
         &lockfile_path(&config_path),
     )?;
+    if !pinset_core::python_supports_stdlib_venv(&distribution) {
+        return Err(Error::PythonEnvironmentUnsupported {
+            version: distribution,
+        }
+        .into());
+    }
     if action == "status" {
         let target = current_target_for_tool("python");
         let environment = load_project_python_environment_for(
@@ -6995,6 +7051,12 @@ fn execute_selected(
         if selection.source != pinset_core::SelectionSource::Project {
             return Err(Error::PythonEnvironmentSelectionMissing {
                 path: cwd.to_path_buf(),
+            }
+            .into());
+        }
+        if !pinset_core::python_supports_stdlib_venv(&selection.version) {
+            return Err(Error::PythonEnvironmentUnsupported {
+                version: selection.version,
             }
             .into());
         }
@@ -8564,45 +8626,65 @@ fn print_sources(sources: &[SourceView], catalog: Catalog) {
     }
 }
 
-fn node_metadata_client(home: &Path) -> Result<NodeMetadataClient, Box<dyn std::error::Error>> {
-    let config = load_source_config(&source_config_path(home))?;
-    let source = config.metadata_source("node")?;
-    if source.kind == pinset_core::SourceKind::Official {
-        Ok(NodeMetadataClient::official()?)
-    } else {
-        Ok(NodeMetadataClient::for_source(
-            &source.base_url,
-            &source.alias,
-        )?)
+fn first_metadata_result<C, T>(
+    clients: &[C],
+    mut operation: impl FnMut(&C) -> std::result::Result<T, Box<Error>>,
+) -> std::result::Result<T, Box<Error>> {
+    let mut first_error = None;
+    for client in clients {
+        match operation(client) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
     }
+    Err(first_error.expect("metadata client list always contains the official source"))
 }
 
-fn go_metadata_client(home: &Path) -> Result<GoMetadataClient, Box<dyn std::error::Error>> {
-    let config = load_source_config(&source_config_path(home))?;
-    let source = config.metadata_source("go")?;
-    if source.kind == pinset_core::SourceKind::Official {
-        Ok(GoMetadataClient::official()?)
-    } else {
-        Ok(GoMetadataClient::for_source(
-            &source.base_url,
-            &source.alias,
-        )?)
-    }
-}
-
-fn flutter_metadata_client(
+fn node_metadata_clients(
     home: &Path,
-) -> Result<FlutterMetadataClient, Box<dyn std::error::Error>> {
+) -> Result<Vec<NodeMetadataClient>, Box<dyn std::error::Error>> {
     let config = load_source_config(&source_config_path(home))?;
-    let source = config.metadata_source("flutter")?;
-    if source.kind == pinset_core::SourceKind::Official {
-        Ok(FlutterMetadataClient::official()?)
-    } else {
-        Ok(FlutterMetadataClient::for_source(
-            &source.base_url,
-            &source.alias,
-        )?)
+    let mut clients = Vec::new();
+    for source in config.metadata_sources("node")? {
+        clients.push(if source.kind == pinset_core::SourceKind::Official {
+            NodeMetadataClient::official()?
+        } else {
+            NodeMetadataClient::for_source(&source.base_url, &source.alias)?
+        });
     }
+    Ok(clients)
+}
+
+fn go_metadata_clients(home: &Path) -> Result<Vec<GoMetadataClient>, Box<dyn std::error::Error>> {
+    let config = load_source_config(&source_config_path(home))?;
+    let mut clients = Vec::new();
+    for source in config.metadata_sources("go")? {
+        clients.push(if source.kind == pinset_core::SourceKind::Official {
+            GoMetadataClient::official()?
+        } else {
+            GoMetadataClient::for_source(&source.base_url, &source.alias)?
+        });
+    }
+    Ok(clients)
+}
+
+fn flutter_metadata_clients(
+    home: &Path,
+) -> Result<Vec<FlutterMetadataClient>, Box<dyn std::error::Error>> {
+    let config = load_source_config(&source_config_path(home))?;
+    let mut clients = Vec::new();
+    for source in config.metadata_sources("flutter")? {
+        clients.push(if source.kind == pinset_core::SourceKind::Official {
+            FlutterMetadataClient::official()?
+        } else {
+            FlutterMetadataClient::for_source(&source.base_url, &source.alias)?
+        });
+    }
+    Ok(clients)
 }
 
 fn effective_cwd(cwd: Option<PathBuf>) -> Result<PathBuf, std::io::Error> {
@@ -9336,6 +9418,26 @@ mod tests {
                 }) if tool == "node"
             ));
         }
+    }
+
+    #[test]
+    fn metadata_resolution_uses_selected_trusted_source_then_official() {
+        let clients = ["trusted", "official"];
+        let mut attempted = Vec::new();
+        let selected = first_metadata_result(&clients, |source| {
+            attempted.push(*source);
+            if *source == "official" {
+                Ok(source.to_string())
+            } else {
+                Err(Box::new(Error::UnsupportedSourceProvider {
+                    provider: source.to_string(),
+                }))
+            }
+        })
+        .expect("trusted fallback succeeds");
+
+        assert_eq!(selected, "official");
+        assert_eq!(attempted, ["trusted", "official"]);
     }
 
     #[test]

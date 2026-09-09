@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CommandGroup } from "@/lib/commands";
+import type { CommandNavigationGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig } from "@/lib/site";
 import { Brand } from "./brand";
+import { LatestReleaseProvider } from "./latest-release";
 
-export function DocsShell({ children, groups, locale }: { children: React.ReactNode; groups: CommandGroup[]; locale: Locale }) {
+export function DocsShell({ children, groups, locale, landing = false }: { children: React.ReactNode; groups: CommandNavigationGroup[]; locale: Locale; landing?: boolean }) {
   const pathname = usePathname();
   const prefix = localePrefix(locale);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchPanelRef = useRef<HTMLDivElement>(null);
   const zh = locale === "zh-CN";
   const otherLocaleHref = locale === "en" ? pathname.replace(/^\/en/, "") || "/" : `/en${pathname}`;
 
@@ -31,22 +33,43 @@ export function DocsShell({ children, groups, locale }: { children: React.ReactN
         event.preventDefault();
         setSearchOpen(true);
       }
-      if (event.key === "Escape") setSearchOpen(false);
+      if (event.key === "Escape") { setSearchOpen(false); setMenuOpen(false); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
-    if (searchOpen) window.setTimeout(() => inputRef.current?.focus(), 0);
+    if (!searchOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    inputRef.current?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = searchPanelRef.current?.querySelectorAll<HTMLElement>('a[href], button, input');
+      if (!items?.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", trapFocus);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
   }, [searchOpen]);
 
   return (
-    <div className="siteFrame" lang={locale}>
+    <LatestReleaseProvider>
+    <div className={`siteFrame ${landing ? "landingFrame" : "docsFrame"}`} lang={locale}>
+      <a className="skipLink" href="#main-content">{zh ? "跳至正文" : "Skip to content"}</a>
       <header className="topbar">
         <Brand href={prefix || "/"} />
         <nav className="topnav" aria-label={zh ? "主导航" : "Primary navigation"}>
-          <Link className={!pathname.includes("/commands") ? "active" : ""} href={prefix || "/"}>{zh ? "文档" : "Documentation"}</Link>
+          {landing ? <><a href="#features">{zh ? "功能" : "Features"}</a><a href="#providers">{zh ? "支持的工具" : "Toolchains"}</a></> : <Link href={prefix || "/"}>{zh ? "首页" : "Home"}</Link>}
           <Link className={pathname.includes("/commands") ? "active" : ""} href={`${prefix}/docs/commands`}>{zh ? "命令" : "Commands"}</Link>
         </nav>
         <div className="topActions">
@@ -62,14 +85,15 @@ export function DocsShell({ children, groups, locale }: { children: React.ReactN
         </div>
       </header>
 
-      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`} aria-label={zh ? "文档导航" : "Documentation navigation"}>
         <div className="sidebarScroll">
           <div className="navGroup">
             <div className="navHeading">{zh ? "文档" : "Documentation"}</div>
             <Link className={pathname === prefix || pathname === `${prefix}/` ? "navLink active" : "navLink"} href={prefix || "/"} onClick={() => setMenuOpen(false)}>{zh ? "介绍" : "Introduction"}</Link>
             <Link className={pathname === `${prefix}/docs/commands` ? "navLink active" : "navLink"} href={`${prefix}/docs/commands`} onClick={() => setMenuOpen(false)}>{zh ? "命令索引" : "Command index"}</Link>
           </div>
-          {groups.map((group) => (
+          {landing && <div className="navGroup"><a className="navLink" href="#features" onClick={() => setMenuOpen(false)}>{zh ? "功能" : "Features"}</a><a className="navLink" href="#providers" onClick={() => setMenuOpen(false)}>{zh ? "支持的工具" : "Toolchains"}</a><a className="navLink" href="#getting-started" onClick={() => setMenuOpen(false)}>{zh ? "开始使用" : "Get started"}</a><a className="navLink" href="#faq" onClick={() => setMenuOpen(false)}>FAQ</a></div>}
+          {!landing && groups.map((group) => (
             <div className="navGroup" key={group.title}>
               <div className="navHeading">{group.title}</div>
               {group.commands.map((command) => {
@@ -83,16 +107,16 @@ export function DocsShell({ children, groups, locale }: { children: React.ReactN
       </aside>
       {menuOpen && <button className="mobileBackdrop" type="button" onClick={() => setMenuOpen(false)} aria-label={zh ? "关闭导航" : "Close navigation"} />}
 
-      <main className="mainContent">{children}</main>
+      <main className="mainContent" id="main-content" tabIndex={-1}>{children}</main>
 
       {searchOpen && (
         <div className="searchOverlay" role="dialog" aria-modal="true" aria-label={zh ? "搜索命令" : "Search commands"}>
           <button className="searchBackdrop" type="button" onClick={() => setSearchOpen(false)} aria-label={zh ? "关闭搜索" : "Close search"} />
-          <div className="searchPanel">
+          <div className="searchPanel" ref={searchPanelRef}>
             <div className="searchField">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m14.3 14.3 3.2 3.2m-1.7-8.2a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" /></svg>
-              <input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? "搜索全部 Pinset 命令…" : "Search all Pinset commands…"} />
-              <kbd>ESC</kbd>
+              <input ref={inputRef} aria-label={zh ? "搜索全部 Pinset 命令" : "Search all Pinset commands"} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? "搜索全部 Pinset 命令…" : "Search all Pinset commands…"} />
+              <button className="closeSearch" type="button" onClick={() => setSearchOpen(false)} aria-label={zh ? "关闭搜索" : "Close search"}>ESC</button>
             </div>
             <div className="searchResults">
               {results.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug} onClick={() => setSearchOpen(false)}><code>pinset {command.title}</code><span>{command.description}</span></Link>)}
@@ -102,5 +126,6 @@ export function DocsShell({ children, groups, locale }: { children: React.ReactN
         </div>
       )}
     </div>
+    </LatestReleaseProvider>
   );
 }

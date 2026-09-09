@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.12.1 - 2026-09-09
+
+- Prefer native artifacts from each runtime project's official release archive. Python now installs supported python.org full ZIPs, component MSI bundles, and historical monolithic MSIs directly, falling back to a compatible distribution only when the official archive has no native artifact for the current target.
+- Keep custom source registration separate from selection. A selected HTTPS source granted `--trust-metadata` is tried first, the official source is added automatically as the next metadata and artifact source, and other merely registered sources are never contacted.
+- Retain `source fallback` as an explicit artifact-only retry list after the selected and official sources. Trusted metadata fallback does not implicitly enumerate every registered source.
+- Refresh the bilingual website and brand assets, and resolve the displayed current version from the latest GitHub Release instead of hardcoding it into the site UI.
+
+Project configuration and runtime lock schemas are unchanged. Pinset continues to download, verify, extract, and install runtime artifacts itself without invoking another runtime version manager.
+
 ## 2.12.0 - 2026-09-09
 
 - Expose stable historical releases from each Provider's official metadata without requiring every Pinset target to have an artifact. `pinset list <tool> --remote` is now the primary remote-index spelling, while `--available` remains a compatible alias.
