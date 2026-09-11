@@ -423,7 +423,7 @@ jobs:
       - name: Inspect packaged files
         shell: bash
         run: |
-          unzip -l dist/pinset-vscode-1.0.0.vsix > vsix-files.txt
+          unzip -l dist/pinset-vscode.vsix > vsix-files.txt
           grep -F 'extension/dist/extension.js' vsix-files.txt
           if grep -E 'extension/(src|test|node_modules)/' vsix-files.txt; then
             echo "VSIX contains development files" >&2

@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.2
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.3
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,7 +114,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.12.2
+.\install.ps1 -Version 2.12.3
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -319,9 +319,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.2
+      - uses: Future-Element/pinset@v2.12.3
         with:
-          version: 2.12.2
+          version: 2.12.3
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -515,10 +515,10 @@ Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 
 
 ### VS Code integration
 
-The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.12.2. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
+The [Pinset VS Code extension](editors/vscode/README.md) is available from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=FutureElement.pinset-vscode). It reads the versioned `pinset editor context --json` protocol and shows the Pinset CLI version, resolved toolchain versions, and selected environment in the status bar. Uninitialized folders receive a one-click `Pinset: Init` action. It also provides diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
 
 ```sh
-code --install-extension pinset-vscode-1.0.0.vsix
+code --install-extension FutureElement.pinset-vscode
 pinset editor context --json
 ```
 

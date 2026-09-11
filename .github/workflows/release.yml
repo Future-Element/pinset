@@ -59,8 +59,8 @@ jobs:
             exit 1
           fi
           extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
-          if [[ "${extension_version}" != "1.0.0" ]]; then
-            echo "VS Code extension version ${extension_version} does not match the 2.11 release contract" >&2
+          if [[ ! "${extension_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VS Code extension version ${extension_version} is not a stable semantic version" >&2
             exit 1
           fi
 
@@ -298,13 +298,13 @@ jobs:
       - name: Attest VSIX provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: editors/vscode/dist/pinset-vscode-1.0.0.vsix
+          subject-path: editors/vscode/dist/pinset-vscode.vsix
 
       - name: Upload VSIX
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pinset-vscode
-          path: editors/vscode/dist/pinset-vscode-1.0.0.vsix
+          path: editors/vscode/dist/pinset-vscode.vsix
           if-no-files-found: error
           retention-days: 7
 
@@ -334,6 +334,10 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: |
+          extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
+          extension_asset="pinset-vscode-${extension_version}.vsix"
+          mv dist/pinset-vscode.vsix "dist/${extension_asset}"
+          echo "PINSET_EXTENSION_ASSET=${extension_asset}" >> "${GITHUB_ENV}"
           cp install.sh dist/install.sh
           cp install.ps1 dist/install.ps1
           release_version="${GITHUB_REF_NAME#v}"
@@ -376,7 +380,7 @@ jobs:
               pinset-core.cdx.json \
               pinset-env.cdx.json \
               pinset-shim.cdx.json \
-              pinset-vscode-1.0.0.vsix \
+              "${extension_asset}" \
               > SHA256SUMS
           )
 
@@ -406,7 +410,7 @@ jobs:
             dist/pinset-core.cdx.json
             dist/pinset-env.cdx.json
             dist/pinset-shim.cdx.json
-            dist/pinset-vscode-1.0.0.vsix
+            dist/pinset-vscode-*.vsix
             dist/pinset-winget.yaml
             dist/pinset-scoop.json
             dist/pinset.rb
@@ -429,7 +433,7 @@ jobs:
             dist/pinset-core.cdx.json
             dist/pinset-env.cdx.json
             dist/pinset-shim.cdx.json
-            dist/pinset-vscode-1.0.0.vsix
+            "dist/${PINSET_EXTENSION_ASSET}"
             dist/pinset-winget.yaml
             dist/pinset-scoop.json
             dist/pinset.rb

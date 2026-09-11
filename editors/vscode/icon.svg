@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">Pinset</title>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#4f57d8"/>
+  <g transform="translate(24 14) scale(2.6)" fill="#fff">
+    <path d="M4 17H10Q12 17 12 19V28Q12 30 14 30H31Q33 30 33 32V40Q33 42 31 42H25Q23 42 23 44V72Q23 76 19 76H4Q0 76 0 72V21Q0 17 4 17Z"/>
+    <path d="M21 0H53Q55 0 57 2L66 11Q68 13 68 16V31Q68 34 66 36L49 53Q46 56 42 56H32Q30 56 30 54V51Q30 49 32 49H38Q41 49 41 46V27Q41 24 38 24H19Q17 24 17 22V4Q17 0 21 0Z"/>
+  </g>
+</svg>

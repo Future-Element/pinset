@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.12.3 - 2026-09-11
+
+- Correct Windows audit of official CPython MSI installations and do not require a standard-library `venv` from Python 2 releases that do not provide it.
+- Add extensionless POSIX command wrappers alongside Windows `.cmd` shims so Git Bash, MSYS, and `#!/bin/sh` Git hooks can resolve project-selected runtimes such as `node` without requiring a separate system installation. Existing Pinset `.cmd` routes are upgraded in place without overwriting foreign command entries.
+- Upgrade the VS Code extension to 1.1.1 with a Marketplace icon, status-bar CLI installation and project initialization actions, toolchain/environment summaries, and source-aware diagnostics that no longer attach operational findings to line 1 of `pinset.toml`.
 
 ## 2.12.2 - 2026-09-11
 

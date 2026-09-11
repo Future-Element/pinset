@@ -5,6 +5,8 @@
 *.part
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
 /website/node_modules/
 /website/.next/
 /website/out/

@@ -19,7 +19,7 @@ use crate::{
     VerificationStrength, current_target_for_tool, download_cache::verify_download_cache_integrity,
     find_optional_project_config, global_config_path, global_lockfile_path,
     load_effective_project_config, load_global_config, load_lockfile,
-    load_project_python_environment, lockfile_path, runtime_provider,
+    load_project_python_environment, lockfile_path, python_supports_stdlib_venv, runtime_provider,
 };
 
 const MAX_AUDIT_RECEIPT_BYTES: u64 = 64 * 1024;
@@ -614,7 +614,10 @@ fn audit_locked_tool(
         artifact,
         report,
     );
-    if scope == LockAuditScope::Project && locked.name == "python" {
+    if scope == LockAuditScope::Project
+        && locked.name == "python"
+        && python_supports_stdlib_venv(&locked.version)
+    {
         audit_python_environment(config_path, locked, &target, report);
     }
 }
@@ -964,7 +967,8 @@ fn audit_install_receipt(
                 Some("official" | "mirror" | "cache")
             )
             || receipt.selected_url.as_deref().is_none_or(str::is_empty)
-            || receipt.artifact_format.as_deref() != Some(artifact.format.as_str())
+            || receipt.artifact_format.as_deref()
+                != Some(expected_receipt_artifact_format(locked, artifact))
             || receipt.bytes_downloaded.is_none())
     {
         report.push(finding(
@@ -1087,6 +1091,22 @@ fn audit_install_receipt(
                 None,
             )),
         ));
+    }
+}
+
+fn expected_receipt_artifact_format(
+    locked: &crate::LockedTool,
+    artifact: &LockedArtifact,
+) -> &'static str {
+    if locked.provider == "python.org-cpython"
+        && matches!(
+            locked.metadata.get("install_kind").map(String::as_str),
+            Some("msi" | "msi-bundle")
+        )
+    {
+        "msi"
+    } else {
+        artifact.format.as_str()
     }
 }
 
@@ -1249,9 +1269,11 @@ fn finding(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use crate::{
-        LockedArtifact, LockedArtifactFormat, MVP_NODE_TARGETS, NodeArchiveFormat, SourceConfig,
-        plan_node_artifact, save_lockfile,
+        LockedArtifact, LockedArtifactFormat, LockedTool, MVP_NODE_TARGETS, NodeArchiveFormat,
+        SourceConfig, plan_node_artifact, save_lockfile,
     };
     use tempfile::tempdir;
 
@@ -1384,6 +1406,51 @@ mod tests {
         }));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn official_python_msi_receipt_and_python_2_without_venv_pass_audit() {
+        let root = tempdir().expect("temporary root");
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::write(
+            project.join(PROJECT_CONFIG_FILENAME),
+            "schema = 5\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n\n[policy]\ninherit-global = false\nsystem-fallback = false\nboundary = \"git\"\n\n[tools]\npython = \"2.7.18\"\n",
+        )
+        .expect("project config");
+        let lockfile = python_27_lockfile();
+        save_lockfile(&project.join("pinset.lock"), &lockfile).expect("lockfile");
+
+        let target = current_target_for_tool("python");
+        let locked = lockfile.tool("python").expect("locked Python");
+        let artifact = locked.artifact(&target).expect("current target artifact");
+        let install = home
+            .join("installs")
+            .join("python")
+            .join("2.7.18")
+            .join(&target);
+        fs::create_dir_all(&install).expect("install directory");
+        fs::write(
+            install.join(".pinset-install.toml"),
+            format!(
+                "schema = 4\ncomplete = true\ntool = \"python\"\nversion = \"2.7.18\"\ninstall_identity = \"2.7.18\"\ntarget = \"{target}\"\ncanonical_url = \"{url}\"\nselected_source = \"fixture\"\nselected_source_kind = \"official\"\nselected_url = \"{url}\"\nartifact_integrity = \"sha256:{integrity}\"\nartifact_format = \"msi\"\nbytes_downloaded = 0\ninstall_root = \"fixture\"\nfile_count = 1\ntotal_size = 1\npinset_version = \"2.12.2\"\ncritical_entries = [\"python.exe\"]\n",
+                url = artifact.canonical_url,
+                integrity = "ab".repeat(32),
+            ),
+        )
+        .expect("receipt");
+
+        let report = audit_project_lock(&home, &project);
+
+        assert!(report.passed, "findings: {:#?}", report.findings);
+        assert!(!report.findings.iter().any(|finding| {
+            matches!(
+                finding.reason_code,
+                LockAuditReasonCode::ReceiptInvalid | LockAuditReasonCode::PythonEnvironmentMissing
+            )
+        }));
+    }
+
     fn node_lockfile(version: &str) -> Lockfile {
         let artifacts = MVP_NODE_TARGETS
             .into_iter()
@@ -1413,5 +1480,38 @@ mod tests {
             "official".to_owned(),
             artifacts,
         )
+    }
+
+    fn python_27_lockfile() -> Lockfile {
+        Lockfile {
+            schema: LOCKFILE_SCHEMA,
+            generated_by: "pinset lock audit test".to_owned(),
+            tools: vec![LockedTool {
+                name: "python".to_owned(),
+                requested: "2.7.18".to_owned(),
+                version: "2.7.18".to_owned(),
+                provider: "python.org-cpython".to_owned(),
+                released_at: Some("2020-04-20T14:18:29Z".to_owned()),
+                metadata: BTreeMap::from([
+                    ("distribution".to_owned(), "python.org/cpython".to_owned()),
+                    ("install_kind".to_owned(), "msi".to_owned()),
+                    ("python_version".to_owned(), "2.7.18".to_owned()),
+                ]),
+                options: BTreeMap::new(),
+                artifacts: vec![LockedArtifact {
+                    target: "windows-x86_64".to_owned(),
+                    canonical_url:
+                        "https://www.python.org/ftp/python/2.7.18/python-2.7.18.amd64.msi"
+                            .to_owned(),
+                    artifact_path: "2.7.18/python-2.7.18.amd64.msi".to_owned(),
+                    sha256: "ab".repeat(32),
+                    integrity: None,
+                    format: LockedArtifactFormat::Binary,
+                    archive_root: String::new(),
+                    verification: "python-org-https-sha256".to_owned(),
+                    overlays: Vec::new(),
+                }],
+            }],
+        }
     }
 }

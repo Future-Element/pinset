@@ -77,7 +77,7 @@ require_text(
         "dist/pinset.rb",
         "dist/install.ps1",
         "dist/pinset-env.cdx.json",
-        "dist/pinset-vscode-1.0.0.vsix",
+        "dist/pinset-vscode-*.vsix",
     ),
 )
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -97,10 +97,16 @@ website_package = json.loads((ROOT / "website/package.json").read_text(encoding=
 assert website_package["version"] == WORKSPACE_VERSION
 assert website_package["packageManager"] == "pnpm@10.15.0"
 extension_package = json.loads((ROOT / "editors/vscode/package.json").read_text(encoding="utf-8"))
-assert extension_package["version"] == "1.0.0"
+assert re.fullmatch(r"\d+\.\d+\.\d+", extension_package["version"])
 require_text(
     ROOT / "editors/vscode/package.json",
-    ("pinset.refresh", "pinset.selectEnvironment", "pinset.runTask", "pinset.checkDiagnostics"),
+    (
+        "pinset.refresh",
+        "pinset.initializeProject",
+        "pinset.selectEnvironment",
+        "pinset.runTask",
+        "pinset.checkDiagnostics",
+    ),
 )
 require_text(
     ROOT / "examples/devcontainer/.devcontainer/Dockerfile",

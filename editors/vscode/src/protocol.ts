@@ -16,6 +16,14 @@ export interface PinsetFinding {
   subject: string;
 }
 
+export interface PinsetDiagnosticTool {
+  name: string;
+  requested: string;
+  locked_version?: string | null;
+  provider?: string | null;
+  current_target_artifact: boolean;
+}
+
 export interface PinsetContext {
   protocol_schema: number;
   minimum_extension_version: string;
@@ -32,6 +40,13 @@ export interface PinsetContext {
   };
   tasks: PinsetTaskContext[];
   diagnostics: {
+    project: {
+      configured: boolean;
+      config_schema?: number | null;
+      lock_schema?: number | null;
+      tasks: number;
+    };
+    tools: PinsetDiagnosticTool[];
     summary: { passed: boolean; errors: number; warnings: number; info: number };
     findings: PinsetFinding[];
   };
@@ -83,6 +98,8 @@ function validateContext(context: PinsetContext): void {
     !Array.isArray(context.environment?.profiles) ||
     typeof context.environment?.source !== "string" ||
     !Array.isArray(context.tasks) ||
+    typeof context.diagnostics?.project?.configured !== "boolean" ||
+    !Array.isArray(context.diagnostics?.tools) ||
     !Array.isArray(context.diagnostics?.findings) ||
     typeof context.diagnostics?.summary?.passed !== "boolean"
   ) {
@@ -91,6 +108,15 @@ function validateContext(context: PinsetContext): void {
   for (const task of context.tasks) {
     if (typeof task?.name !== "string" || !Array.isArray(task.depends_on)) {
       throw new Error("Pinset returned an invalid editor task payload");
+    }
+  }
+  for (const tool of context.diagnostics.tools) {
+    if (
+      typeof tool?.name !== "string" ||
+      typeof tool.requested !== "string" ||
+      typeof tool.current_target_artifact !== "boolean"
+    ) {
+      throw new Error("Pinset returned an invalid editor tool payload");
     }
   }
 }

@@ -5,3 +5,4 @@ tsconfig.json
 package-lock.json
 dist/*.map
 dist/test/**
+icon.svg

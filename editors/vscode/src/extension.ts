@@ -3,8 +3,12 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { diagnosticDocument } from "./diagnostic-model";
+import { INSTALL_GUIDE_URL, installerPlan } from "./install";
+import { isMissingExecutableError, PinsetProcessError, processStartError } from "./process-error";
 import { parseContext, type PinsetContext, type PinsetFinding } from "./protocol";
 import { terminateProcessTree, terminationPlan } from "./process-tree";
+import { statusModel, type StatusItemModel } from "./status-model";
 
 export { parseContext } from "./protocol";
 export { terminateProcessTree, terminationPlan } from "./process-tree";
@@ -14,15 +18,6 @@ const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 interface CapturedProcess {
   stdout: string;
   stderr: string;
-}
-
-class PinsetProcessError extends Error {
-  constructor(
-    message: string,
-    readonly stderr: string,
-  ) {
-    super(message);
-  }
 }
 
 function executable(): string {
@@ -62,9 +57,9 @@ async function runCli(
       cancelled = true;
       void terminate(child);
     });
-    child.once("error", (error) => {
+    child.once("error", (error: NodeJS.ErrnoException) => {
       cancellation?.dispose();
-      reject(new PinsetProcessError(`Could not start Pinset: ${error.message}`, ""));
+      reject(processStartError(error));
     });
     child.once("close", (code, signal) => {
       cancellation?.dispose();
@@ -104,6 +99,10 @@ class ContextStore {
 
   error(folder: vscode.WorkspaceFolder): string | undefined {
     return this.errors.get(folder.uri.toString());
+  }
+
+  values(): Iterable<PinsetContext> {
+    return this.contexts.values();
   }
 
   clear(): void {
@@ -228,45 +227,126 @@ class PinsetTaskProvider implements vscode.TaskProvider, vscode.Disposable {
   }
 }
 
+class PinsetStatus implements vscode.Disposable {
+  private readonly primary = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 52);
+  private readonly tools = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 51);
+  private readonly environment = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+
+  loading(): void {
+    this.set(this.primary, {
+      text: "$(sync~spin) Pinset",
+      tooltip: "Refreshing Pinset project status…",
+      command: "pinset.refresh",
+    });
+    this.tools.hide();
+    this.environment.hide();
+  }
+
+  update(context: PinsetContext): void {
+    const model = statusModel(context);
+    this.set(this.primary, model.primary);
+    this.setOptional(this.tools, model.tools);
+    this.setOptional(this.environment, model.environment);
+  }
+
+  error(message: string): void {
+    this.set(this.primary, {
+      text: "$(error) Pinset unavailable",
+      tooltip: message,
+      command: "pinset.checkDiagnostics",
+    });
+    this.tools.hide();
+    this.environment.hide();
+  }
+
+  missingCli(message: string): void {
+    this.set(this.primary, {
+      text: "$(cloud-download) Pinset: Install CLI",
+      tooltip: `${message}\nInstall Pinset in this local or remote extension host.`,
+      command: "pinset.install",
+    });
+    this.tools.hide();
+    this.environment.hide();
+  }
+
+  untrusted(): void {
+    this.set(this.primary, {
+      text: "$(lock) Pinset: Workspace not trusted",
+      tooltip: "Trust this workspace before Pinset reads project configuration or starts tasks.",
+      command: "pinset.checkDiagnostics",
+    });
+    this.tools.hide();
+    this.environment.hide();
+  }
+
+  hide(): void {
+    this.primary.hide();
+    this.tools.hide();
+    this.environment.hide();
+  }
+
+  dispose(): void {
+    this.primary.dispose();
+    this.tools.dispose();
+    this.environment.dispose();
+  }
+
+  private setOptional(item: vscode.StatusBarItem, model: StatusItemModel | undefined): void {
+    if (model) this.set(item, model);
+    else item.hide();
+  }
+
+  private set(item: vscode.StatusBarItem, model: StatusItemModel): void {
+    item.text = model.text;
+    item.tooltip = model.tooltip;
+    item.command = model.command;
+    item.show();
+  }
+}
+
 export async function activate(extensionContext: vscode.ExtensionContext): Promise<void> {
   const extensionVersion = String(extensionContext.extension.packageJSON.version ?? "0.0.0");
   const store = new ContextStore(extensionVersion);
   const diagnostics = vscode.languages.createDiagnosticCollection("pinset");
   const output = vscode.window.createOutputChannel("Pinset");
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  const status = new PinsetStatus();
   const taskProvider = new PinsetTaskProvider(store);
-  status.command = "pinset.checkDiagnostics";
-  status.show();
 
   const refreshFolder = async (folder: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<void> => {
     if (!vscode.workspace.isTrusted) {
-      setUntrustedStatus(status);
+      status.untrusted();
       diagnostics.clear();
       return;
     }
-    status.text = "$(sync~spin) Pinset";
+    if (folder === displayedFolder()) status.loading();
     try {
       const context = await store.refresh(folder, token);
-      publishDiagnostics(diagnostics, folder, context);
+      publishDiagnostics(diagnostics, store.values());
       taskProvider.changed();
-      if (folder === displayedFolder()) updateStatus(status, folder, context);
+      if (folder === displayedFolder()) status.update(context);
     } catch (error) {
       if (error instanceof vscode.CancellationError) return;
       output.appendLine(`[${folder.name}] ${errorMessage(error)}`);
+      publishDiagnostics(diagnostics, store.values());
       if (folder === displayedFolder()) {
-        status.text = "$(error) Pinset";
-        status.tooltip = `Pinset: ${errorMessage(error)}`;
+        if (isMissingExecutableError(error)) status.missingCli(errorMessage(error));
+        else status.error(errorMessage(error));
       }
     }
   };
 
   const refreshAll = async (): Promise<void> => {
     if (!vscode.workspace.isTrusted) {
-      setUntrustedStatus(status);
+      status.untrusted();
       diagnostics.clear();
       return;
     }
-    await Promise.all((vscode.workspace.workspaceFolders ?? []).map((folder) => refreshFolder(folder)));
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+      status.hide();
+      return;
+    }
+    await Promise.all(folders.map((folder) => refreshFolder(folder)));
   };
 
   extensionContext.subscriptions.push(
@@ -276,6 +356,65 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     taskProvider,
     vscode.tasks.registerTaskProvider("pinset", taskProvider),
     vscode.commands.registerCommand("pinset.refresh", refreshAll),
+    vscode.commands.registerCommand("pinset.install", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      const action = await vscode.window.showWarningMessage(
+        "Pinset CLI was not found in this extension host. Run the official installer in a new terminal?",
+        { modal: true, detail: "The installer downloads a Pinset release from GitHub and verifies its SHA-256 checksum before installing it." },
+        "Install in Terminal",
+        "Open Install Guide",
+      );
+      if (action === "Open Install Guide") {
+        await vscode.env.openExternal(vscode.Uri.parse(INSTALL_GUIDE_URL));
+        return;
+      }
+      if (action !== "Install in Terminal") return;
+      const plan = installerPlan(process.platform, process.env);
+      if (!plan) {
+        await vscode.env.openExternal(vscode.Uri.parse(INSTALL_GUIDE_URL));
+        void vscode.window.showInformationMessage("The automatic install path is unavailable in this host. The Pinset installation guide has been opened.");
+        return;
+      }
+      if (plan.executablePath) {
+        await vscode.workspace
+          .getConfiguration("pinset")
+          .update("executablePath", plan.executablePath, vscode.ConfigurationTarget.Global);
+      }
+      const terminal = vscode.window.createTerminal({
+        name: "Pinset Installer",
+        cwd: folder.uri,
+        shellPath: plan.shellPath,
+      });
+      terminal.show();
+      terminal.sendText(plan.command, true);
+      void vscode.window.showInformationMessage("Pinset installer started. When it finishes, select Pinset: Refresh Status.");
+    }),
+    vscode.commands.registerCommand("pinset.initializeProject", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      try {
+        const result = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Initializing Pinset in ${folder.name}` },
+          async () => runCli(folder, ["init"]),
+        );
+        output.appendLine(`[${folder.name}] ${result.stdout.trim()}`);
+        await refreshFolder(folder);
+        const open = await vscode.window.showInformationMessage(
+          `Pinset initialized in ${folder.name}.`,
+          "Open pinset.toml",
+        );
+        if (open === "Open pinset.toml") {
+          await vscode.window.showTextDocument(vscode.Uri.joinPath(folder.uri, "pinset.toml"));
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        output.appendLine(`[${folder.name}] ${message}`);
+        void vscode.window.showErrorMessage(`Could not initialize Pinset: ${message}`);
+        if (isMissingExecutableError(error)) status.missingCli(message);
+        else status.error(message);
+      }
+    }),
     vscode.commands.registerCommand("pinset.selectEnvironment", async () => {
       const folder = await trustedFolder();
       if (!folder) return;
@@ -334,8 +473,13 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     }),
     vscode.window.onDidChangeActiveTextEditor(() => {
       const folder = activeFolder();
-      if (!vscode.workspace.isTrusted) setUntrustedStatus(status);
-      else if (folder && store.get(folder)) updateStatus(status, folder, store.get(folder)!);
+      if (!vscode.workspace.isTrusted) status.untrusted();
+      else if (folder && store.get(folder)) status.update(store.get(folder)!);
+      else if (!folder && vscode.workspace.workspaceFolders?.length) {
+        const first = vscode.workspace.workspaceFolders[0];
+        const context = first ? store.get(first) : undefined;
+        if (context) status.update(context);
+      }
     }),
   );
 
@@ -352,52 +496,45 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
   );
 
   if (vscode.workspace.isTrusted) await refreshAll();
-  else setUntrustedStatus(status);
+  else status.untrusted();
 }
 
 export function deactivate(): void {}
 
 function publishDiagnostics(
   collection: vscode.DiagnosticCollection,
-  folder: vscode.WorkspaceFolder,
-  context: PinsetContext,
+  contexts: Iterable<PinsetContext>,
 ): void {
-  const uri = context.config
-    ? vscode.Uri.joinPath(
-        folder.uri,
-        ...path.relative(folder.uri.fsPath, context.config).split(path.sep),
-      )
-    : folder.uri;
-  const values = context.diagnostics.findings.map((finding) => {
-    const diagnostic = new vscode.Diagnostic(
-      new vscode.Range(0, 0, 0, 1),
-      `${finding.code}: ${finding.subject}`,
-      severity(finding),
-    );
-    diagnostic.source = "Pinset";
-    diagnostic.code = finding.code;
-    return diagnostic;
-  });
-  collection.set(uri, values);
+  collection.clear();
+  const grouped = new Map<string, { uri: vscode.Uri; values: vscode.Diagnostic[] }>();
+  for (const context of contexts) {
+    if (!context.config) continue;
+    const configPath = context.config;
+    const lockPath = path.join(path.dirname(configPath), "pinset.lock");
+    for (const finding of context.diagnostics.findings) {
+      const document = diagnosticDocument(finding.category);
+      if (!document) continue;
+      const uri = vscode.Uri.file(document === "config" ? configPath : lockPath);
+      const key = uri.toString();
+      const entry = grouped.get(key) ?? { uri, values: [] };
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(0, 0, 0, 1),
+        `${finding.code}: ${finding.subject}`,
+        severity(finding),
+      );
+      diagnostic.source = "Pinset";
+      diagnostic.code = finding.code;
+      entry.values.push(diagnostic);
+      grouped.set(key, entry);
+    }
+  }
+  for (const { uri, values } of grouped.values()) collection.set(uri, values);
 }
 
 function severity(finding: PinsetFinding): vscode.DiagnosticSeverity {
   if (finding.severity === "error") return vscode.DiagnosticSeverity.Error;
   if (finding.severity === "warning") return vscode.DiagnosticSeverity.Warning;
   return vscode.DiagnosticSeverity.Information;
-}
-
-function updateStatus(status: vscode.StatusBarItem, folder: vscode.WorkspaceFolder, context: PinsetContext): void {
-  const summary = context.diagnostics.summary;
-  const icon = summary.errors > 0 ? "error" : summary.warnings > 0 ? "warning" : "check";
-  const profile = context.environment.selected ?? "default";
-  status.text = `$(${icon}) Pinset: ${profile}`;
-  status.tooltip = `${folder.name}: ${summary.errors} error(s), ${summary.warnings} warning(s)`;
-}
-
-function setUntrustedStatus(status: vscode.StatusBarItem): void {
-  status.text = "$(lock) Pinset: Workspace not trusted";
-  status.tooltip = "Trust this workspace before Pinset reads project configuration or starts tasks.";
 }
 
 async function trustedFolder(): Promise<vscode.WorkspaceFolder | undefined> {

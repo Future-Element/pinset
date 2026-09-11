@@ -2,12 +2,21 @@
   "name": "pinset-vscode",
   "displayName": "Pinset",
   "description": "Pinset toolchain status, diagnostics, environments, and project tasks.",
-  "version": "1.0.0",
-  "publisher": "future-element",
+  "version": "1.1.1",
+  "publisher": "FutureElement",
+  "icon": "icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Future-Element/pinset.git"
+  },
+  "homepage": "https://pinset.future-element.com/",
+  "bugs": {
+    "url": "https://github.com/Future-Element/pinset/issues"
+  },
+  "galleryBanner": {
+    "color": "#111827",
+    "theme": "dark"
   },
   "engines": {
     "vscode": "^1.95.0"
@@ -23,9 +32,12 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "workspaceContains:pinset.toml",
     "onTaskType:pinset",
     "onCommand:pinset.refresh",
+    "onCommand:pinset.install",
+    "onCommand:pinset.initializeProject",
     "onCommand:pinset.selectEnvironment",
     "onCommand:pinset.runTask",
     "onCommand:pinset.checkDiagnostics"
@@ -33,6 +45,8 @@
   "contributes": {
     "commands": [
       { "command": "pinset.refresh", "title": "Pinset: Refresh Status" },
+      { "command": "pinset.install", "title": "Pinset: Install CLI" },
+      { "command": "pinset.initializeProject", "title": "Pinset: Initialize Project" },
       { "command": "pinset.selectEnvironment", "title": "Pinset: Select Environment" },
       { "command": "pinset.runTask", "title": "Pinset: Run Project Task" },
       { "command": "pinset.checkDiagnostics", "title": "Pinset: Check Diagnostics" }
@@ -61,10 +75,10 @@
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "compile": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
-    "compile:test": "esbuild src/protocol.ts src/process-tree.ts --bundle --platform=node --format=cjs --outdir=dist/test",
+    "compile:test": "esbuild src/protocol.ts src/process-tree.ts src/process-error.ts src/install.ts src/diagnostic-model.ts src/status-model.ts --bundle --platform=node --format=cjs --outdir=dist/test",
     "typecheck": "tsc --noEmit",
     "test": "npm run compile && npm run compile:test && node --test test/*.test.cjs",
-    "package": "npm run typecheck && npm run test && vsce package --no-dependencies --out dist/pinset-vscode-1.0.0.vsix"
+    "package": "npm run typecheck && npm run test && vsce package --no-dependencies --out dist/pinset-vscode.vsix"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

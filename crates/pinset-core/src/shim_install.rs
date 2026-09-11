@@ -23,6 +23,11 @@ pub struct ShimInstallResult {
     pub method: ShimInstallMethod,
 }
 
+struct InstalledShim {
+    result: ShimInstallResult,
+    created_paths: Vec<PathBuf>,
+}
+
 pub fn install_shims(
     shim_binary: &Path,
     destination_dir: &Path,
@@ -64,12 +69,16 @@ pub fn install_shims(
     }
 
     let mut installed = Vec::with_capacity(destinations.len());
+    let mut created_paths = Vec::new();
     for (command, destination) in destinations {
         match install_one(shim_binary, command, destination) {
-            Ok(result) => installed.push(result),
+            Ok(outcome) => {
+                created_paths.extend(outcome.created_paths);
+                installed.push(outcome.result);
+            }
             Err(error) => {
-                for result in &installed {
-                    let _ = fs::remove_file(&result.destination);
+                for path in &created_paths {
+                    let _ = fs::remove_file(path);
                 }
                 return Err(error);
             }
@@ -105,49 +114,103 @@ pub fn ensure_shims(
             });
         }
         let destination = destination_dir.join(filename);
-        if let Some(existing) =
-            existing_alternate_command_entry(destination_dir, command, &destination).map_err(
-                |source| Error::InstallShim {
-                    source_path: shim_binary.to_path_buf(),
-                    destination: destination.clone(),
-                    source,
-                },
-            )?
+        #[cfg(windows)]
         {
-            return Err(Error::ShimDestinationExists { path: existing });
-        }
-        if path_entry_exists(&destination).map_err(|source| Error::InstallShim {
-            source_path: shim_binary.to_path_buf(),
-            destination: destination.clone(),
-            source,
-        })? {
-            if is_managed_command_shim(shim_binary, &destination, command).map_err(|source| {
-                Error::InstallShim {
+            let mut all_managed = true;
+            for path in [destination.clone(), destination_dir.join(command)] {
+                if path_entry_exists(&path).map_err(|source| Error::InstallShim {
                     source_path: shim_binary.to_path_buf(),
                     destination: destination.clone(),
                     source,
+                })? {
+                    if !is_managed_command_shim(shim_binary, &path, command).map_err(|source| {
+                        Error::InstallShim {
+                            source_path: shim_binary.to_path_buf(),
+                            destination: destination.clone(),
+                            source,
+                        }
+                    })? {
+                        return Err(Error::ShimDestinationExists { path });
+                    }
+                } else {
+                    all_managed = false;
                 }
-            })? {
+            }
+            for path in [
+                destination_dir.join(format!("{command}.exe")),
+                destination_dir.join(format!("{command}.bat")),
+            ] {
+                if path_entry_exists(&path).map_err(|source| Error::InstallShim {
+                    source_path: shim_binary.to_path_buf(),
+                    destination: destination.clone(),
+                    source,
+                })? {
+                    return Err(Error::ShimDestinationExists { path });
+                }
+            }
+
+            if all_managed {
                 existing.push(ShimInstallResult {
                     command: command.clone(),
                     destination,
                     method: ShimInstallMethod::Existing,
                 });
             } else {
-                return Err(Error::ShimDestinationExists { path: destination });
+                missing.push((command, destination));
             }
-        } else {
-            missing.push((command, destination));
+            continue;
+        }
+
+        #[cfg(not(windows))]
+        {
+            if let Some(existing) =
+                existing_alternate_command_entry(destination_dir, command, &destination).map_err(
+                    |source| Error::InstallShim {
+                        source_path: shim_binary.to_path_buf(),
+                        destination: destination.clone(),
+                        source,
+                    },
+                )?
+            {
+                return Err(Error::ShimDestinationExists { path: existing });
+            }
+            if path_entry_exists(&destination).map_err(|source| Error::InstallShim {
+                source_path: shim_binary.to_path_buf(),
+                destination: destination.clone(),
+                source,
+            })? {
+                if is_managed_command_shim(shim_binary, &destination, command).map_err(
+                    |source| Error::InstallShim {
+                        source_path: shim_binary.to_path_buf(),
+                        destination: destination.clone(),
+                        source,
+                    },
+                )? {
+                    existing.push(ShimInstallResult {
+                        command: command.clone(),
+                        destination,
+                        method: ShimInstallMethod::Existing,
+                    });
+                } else {
+                    return Err(Error::ShimDestinationExists { path: destination });
+                }
+            } else {
+                missing.push((command, destination));
+            }
         }
     }
 
     let mut installed = Vec::with_capacity(missing.len());
+    let mut created_paths = Vec::new();
     for (command, destination) in missing {
         match install_one(shim_binary, command, destination) {
-            Ok(result) => installed.push(result),
+            Ok(outcome) => {
+                created_paths.extend(outcome.created_paths);
+                installed.push(outcome.result);
+            }
             Err(error) => {
-                for result in &installed {
-                    let _ = fs::remove_file(&result.destination);
+                for path in &created_paths {
+                    let _ = fs::remove_file(path);
                 }
                 return Err(error);
             }
@@ -157,33 +220,36 @@ pub fn ensure_shims(
     Ok(existing)
 }
 
-fn install_one(
-    shim_binary: &Path,
-    command: &str,
-    destination: PathBuf,
-) -> Result<ShimInstallResult> {
+fn install_one(shim_binary: &Path, command: &str, destination: PathBuf) -> Result<InstalledShim> {
     #[cfg(windows)]
     {
-        write_windows_wrapper(shim_binary, command, &destination).map_err(|source| {
-            Error::InstallShim {
-                source_path: shim_binary.to_path_buf(),
-                destination: destination.clone(),
-                source,
-            }
-        })?;
-        Ok(ShimInstallResult {
-            command: command.to_owned(),
-            destination,
-            method: ShimInstallMethod::Wrapper,
+        let created_paths =
+            ensure_windows_wrappers(shim_binary, command, &destination).map_err(|source| {
+                Error::InstallShim {
+                    source_path: shim_binary.to_path_buf(),
+                    destination: destination.clone(),
+                    source,
+                }
+            })?;
+        Ok(InstalledShim {
+            result: ShimInstallResult {
+                command: command.to_owned(),
+                destination,
+                method: ShimInstallMethod::Wrapper,
+            },
+            created_paths,
         })
     }
 
     #[cfg(unix)]
     if std::os::unix::fs::symlink(shim_binary, &destination).is_ok() {
-        return Ok(ShimInstallResult {
-            command: command.to_owned(),
-            destination,
-            method: ShimInstallMethod::Symlink,
+        return Ok(InstalledShim {
+            result: ShimInstallResult {
+                command: command.to_owned(),
+                destination: destination.clone(),
+                method: ShimInstallMethod::Symlink,
+            },
+            created_paths: vec![destination],
         });
     }
 
@@ -201,10 +267,13 @@ fn install_one(
     };
 
     #[cfg(not(windows))]
-    Ok(ShimInstallResult {
-        command: command.to_owned(),
-        destination,
-        method,
+    Ok(InstalledShim {
+        result: ShimInstallResult {
+            command: command.to_owned(),
+            destination: destination.clone(),
+            method,
+        },
+        created_paths: vec![destination],
     })
 }
 
@@ -257,6 +326,7 @@ fn existing_command_entry(directory: &Path, command: &str) -> io::Result<Option<
         .transpose()
 }
 
+#[cfg(not(windows))]
 fn existing_alternate_command_entry(
     directory: &Path,
     command: &str,
@@ -275,8 +345,46 @@ fn existing_alternate_command_entry(
 }
 
 #[cfg(windows)]
-fn write_windows_wrapper(source: &Path, command: &str, destination: &Path) -> io::Result<()> {
-    let wrapper = windows_wrapper(source, command);
+fn ensure_windows_wrappers(
+    source: &Path,
+    command: &str,
+    destination: &Path,
+) -> io::Result<Vec<PathBuf>> {
+    let mut created_paths = Vec::new();
+    if ensure_text_wrapper(destination, &windows_wrapper(source, command))? {
+        created_paths.push(destination.to_path_buf());
+    }
+
+    let shell_destination = destination
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(command);
+    match ensure_text_wrapper(&shell_destination, &windows_posix_wrapper(command)) {
+        Ok(true) => created_paths.push(shell_destination),
+        Ok(false) => {}
+        Err(error) => {
+            for path in &created_paths {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error);
+        }
+    }
+    Ok(created_paths)
+}
+
+#[cfg(windows)]
+fn ensure_text_wrapper(destination: &Path, wrapper: &str) -> io::Result<bool> {
+    if path_entry_exists(destination)? {
+        return match fs::read_to_string(destination) {
+            Ok(content) if content == wrapper => Ok(false),
+            Ok(_) => Err(io::Error::new(
+                ErrorKind::AlreadyExists,
+                "command entry already exists and is not managed by Pinset",
+            )),
+            Err(error) => Err(error),
+        };
+    }
+
     let mut destination_file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -286,7 +394,7 @@ fn write_windows_wrapper(source: &Path, command: &str, destination: &Path) -> io
         let _ = fs::remove_file(destination);
         return Err(error);
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(windows)]
@@ -295,6 +403,11 @@ fn windows_wrapper(source: &Path, command: &str) -> String {
     format!(
         "@echo off\r\nsetlocal DisableDelayedExpansion\r\n\"{source}\" --as {command} -- %*\r\nexit /b %ERRORLEVEL%\r\n"
     )
+}
+
+#[cfg(windows)]
+fn windows_posix_wrapper(command: &str) -> String {
+    format!("#!/bin/sh\nexec \"$(dirname \"$0\")/{command}.cmd\" \"$@\"\n")
 }
 
 #[cfg(not(windows))]
@@ -370,8 +483,9 @@ pub fn is_managed_shim(source: &Path, destination: &Path) -> io::Result<bool> {
 
 /// Returns whether a command entry is managed by Pinset for the given command name.
 ///
-/// Windows routes are stable `.cmd` wrappers that point at the companion router path, so updating
-/// `pinset-shim.exe` does not leave hard-linked or copied command binaries on an older version.
+/// Windows routes use a stable `.cmd` wrapper for PowerShell/CMD and an extensionless wrapper for
+/// POSIX shells such as Git Bash. Updating `pinset-shim.exe` therefore does not leave hard-linked
+/// or copied command binaries on an older version.
 pub fn is_managed_command_shim(
     source: &Path,
     destination: &Path,
@@ -379,10 +493,19 @@ pub fn is_managed_command_shim(
 ) -> io::Result<bool> {
     #[cfg(windows)]
     {
-        if fs::read_to_string(destination)
-            .is_ok_and(|content| content == windows_wrapper(source, _command))
-        {
-            return Ok(true);
+        if let Some(file_name) = destination.file_name().and_then(|value| value.to_str()) {
+            let expected = if file_name == _command {
+                Some(windows_posix_wrapper(_command))
+            } else if file_name == format!("{_command}.cmd") {
+                Some(windows_wrapper(source, _command))
+            } else {
+                None
+            };
+            if expected.is_some_and(|expected| {
+                fs::read_to_string(destination).is_ok_and(|content| content == expected)
+            }) {
+                return Ok(true);
+            }
         }
     }
     is_managed_shim(source, destination)
@@ -415,6 +538,15 @@ mod tests {
 
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|result| result.destination.is_file()));
+        #[cfg(windows)]
+        for command in ["node", "npm"] {
+            let shell_entry = root.path().join("shims").join(command);
+            assert!(shell_entry.is_file());
+            assert_eq!(
+                fs::read_to_string(shell_entry).expect("shell wrapper"),
+                windows_posix_wrapper(command)
+            );
+        }
     }
 
     #[test]
@@ -496,6 +628,48 @@ mod tests {
         let repeated = ensure_shims(&source, &shims, &["node".to_owned()]).expect("repeat");
         assert_eq!(repeated[0].method, ShimInstallMethod::Existing);
         assert!(is_managed_command_shim(&source, &repeated[0].destination, "node").unwrap());
+        assert!(is_managed_command_shim(&source, &shims.join("node"), "node").unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_adds_posix_wrapper_to_existing_cmd_only_installation() {
+        let root = tempdir().expect("temp directory");
+        let source = root.path().join("pinset-shim.exe");
+        let shims = root.path().join("shims");
+        fs::create_dir_all(&shims).expect("shims");
+        fs::write(&source, b"router").expect("source");
+        fs::write(shims.join("node.cmd"), windows_wrapper(&source, "node"))
+            .expect("legacy cmd wrapper");
+
+        let result = ensure_shims(&source, &shims, &["node".to_owned()]).expect("migration");
+
+        assert_eq!(result[0].method, ShimInstallMethod::Wrapper);
+        assert_eq!(
+            fs::read_to_string(shims.join("node")).expect("posix wrapper"),
+            windows_posix_wrapper("node")
+        );
+        assert_eq!(
+            fs::read_to_string(shims.join("node.cmd")).expect("cmd wrapper"),
+            windows_wrapper(&source, "node")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_rejects_foreign_extensionless_entry() {
+        let root = tempdir().expect("temp directory");
+        let source = root.path().join("pinset-shim.exe");
+        let shims = root.path().join("shims");
+        fs::create_dir_all(&shims).expect("shims");
+        fs::write(&source, b"router").expect("source");
+        fs::write(shims.join("node"), "#!/bin/sh\necho foreign\n").expect("foreign shell entry");
+
+        let error = ensure_shims(&source, &shims, &["node".to_owned()])
+            .expect_err("foreign entry must not be overwritten");
+
+        assert!(matches!(error, Error::ShimDestinationExists { .. }));
+        assert!(!shims.join("node.cmd").exists());
     }
 
     #[test]

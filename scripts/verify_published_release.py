@@ -28,12 +28,16 @@ archives = {
 }
 assert archive in archives
 sboms = {f"{name}.cdx.json" for name in ("pinset-cli", "pinset-core", "pinset-env", "pinset-shim")}
+release = json.loads(run("gh", "api", f"repos/{repository}/releases/tags/{tag}"))
+published_assets = {asset["name"] for asset in release["assets"]}
+vsix_assets = {name for name in published_assets if re.fullmatch(r"pinset-vscode-\d+\.\d+\.\d+\.vsix", name)}
+assert len(vsix_assets) == 1, "release must contain exactly one versioned Pinset VSIX"
+extension_asset = next(iter(vsix_assets))
 assets = archives | sboms | {
     "install.sh", "install.ps1", "uninstall.sh", "uninstall.ps1",
     "pinset-winget.yaml", "pinset-scoop.json", "pinset.rb", "SHA256SUMS",
-    "pinset-vscode-1.0.0.vsix",
+    extension_asset,
 }
-release = json.loads(run("gh", "api", f"repos/{repository}/releases/tags/{tag}"))
 assert release["tag_name"] == tag and not release["draft"]
 assert release["prerelease"] == ("-rc." in tag)
 assert {asset["name"] for asset in release["assets"]} == assets
@@ -59,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
     for name in sboms:
         document = json.loads((downloaded / name).read_text())
         assert document["bomFormat"] == "CycloneDX" and document["specVersion"]
-    for name in archives | {"SHA256SUMS", "pinset-vscode-1.0.0.vsix"}:
+    for name in archives | {"SHA256SUMS", extension_asset}:
         run("gh", "attestation", "verify", str(downloaded / name), "--repo", repository,
             "--source-digest", commit, "--source-ref", f"refs/tags/{tag}",
             "--signer-workflow", f"{repository}/.github/workflows/release.yml")
@@ -73,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
             with tarfile.open(downloaded / name) as packed:
                 assert set(packed.getnames()) == expected
                 assert all(member.isfile() for member in packed.getmembers())
-    with zipfile.ZipFile(downloaded / "pinset-vscode-1.0.0.vsix") as packed:
+    with zipfile.ZipFile(downloaded / extension_asset) as packed:
         names = set(packed.namelist())
         assert "extension/dist/extension.js" in names
         assert not any(name.startswith(("extension/src/", "extension/test/", "extension/node_modules/")) for name in names)

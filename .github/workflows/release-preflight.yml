@@ -48,8 +48,8 @@ jobs:
             exit 1
           fi
           extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
-          if [[ "${extension_version}" != "1.0.0" ]]; then
-            echo "VS Code extension version ${extension_version} does not match the 2.11 release contract" >&2
+          if [[ ! "${extension_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VS Code extension version ${extension_version} is not a stable semantic version" >&2
             exit 1
           fi
           if ! grep -F "## ${workspace_version} " CHANGELOG.md >/dev/null; then
@@ -229,7 +229,7 @@ jobs:
       - name: Inspect packaged files
         shell: bash
         run: |
-          unzip -l dist/pinset-vscode-1.0.0.vsix > vsix-files.txt
+          unzip -l dist/pinset-vscode.vsix > vsix-files.txt
           grep -F 'extension/dist/extension.js' vsix-files.txt
           if grep -E 'extension/(src|test|node_modules)/' vsix-files.txt; then
             echo "VSIX contains development files" >&2

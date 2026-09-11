@@ -17,7 +17,12 @@ function envelope(protocol = 1, minimum = "1.0.0") {
       workspace_members: [],
       environment: { profiles: [], source: "none" },
       tasks: [],
-      diagnostics: { summary: { passed: true, errors: 0, warnings: 0, info: 0 }, findings: [] },
+      diagnostics: {
+        project: { configured: false, tasks: 0 },
+        tools: [],
+        summary: { passed: true, errors: 0, warnings: 0, info: 0 },
+        findings: [],
+      },
     },
   });
 }
