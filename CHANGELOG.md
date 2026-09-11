@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.12.2 - 2026-09-11
+
+- Remove GitHub REST API usage from self-update version discovery. Stable checks resolve GitHub's public `releases/latest` redirect, while prerelease checks read the repository's Atom release feed; exact-version updates continue to download release assets directly.
+
 ## 2.12.1 - 2026-09-09
 
 - Prefer native artifacts from each runtime project's official release archive. Python now installs supported python.org full ZIPs, component MSI bundles, and historical monolithic MSIs directly, falling back to a compatible distribution only when the official archive has no native artifact for the current target.

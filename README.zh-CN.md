@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,7 +114,7 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.12.1
+.\install.ps1 -Version 2.12.2
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
@@ -319,9 +319,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.1
+      - uses: Future-Element/pinset@v2.12.2
         with:
-          version: 2.12.1
+          version: 2.12.2
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -359,7 +359,7 @@ pinset self update
 pinset migrate --global
 ```
 
-`self update` 会在下载前检查 `PINSET_HOME/state/global.lock`，并按原精确版本安全迁移 Node.js、pnpm、Bun、Go、Python、Java、Rust 与 .NET SDK 的已知 pre-1.0 记录。Flutter 的目标矩阵未变化。未知或损坏的锁结构会被拒绝，不会猜测迁移。
+`self outdated` 和 `self update` 通过 GitHub 公共 Release 重定向或 Atom 订阅发现已发布版本，不会调用有频率限制的 GitHub REST API。`self update` 会在下载前检查 `PINSET_HOME/state/global.lock`，并按原精确版本安全迁移 Node.js、pnpm、Bun、Go、Python、Java、Rust 与 .NET SDK 的已知 pre-1.0 记录。Flutter 的目标矩阵未变化。未知或损坏的锁结构会被拒绝，不会猜测迁移。
 
 `doctor --deep` 和安装收据验证的是安装布局、关键入口和统计信息，不宣称对每个已安装文件进行密码学验证。
 
@@ -515,7 +515,7 @@ Pinset 在路由命令前验证 Registry 签名、精确 Release 制品 URL、�
 
 ### VS Code 集成
 
-[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.12.1 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
+[Pinset VS Code 扩展](editors/vscode/README.md)随 Pinset 2.12.2 提供 `pinset-vscode-1.0.0.vsix`。扩展读取版本化的 `pinset editor context --json` 协议，在单根和多根工作区中按文件夹显示状态、诊断与环境选择，并提供已声明任务和可取消的任务终端：
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

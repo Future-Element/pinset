@@ -1111,9 +1111,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.1
+      - uses: Future-Element/pinset@v2.12.2
         with:
-          version: 2.12.1
+          version: 2.12.2
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js
@@ -1125,7 +1125,7 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 `pinset paths [tool] [--json]` 会报告 CLI、相邻 shim、Pinset home、shim 目录、安装根，以及可选工具的已安装版本。`pinset list [tool] --long` 增加收据 schema、安装根、文件数量、总大小、关键入口与完整性状态。`pinset doctor --deep` 会重新扫描这些统计，但不宣称逐文件密码学验证。`pinset install <tool@精确版本> --repair` 只修复所有权收据与工具、版本、平台和目标目录全部匹配的安装。`pinset shim install --all` 注册所有内置 Provider 命令，但不下载运行时。
 
-`pinset self outdated [--channel stable|prerelease] [--json]` 只在用户明确执行时检查固定官方仓库。下载更新前，`pinset self update [--version <版本>]` 会检查全局 `global.lock`，并按原精确版本自动迁移可安全识别的 pre-1.0 Provider 记录。兼容迁移覆盖 Node.js、pnpm、Bun、Go、Python、Java、Rust 与 .NET SDK 旧锁中缺少 Linux ARM64 目标的问题，并把 Node.js 历史 HTTPS checksum 记录升级为当前的 OpenPGP 认证记录；Flutter 的目标矩阵没有变化。随后命令会验证平台、语义版本、归档结构与 `SHA256SUMS`，校验新 CLI 后成对替换 CLI/shim，并支持备份与回滚。若自动迁移无法完成，可显式运行 `pinset migrate --global` 修复。普通命令和 `doctor` 不会后台检查更新。
+`pinset self outdated [--channel stable|prerelease] [--json]` 只在用户明确执行时检查固定官方仓库。稳定版发现跟随 GitHub 公共 `releases/latest` 重定向，预发布版发现读取仓库的 Atom Release 订阅，两条路径都不会调用有频率限制的 GitHub REST API。下载更新前，`pinset self update [--version <版本>]` 会检查全局 `global.lock`，并按原精确版本自动迁移可安全识别的 pre-1.0 Provider 记录。兼容迁移覆盖 Node.js、pnpm、Bun、Go、Python、Java、Rust 与 .NET SDK 旧锁中缺少 Linux ARM64 目标的问题，并把 Node.js 历史 HTTPS checksum 记录升级为当前的 OpenPGP 认证记录；Flutter 的目标矩阵没有变化。随后命令会验证平台、语义版本、归档结构与 `SHA256SUMS`，校验新 CLI 后成对替换 CLI/shim，并支持备份与回滚。若自动迁移无法完成，可显式运行 `pinset migrate --global` 修复。普通命令和 `doctor` 不会后台检查更新。
 
 自更新使用跨进程锁和 60 秒 HTTP 超时。Windows 中运行中的可执行文件不能替换自身，因此替换仍由异步辅助进程完成；辅助进程会把成功或回滚结果写入 `PINSET_HOME/state`，下一次执行 `self outdated` 或 `self update` 时会报告。Windows `.cmd`/`.bat` 运行时回退会拒绝包含 `cmd.exe` 元字符的参数，避免被 shell 二次解释；受管 `.exe` 运行时不受影响。
 
