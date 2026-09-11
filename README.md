@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.12.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,7 +114,7 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.12.1
+.\install.ps1 -Version 2.12.2
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
@@ -319,9 +319,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.1
+      - uses: Future-Element/pinset@v2.12.2
         with:
-          version: 2.12.1
+          version: 2.12.2
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -359,7 +359,7 @@ pinset self update
 pinset migrate --global
 ```
 
-`self update` checks `PINSET_HOME/state/global.lock` before downloading and safely migrates known pre-1.0 records for Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK at their existing exact versions. Flutter's target matrix is unchanged. Unknown or corrupted lock shapes are rejected instead of guessed.
+`self outdated` and `self update` discover published versions through GitHub's public Release redirect or Atom feed without calling the rate-limited GitHub REST API. `self update` checks `PINSET_HOME/state/global.lock` before downloading and safely migrates known pre-1.0 records for Node.js, pnpm, Bun, Go, Python, Java, Rust, and .NET SDK at their existing exact versions. Flutter's target matrix is unchanged. Unknown or corrupted lock shapes are rejected instead of guessed.
 
 `doctor --deep` and installation receipt checks validate layout, critical entries, and statistics. They do not claim cryptographic verification of every installed file.
 
@@ -515,7 +515,7 @@ Pinset verifies the signed Registry, exact release asset URLs, upstream SHA-256 
 
 ### VS Code integration
 
-The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.12.1. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
+The [Pinset VS Code extension](editors/vscode/README.md) is released as `pinset-vscode-1.0.0.vsix` with Pinset 2.12.2. It reads the versioned `pinset editor context --json` protocol and provides per-folder status, diagnostics, environment selection, declared tasks, and cancellable task terminals in single-root and multi-root workspaces:
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

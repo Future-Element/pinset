@@ -8,7 +8,7 @@ Configure `pinset.executablePath` when `pinset` is not available on the extensio
 
 ## Install
 
-Download `pinset-vscode-1.0.0.vsix` from the Pinset 2.12.1 GitHub Release, then run:
+Download `pinset-vscode-1.0.0.vsix` from the Pinset 2.12.2 GitHub Release, then run:
 
 ```sh
 code --install-extension pinset-vscode-1.0.0.vsix

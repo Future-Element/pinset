@@ -6,20 +6,18 @@ use std::{
     time::Duration,
 };
 
-use reqwest::blocking::Client;
+use reqwest::{Url, blocking::Client};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-const API: &str = "https://api.github.com/repos/Future-Element/pinset";
+const LATEST_RELEASE: &str = "https://github.com/Future-Element/pinset/releases/latest";
+const RELEASE_FEED: &str = "https://github.com/Future-Element/pinset/releases.atom";
+const RELEASE_TAG_PATH: &str = "/Future-Element/pinset/releases/tag/";
+const RELEASE_TAG_URL: &str = "https://github.com/Future-Element/pinset/releases/tag/";
 const RELEASES: &str = "https://github.com/Future-Element/pinset/releases/download";
 const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
-
-#[derive(Debug, Deserialize)]
-struct Release {
-    tag_name: String,
-    draft: bool,
-}
+const MAX_RELEASE_FEED_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct SelfUpdateResult {
@@ -31,9 +29,8 @@ struct SelfUpdateResult {
 
 pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     report_previous_result()?;
-    let latest = latest_release(prerelease)?;
+    let available = latest_release(prerelease)?;
     let current = Version::parse(pinset_core::pinset_version())?;
-    let available = parse_tag(&latest.tag_name)?;
     let is_outdated = available > current;
     if json {
         println!(
@@ -65,7 +62,7 @@ where
     let current = Version::parse(pinset_core::pinset_version())?;
     let version = match requested {
         Some(value) => Version::parse(value.trim_start_matches('v'))?,
-        None => parse_tag(&latest_release(false)?.tag_name)?,
+        None => latest_release(false)?,
     };
     if version < current {
         return Err(format!("refusing to downgrade Pinset from {current} to {version}").into());
@@ -92,26 +89,48 @@ where
     )
 }
 
-fn latest_release(prerelease: bool) -> Result<Release, Box<dyn std::error::Error>> {
+fn latest_release(prerelease: bool) -> Result<Version, Box<dyn std::error::Error>> {
     let client = client()?;
     if !prerelease {
-        let response = client
-            .get(format!("{API}/releases/latest"))
-            .send()?
-            .error_for_status()?
-            .text()?;
-        return Ok(serde_json::from_str(&response)?);
+        return latest_stable_release(&client, LATEST_RELEASE);
     }
-    let response = client
-        .get(format!("{API}/releases?per_page=20"))
-        .send()?
-        .error_for_status()?
-        .text()?;
-    let releases: Vec<Release> = serde_json::from_str(&response)?;
-    releases
-        .into_iter()
-        .find(|release| !release.draft)
-        .ok_or_else(|| "no published Pinset release was found".into())
+    let feed = download(&client, RELEASE_FEED, MAX_RELEASE_FEED_BYTES)?;
+    latest_release_from_feed(std::str::from_utf8(&feed)?)
+}
+
+fn latest_stable_release(
+    client: &Client,
+    url: &str,
+) -> Result<Version, Box<dyn std::error::Error>> {
+    let response = client.head(url).send()?.error_for_status()?;
+    release_version_from_url(response.url())
+}
+
+fn release_version_from_url(url: &Url) -> Result<Version, Box<dyn std::error::Error>> {
+    if url.scheme() != "https" || url.host_str() != Some("github.com") {
+        return Err("latest Pinset release redirected outside github.com".into());
+    }
+    let tag = url
+        .path()
+        .strip_prefix(RELEASE_TAG_PATH)
+        .filter(|tag| !tag.is_empty() && !tag.contains('/'))
+        .ok_or("latest Pinset release did not redirect to a release tag")?;
+    Ok(parse_tag(tag)?)
+}
+
+fn latest_release_from_feed(feed: &str) -> Result<Version, Box<dyn std::error::Error>> {
+    feed.match_indices(RELEASE_TAG_URL)
+        .filter_map(|(start, _)| {
+            let tag = feed[start + RELEASE_TAG_URL.len()..]
+                .split('"')
+                .next()
+                .unwrap_or_default();
+            (!tag.is_empty() && !tag.contains(['/', '&', '<', '>']))
+                .then(|| parse_tag(tag).ok())
+                .flatten()
+        })
+        .max()
+        .ok_or_else(|| "no published Pinset release was found in the GitHub release feed".into())
 }
 
 fn client() -> Result<Client, reqwest::Error> {
@@ -480,5 +499,46 @@ mod tests {
         assert!(parse_tag("v2.2.0-rc.10").unwrap() < parse_tag("v2.2.0").unwrap());
         assert!(Version::parse("1.9.0").unwrap() < Version::parse("2.0.0-rc.1").unwrap());
         assert_eq!(parse_tag("v2.0.0-rc.1").unwrap().to_string(), "2.0.0-rc.1");
+    }
+
+    #[test]
+    fn stable_release_version_comes_from_the_github_redirect_url() {
+        assert_eq!(
+            release_version_from_url(
+                &Url::parse("https://github.com/Future-Element/pinset/releases/tag/v2.12.2")
+                    .unwrap()
+            )
+            .unwrap(),
+            Version::parse("2.12.2").unwrap()
+        );
+        assert!(
+            release_version_from_url(
+                &Url::parse("https://example.com/Future-Element/pinset/releases/tag/v2.12.2")
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            release_version_from_url(
+                &Url::parse("https://github.com/other/pinset/releases/tag/v2.12.2").unwrap()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn prerelease_channel_uses_the_highest_release_feed_version() {
+        let feed = r#"
+            <feed>
+              <entry><link rel="alternate" href="https://github.com/Future-Element/pinset/releases/tag/not-semver"/></entry>
+              <entry><link rel="alternate" href="https://github.com/Future-Element/pinset/releases/tag/v2.12.2"/></entry>
+              <entry><link rel="alternate" href="https://github.com/Future-Element/pinset/releases/tag/v2.13.0-rc.2"/></entry>
+            </feed>
+        "#;
+        assert_eq!(
+            latest_release_from_feed(feed).unwrap(),
+            Version::parse("2.13.0-rc.2").unwrap()
+        );
+        assert!(latest_release_from_feed("<feed></feed>").is_err());
     }
 }
