@@ -1482,6 +1482,7 @@ mod tests {
         )
     }
 
+    #[cfg(target_os = "windows")]
     fn python_27_lockfile() -> Lockfile {
         Lockfile {
             schema: LOCKFILE_SCHEMA,
