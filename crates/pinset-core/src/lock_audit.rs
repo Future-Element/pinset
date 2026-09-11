@@ -1269,11 +1269,14 @@ fn finding(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
     use std::collections::BTreeMap;
 
+    #[cfg(target_os = "windows")]
+    use crate::LockedTool;
     use crate::{
-        LockedArtifact, LockedArtifactFormat, LockedTool, MVP_NODE_TARGETS, NodeArchiveFormat,
-        SourceConfig, plan_node_artifact, save_lockfile,
+        LockedArtifact, LockedArtifactFormat, MVP_NODE_TARGETS, NodeArchiveFormat, SourceConfig,
+        plan_node_artifact, save_lockfile,
     };
     use tempfile::tempdir;
 
