@@ -9,6 +9,7 @@
 - Add optional Action preparation and portable summaries. Keep published defaults on 2.12.3 until the final combined release.
 - Update the website's Next.js and Sharp dependencies to patched versions.
 - Accept official Rust default-profile package aliases and the platform-specific `rust-mingw` component when validating generated locks.
+- Install official .NET tarballs containing a `./` root entry while retaining archive traversal and collision checks.
 
 ## 2.13.0 - Unreleased
 

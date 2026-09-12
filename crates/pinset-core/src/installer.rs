@@ -1097,12 +1097,18 @@ impl Installer {
             let entry_type = entry.header().entry_type();
             let is_directory = entry_type.is_dir();
             let is_symlink = entry_type.is_symlink();
+            // Official .NET tarballs include a root ./ directory and prefix
+            // entries with ./. Normalize only that harmless leading component.
+            let archived_path = archived_path.strip_prefix(".").unwrap_or(&archived_path);
+            if archived_path.as_os_str().is_empty() && is_directory {
+                continue;
+            }
             if (!entry_type.is_file() && !is_directory && !is_symlink)
-                || !is_safe_relative(&archived_path)
+                || !is_safe_relative(archived_path)
             {
                 return Err(Error::UnsafeArchiveEntry { entry: entry_name });
             }
-            let Some(relative) = strip_entry_path(&archived_path, strip_components) else {
+            let Some(relative) = strip_entry_path(archived_path, strip_components) else {
                 continue;
             };
             if !include_prefixes.is_empty()
@@ -2208,6 +2214,48 @@ mod tests {
             b"fake cargo"
         );
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn installs_dot_prefixed_sdk_tar_but_rejects_traversal_and_root_files() {
+        for (name, entry_type, accepted) in [
+            ("./", tar::EntryType::Directory, true),
+            ("./", tar::EntryType::Regular, false),
+            ("./../outside", tar::EntryType::Regular, false),
+        ] {
+            let encoder = GzEncoder::new(Vec::new(), Compression::default());
+            let mut builder = tar::Builder::new(encoder);
+            for (path, kind, content) in [
+                (name, entry_type, b"".as_slice()),
+                ("./dotnet", tar::EntryType::Regular, b"sdk".as_slice()),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.as_mut_bytes()[..path.len()].copy_from_slice(path.as_bytes());
+                header.set_entry_type(kind);
+                header.set_size(content.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append(&header, Cursor::new(content)).unwrap();
+            }
+            let archive = builder.into_inner().unwrap().finish().unwrap();
+            let (url, server) = serve_once(archive.clone(), archive.len());
+            let root = tempdir().unwrap();
+            let mut request = request(root.path(), url, sha256_hex(&archive));
+            request.artifact.format = ArtifactFormat::TarGz;
+            request.strip_components = 0;
+            request.required_paths = vec![PathBuf::from("dotnet")];
+            let result = test_installer().install(&request);
+            server.join().unwrap();
+            if accepted {
+                assert_eq!(
+                    fs::read(result.unwrap().install_dir.join("dotnet")).unwrap(),
+                    b"sdk"
+                );
+            } else {
+                assert!(matches!(result, Err(Error::UnsafeArchiveEntry { .. })));
+                assert!(!final_dir(root.path()).exists());
+            }
+        }
     }
 
     #[test]
