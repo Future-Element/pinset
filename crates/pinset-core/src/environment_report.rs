@@ -75,6 +75,10 @@ pub struct EnvironmentDescriptor {
     pub requirements: Option<crate::ProjectRequirements>,
     #[serde(default)]
     pub variables: BTreeMap<String, VariableRequirement>,
+    #[serde(default)]
+    pub configuration_origins: BTreeMap<String, String>,
+    #[serde(default)]
+    pub directory_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +96,7 @@ impl EnvironmentDescriptor {
         let mut report = self.clone();
         report.project_root = None;
         report.context_fingerprint = None;
+        report.directory_identity = None;
         for runtime in &mut report.runtimes {
             runtime.executable = None;
         }

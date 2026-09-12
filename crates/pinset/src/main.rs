@@ -6303,6 +6303,14 @@ fn install_project_with_python_environment(
         offline,
         catalog,
     )?;
+    if let Some(flutter) = policy_lock.tool("flutter") {
+        pinset_core::prepare_workspace_flutter(
+            &home,
+            &config_path,
+            &flutter.installation_version(),
+            &current_target_for_tool("flutter"),
+        )?;
+    }
     if let Some(requested) = project.tools.get("python") {
         let distribution = selected_version_from_lock(
             "python",

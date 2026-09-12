@@ -464,7 +464,15 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     vscode.commands.registerCommand("pinset.restoreBindings", async () => {
       const folder = await trustedFolder();
       if (!folder) return;
-      try { await restoreBindings(folder, extensionContext.workspaceState); await refreshFolder(folder); }
+      try {
+        const context = await store.refresh(folder);
+        if (!context.descriptor) throw new Error("Restoration requires a current Pinset environment report.");
+        await restoreBindings(folder, context.descriptor, extensionContext.workspaceState, async () => {
+          const fresh = await store.refresh(folder);
+          if (fresh.descriptor?.directory_identity !== context.descriptor?.directory_identity) throw new Error("Directory or host changed; existing bindings were preserved.");
+        });
+        await refreshFolder(folder);
+      }
       catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
     }),
     vscode.tasks.registerTaskProvider("pinset", taskProvider),

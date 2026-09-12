@@ -11,4 +11,5 @@ pinset-core = { path = "../pinset-core", features = ["lockfile", "environment-se
 zeroize.workspace = true
 
 [dev-dependencies]
+pinset-core = { path = "../pinset-core", features = ["project-write"] }
 tempfile.workspace = true

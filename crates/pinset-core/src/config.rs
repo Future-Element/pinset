@@ -406,6 +406,65 @@ pub fn load_effective_project_config(path: &Path) -> Result<ProjectConfig> {
     effective_project_config(path, &config)
 }
 
+/// The encrypted profile files are relative to the declaration that owns them.
+/// Trust and local profile selection remain bound to the requesting member.
+pub fn project_environment_source(path: &Path) -> Result<PathBuf> {
+    let member = parse_project_config(path)?;
+    if member.environment.is_none()
+        && let Some((root_path, _)) = workspace_root_for_member(path)?
+    {
+        return Ok(root_path);
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Portable provenance labels; never expose another machine's filesystem paths.
+pub fn project_configuration_origins(path: &Path) -> Result<BTreeMap<String, String>> {
+    let member = parse_project_config(path)?;
+    let Some((_, root)) = workspace_root_for_member(path)? else {
+        return Ok(BTreeMap::from([("scope".into(), "project".into())]));
+    };
+    let mut origins = BTreeMap::from([("scope".into(), "workspace_member".into())]);
+    for tool in root.tools.keys().chain(member.tools.keys()) {
+        origins.insert(
+            format!("tools.{tool}"),
+            if member.tools.contains_key(tool) {
+                "member"
+            } else {
+                "workspace_root"
+            }
+            .into(),
+        );
+    }
+    for (name, overridden) in [
+        ("environment", member.environment.is_some()),
+        ("python", member.python.is_some()),
+        ("requirements", member.requirements.is_some()),
+    ] {
+        origins.insert(
+            name.into(),
+            if overridden {
+                "member"
+            } else {
+                "workspace_root"
+            }
+            .into(),
+        );
+    }
+    for task in root.tasks.keys().chain(member.tasks.keys()) {
+        origins.insert(
+            format!("tasks.{task}"),
+            if member.tasks.contains_key(task) {
+                "member"
+            } else {
+                "workspace_root"
+            }
+            .into(),
+        );
+    }
+    Ok(origins)
+}
+
 pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<ProjectConfig> {
     let Some((_, root)) = workspace_root_for_member(path)? else {
         validate_environment_config(member)?;

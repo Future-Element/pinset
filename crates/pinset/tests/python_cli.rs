@@ -193,7 +193,7 @@ fn write_python_lock(project: &Path) {
 }
 
 fn create_fake_environment(project: &Path) -> std::path::PathBuf {
-    create_fake_environment_at(project, "default", ".venv", 1)
+    create_fake_environment_at(project, "default", ".venv")
 }
 
 fn create_fake_named_environment(
@@ -201,14 +201,13 @@ fn create_fake_named_environment(
     name: &str,
     relative_path: &str,
 ) -> std::path::PathBuf {
-    create_fake_environment_at(project, name, relative_path, 2)
+    create_fake_environment_at(project, name, relative_path)
 }
 
 fn create_fake_environment_at(
     project: &Path,
     name: &str,
     relative_path: &str,
-    schema: u32,
 ) -> std::path::PathBuf {
     let root = project.join(relative_path);
     let commands = if cfg!(windows) {
@@ -220,17 +219,7 @@ fn create_fake_environment_at(
     fs::write(root.join("pyvenv.cfg"), "home = pinset-test\n").expect("pyvenv");
     fs::write(
         root.join(".pinset-venv.toml"),
-        if schema == 1 {
-            format!(
-                "schema = 1\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n",
-                pinset_core::current_target_for_tool("python")
-            )
-        } else {
-            format!(
-                "schema = 2\nenvironment = \"{name}\"\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n",
-                pinset_core::current_target_for_tool("python")
-            )
-        },
+        format!("schema = 3\nenvironment = \"{name}\"\ndistribution = \"{DISTRIBUTION}\"\ntarget = \"{}\"\n[directory]\n{}", pinset_core::current_target_for_tool("python"), toml::to_string(&pinset_core::work_directory_identity(project).unwrap()).unwrap()),
     )
     .expect("marker");
     write_python(&commands);

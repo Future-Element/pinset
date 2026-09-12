@@ -109,6 +109,8 @@ struct TrustRecord {
     project_id: String,
     root: String,
     environment_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    directory: Option<pinset_core::WorkDirectoryIdentity>,
 }
 
 pub fn validate_variable_name(name: &str) -> Result<()> {
@@ -465,10 +467,11 @@ pub fn trust_project(
     environment_toml: &str,
 ) -> Result<()> {
     let record = TrustRecord {
-        schema: 1,
+        schema: 2,
         project_id: project_id.to_owned(),
         root: canonical_root(root)?.to_string_lossy().into_owned(),
         environment_fingerprint: fingerprint(environment_toml),
+        directory: Some(directory_identity(root)?),
     };
     let path = trust_path(home, root)?;
     let bytes = toml::to_string_pretty(&record)
@@ -495,9 +498,10 @@ pub fn verify_project_trust(
     })?;
     let record: TrustRecord = toml::from_str(&content).map_err(|_| Error::TrustChanged)?;
     let canonical = canonical_root(root)?.to_string_lossy().into_owned();
-    if record.schema != 1
+    if record.schema != 2
         || record.project_id != project_id
         || record.root != canonical
+        || record.directory.as_ref() != Some(&directory_identity(root)?)
         || record.environment_fingerprint != fingerprint(environment_toml)
     {
         return Err(Error::TrustChanged);
@@ -590,11 +594,16 @@ fn save_identity_metadata(home: &Path, metadata: &IdentityMetadata) -> Result<()
 }
 
 fn trust_path(home: &Path, root: &Path) -> Result<PathBuf> {
-    let canonical = canonical_root(root)?;
-    Ok(home.join("state").join("trust").join(format!(
-        "{}.toml",
-        fingerprint(&canonical.to_string_lossy())
-    )))
+    Ok(home
+        .join("state/trust/v2")
+        .join(format!("{}.toml", directory_identity(root)?.namespace)))
+}
+
+fn directory_identity(root: &Path) -> Result<pinset_core::WorkDirectoryIdentity> {
+    pinset_core::work_directory_identity(root).map_err(|source| Error::Io {
+        path: root.to_path_buf(),
+        source,
+    })
 }
 
 fn canonical_root(root: &Path) -> Result<PathBuf> {
@@ -682,6 +691,31 @@ mod tests {
             verify_project_trust(home.path(), root.path(), "project", "policy-b"),
             Err(Error::TrustChanged)
         ));
+    }
+
+    #[test]
+    fn rebuilt_directory_and_foreign_host_do_not_inherit_trust() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let root = temp.path().join("project");
+        fs::create_dir(&root).unwrap();
+        trust_project(&home, &root, "project", "policy").unwrap();
+        let path = trust_path(&home, &root).unwrap();
+        let mut record: TrustRecord = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        record.directory.as_mut().unwrap().host = "another-host".into();
+        fs::write(&path, toml::to_string(&record).unwrap()).unwrap();
+        assert!(matches!(
+            verify_project_trust(&home, &root, "project", "policy"),
+            Err(Error::TrustChanged)
+        ));
+        trust_project(&home, &root, "project", "policy").unwrap();
+        fs::rename(&root, temp.path().join("previous")).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(matches!(
+            verify_project_trust(&home, &root, "project", "policy"),
+            Err(Error::TrustMissing)
+        ));
+        assert!(path.is_file(), "prior state is retained for review");
     }
 
     #[test]

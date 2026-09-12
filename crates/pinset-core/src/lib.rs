@@ -126,6 +126,12 @@ mod target;
 #[cfg(feature = "project-write")]
 pub use state_write_lock::acquire_setup_state_write_lock;
 mod user_settings;
+mod work_directory;
+pub use work_directory::{WorkDirectoryIdentity, work_directory_identity};
+mod workspace_runtime;
+#[cfg(feature = "project-write")]
+pub use workspace_runtime::prepare_workspace_flutter;
+pub use workspace_runtime::{prepared_workspace_flutter, workspace_flutter_directory};
 
 #[cfg(feature = "lockfile")]
 pub use config::validate_project_lock_policy;
@@ -136,8 +142,9 @@ pub use config::{
     ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectRequirements, ProjectTask,
     ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
     find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
-    load_effective_project_config, load_project_config, project_task_order,
-    validate_environment_variable_value, workspace_members,
+    load_effective_project_config, load_project_config, project_configuration_origins,
+    project_environment_source, project_task_order, validate_environment_variable_value,
+    workspace_members,
 };
 #[cfg(feature = "project-write")]
 pub use config::{create_project_config, save_project_config};

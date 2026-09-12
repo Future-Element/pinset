@@ -515,6 +515,17 @@ fn blocks_mutating_a_managed_flutter_sdk_before_invoking_it() {
     )
     .expect("project config");
     create_fake_flutter(&home, "3.47.0");
+    let shared = home
+        .join("installs/flutter/3.47.0")
+        .join(pinset_core::current_target_for_tool("flutter"));
+    fs::write(shared.join(".pinset-install.toml"), "fixture receipt").unwrap();
+    pinset_core::prepare_workspace_flutter(
+        &home,
+        &project.join("pinset.toml"),
+        "3.47.0",
+        &pinset_core::current_target_for_tool("flutter"),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_pinset-shim"))
         .args(["--as", "flutter", "--cwd"])

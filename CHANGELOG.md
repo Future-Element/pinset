@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.15.0 - Unreleased
+
+- Bind local profiles, trust, Python environments, editor bindings and readiness evidence to the canonical work directory, its filesystem generation and the runtime host.
+- Resolve inherited workspace environment files from their declaring root while retaining member-specific profile choice and trust; explain effective configuration origins.
+- Isolate Flutter SDK caches in owned work-directory copies while reusing verified downloads and base installations. Preserve legacy local state for explicit migration and keep SDK pruning reference-aware.
+
 ## 2.14.0 - Unreleased
 
 - Check declared Node/bundled npm, Python, Go, Rust, Java/Gradle/AGP and .NET compatibility with explicit pass, fail, unknown and not-applicable results, revisioned rules and primary references.
