@@ -92,6 +92,10 @@
       {
         "command": "pinset.restoreBindings",
         "title": "Pinset: Restore Editor Bindings"
+      },
+      {
+        "command": "pinset.probeDebug",
+        "title": "Pinset: Probe Native Debugger"
       }
     ],
     "configuration": {
@@ -151,6 +155,10 @@
         },
         {
           "command": "pinset.restoreBindings",
+          "when": "view == pinset.environments"
+        },
+        {
+          "command": "pinset.probeDebug",
           "when": "view == pinset.environments"
         }
       ]

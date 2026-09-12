@@ -18,6 +18,10 @@ const LIMIT: u64 = 64 * 1024;
 pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<()> {
     for runtime in &report.runtimes {
         let Some(executable) = runtime.executable.as_deref().map(Path::new) else {
+            if matches!(runtime.tool.as_str(), "node" | "python" | "flutter") {
+                report.evidence.push(evidence(report.context_fingerprint.as_deref(), "managed-command", &runtime.tool,
+                    ReadinessState::Unknown, None, None, None, "managed_runtime_unavailable"));
+            }
             continue;
         };
         let arguments: Vec<&str> = match runtime.tool.as_str() {

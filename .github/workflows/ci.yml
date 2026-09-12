@@ -366,7 +366,15 @@ jobs:
         run: |
           suffix=""
           if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi
-          python scripts/tests/environment_setup_test.py "target/debug/pinset${suffix}"
+          npm ci --prefix editors/vscode
+          npm run compile --prefix editors/vscode
+          npm install --prefix "${RUNNER_TEMP}/pinset-editor-test" --no-audit --no-fund @vscode/test-electron@2.5.2
+          export PINSET_EDITOR_TEST_MODULES="${RUNNER_TEMP}/pinset-editor-test/node_modules"
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            xvfb-run -a python scripts/tests/environment_setup_test.py "target/debug/pinset${suffix}"
+          else
+            python scripts/tests/environment_setup_test.py "target/debug/pinset${suffix}"
+          fi
 
   website:
     name: Validate documentation website

@@ -213,6 +213,7 @@ pub fn collect(
     profile: Option<&str>,
     no_env: bool,
 ) -> ReportResult<EnvironmentDescriptor> {
+    let no_env = no_env || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1");
     let home = pinset_home()?;
     let path = find_optional_project_config(cwd)?;
     let mut report = EnvironmentDescriptor {
@@ -397,7 +398,7 @@ pub fn collect(
 
 /// Explicit execution may check a trusted environment; background collection never decrypts it.
 pub fn verify_environment(cwd: &Path, report: &mut EnvironmentDescriptor, no_env: bool) {
-    if no_env || report.profile.is_none() {
+    if no_env || report.profile_source == "disabled" || report.profile.is_none() {
         return;
     }
     let result = crate::environment::resolve_environment(cwd, report.profile.as_deref()).map(

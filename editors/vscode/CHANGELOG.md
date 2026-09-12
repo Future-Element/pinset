@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.2.0 (unreleased)
+
+- Add per-folder environment preparation, readiness and execution evidence.
+- Preview and restore Node, Python and Flutter workspace bindings.
+- Observe controlled native debugger launches independently of configuration readiness.
+- Negotiate protocol 2 with CLI 2.13+ while retaining protocol 1 compatibility.
+
 ## 1.1.1
 
 - Add the Pinset brand icon to the Visual Studio Marketplace package.

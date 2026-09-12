@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 
 import { diagnosticDocument } from "./diagnostic-model";
 import { EnvironmentPanel, bindEnvironment, restoreBindings } from "./environment-panel";
+import { appendDebugEvidence, debugProbe } from "./debug-probe";
 import { INSTALL_GUIDE_URL, installerPlan } from "./install";
 import { isMissingExecutableError, PinsetProcessError, processStartError } from "./process-error";
 import { parseContext, validateDescriptor, type PinsetContext, type PinsetFinding } from "./protocol";
@@ -378,6 +379,21 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     taskProvider,
     panel,
     vscode.window.registerTreeDataProvider("pinset.environments", panel),
+    vscode.commands.registerCommand("pinset.probeDebug", async (requestedTool?: string) => {
+      const folder = await trustedFolder();
+      if (!folder || !extensionContext.storageUri) return undefined;
+      const context = await store.refresh(folder);
+      if (!context.descriptor) throw new Error("Native probes require Pinset 2.13 or newer.");
+      const runtimes = context.descriptor.runtimes.filter(runtime => ["node", "python", "flutter"].includes(runtime.tool));
+      const runtime = typeof requestedTool === "string" ? runtimes.find(runtime => runtime.tool === requestedTool)
+        : (await vscode.window.showQuickPick(runtimes.map(runtime => ({label: runtime.tool, runtime})), {placeHolder: "Observe a controlled native debug launch (project secrets are excluded)"}))?.runtime;
+      if (!runtime) return undefined;
+      const evidence = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: `Observing ${runtime.tool} debugger`, cancellable: true},
+        (_progress, token) => debugProbe(folder, runtime, extensionContext.storageUri!, token));
+      if (store.get(folder) !== context) throw new Error("Project changed while probing; repeat the probe.");
+      appendDebugEvidence(context.descriptor, evidence); panel.changed();
+      return evidence;
+    }),
     vscode.commands.registerCommand("pinset.prepareEnvironment", async () => {
       const folder = await trustedFolder();
       if (!folder) return;

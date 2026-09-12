@@ -4471,7 +4471,7 @@ fn workspace_update_preview(
     })
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
+const COMPLETION_COMMANDS: &str = "init setup detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
@@ -4516,6 +4516,7 @@ fn completion_script(shell: ActivationShell) -> String {
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
             detect) values="--cwd --json --lang --help" ;;
+            setup) values="--plan --yes --resume --offline --task --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
@@ -4530,7 +4531,7 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
@@ -4563,6 +4564,7 @@ _pinset_completion() {
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
             detect) values="--cwd --json --lang --help" ;;
+            setup) values="--plan --yes --resume --offline --task --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
@@ -4577,7 +4579,7 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;

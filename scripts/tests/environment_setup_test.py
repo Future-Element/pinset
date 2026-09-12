@@ -77,6 +77,9 @@ def main() -> None:
         print(json.dumps({"platform": sys.platform, "prepared": True, "native_shells": True,
                           "managed_node_python_probes": True, "editor_refresh_ms": samples,
                           "native_ide_debug_test": "not covered by CLI acceptance"}))
+        if os.environ.get("PINSET_EDITOR_TEST_MODULES"):
+            subprocess.run(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]],
+                           env=env, check=True, timeout=600)
 
 
 if __name__ == "__main__":
