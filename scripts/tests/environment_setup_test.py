@@ -6,10 +6,28 @@ import os
 import platform
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
+
+
+def run_editor(arguments: list[str], env: dict[str, str]) -> None:
+    print("Starting native editor acceptance: " + env.get("PINSET_EDITOR_TEST_TOOLS", "node,python"), flush=True)
+    process = subprocess.Popen(arguments, env=env, start_new_session=os.name != "nt",
+                               creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    try:
+        code = process.wait(timeout=600)
+        if code:
+            raise subprocess.CalledProcessError(code, arguments)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill.exe", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=30, check=False)
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=30)
+        raise
 
 
 def main() -> None:
@@ -97,8 +115,7 @@ def main() -> None:
                           "managed_node_python_probes": True, "legacy_editor_refresh_ms": legacy_samples, "editor_refresh_ms": samples,
                           "native_ide_debug_test": "not covered by CLI acceptance"}))
         if os.environ.get("PINSET_EDITOR_TEST_MODULES"):
-            subprocess.run(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]],
-                           env=env, check=True, timeout=600)
+            run_editor(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]], env)
         # Flutter has no built-in Linux ARM64 archive. Keep that boundary explicit.
         if not (sys.platform == "linux" and platform.machine().lower() in ("aarch64", "arm64")):
             run("use", "flutter@3.35.3", "java@21", "--no-install")
@@ -116,8 +133,7 @@ def main() -> None:
             assert "java.home =" in java_output.stderr
             if os.environ.get("PINSET_EDITOR_TEST_MODULES"):
                 flutter_env = dict(env, PINSET_EDITOR_TEST_TOOLS="flutter", PINSET_EDITOR_TEST_FLUTTER_SDK=str(sdk))
-                subprocess.run(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]],
-                               env=flutter_env, check=True, timeout=600)
+                run_editor(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]], flutter_env)
             print(json.dumps({"flutter_sdk": "native dart process observed", "java": "native version process observed", "application_build": "not verified"}))
 
 
