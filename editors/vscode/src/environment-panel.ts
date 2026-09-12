@@ -48,7 +48,11 @@ export class EnvironmentPanel implements vscode.TreeDataProvider<Row>, vscode.Di
         ], runtime.selection_source)),
         ...report.checks.filter(check => check.state !== "pass" && check.state !== "not_applicable")
           .map(check => new Row(check.id, [], `${check.state}: ${check.reason}${check.next_step ? `; ${check.next_step}` : ""}`)),
-        ...report.evidence.map(evidence => new Row(`${evidence.tool} / ${evidence.entry}`, [], `${evidence.state}: ${evidence.reason}`)),
+        ...report.evidence.map(evidence => new Row(`${evidence.tool} / ${evidence.entry}`, [
+          new Row("Expected executable", [], evidence.expected_executable ?? "not included in this evidence"),
+          new Row("Observed executable", [], evidence.observed_executable ?? "not included in this evidence"),
+          new Row("Observed version", [], evidence.observed_version ?? "not observed"),
+        ], `${evidence.state}: ${evidence.reason}`)),
         new Row("Other debug / test / existing terminals", [], "Verify each entry separately"),
       ];
       return new Row(folder.name, children);

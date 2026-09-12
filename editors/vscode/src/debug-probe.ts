@@ -4,7 +4,10 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { EnvironmentDescriptor, RuntimeDescriptor } from "./protocol";
 
-export interface DebugEvidence { tool: string; entry: string; state: "pass" | "fail" | "unknown"; reason: string; observed_version?: string; }
+export interface DebugEvidence {
+  tool: string; entry: string; state: "pass" | "fail" | "unknown"; reason: string; observed_version?: string;
+  expected_executable?: string; observed_executable?: string; observed_unix_ms?: number; context_fingerprint?: string | null;
+}
 
 /** Observe only this controlled launch, never general user debug sessions or their output. */
 export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: RuntimeDescriptor, storage: vscode.Uri,
@@ -99,7 +102,8 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
     };
     const equal = await identity(expected).then(async expectedPath => expectedPath === await identity(observed!.executable)).catch(() => false);
     const version = language === "flutter" || runtime.locked_version === observed.version || runtime.locked_version?.startsWith(`${observed.version}+`);
-    return result(equal && version ? "pass" : "fail", equal && version ? "native_debug_process_observed_without_project_secrets" : "native_debug_runtime_mismatch", observed.version);
+    return { ...result(equal && version ? "pass" : "fail", equal && version ? "native_debug_process_observed_without_project_secrets" : "native_debug_runtime_mismatch", observed.version),
+      expected_executable: expected, observed_executable: observed.executable, observed_unix_ms: Date.now() };
   } finally {
     clearTimeout(timeout); clearInterval(observationTimer); tracker.dispose(); start.dispose(); termination.dispose(); cancellation.dispose();
     if (session) await vscode.debug.stopDebugging(session);
@@ -108,6 +112,7 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
 }
 
 export function appendDebugEvidence(report: EnvironmentDescriptor, evidence: DebugEvidence): void {
-  report.evidence = [...report.evidence.filter(old => old.tool !== evidence.tool || old.entry !== evidence.entry), evidence];
+  report.evidence = [...report.evidence.filter(old => old.tool !== evidence.tool || old.entry !== evidence.entry),
+    { ...evidence, context_fingerprint: report.context_fingerprint, observed_unix_ms: evidence.observed_unix_ms ?? Date.now() }];
   report.execution_verified = report.evidence.length > 0 && report.evidence.every(item => item.state === "pass");
 }
