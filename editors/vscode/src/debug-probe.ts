@@ -16,7 +16,13 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
   const extensionId = language === "python" ? "ms-python.debugpy" : language === "flutter" ? "Dart-Code.dart-code" : "ms-vscode.js-debug";
   const extension = vscode.extensions.getExtension(extensionId);
   if (!extension) return result("unknown", "native_debug_extension_unavailable");
-  await extension.activate();
+  let activationTimer: NodeJS.Timeout | undefined;
+  const activated = await Promise.race([
+    extension.activate().then(() => true),
+    new Promise<false>(resolve => { activationTimer = setTimeout(() => resolve(false), 30_000); }),
+  ]).finally(() => { if (activationTimer) clearTimeout(activationTimer); });
+  if (!activated) return result("unknown", "native_debug_extension_activation_timed_out");
+  if (token.isCancellationRequested) return result("unknown", "probe_cancelled");
   const nonce = randomUUID();
   const marker = `PINSET_PROBE_${nonce}:`;
   const directory = vscode.Uri.joinPath(storage, "probes", nonce);
@@ -73,13 +79,19 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
   const start = vscode.debug.onDidStartDebugSession(started => { if (started.name === name || started.configuration.program === file.fsPath) session = started; });
   const termination = vscode.debug.onDidTerminateDebugSession(ended => { if (ended === session) resolveDone?.(); });
   const cancellation = token.onCancellationRequested(() => { resolveDone?.(); if (session) void vscode.debug.stopDebugging(session); });
-  const timeout = setTimeout(() => resolveDone?.(), 30_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; resolveDone?.(); }, 30_000);
   try {
     if (token.isCancellationRequested) return result("unknown", "probe_cancelled");
-    if (!await vscode.debug.startDebugging(folder, config)) return result("unknown", "debug_adapter_declined_launch");
+    // Language extensions can leave startDebugging pending while displaying a prompt.
+    // The cancellation/deadline must also bound that launch promise, not just process output.
+    const launch = vscode.debug.startDebugging(folder, config);
+    const started = await Promise.race([launch, done.then(() => undefined)]);
+    if (started === false) return result("unknown", "debug_adapter_declined_launch");
     await done;
     await readObservation();
     if (token.isCancellationRequested) return result("unknown", "probe_cancelled");
+    if (timedOut && !observed) return result("unknown", "debug_probe_timed_out");
     if (!observed) return result("unknown", "debug_process_not_observed");
     const identity = async (value: string): Promise<string> => {
       const result = language === "python" ? path.join(await fs.realpath(path.dirname(value)), path.basename(value)) : await fs.realpath(value);

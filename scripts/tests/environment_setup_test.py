@@ -14,7 +14,9 @@ import time
 
 def main() -> None:
     cli = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="pinset-environment-") as temporary:
+    # macOS AF_UNIX socket names are limited to 103 bytes. Keep VS Code's user-data
+    # root short while still exercising project/runtime paths containing spaces.
+    with tempfile.TemporaryDirectory(prefix="pinset-env-", dir="/tmp" if sys.platform == "darwin" else None) as temporary:
         root = Path(temporary)
         project = root / "project with spaces"
         project.mkdir()
