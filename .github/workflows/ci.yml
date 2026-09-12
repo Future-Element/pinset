@@ -340,7 +340,9 @@ jobs:
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            python -m pip install --only-binary=:all: pywinpty==3.0.5
+            # 3.x has reported ConPTY read/write stalls (andfoy/pywinpty#545).
+            # Keep the native terminal fixture on the compatible pre-3.x transport.
+            python -m pip install --only-binary=:all: pywinpty==2.0.15
           elif [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
             sudo apt-get install -y gnome-keyring dbus-x11
