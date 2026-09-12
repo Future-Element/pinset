@@ -125,12 +125,15 @@ def main() -> None:
             assert flutter_setup["report"]["environment_ready"], flutter_setup
             sdk = Path(run("which", "flutter").strip()).parent.parent
             dart_probe = project / "sdk_probe.dart"
-            dart_probe.write_text("import 'dart:io'; void main() { print(Platform.resolvedExecutable); }", encoding="utf-8")
+            dart_probe.write_text("import 'dart:io'; void main() { print('PINSET_DART_EXECUTABLE:' + Platform.resolvedExecutable); }", encoding="utf-8")
             dart_output = run("--", "dart", str(dart_probe)).strip()
-            assert Path(dart_output).resolve().is_relative_to(sdk.resolve()), dart_output
+            observed = [line.removeprefix("PINSET_DART_EXECUTABLE:") for line in dart_output.splitlines() if line.startswith("PINSET_DART_EXECUTABLE:")]
+            assert len(observed) == 1 and Path(observed[0]).resolve().is_relative_to(sdk.resolve()), dart_output
             java_output = subprocess.run([str(cli), "--", "java", "-XshowSettings:properties", "-version"],
                                          cwd=project, env=env, capture_output=True, text=True, check=True, timeout=30)
-            assert "java.home =" in java_output.stderr
+            java_homes = [line.split("=", 1)[1].strip() for line in java_output.stderr.splitlines() if line.strip().startswith("java.home =")]
+            expected_java_home = Path(run("which", "java").strip()).parent.parent.resolve()
+            assert len(java_homes) == 1 and Path(java_homes[0]).resolve() == expected_java_home, java_output.stderr
             if os.environ.get("PINSET_EDITOR_TEST_MODULES"):
                 flutter_env = dict(env, PINSET_EDITOR_TEST_TOOLS="flutter", PINSET_EDITOR_TEST_FLUTTER_SDK=str(sdk))
                 run_editor(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]], flutter_env)
