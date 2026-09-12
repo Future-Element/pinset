@@ -14,13 +14,14 @@ async function main() {
     "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.autoUpdate": false,
   }));
   const version = "stable";
-  const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(home, "vscode-download") });
-  await runVSCodeCommand(["--install-extension", "ms-python.python", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
-  await runVSCodeCommand(["--install-extension", "ms-python.debugpy", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
+  const download = { version, cachePath: path.join(home, "vscode-download") };
+  const vscodeExecutablePath = await downloadAndUnzipVSCode(download);
+  await runVSCodeCommand(["--install-extension", "ms-python.python", "--extensions-dir", extensionsDir, "--user-data-dir", userData], download);
+  await runVSCodeCommand(["--install-extension", "ms-python.debugpy", "--extensions-dir", extensionsDir, "--user-data-dir", userData], download);
   if (process.env.PINSET_EDITOR_TEST_FLUTTER_SDK) {
     await fs.mkdir(path.join(project, ".vscode"), { recursive: true });
     await fs.writeFile(path.join(project, ".vscode/settings.json"), JSON.stringify({ "dart.flutterSdkPath": process.env.PINSET_EDITOR_TEST_FLUTTER_SDK }));
-    await runVSCodeCommand(["--install-extension", "Dart-Code.flutter", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
+    await runVSCodeCommand(["--install-extension", "Dart-Code.flutter", "--extensions-dir", extensionsDir, "--user-data-dir", userData], download);
   }
   await runTests({ vscodeExecutablePath, extensionDevelopmentPath,
     extensionTestsPath: path.resolve(__dirname, "editor_environment_suite.cjs"),

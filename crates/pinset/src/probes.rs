@@ -111,7 +111,13 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
             .map(str::to_owned);
         let matches = actual
             .as_deref()
-            .is_some_and(|actual| same_executable(executable, actual))
+            .is_some_and(|actual| {
+                if runtime.tool == "python" {
+                    same_python_invocation(executable, actual)
+                } else {
+                    same_executable(executable, actual)
+                }
+            })
             && version
                 .as_deref()
                 .zip(runtime.locked_version.as_deref())
@@ -145,6 +151,25 @@ fn same_executable(expected: &Path, actual: &Path) -> bool {
     let expected = std::fs::canonicalize(expected).ok();
     let actual = std::fs::canonicalize(actual).ok();
     expected.is_some() && expected == actual
+}
+
+// A venv executable can be a symlink to its base interpreter. Resolving that final symlink
+// would incorrectly accept a process launched directly through the base interpreter.
+fn same_python_invocation(expected: &Path, actual: &Path) -> bool {
+    let parent = |path: &Path| path.parent().and_then(|parent| std::fs::canonicalize(parent).ok());
+    let filename = |path: &Path| {
+        path.file_name().map(|name| {
+            let name = name.to_string_lossy();
+            if cfg!(windows) {
+                name.to_ascii_lowercase()
+            } else {
+                name.into_owned()
+            }
+        })
+    };
+    parent(expected).is_some()
+        && parent(expected) == parent(actual)
+        && filename(expected) == filename(actual)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -275,6 +300,23 @@ mod tests {
             Path::new("missing-first-probe"),
             Path::new("missing-second-probe")
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn venv_and_base_interpreter_are_distinct_even_when_symlinked() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join("base");
+        let venv = root.path().join("venv");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::create_dir(&venv).unwrap();
+        let base_python = base.join("python");
+        let venv_python = venv.join("python");
+        std::fs::write(&base_python, "fixture").unwrap();
+        std::os::unix::fs::symlink(&base_python, &venv_python).unwrap();
+        assert!(same_executable(&venv_python, &base_python));
+        assert!(!same_python_invocation(&venv_python, &base_python));
+        assert!(same_python_invocation(&venv_python, &venv_python));
     }
 
     #[cfg(unix)]
