@@ -13,3 +13,5 @@ Implementation authorized on 2026-09-12. Development versions merge after valida
 Validation uses local Docker first, as authorized on 2026-09-12. Merge-required CI and platform-specific native acceptance are consolidated after local checks pass. Linux containers do not establish Windows/macOS native behavior. Preserve the existing icon/package changes in the original checkout; implementation runs in a separate worktree.
 
 Acceptance remains pending until supported entry points have native execution evidence. Source changes and static checks alone do not complete M0–M2.
+
+2.13 Docker acceptance passed on Linux x64: workspace formatting/Clippy/tests, integration contracts, extension typing/tests/VSIX packaging, website typing/build/SEO, setup/resume/explicit-task handling, managed Node/Python probes, actual VS Code Node/Python/Flutter debug launches and Java home observation. Native versions observed: Node 24.1.0, Python 3.13.15, Flutter 3.35.3 with Dart 3.9.2. Remaining Windows/macOS acceptance and the merge gate are tracked in PR #62; no intermediate release is created.
