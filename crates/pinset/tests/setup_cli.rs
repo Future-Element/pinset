@@ -35,8 +35,28 @@ fn setup_preview_is_read_only_and_never_executes_project_tasks() {
     assert_eq!(value["command"], "setup");
     assert_eq!(value["data"]["tasks"][0], "setup");
     assert_eq!(value["data"]["steps"][0]["id"], "resolve");
+    assert_eq!(value["data"]["environment"]["runtimes"][0]["requested"], "24.0.0");
+    assert!(value["data"]["environment"]["runtimes"][0]["locked_version"].is_null());
     assert!(!home.exists());
     assert!(!root.path().join("pinset.lock").exists());
+}
+
+#[test]
+fn preview_preserves_effective_profile_source_without_decryption() {
+    let root = tempdir().unwrap();
+    let home = root.path().join("home");
+    fs::write(root.path().join("pinset.toml"), "schema = 5\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n[tools]\nnode = \"24.0.0\"\n[environment]\nauto-profile = \"dev\"\n[environment.profiles.dev]\nfile = \".pinset/dev.age\"\nrecipients = [\"age1example\"]\n").unwrap();
+    let output = cli(root.path(), &home, &["setup", "--plan", "--json"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["data"]["profile"], "dev");
+    assert!(value["data"]["requested_profile"].is_null());
+    assert_eq!(value["data"]["environment"]["profile_source"], "project");
+    assert!(!home.exists());
+    let disabled = cli(root.path(), &home, &["--no-env", "setup", "--plan", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&disabled.stdout).unwrap();
+    assert!(value["data"]["profile"].is_null());
+    assert_eq!(value["data"]["environment"]["profile_source"], "disabled");
 }
 
 #[test]

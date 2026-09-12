@@ -42,6 +42,8 @@ pub struct SetupPlan {
     schema: u32,
     root: PathBuf,
     profile: Option<String>,
+    requested_profile: Option<String>,
+    environment: Option<pinset_core::EnvironmentDescriptor>,
     no_env: bool,
     fingerprint: String,
     selections: Vec<String>,
@@ -67,13 +69,14 @@ fn step(id: &str) -> Step {
 }
 
 pub fn plan(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportResult<SetupPlan> {
+    let no_env = no_env || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1");
     let config_path = find_optional_project_config(cwd)?;
     let root = fs::canonicalize(config_path.as_deref().and_then(Path::parent).unwrap_or(cwd))?;
     let mut selections = Vec::new();
     let mut steps = Vec::new();
     let mut blockers = Vec::new();
     let mut tasks = Vec::new();
-    let mut selected_profile = profile.map(str::to_owned);
+    let mut selected_profile = if no_env { None } else { profile.map(str::to_owned) };
     if let Some(path) = &config_path {
         let config = load_effective_project_config(path)?;
         if !no_env {
@@ -148,10 +151,17 @@ pub fn plan(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportResult<Set
     steps.push(step("environment"));
     steps.push(step("readiness"));
     let fingerprint = readiness::fingerprint(&root, selected_profile.as_deref(), no_env)?;
+    let environment = if config_path.is_some() {
+        Some(readiness::collect(&root, profile, no_env)?)
+    } else {
+        None
+    };
     Ok(SetupPlan {
         schema: 1,
         root,
         profile: selected_profile,
+        requested_profile: profile.map(str::to_owned),
+        environment,
         no_env,
         fingerprint,
         selections,
@@ -173,6 +183,10 @@ pub struct SetupOptions<'a> {
 }
 
 pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportResult<i32> {
+    let options = SetupOptions {
+        no_env: options.no_env || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1"),
+        ..options
+    };
     if options.preview {
         let plan = plan(cwd, options.profile, options.no_env)?;
         if options.json {
@@ -206,7 +220,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             || record.plan.no_env != options.no_env
             || options
                 .profile
-                .is_some_and(|profile| record.plan.profile.as_deref() != Some(profile))
+                .is_some_and(|profile| record.plan.requested_profile.as_deref() != Some(profile))
         {
             return Err("setup run belongs to another context or unsupported schema".into());
         }
@@ -279,7 +293,8 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             Err(error) => {
                 run.plan.steps[index].state = StepState::Failed;
                 // Raw task/environment errors may contain secrets. Persist only a stable reason.
-                run.plan.steps[index].reason = Some(crate::json_error(error.as_ref()).0.to_owned());
+                run.plan.steps[index].reason = Some(error.downcast_ref::<PreparationFailure>()
+                    .map_or_else(|| crate::json_error(error.as_ref()).0.to_owned(), |failure| failure.reason.clone()));
                 for item in run.plan.steps.iter_mut().skip(index + 1) {
                     item.state = StepState::Blocked;
                 }
@@ -299,7 +314,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             }
         }
     }
-    let mut report = readiness::collect(&root, run.plan.profile.as_deref(), run.plan.no_env)?;
+    let mut report = readiness::collect(&root, run.plan.requested_profile.as_deref(), run.plan.no_env)?;
     readiness::verify_environment(&root, &mut report, run.plan.no_env);
     if report.environment_ready
         && let Some(task) = options.task
@@ -308,7 +323,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         let mut args = Vec::new();
         if run.plan.no_env {
             args.push("--no-env");
-        } else if let Some(profile) = options.profile {
+        } else if let Some(profile) = run.plan.requested_profile.as_deref() {
             args.extend(["-e", profile]);
         }
         args.extend(["run", task]);
@@ -379,21 +394,18 @@ fn execute(
             quiet,
         ),
         "environment" => {
-            let mut report = readiness::collect(&plan.root, plan.profile.as_deref(), plan.no_env)?;
+            let mut report = readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
             readiness::verify_environment(&plan.root, &mut report, plan.no_env);
-            if report.checks.iter().any(|item| {
+            if let Some(item) = report.checks.iter().find(|item| {
                 item.id == "environment"
                     && matches!(item.state, ReadinessState::Fail | ReadinessState::Unknown)
             }) {
-                return Err(
-                    "environment requires attention; run pinset env check or pinset trust status"
-                        .into(),
-                );
+                return Err(Box::new(PreparationFailure { reason: item.reason.clone() }));
             }
             Ok(())
         }
         "readiness" => {
-            let mut report = readiness::collect(&plan.root, plan.profile.as_deref(), plan.no_env)?;
+            let mut report = readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
             readiness::verify_environment(&plan.root, &mut report, plan.no_env);
             if !report.environment_ready {
                 return Err(
@@ -463,6 +475,11 @@ fn child(cwd: &Path, args: &[&str], quiet: bool) -> ReportResult<()> {
 }
 
 fn ensure_baseline(plan: &SetupPlan) -> ReportResult<()> {
+    if !plan.no_env && let Some(path) = find_optional_project_config(&plan.root)? {
+        let config = load_effective_project_config(&path)?;
+        let selected = pinset_core::environment_selection(&pinset_home()?, &path, &config, plan.requested_profile.as_deref())?;
+        if selected.profile != plan.profile { return Err("environment selection changed; review a new setup --plan".into()); }
+    }
     if readiness::fingerprint(&plan.root, plan.profile.as_deref(), plan.no_env)? != plan.fingerprint
     {
         return Err(
@@ -497,6 +514,11 @@ fn save(home: &Path, run: &SetupRun) -> ReportResult<()> {
 }
 
 fn show(plan: &SetupPlan, catalog: Catalog) {
+    if let Some(environment) = &plan.environment {
+        for runtime in &environment.runtimes {
+            println!("{}: {} (requested: {})", runtime.tool, runtime.locked_version.as_deref().unwrap_or("unlocked"), runtime.requested);
+        }
+    }
     if catalog.language() == crate::i18n::Language::SimplifiedChinese {
         println!("项目：{}", plan.root.display());
         for selection in &plan.selections {
@@ -523,3 +545,12 @@ fn show(plan: &SetupPlan, catalog: Catalog) {
     }
     println!("Encrypted values and project tasks are not read or executed by this preview.");
 }
+
+#[derive(Debug)]
+struct PreparationFailure { reason: String }
+impl std::fmt::Display for PreparationFailure {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(output, "environment precondition failed: {}; run pinset env check or pinset trust status", self.reason)
+    }
+}
+impl std::error::Error for PreparationFailure {}
