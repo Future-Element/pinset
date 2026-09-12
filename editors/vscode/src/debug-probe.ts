@@ -45,7 +45,8 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
   const name = `Pinset runtime probe ${nonce}`;
   const config: vscode.DebugConfiguration = { name, type: language === "node" ? "node" : language === "python" ? "debugpy" : "dart",
     request: "launch", program: file.fsPath, cwd: folder.uri.fsPath, console: "internalConsole", noDebug: false,
-    env: { NODE_OPTIONS: "", NODE_PATH: "", PYTHONPATH: "", PYTHONSTARTUP: "", PYTHONINSPECT: "" }, envFile: emptyEnvironment.fsPath };
+    env: { NODE_OPTIONS: "", NODE_PATH: "", PYTHONPATH: "", PYTHONSTARTUP: "", PYTHONINSPECT: "", PYTHONHOME: "",
+      PINSET_IDENTITY: "", PINSET_IDENTITY_FILE: "", PINSET_ENV_PROFILE: "", LD_PRELOAD: "", DYLD_INSERT_LIBRARIES: "" }, envFile: emptyEnvironment.fsPath };
   if (language === "node") { config.runtimeExecutable = expected; config.outputCapture = "std"; }
   if (language === "python") { config.python = expected; config.redirectOutput = true; }
   // Dart Code resolves the SDK through the explicitly bound workspace, then reports the process it launched.
@@ -102,7 +103,7 @@ export async function debugProbe(folder: vscode.WorkspaceFolder, runtime: Runtim
     };
     const equal = await identity(expected).then(async expectedPath => expectedPath === await identity(observed!.executable)).catch(() => false);
     const version = language === "flutter" || runtime.locked_version === observed.version || runtime.locked_version?.startsWith(`${observed.version}+`);
-    return { ...result(equal && version ? "pass" : "fail", equal && version ? "native_debug_process_observed_without_project_secrets" : "native_debug_runtime_mismatch", observed.version),
+    return { ...result(equal && version ? "pass" : "fail", equal && version ? "native_debug_process_observed_without_encrypted_profile_injection" : "native_debug_runtime_mismatch", observed.version),
       expected_executable: expected, observed_executable: observed.executable, observed_unix_ms: Date.now() };
   } finally {
     clearTimeout(timeout); clearInterval(observationTimer); tracker.dispose(); start.dispose(); termination.dispose(); cancellation.dispose();

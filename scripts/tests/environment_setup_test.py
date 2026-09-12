@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Native environment acceptance. Run only in a disposable GitHub Actions VM."""
+"""Native environment acceptance in a disposable Docker container or CI runner."""
 from __future__ import annotations
+from contextlib import contextmanager
 import json
 import os
 import platform
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -11,6 +13,39 @@ import subprocess
 import sys
 import tempfile
 import time
+
+
+def copy_archives(source: Path, destination: Path) -> None:
+    # Reuse only immutable, content-addressed downloads. Installs, venvs, profiles,
+    # trust and editor state remain fresh; Pinset rechecks archive integrity.
+    for algorithm, length in (("sha256", 64), ("sha512", 128)):
+        directory = source / algorithm
+        if directory.is_symlink() or not directory.is_dir():
+            continue
+        for archive in directory.iterdir():
+            if archive.is_symlink() or not archive.is_file() or not re.fullmatch(rf"[0-9a-f]{{{length}}}\.archive", archive.name):
+                continue
+            target = destination / algorithm / archive.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                partial = target.with_suffix(".copying")
+                shutil.copy2(archive, partial)
+                os.replace(partial, target)
+
+
+@contextmanager
+def acceptance_fixture():
+    # macOS AF_UNIX socket names are limited to 103 bytes.
+    with tempfile.TemporaryDirectory(prefix="pinset-env-", dir="/tmp" if sys.platform == "darwin" else None) as temporary:
+        root = Path(temporary)
+        cache = os.environ.get("PINSET_ACCEPTANCE_CACHE")
+        if cache:
+            copy_archives(Path(cache) / "downloads", root / "home/downloads")
+        try:
+            yield root
+        finally:
+            if cache:
+                copy_archives(root / "home/downloads", Path(cache) / "downloads")
 
 
 def run_editor(arguments: list[str], env: dict[str, str]) -> None:
@@ -32,10 +67,7 @@ def run_editor(arguments: list[str], env: dict[str, str]) -> None:
 
 def main() -> None:
     cli = Path(sys.argv[1]).resolve()
-    # macOS AF_UNIX socket names are limited to 103 bytes. Keep VS Code's user-data
-    # root short while still exercising project/runtime paths containing spaces.
-    with tempfile.TemporaryDirectory(prefix="pinset-env-", dir="/tmp" if sys.platform == "darwin" else None) as temporary:
-        root = Path(temporary)
+    with acceptance_fixture() as root:
         project = root / "project with spaces"
         project.mkdir()
         env = dict(os.environ, PINSET_HOME=str(root / "home"), PINSET_TEST_CLI=str(cli))
@@ -86,6 +118,9 @@ def main() -> None:
         run("check", "--probe", "--json", json_output=True)
         assert not marker.exists()
         env.pop("NODE_OPTIONS")
+        env["PINSET_IDENTITY"] = "disposable-probe-credential-marker"
+        run("check", "--probe", "--json", json_output=True)
+        env.pop("PINSET_IDENTITY")
         if os.name == "nt":
             for shell in ("powershell.exe", "pwsh.exe"):
                 assert shutil.which(shell), f"Required shell unavailable: {shell}"

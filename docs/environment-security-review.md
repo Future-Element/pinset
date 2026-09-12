@@ -1,6 +1,6 @@
 # Environment changes: execution boundary review
 
-This review covers the configuration-execution and editor-write changes required by CONTRIBUTING.md. Native acceptance is a separate CI gate; this review does not replace it.
+This review covers the configuration-execution and editor-write changes required by CONTRIBUTING.md. Docker checks and platform-native acceptance are separate verification gates; this review does not replace them.
 
 Preparation previews read configuration, discovery, lock metadata and receipts without resolving online metadata, decrypting profiles or launching tasks. Execution requires an interactive confirmation or explicit `--yes`. Resume binds to a canonical project directory and input fingerprint, revalidates completed steps and refuses changed selections. SDK downloads continue through existing integrity, ownership, platform and install-lock checks. Python environment creation refuses unowned directories. Project tasks require an explicit declared task name and keep the normal task/profile resolver semantics.
 

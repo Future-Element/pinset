@@ -48,14 +48,14 @@ Extension 1.2 adds an Explorer environment panel per folder. The CLI runs in the
 
 插件 1.2 增加各文件夹独立的环境面板，CLI 在工作区扩展宿主运行，远程环境不会套用本机路径。可准备、探测、绑定 Node 调试配置/Python 活动解释器/Flutter SDK。绑定前预览字段差异；恢复仅处理仍等于 Pinset 写入值的字段，保留用户后续修改。
 
-Reopen existing terminals after binding. Missing language APIs/extensions are unavailable, never a pass. Controlled native debugger probes exclude project secrets and prove only their own launch configuration. User debug/test configurations and existing terminals remain unverified until separately observed.
+Reopen existing terminals after binding. Missing language APIs/extensions are unavailable, never a pass. Controlled native debugger probes do not load encrypted profiles, clear Pinset identity fields and prove only their own launch configuration. They retain ordinary host environment variables. User debug/test configurations and existing terminals remain unverified until separately observed.
 
-绑定后需重新打开终端。缺少语言扩展/API 时不报告通过。受控原生调试探测不注入项目秘密，只证明其自身启动配置；用户调试/测试配置与旧终端需分别验证。
+绑定后需重新打开终端。缺少语言扩展/API 时不报告通过。受控原生调试探测不加载加密 profile，并清除 Pinset 身份字段；仍会继承宿主的常规环境变量，只证明其自身启动配置。用户调试/测试配置与旧终端需分别验证。
 
 Adapter references: [Python public API](https://github.com/microsoft/vscode-python/blob/main/src/client/api/types.ts), [Node debug options](https://github.com/microsoft/vscode-js-debug/blob/main/OPTIONS.md), [Dart Code SDK settings](https://dartcode.org/docs/settings/#dartfluttersdkpath). API support and runtime execution are validated separately.
 
 ## Validation and rollback / 验证与回退
 
-All builds, formatting, tests and native acceptance run in disposable GitHub Actions VMs. CI covers Windows x64, Linux x64/ARM64 and macOS ARM64. Native SDK/shell acceptance and real VS Code debug observations are separate tests. WSL/SSH/container host detection does not imply a tested remote debug session.
+Builds, formatting and tests run in local Docker before consolidated merge checks. Platform-specific native acceptance covers Windows x64, Linux x64/ARM64 and macOS ARM64; Linux containers do not replace Windows/macOS execution evidence. Native SDK/shell acceptance and real VS Code debug observations are separate tests. WSL/SSH/container host detection does not imply a tested remote debug session.
 
 No intermediate release tags are created. Reverting a development PR restores old behavior; old protocol consumers retain v1. Receipt-owned installations can be removed through existing reference-aware uninstall/prune commands. Configurations created during setup remain explicit project files and are not silently deleted after a failed run.

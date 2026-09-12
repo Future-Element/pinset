@@ -401,7 +401,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
       if (!context.descriptor) throw new Error("Native probes require Pinset 2.13 or newer.");
       const runtimes = context.descriptor.runtimes.filter(runtime => ["node", "python", "flutter"].includes(runtime.tool));
       const runtime = typeof requestedTool === "string" ? runtimes.find(runtime => runtime.tool === requestedTool)
-        : (await vscode.window.showQuickPick(runtimes.map(runtime => ({label: runtime.tool, runtime})), {placeHolder: "Observe a controlled native debug launch (project secrets are excluded)"}))?.runtime;
+        : (await vscode.window.showQuickPick(runtimes.map(runtime => ({label: runtime.tool, runtime})), {placeHolder: "Observe a controlled native debug launch (encrypted profiles are not loaded)"}))?.runtime;
       if (!runtime) return undefined;
       const evidence = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: `Observing ${runtime.tool} debugger`, cancellable: true},
         (_progress, token) => debugProbe(folder, runtime, extensionContext.storageUri!, token));

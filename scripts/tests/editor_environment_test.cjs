@@ -1,4 +1,4 @@
-// Runs the packaged source in a real VS Code extension host on disposable CI runners.
+// Runs the packaged source in a real VS Code extension host in disposable Docker/CI.
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { downloadAndUnzipVSCode, runTests, runVSCodeCommand } = require(path.join(process.env.PINSET_EDITOR_TEST_MODULES, "@vscode/test-electron"));
@@ -14,7 +14,7 @@ async function main() {
     "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.autoUpdate": false,
   }));
   const version = "stable";
-  const download = { version, cachePath: path.join(home, "vscode-download") };
+  const download = { version, cachePath: path.join(process.env.PINSET_ACCEPTANCE_CACHE || home, "vscode-download") };
   const vscodeExecutablePath = await downloadAndUnzipVSCode(download);
   await runVSCodeCommand(["--install-extension", "ms-python.python", "--extensions-dir", extensionsDir, "--user-data-dir", userData], download);
   await runVSCodeCommand(["--install-extension", "ms-python.debugpy", "--extensions-dir", extensionsDir, "--user-data-dir", userData], download);

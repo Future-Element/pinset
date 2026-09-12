@@ -35,13 +35,13 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
         let arguments: Vec<&str> = match runtime.tool.as_str() {
             "node" => vec![
                 "-e",
-                "console.log(JSON.stringify({executable:process.execPath,version:process.versions.node}))",
+                "console.log(JSON.stringify({executable:process.execPath,version:process.versions.node,identity_present:!!process.env.PINSET_IDENTITY}))",
             ],
             "python" => vec![
                 "-E",
                 "-S",
                 "-c",
-                "import sys,json; print(json.dumps(dict(executable=sys.executable,version='.'.join(map(str,sys.version_info[:3])),prefix=sys.prefix,base_prefix=getattr(sys,'base_prefix',sys.prefix))))",
+                "import sys,json,os; print(json.dumps(dict(executable=sys.executable,version='.'.join(map(str,sys.version_info[:3])),prefix=sys.prefix,base_prefix=getattr(sys,'base_prefix',sys.prefix),identity_present=bool(os.environ.get('PINSET_IDENTITY')))))",
             ],
             // Flutter version checks can refresh/write its cache. Require a declared task instead.
             "flutter" => {
@@ -80,6 +80,11 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
             "PYTHONSTARTUP",
             "PYTHONPATH",
             "PYTHONINSPECT",
+            "PINSET_IDENTITY",
+            "PINSET_IDENTITY_FILE",
+            "PINSET_ENV_PROFILE",
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
         ] {
             command.env_remove(name);
         }
@@ -109,18 +114,25 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
             .and_then(|value| value.get("version"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let matches = actual.as_deref().is_some_and(|actual| {
-            if runtime.tool == "python" {
-                same_python_invocation(executable, actual)
-            } else {
-                same_executable(executable, actual)
-            }
-        }) && version
-            .as_deref()
-            .zip(runtime.locked_version.as_deref())
-            .is_some_and(|(actual, locked)| {
-                locked == actual || locked.starts_with(&format!("{actual}+"))
-            });
+        let credentials_removed = observation
+            .as_ref()
+            .and_then(|value| value.get("identity_present"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(false);
+        let matches = credentials_removed
+            && actual.as_deref().is_some_and(|actual| {
+                if runtime.tool == "python" {
+                    same_python_invocation(executable, actual)
+                } else {
+                    same_executable(executable, actual)
+                }
+            })
+            && version
+                .as_deref()
+                .zip(runtime.locked_version.as_deref())
+                .is_some_and(|(actual, locked)| {
+                    locked == actual || locked.starts_with(&format!("{actual}+"))
+                });
         report.evidence.push(evidence(
             report.context_fingerprint.as_deref(),
             "managed-command",

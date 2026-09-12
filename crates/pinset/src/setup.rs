@@ -389,7 +389,11 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             println!("Available tasks: {}", run.plan.tasks.join(", "));
         }
     }
-    Ok(if report.environment_ready && !task_failed { 0 } else { 1 })
+    Ok(if report.environment_ready && !task_failed {
+        0
+    } else {
+        1
+    })
 }
 
 fn execute(

@@ -10,6 +10,6 @@ Implementation authorized on 2026-09-12. Development versions merge after valida
 
 `release.json` records the published distribution version. Installers, the Action default and downloadable devcontainer examples keep using that version during development. Release preparation updates it and distribution defaults together with the final version, before the final preflight. No intermediate development version is advertised as downloadable.
 
-Validation follows CONTRIBUTING.md: compilation, formatting, tests and native execution run in disposable GitHub Actions runners. Preserve the existing icon/package changes in the original checkout; implementation runs in a separate worktree.
+Validation uses local Docker first, as authorized on 2026-09-12. Merge-required CI and platform-specific native acceptance are consolidated after local checks pass. Linux containers do not establish Windows/macOS native behavior. Preserve the existing icon/package changes in the original checkout; implementation runs in a separate worktree.
 
 Acceptance remains pending until supported entry points have native execution evidence. Source changes and static checks alone do not complete M0–M2.
