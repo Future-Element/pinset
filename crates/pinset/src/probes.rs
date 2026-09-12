@@ -109,21 +109,18 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
             .and_then(|value| value.get("version"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let matches = actual
+        let matches = actual.as_deref().is_some_and(|actual| {
+            if runtime.tool == "python" {
+                same_python_invocation(executable, actual)
+            } else {
+                same_executable(executable, actual)
+            }
+        }) && version
             .as_deref()
-            .is_some_and(|actual| {
-                if runtime.tool == "python" {
-                    same_python_invocation(executable, actual)
-                } else {
-                    same_executable(executable, actual)
-                }
-            })
-            && version
-                .as_deref()
-                .zip(runtime.locked_version.as_deref())
-                .is_some_and(|(actual, locked)| {
-                    locked == actual || locked.starts_with(&format!("{actual}+"))
-                });
+            .zip(runtime.locked_version.as_deref())
+            .is_some_and(|(actual, locked)| {
+                locked == actual || locked.starts_with(&format!("{actual}+"))
+            });
         report.evidence.push(evidence(
             report.context_fingerprint.as_deref(),
             "managed-command",
@@ -156,7 +153,10 @@ fn same_executable(expected: &Path, actual: &Path) -> bool {
 // A venv executable can be a symlink to its base interpreter. Resolving that final symlink
 // would incorrectly accept a process launched directly through the base interpreter.
 fn same_python_invocation(expected: &Path, actual: &Path) -> bool {
-    let parent = |path: &Path| path.parent().and_then(|parent| std::fs::canonicalize(parent).ok());
+    let parent = |path: &Path| {
+        path.parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+    };
     let filename = |path: &Path| {
         path.file_name().map(|name| {
             let name = name.to_string_lossy();

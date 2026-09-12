@@ -76,7 +76,11 @@ pub fn plan(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportResult<Set
     let mut steps = Vec::new();
     let mut blockers = Vec::new();
     let mut tasks = Vec::new();
-    let mut selected_profile = if no_env { None } else { profile.map(str::to_owned) };
+    let mut selected_profile = if no_env {
+        None
+    } else {
+        profile.map(str::to_owned)
+    };
     if let Some(path) = &config_path {
         let config = load_effective_project_config(path)?;
         if !no_env {
@@ -184,7 +188,8 @@ pub struct SetupOptions<'a> {
 
 pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportResult<i32> {
     let options = SetupOptions {
-        no_env: options.no_env || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1"),
+        no_env: options.no_env
+            || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1"),
         ..options
     };
     if options.preview {
@@ -293,8 +298,11 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             Err(error) => {
                 run.plan.steps[index].state = StepState::Failed;
                 // Raw task/environment errors may contain secrets. Persist only a stable reason.
-                run.plan.steps[index].reason = Some(error.downcast_ref::<PreparationFailure>()
-                    .map_or_else(|| crate::json_error(error.as_ref()).0.to_owned(), |failure| failure.reason.clone()));
+                run.plan.steps[index].reason =
+                    Some(error.downcast_ref::<PreparationFailure>().map_or_else(
+                        || crate::json_error(error.as_ref()).0.to_owned(),
+                        |failure| failure.reason.clone(),
+                    ));
                 for item in run.plan.steps.iter_mut().skip(index + 1) {
                     item.state = StepState::Blocked;
                 }
@@ -314,7 +322,11 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             }
         }
     }
-    let mut report = readiness::collect(&root, run.plan.requested_profile.as_deref(), run.plan.no_env)?;
+    let mut report = readiness::collect(
+        &root,
+        run.plan.requested_profile.as_deref(),
+        run.plan.no_env,
+    )?;
     readiness::verify_environment(&root, &mut report, run.plan.no_env);
     if report.environment_ready
         && let Some(task) = options.task
@@ -394,18 +406,22 @@ fn execute(
             quiet,
         ),
         "environment" => {
-            let mut report = readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
+            let mut report =
+                readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
             readiness::verify_environment(&plan.root, &mut report, plan.no_env);
             if let Some(item) = report.checks.iter().find(|item| {
                 item.id == "environment"
                     && matches!(item.state, ReadinessState::Fail | ReadinessState::Unknown)
             }) {
-                return Err(Box::new(PreparationFailure { reason: item.reason.clone() }));
+                return Err(Box::new(PreparationFailure {
+                    reason: item.reason.clone(),
+                }));
             }
             Ok(())
         }
         "readiness" => {
-            let mut report = readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
+            let mut report =
+                readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
             readiness::verify_environment(&plan.root, &mut report, plan.no_env);
             if !report.environment_ready {
                 return Err(
@@ -475,10 +491,19 @@ fn child(cwd: &Path, args: &[&str], quiet: bool) -> ReportResult<()> {
 }
 
 fn ensure_baseline(plan: &SetupPlan) -> ReportResult<()> {
-    if !plan.no_env && let Some(path) = find_optional_project_config(&plan.root)? {
+    if !plan.no_env
+        && let Some(path) = find_optional_project_config(&plan.root)?
+    {
         let config = load_effective_project_config(&path)?;
-        let selected = pinset_core::environment_selection(&pinset_home()?, &path, &config, plan.requested_profile.as_deref())?;
-        if selected.profile != plan.profile { return Err("environment selection changed; review a new setup --plan".into()); }
+        let selected = pinset_core::environment_selection(
+            &pinset_home()?,
+            &path,
+            &config,
+            plan.requested_profile.as_deref(),
+        )?;
+        if selected.profile != plan.profile {
+            return Err("environment selection changed; review a new setup --plan".into());
+        }
     }
     if readiness::fingerprint(&plan.root, plan.profile.as_deref(), plan.no_env)? != plan.fingerprint
     {
@@ -516,7 +541,12 @@ fn save(home: &Path, run: &SetupRun) -> ReportResult<()> {
 fn show(plan: &SetupPlan, catalog: Catalog) {
     if let Some(environment) = &plan.environment {
         for runtime in &environment.runtimes {
-            println!("{}: {} (requested: {})", runtime.tool, runtime.locked_version.as_deref().unwrap_or("unlocked"), runtime.requested);
+            println!(
+                "{}: {} (requested: {})",
+                runtime.tool,
+                runtime.locked_version.as_deref().unwrap_or("unlocked"),
+                runtime.requested
+            );
         }
     }
     if catalog.language() == crate::i18n::Language::SimplifiedChinese {
@@ -547,10 +577,16 @@ fn show(plan: &SetupPlan, catalog: Catalog) {
 }
 
 #[derive(Debug)]
-struct PreparationFailure { reason: String }
+struct PreparationFailure {
+    reason: String,
+}
 impl std::fmt::Display for PreparationFailure {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(output, "environment precondition failed: {}; run pinset env check or pinset trust status", self.reason)
+        write!(
+            output,
+            "environment precondition failed: {}; run pinset env check or pinset trust status",
+            self.reason
+        )
     }
 }
 impl std::error::Error for PreparationFailure {}
