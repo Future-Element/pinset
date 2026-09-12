@@ -17,10 +17,15 @@ async function main() {
   const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(home, "vscode-download") });
   await runVSCodeCommand(["--install-extension", "ms-python.python", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
   await runVSCodeCommand(["--install-extension", "ms-python.debugpy", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
+  if (process.env.PINSET_EDITOR_TEST_FLUTTER_SDK) {
+    await fs.mkdir(path.join(project, ".vscode"), { recursive: true });
+    await fs.writeFile(path.join(project, ".vscode/settings.json"), JSON.stringify({ "dart.flutterSdkPath": process.env.PINSET_EDITOR_TEST_FLUTTER_SDK }));
+    await runVSCodeCommand(["--install-extension", "Dart-Code.flutter", "--extensions-dir", extensionsDir, "--user-data-dir", userData], { vscodeExecutablePath });
+  }
   await runTests({ vscodeExecutablePath, extensionDevelopmentPath,
     extensionTestsPath: path.resolve(__dirname, "editor_environment_suite.cjs"),
     launchArgs: [project, "--no-sandbox", "--disable-gpu", "--skip-welcome", "--skip-release-notes", "--user-data-dir", userData, "--extensions-dir", extensionsDir],
-    extensionTestsEnv: { PINSET_HOME: home },
+    extensionTestsEnv: { PINSET_HOME: home, PINSET_EDITOR_TEST_TOOLS: process.env.PINSET_EDITOR_TEST_TOOLS || "node,python" },
   });
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

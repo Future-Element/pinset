@@ -178,7 +178,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         if options.json {
             crate::print_json_success("setup", &plan)?;
         } else {
-            show(&plan);
+            show(&plan, catalog);
         }
         return Ok(if plan.blockers.is_empty() { 0 } else { 1 });
     }
@@ -229,7 +229,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         if options.json {
             crate::print_json_success("setup", &run.plan)?;
         } else {
-            show(&run.plan);
+            show(&run.plan, catalog);
         }
         return Ok(1);
     }
@@ -240,7 +240,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
                     .into(),
             );
         }
-        show(&run.plan);
+        show(&run.plan, catalog);
         eprint!("Prepare this environment? [y/N]: ");
         io::stderr().flush()?;
         let mut answer = String::new();
@@ -496,7 +496,15 @@ fn save(home: &Path, run: &SetupRun) -> ReportResult<()> {
     Ok(())
 }
 
-fn show(plan: &SetupPlan) {
+fn show(plan: &SetupPlan, catalog: Catalog) {
+    if catalog.language() == crate::i18n::Language::SimplifiedChinese {
+        println!("项目：{}", plan.root.display());
+        for selection in &plan.selections { println!("选择：{selection}（解析版本需联网）"); }
+        for step in &plan.steps { println!("准备：{}", step.id); }
+        for blocker in &plan.blockers { println!("需要处理：{blocker}"); }
+        println!("此预览不会解密变量或执行项目任务。");
+        return;
+    }
     println!("Project: {}", plan.root.display());
     for selection in &plan.selections {
         println!("Select: {selection} (resolution requires network)");

@@ -49,7 +49,7 @@ export class EnvironmentPanel implements vscode.TreeDataProvider<Row>, vscode.Di
         ...report.checks.filter(check => check.state !== "pass" && check.state !== "not_applicable")
           .map(check => new Row(check.id, [], `${check.state}: ${check.reason}${check.next_step ? `; ${check.next_step}` : ""}`)),
         ...report.evidence.map(evidence => new Row(`${evidence.tool} / ${evidence.entry}`, [], `${evidence.state}: ${evidence.reason}`)),
-        new Row("Native debug / test / existing terminals", [], "Verify each entry separately"),
+        new Row("Other debug / test / existing terminals", [], "Verify each entry separately"),
       ];
       return new Row(folder.name, children);
     });
@@ -90,7 +90,7 @@ async function proposal(folder: vscode.WorkspaceFolder, runtime: RuntimeDescript
   return { section, key, before: (await current(folder, { section, key })) ?? null, after, host: host() };
 }
 
-export async function bindEnvironment(folder: vscode.WorkspaceFolder, report: EnvironmentDescriptor, state: vscode.Memento): Promise<void> {
+export async function bindEnvironment(folder: vscode.WorkspaceFolder, report: EnvironmentDescriptor, state: vscode.Memento, validateContext: () => Promise<void>): Promise<void> {
   const selected = await vscode.window.showQuickPick(report.runtimes.filter(runtime => ["node", "python", "flutter"].includes(runtime.tool))
     .map(runtime => ({ label: runtime.tool, description: runtime.executable ?? "not installed", runtime })), { placeHolder: `Bind a runtime in ${folder.name}` });
   if (!selected) return;
@@ -100,6 +100,7 @@ export async function bindEnvironment(folder: vscode.WorkspaceFolder, report: En
   const answer = await vscode.window.showWarningMessage(`Update ${binding.section}.${binding.key} for ${folder.name}?`,
     { modal: true, detail: `Before: ${JSON.stringify(binding.before)}\nAfter: ${JSON.stringify(binding.after)}\nExisting terminals must be reopened. Debug/test execution remains unverified.` }, "Apply Binding");
   if (answer !== "Apply Binding") return;
+  await validateContext();
   if (!sameValue(await current(folder, binding), binding.before)) throw new Error("Settings changed while previewing. Review the binding again.");
   // Record before writing so interruption cannot erase the ownership boundary.
   await state.update(bindingKey(folder), [...bindings, binding]);
@@ -113,7 +114,9 @@ export async function restoreBindings(folder: vscode.WorkspaceFolder, state: vsc
   const bindings = state.get<Binding[]>(key, []);
   const retained: Binding[] = [];
   for (const binding of bindings) {
-    if (binding.host !== host() || !sameValue(await current(folder, binding), binding.after)) { retained.push(binding); continue; }
+    const value = await current(folder, binding);
+    if (sameValue(value, binding.before)) continue;
+    if (binding.host !== host() || !sameValue(value, binding.after)) { retained.push(binding); continue; }
     await write(folder, binding, binding.before);
     // Commit progress after every field, allowing partial restoration to resume safely.
     await state.update(key, [...retained, ...bindings.slice(bindings.indexOf(binding) + 1)]);

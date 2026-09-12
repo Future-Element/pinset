@@ -117,6 +117,16 @@ pub fn collect(
 ) -> Result<DiagnosticReport, Box<dyn std::error::Error>> {
     let home = pinset_home()?;
     let audit = audit_project_lock(&home, cwd);
+    collect_with_audit(cwd, repair_preview, audit)
+}
+
+pub fn collect_environment(cwd: &Path) -> Result<DiagnosticReport, Box<dyn std::error::Error>> {
+    let audit = pinset_core::audit_project_environment(&pinset_home()?, cwd);
+    collect_with_audit(cwd, false, audit)
+}
+
+fn collect_with_audit(cwd: &Path, repair_preview: bool, audit: pinset_core::LockAuditReport) -> Result<DiagnosticReport, Box<dyn std::error::Error>> {
+    let home = pinset_home()?;
     let config_path = find_optional_project_config(cwd)?;
     let config = config_path
         .as_deref()

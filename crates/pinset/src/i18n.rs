@@ -357,7 +357,9 @@ impl Catalog {
             Some("doctor") => {
                 "只读检查配置、锁文件、运行时、shim 和 PATH。\n\n用法：pinset doctor [--cwd <目录>] [--json]"
             }
-            Some("setup") => { "准备当前项目的开发环境，沿用已有锁定版本。\n\n用法：pinset [-e <环境> | --no-env] setup [--plan | --yes | --resume <运行编号>] [--offline] [--task <已声明任务>] [--json]\n\n--plan 只读预览，不下载、不解密、不执行任务。非交互执行需要 --yes；恢复时校验原项目输入。" }
+            Some("setup") => {
+                "准备当前项目的开发环境，沿用已有锁定版本。\n\n用法：pinset [-e <环境> | --no-env] setup [--plan | --yes | --resume <运行编号>] [--offline] [--task <已声明任务>] [--json]\n\n--plan 只读预览，不下载、不解密、不执行任务。非交互执行需要 --yes；恢复时校验原项目输入。"
+            }
             Some("status") => {
                 "生成不含路径及秘密值的诊断报告，可保存或与基线比较。\n\n用法：pinset status [--cwd <目录>] [--json] [--save <文件>] [--compare <文件>] [--repair-preview]"
             }

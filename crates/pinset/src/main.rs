@@ -4604,6 +4604,7 @@ compdef _pinset_completion pinset"#
         ActivationShell::Fish => {
             r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__ -C --cwd -e --profile --no-env'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from setup' -a '--plan --yes --resume --offline --task --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --offline --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--remote --available --long'
@@ -4629,7 +4630,7 @@ complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-i
 complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -n '__fish_seen_subcommand_from doctor' -a '--deep'
-complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview'
+complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview --report-version --probe'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -4639,6 +4640,7 @@ complete -c pinset -f -a '--help --lang'"#
     $command = if ($elements.Count -gt 1) { $elements[1] } else { '' }
     $values = switch ($command) {
         'global' { '__SELECTIONS__ --no-install --lang --help' -split ' ' }
+        'setup' { '--plan --yes --resume --offline --task --json --lang --help' -split ' ' }
         'detect' { '--cwd --json --lang --help' -split ' ' }
         'import' { '--cwd --force --no-install --lang --help' -split ' ' }
         'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
@@ -4654,7 +4656,7 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --deep --json --lang --help' -split ' ' }
-        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --lang --help' -split ' ' }
+        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --report-version --probe --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
@@ -8444,7 +8446,7 @@ fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error:
                 workspace_members,
                 environment,
                 tasks,
-                diagnostics: diagnostics::collect(&cwd, false)?,
+                diagnostics: if protocol == 2 { diagnostics::collect_environment(&cwd)? } else { diagnostics::collect(&cwd, false)? },
             };
             if json {
                 if protocol == 2 {

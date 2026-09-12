@@ -252,13 +252,21 @@ struct AuditInstallReceipt {
 pub fn audit_project_lock(pinset_home: &Path, cwd: &Path) -> LockAuditReport {
     let config = project_config_path_for_audit(cwd);
     let lockfile = lockfile_path(&config);
-    audit_lock_paths(pinset_home, LockAuditScope::Project, config, lockfile)
+    audit_lock_paths(pinset_home, LockAuditScope::Project, config, lockfile, true)
+}
+
+/// Configuration, locked artifact and installation ownership checks for background UI.
+/// Archive contents are deliberately outside this scope; use audit_project_lock for a full audit.
+pub fn audit_project_environment(pinset_home: &Path, cwd: &Path) -> LockAuditReport {
+    let config = project_config_path_for_audit(cwd);
+    let lockfile = lockfile_path(&config);
+    audit_lock_paths(pinset_home, LockAuditScope::Project, config, lockfile, false)
 }
 
 pub fn audit_global_lock(pinset_home: &Path) -> LockAuditReport {
     let config = global_config_path(pinset_home);
     let lockfile = global_lockfile_path(pinset_home);
-    audit_lock_paths(pinset_home, LockAuditScope::Global, config, lockfile)
+    audit_lock_paths(pinset_home, LockAuditScope::Global, config, lockfile, true)
 }
 
 fn audit_lock_paths(
@@ -266,6 +274,7 @@ fn audit_lock_paths(
     scope: LockAuditScope,
     config_path: PathBuf,
     lock_path: PathBuf,
+    include_cache: bool,
 ) -> LockAuditReport {
     let mut report = LockAuditReport {
         scope,
@@ -287,6 +296,7 @@ fn audit_lock_paths(
             config,
             lockfile,
             &mut report,
+            include_cache,
         );
     }
     report.finish();
@@ -461,6 +471,7 @@ fn audit_config_lock_pair(
     config: &ConfigSelection,
     lockfile: &Lockfile,
     report: &mut LockAuditReport,
+    include_cache: bool,
 ) {
     let lock_path = report.lockfile.clone();
     for (tool, requested) in &config.tools {
@@ -553,7 +564,7 @@ fn audit_config_lock_pair(
                 Some(repair(action, None)),
             ));
         }
-        audit_locked_tool(pinset_home, scope, config_path, locked, report);
+        audit_locked_tool(pinset_home, scope, config_path, locked, report, include_cache);
     }
 
     for locked in &lockfile.tools {
@@ -580,6 +591,7 @@ fn audit_locked_tool(
     config_path: &Path,
     locked: &crate::LockedTool,
     report: &mut LockAuditReport,
+    include_cache: bool,
 ) {
     let lock_path = report.lockfile.clone();
     let target = current_target_for_tool(&locked.name);
@@ -603,7 +615,7 @@ fn audit_locked_tool(
         return;
     };
     report.summary.platform_artifacts += 1;
-    audit_artifact_cache(pinset_home, &subject, artifact, report);
+    if include_cache { audit_artifact_cache(pinset_home, &subject, artifact, report); }
     audit_install_receipt(
         pinset_home,
         scope,
@@ -1314,6 +1326,22 @@ mod tests {
             LockAuditReasonCode::ReceiptIntegrityMismatch.as_str(),
             "receipt_integrity_mismatch"
         );
+    }
+
+    #[test]
+    fn background_environment_scope_retains_install_errors_without_claiming_cache_checks() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join(PROJECT_CONFIG_FILENAME), "schema = 3\n[tools]\nnode = \"24.0.0\"\n").unwrap();
+        save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).unwrap();
+        let background = audit_project_environment(&home, &project);
+        assert!(background.findings.iter().any(|finding| finding.reason_code == LockAuditReasonCode::InstallMissing));
+        assert!(!background.findings.iter().any(|finding| finding.category == LockAuditCategory::Cache));
+        let explicit = audit_project_lock(&home, &project);
+        assert!(explicit.findings.iter().any(|finding| finding.category == LockAuditCategory::Cache));
+        assert!(!home.exists());
     }
 
     #[test]

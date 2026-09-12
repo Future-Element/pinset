@@ -6,7 +6,7 @@ exports.run = async () => {
   assert.ok(extension);
   await extension.activate();
   await vscode.commands.executeCommand("pinset.refresh");
-  for (const tool of ["node", "python"]) {
+  for (const tool of (process.env.PINSET_EDITOR_TEST_TOOLS || "node,python").split(",")) {
     const evidence = await vscode.commands.executeCommand("pinset.probeDebug", tool);
     assert.equal(evidence?.entry, "pinset-debug-probe", JSON.stringify(evidence));
     assert.equal(evidence?.state, "pass", JSON.stringify(evidence));

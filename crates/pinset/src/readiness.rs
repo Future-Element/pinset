@@ -39,6 +39,7 @@ pub fn host() -> &'static str {
 
 /// Local state identity excludes decrypted values and includes effective member configuration.
 pub fn fingerprint(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportResult<String> {
+    let no_env = no_env || std::env::var_os("PINSET_ENV_DISABLE").is_some_and(|value| value == "1");
     let root = fs::canonicalize(cwd)?;
     let mut digest = Sha256::new();
     let root_text = root.to_string_lossy();
@@ -88,6 +89,16 @@ pub fn run(
             .any(|item| item.id == "environment" && item.state == ReadinessState::Fail)
         {
             crate::probes::collect(cwd, &mut report)?;
+            let current = collect(cwd, profile, no_env)?;
+            if current.context_fingerprint != report.context_fingerprint {
+                for item in &mut report.evidence {
+                    item.state = ReadinessState::Unknown;
+                    item.reason = "project_changed_during_probe".to_owned();
+                }
+                report.checks.push(check("probe_context", ReadinessState::Fail,
+                    "project_changed_during_probe", Some("pinset check --probe")));
+                report.update_readiness();
+            }
         }
     }
     let report = report.portable();
@@ -346,7 +357,7 @@ pub fn collect(
             checks,
         });
     }
-    let audit = pinset_core::audit_project_lock(&home, cwd);
+    let audit = pinset_core::audit_project_environment(&home, cwd);
     for finding in audit.findings {
         if finding.severity == pinset_core::LockAuditSeverity::Error {
             report.checks.push(check(

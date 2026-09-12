@@ -126,13 +126,12 @@ class ContextStore {
     const generation = (this.generations.get(key) ?? 0) + 1;
     this.generations.set(key, generation);
     try {
-      const result = await runCli(folder, ["editor", "context", "--cwd", folder.uri.fsPath, "--json"], token);
-      let context = parseContext(result.stdout, this.extensionVersion);
-      const [major = 0, minor = 0] = context.cli_version.split(".").map(Number);
-      if (major > 2 || (major === 2 && minor >= 13)) {
-        const upgraded = await runCli(folder, ["editor", "context", "--protocol", "2", "--cwd", folder.uri.fsPath, "--json"], token);
-        context = parseContext(upgraded.stdout, this.extensionVersion);
-      }
+      const version = await runCli(folder, ["--version"], token);
+      const match = /^pinset (\d+)\.(\d+)\./.exec(version.stdout.trim());
+      if (!match) throw new Error("Pinset returned an unsupported version response.");
+      const modern = Number(match[1]) > 2 || (Number(match[1]) === 2 && Number(match[2]) >= 13);
+      const result = await runCli(folder, ["editor", "context", ...(modern ? ["--protocol", "2"] : []), "--cwd", folder.uri.fsPath, "--json"], token);
+      const context = parseContext(result.stdout, this.extensionVersion);
       if (this.generations.get(key) !== generation) throw new vscode.CancellationError();
       this.contexts.set(key, context);
       this.errors.delete(key);
@@ -431,7 +430,13 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
       const folder = await trustedFolder();
       if (!folder) return;
       try { const context = await store.refresh(folder); if (!context.descriptor) throw new Error("Binding requires Pinset 2.13 or newer.");
-        await bindEnvironment(folder, context.descriptor, extensionContext.workspaceState); await refreshFolder(folder);
+        await bindEnvironment(folder, context.descriptor, extensionContext.workspaceState, async () => {
+          const fresh = await store.refresh(folder);
+          if (fresh.descriptor?.context_fingerprint !== context.descriptor?.context_fingerprint
+            || JSON.stringify(fresh.descriptor?.runtimes) !== JSON.stringify(context.descriptor?.runtimes)) {
+            throw new Error("Project selection changed while previewing. Review the binding again.");
+          }
+        }); await refreshFolder(folder);
       } catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
     }),
     vscode.commands.registerCommand("pinset.restoreBindings", async () => {

@@ -37,7 +37,7 @@ def require_text(path: pathlib.Path, values: tuple[str, ...]) -> None:
             raise AssertionError(f"{display} is missing {value!r}")
 
 
-for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic-report.schema.json", "bundle-manifest.schema.json"):
+for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic-report.schema.json", "environment-report-v2.schema.json", "bundle-manifest.schema.json"):
     schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["additionalProperties"] is False

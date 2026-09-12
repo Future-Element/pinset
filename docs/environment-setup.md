@@ -34,6 +34,8 @@ pinset editor context --protocol 2 --json
 
 Report and editor protocol v1 remain the default. Four states are distinct: `pass`, `fail`, `unknown`, `not_applicable`. `environment_ready` requires applicable preparation checks to pass; it is not proof of execution. `execution_verified` covers only the listed observations. Controlled Node/Python probes disable startup hooks and enforce time/output limits. Background collection never runs builds or decrypts profiles.
 
+Protocol 2 checks configuration, lock metadata, receipt ownership and routing without repeatedly hashing downloaded archives. Cache integrity remains an explicit `pinset cache verify` / `pinset lock audit` check and is validated before installation. Installed-environment readiness does not claim offline cache completeness.
+
 旧报告与编辑器协议 1 保持默认。通过、失败、未知、不适用分别报告。“环境就绪”不等于“执行已验证”，执行结论仅覆盖列出的观察入口。Node/Python 探测禁用启动钩子并限制时长及输出。后台收集不运行构建、不解密 profile。
 
 Portable reports remove local paths and fingerprints, do not include task arguments or secret values, and never compare secret-value hashes. Editor context and setup journals are local records containing paths, not portable exports. Explicit preparation/check operations distinguish trust, identity and variable contract errors.
