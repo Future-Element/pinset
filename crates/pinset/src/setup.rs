@@ -58,6 +58,8 @@ struct SetupRun {
     schema: u32,
     id: String,
     plan: SetupPlan,
+    #[serde(default)]
+    task: Option<Step>,
 }
 
 fn step(id: &str) -> Step {
@@ -235,6 +237,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             schema: 1,
             id: uuid::Uuid::new_v4().to_string(),
             plan: plan(&root, options.profile, options.no_env)?,
+            task: None,
         }
     };
     ensure_baseline(&run.plan)?;
@@ -260,7 +263,11 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             );
         }
         show(&run.plan, catalog);
-        eprint!("Prepare this environment? [y/N]: ");
+        if catalog.language() == crate::i18n::Language::SimplifiedChinese {
+            eprint!("准备此开发环境？[y/N]：");
+        } else {
+            eprint!("Prepare this environment? [y/N]: ");
+        }
         io::stderr().flush()?;
         let mut answer = String::new();
         io::stdin().read_line(&mut answer)?;
@@ -328,6 +335,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         run.plan.no_env,
     )?;
     readiness::verify_environment(&root, &mut report, run.plan.no_env);
+    let mut task_failed = false;
     if report.environment_ready
         && let Some(task) = options.task
     {
@@ -339,7 +347,19 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             args.extend(["-e", profile]);
         }
         args.extend(["run", task]);
-        child(&root, &args, options.json)?;
+        run.task = Some(Step {
+            id: task.to_owned(),
+            state: StepState::Running,
+            reason: None,
+        });
+        save(&home, &run)?;
+        task_failed = child(&root, &args, options.json).is_err();
+        run.task = Some(Step {
+            id: task.to_owned(),
+            state: if task_failed { StepState::Failed } else { StepState::Succeeded },
+            reason: task_failed.then(|| "explicit_task_failed".to_owned()),
+        });
+        save(&home, &run)?;
     }
     if options.json {
         crate::print_json_success(
@@ -348,7 +368,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         )?;
     } else {
         println!(
-            "Setup {}: environment {}. Project tasks were not executed.",
+            "Setup {}: environment {}.",
             run.id,
             if report.environment_ready {
                 "ready"
@@ -356,11 +376,16 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
                 "needs attention"
             }
         );
+        if let Some(task) = &run.task {
+            println!("Explicit task {}: {:?}", task.id, task.state);
+        } else {
+            println!("Project tasks were not executed.");
+        }
         if !run.plan.tasks.is_empty() {
             println!("Available tasks: {}", run.plan.tasks.join(", "));
         }
     }
-    Ok(if report.environment_ready { 0 } else { 1 })
+    Ok(if report.environment_ready && !task_failed { 0 } else { 1 })
 }
 
 fn execute(

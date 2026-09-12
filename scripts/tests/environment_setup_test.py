@@ -32,13 +32,24 @@ def main() -> None:
             return json.loads(result.stdout)["data"] if json_output else result.stdout
 
         run("init")
+        with (project / "pinset.toml").open("a", encoding="utf-8") as config:
+            config.write('\n[tasks.verify]\ncommand = ["node", "-e", "require(\'fs\').writeFileSync(\'explicit-task-ran\',\'yes\')"]\n')
+            config.write('\n[tasks.fail]\ncommand = ["node", "-e", "process.exit(23)"]\n')
         run("use", "node@24.1.0", "python@3.13", "--no-install")
         plan = run("setup", "--plan", "--json", json_output=True)
         assert not plan["blockers"]
         prepared = run("setup", "--yes", "--json", json_output=True)
         assert prepared["report"]["environment_ready"], prepared
         assert not prepared["report"]["execution_verified"]
+        assert not (project / "explicit-task-ran").exists()
         run("setup", "--resume", prepared["run"]["id"], "--yes", "--offline", "--json", json_output=True)
+        explicit = run("setup", "--yes", "--offline", "--task", "verify", "--json", json_output=True)
+        assert explicit["run"]["task"]["state"] == "succeeded"
+        assert (project / "explicit-task-ran").read_text() == "yes"
+        failed_task = subprocess.run([str(cli), "setup", "--yes", "--offline", "--task", "fail", "--json"], cwd=project, env=env, capture_output=True, text=True, timeout=120)
+        assert failed_task.returncode == 1
+        failed = json.loads(failed_task.stdout)["data"]
+        assert failed["report"]["environment_ready"] and failed["run"]["task"]["state"] == "failed", failed
         report = run("check", "--probe", "--json", json_output=True)["report"]
         assert report["environment_ready"] and report["execution_verified"], report
         assert {item["tool"] for item in report["evidence"]} == {"node", "python"}
