@@ -95,8 +95,12 @@ pub fn run(
                     item.state = ReadinessState::Unknown;
                     item.reason = "project_changed_during_probe".to_owned();
                 }
-                report.checks.push(check("probe_context", ReadinessState::Fail,
-                    "project_changed_during_probe", Some("pinset check --probe")));
+                report.checks.push(check(
+                    "probe_context",
+                    ReadinessState::Fail,
+                    "project_changed_during_probe",
+                    Some("pinset check --probe"),
+                ));
                 report.update_readiness();
             }
         }

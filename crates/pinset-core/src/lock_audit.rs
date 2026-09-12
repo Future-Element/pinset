@@ -260,7 +260,13 @@ pub fn audit_project_lock(pinset_home: &Path, cwd: &Path) -> LockAuditReport {
 pub fn audit_project_environment(pinset_home: &Path, cwd: &Path) -> LockAuditReport {
     let config = project_config_path_for_audit(cwd);
     let lockfile = lockfile_path(&config);
-    audit_lock_paths(pinset_home, LockAuditScope::Project, config, lockfile, false)
+    audit_lock_paths(
+        pinset_home,
+        LockAuditScope::Project,
+        config,
+        lockfile,
+        false,
+    )
 }
 
 pub fn audit_global_lock(pinset_home: &Path) -> LockAuditReport {
@@ -564,7 +570,14 @@ fn audit_config_lock_pair(
                 Some(repair(action, None)),
             ));
         }
-        audit_locked_tool(pinset_home, scope, config_path, locked, report, include_cache);
+        audit_locked_tool(
+            pinset_home,
+            scope,
+            config_path,
+            locked,
+            report,
+            include_cache,
+        );
     }
 
     for locked in &lockfile.tools {
@@ -615,7 +628,9 @@ fn audit_locked_tool(
         return;
     };
     report.summary.platform_artifacts += 1;
-    if include_cache { audit_artifact_cache(pinset_home, &subject, artifact, report); }
+    if include_cache {
+        audit_artifact_cache(pinset_home, &subject, artifact, report);
+    }
     audit_install_receipt(
         pinset_home,
         scope,
@@ -1334,13 +1349,32 @@ mod tests {
         let home = root.path().join("home");
         let project = root.path().join("project");
         fs::create_dir(&project).unwrap();
-        fs::write(project.join(PROJECT_CONFIG_FILENAME), "schema = 3\n[tools]\nnode = \"24.0.0\"\n").unwrap();
+        fs::write(
+            project.join(PROJECT_CONFIG_FILENAME),
+            "schema = 3\n[tools]\nnode = \"24.0.0\"\n",
+        )
+        .unwrap();
         save_lockfile(&project.join("pinset.lock"), &node_lockfile("24.0.0")).unwrap();
         let background = audit_project_environment(&home, &project);
-        assert!(background.findings.iter().any(|finding| finding.reason_code == LockAuditReasonCode::InstallMissing));
-        assert!(!background.findings.iter().any(|finding| finding.category == LockAuditCategory::Cache));
+        assert!(
+            background
+                .findings
+                .iter()
+                .any(|finding| finding.reason_code == LockAuditReasonCode::InstallMissing)
+        );
+        assert!(
+            !background
+                .findings
+                .iter()
+                .any(|finding| finding.category == LockAuditCategory::Cache)
+        );
         let explicit = audit_project_lock(&home, &project);
-        assert!(explicit.findings.iter().any(|finding| finding.category == LockAuditCategory::Cache));
+        assert!(
+            explicit
+                .findings
+                .iter()
+                .any(|finding| finding.category == LockAuditCategory::Cache)
+        );
         assert!(!home.exists());
     }
 

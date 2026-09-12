@@ -207,7 +207,8 @@ pub use java_runtime::install_locked_java;
 #[cfg(all(feature = "installer", feature = "lockfile"))]
 pub use lock_audit::{
     LockAuditCategory, LockAuditFinding, LockAuditReasonCode, LockAuditRepair, LockAuditReport,
-    LockAuditScope, LockAuditSeverity, LockAuditSummary, audit_global_lock, audit_project_lock, audit_project_environment,
+    LockAuditScope, LockAuditSeverity, LockAuditSummary, audit_global_lock,
+    audit_project_environment, audit_project_lock,
 };
 #[cfg(feature = "lockfile")]
 pub use lockfile::{

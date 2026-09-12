@@ -308,7 +308,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         let mut args = Vec::new();
         if run.plan.no_env {
             args.push("--no-env");
-        } else if let Some(profile) = run.plan.profile.as_deref() {
+        } else if let Some(profile) = options.profile {
             args.extend(["-e", profile]);
         }
         args.extend(["run", task]);
@@ -499,9 +499,15 @@ fn save(home: &Path, run: &SetupRun) -> ReportResult<()> {
 fn show(plan: &SetupPlan, catalog: Catalog) {
     if catalog.language() == crate::i18n::Language::SimplifiedChinese {
         println!("项目：{}", plan.root.display());
-        for selection in &plan.selections { println!("选择：{selection}（解析版本需联网）"); }
-        for step in &plan.steps { println!("准备：{}", step.id); }
-        for blocker in &plan.blockers { println!("需要处理：{blocker}"); }
+        for selection in &plan.selections {
+            println!("选择：{selection}（解析版本需联网）");
+        }
+        for step in &plan.steps {
+            println!("准备：{}", step.id);
+        }
+        for blocker in &plan.blockers {
+            println!("需要处理：{blocker}");
+        }
         println!("此预览不会解密变量或执行项目任务。");
         return;
     }

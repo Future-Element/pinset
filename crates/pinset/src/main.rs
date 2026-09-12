@@ -8446,7 +8446,11 @@ fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error:
                 workspace_members,
                 environment,
                 tasks,
-                diagnostics: if protocol == 2 { diagnostics::collect_environment(&cwd)? } else { diagnostics::collect(&cwd, false)? },
+                diagnostics: if protocol == 2 {
+                    diagnostics::collect_environment(&cwd)?
+                } else {
+                    diagnostics::collect(&cwd, false)?
+                },
             };
             if json {
                 if protocol == 2 {
