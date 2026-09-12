@@ -86,6 +86,9 @@ async function runCli(
             const response = JSON.parse(standardOutput);
             if (typeof response.error?.message === "string") detail = response.error.message;
             else if (Array.isArray(response.data?.blockers)) detail = response.data.blockers.join("; ");
+            else if (response.data?.run?.task?.state === "failed") {
+              detail = `Environment preparation completed; explicit task ${response.data.run.task.id} failed. Inspect the task, then retry it explicitly with pinset run ${response.data.run.task.id}.`;
+            }
             else if (response.data?.run?.id) {
               const failed = response.data.run.plan?.steps?.filter((step: { state: string }) => step.state === "failed") ?? [];
               detail = `${failed.map((step: { id: string; reason?: string }) => `${step.id}: ${step.reason ?? "failed"}`).join("; ")}. Resume: pinset setup --resume ${response.data.run.id}`;

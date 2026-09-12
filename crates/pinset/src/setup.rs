@@ -356,7 +356,11 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
         task_failed = child(&root, &args, options.json).is_err();
         run.task = Some(Step {
             id: task.to_owned(),
-            state: if task_failed { StepState::Failed } else { StepState::Succeeded },
+            state: if task_failed {
+                StepState::Failed
+            } else {
+                StepState::Succeeded
+            },
             reason: task_failed.then(|| "explicit_task_failed".to_owned()),
         });
         save(&home, &run)?;
@@ -377,7 +381,7 @@ pub fn run(cwd: &Path, options: SetupOptions<'_>, catalog: Catalog) -> ReportRes
             }
         );
         if let Some(task) = &run.task {
-            println!("Explicit task {}: {:?}", task.id, task.state);
+            println!("Last explicit task {}: {:?}", task.id, task.state);
         } else {
             println!("Project tasks were not executed.");
         }
