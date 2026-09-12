@@ -32,6 +32,7 @@ async function runCli(
   token?: vscode.CancellationToken,
   timeoutMs = 30_000,
 ): Promise<CapturedProcess> {
+  if (token?.isCancellationRequested) throw new vscode.CancellationError();
   return new Promise<CapturedProcess>((resolve, reject) => {
     const child = spawn(executable(), [...args], {
       cwd: folder.uri.fsPath,
@@ -79,10 +80,22 @@ async function runCli(
       } else if (cancelled) {
         reject(new vscode.CancellationError());
       } else if (code !== 0) {
+        let detail = standardError;
+        if (!detail && args.includes("--json")) {
+          try {
+            const response = JSON.parse(standardOutput);
+            if (typeof response.error?.message === "string") detail = response.error.message;
+            else if (Array.isArray(response.data?.blockers)) detail = response.data.blockers.join("; ");
+            else if (response.data?.run?.id) {
+              const failed = response.data.run.plan?.steps?.filter((step: { state: string }) => step.state === "failed") ?? [];
+              detail = `${failed.map((step: { id: string; reason?: string }) => `${step.id}: ${step.reason ?? "failed"}`).join("; ")}. Resume: pinset setup --resume ${response.data.run.id}`;
+            }
+          } catch { /* Keep the existing process error for incompatible CLI output. */ }
+        }
         reject(
           new PinsetProcessError(
-            standardError || `Pinset exited with ${code ?? signal ?? "an unknown status"}`,
-            standardError,
+            detail || `Pinset exited with ${code ?? signal ?? "an unknown status"}`,
+            detail,
           ),
         );
       } else {
@@ -389,8 +402,12 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
       if (!runtime) return undefined;
       const evidence = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: `Observing ${runtime.tool} debugger`, cancellable: true},
         (_progress, token) => debugProbe(folder, runtime, extensionContext.storageUri!, token));
-      if (store.get(folder) !== context) throw new Error("Project changed while probing; repeat the probe.");
-      appendDebugEvidence(context.descriptor, evidence); panel.changed();
+      const fresh = await store.refresh(folder);
+      if (fresh.descriptor?.context_fingerprint !== context.descriptor.context_fingerprint
+        || JSON.stringify(fresh.descriptor?.runtimes) !== JSON.stringify(context.descriptor.runtimes)) {
+        throw new Error("Project changed while probing; repeat the probe.");
+      }
+      appendDebugEvidence(fresh.descriptor!, evidence); panel.changed();
       return evidence;
     }),
     vscode.commands.registerCommand("pinset.prepareEnvironment", async () => {
@@ -400,7 +417,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
         const preview = await runCli(folder, ["setup", "--plan", "--json"]);
         const plan = JSON.parse(preview.stdout).data;
         const answer = await vscode.window.showWarningMessage(`Prepare ${folder.name}?`, { modal: true,
-          detail: `Steps: ${plan.steps.map((step: { id: string }) => step.id).join(", ")}\nDeclared tasks require a separate explicit action.` }, "Prepare");
+          detail: `Runtimes: ${(plan.environment?.runtimes ?? []).map((runtime: { tool: string; requested: string; locked_version?: string }) => `${runtime.tool}: ${runtime.locked_version ?? "resolve required"} (requested ${runtime.requested})`).join(", ")}\nProfile: ${plan.profile ?? "none"}\nSteps: ${plan.steps.map((step: { id: string }) => step.id).join(", ")}\nDeclared tasks require a separate explicit action.` }, "Prepare");
         if (answer !== "Prepare") return;
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Preparing Pinset environment", cancellable: true },
           async (_progress, token) => { const result = await runCli(folder, ["setup", "--yes", "--json"], token, 20 * 60_000); output.appendLine(result.stdout); });
@@ -419,10 +436,12 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
           async (_progress, token) => runCli(folder, ["status", "--report-version", "2", "--probe", "--json"], token));
         const report: unknown = JSON.parse(result.stdout).data.report;
         validateDescriptor(report);
-        if (store.get(folder) !== context || context.descriptor.context_fingerprint !== fingerprint) throw new Error("Project changed while probing; refresh and retry.");
-        context.descriptor.evidence = report.evidence;
-        context.descriptor.execution_verified = report.execution_verified;
-        context.descriptor.environment_ready = report.environment_ready;
+        const fresh = await store.refresh(folder);
+        if (!fresh.descriptor || fresh.descriptor.context_fingerprint !== fingerprint
+          || JSON.stringify(fresh.descriptor.runtimes) !== JSON.stringify(context.descriptor.runtimes)) throw new Error("Project changed while probing; refresh and retry.");
+        fresh.descriptor.evidence = report.evidence;
+        fresh.descriptor.execution_verified = report.execution_verified;
+        fresh.descriptor.environment_ready = report.environment_ready;
         panel.changed();
       } catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
     }),
