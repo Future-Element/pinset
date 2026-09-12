@@ -20,9 +20,22 @@ inputs:
     required: false
     default: .
   trust-project-id:
-    description: Expected non-secret schema 4 or 5 project-id to trust for encrypted environment injection.
+    description: Expected non-secret project-id to trust for encrypted environment injection.
     required: false
     default: ""
+  prepare:
+    description: Run pinset setup --yes to prepare the declared environment (Pinset 2.13 or newer).
+    required: false
+    default: "false"
+  environment-report:
+    description: Save a portable environment report and add a summary (Pinset 2.13 or newer).
+    required: false
+    default: "false"
+
+outputs:
+  environment-report:
+    description: Path to the portable environment report, when requested.
+    value: ${{ steps.environment-report.outputs.path }}
 
 runs:
   using: composite
@@ -105,7 +118,7 @@ runs:
       run: pinset cache verify
 
     - name: Install locked runtimes
-      if: inputs.install == 'true'
+      if: inputs.install == 'true' && inputs.prepare != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: pinset install --locked
@@ -114,7 +127,27 @@ runs:
       if: inputs.trust-project-id != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pinset trust add --project-id "${{ inputs.trust-project-id }}"
+      env:
+        PINSET_EXPECTED_PROJECT_ID: ${{ inputs.trust-project-id }}
+      run: pinset trust add --project-id "${PINSET_EXPECTED_PROJECT_ID}"
+
+    - name: Prepare the declared development environment
+      if: inputs.prepare == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pinset setup --yes
+
+    - name: Save portable environment report
+      id: environment-report
+      if: always() && inputs.environment-report == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        report="${RUNNER_TEMP}/pinset-environment-report.json"
+        pinset status --report-version 2 --save "${report}" --json > "${RUNNER_TEMP}/pinset-environment-envelope.json"
+        printf 'path=%s\n' "${report}" >> "${GITHUB_OUTPUT}"
+        python "${GITHUB_ACTION_PATH}/scripts/environment_summary.py" "${report}"
 
 branding:
   icon: check-circle

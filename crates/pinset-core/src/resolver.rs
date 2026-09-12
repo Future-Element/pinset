@@ -565,6 +565,8 @@ fn selection_from_config(
     state: (&Path, Result<Option<crate::Lockfile>>),
 ) -> Result<ToolSelection> {
     let (pinset_home, lockfile) = state;
+    #[cfg(not(feature = "provider-registry"))]
+    let _ = pinset_home;
     let lockfile = lockfile?;
     let (version, installation_version) = if let Some(lockfile) = lockfile {
         let locked = validate_lock_matches_tool(&lockfile, tool, requested, config_path)?;
@@ -584,7 +586,7 @@ fn selection_from_config(
             crate::validate_locked_declarative_provider(pinset_home, locked)?;
         }
         (locked.version.clone(), locked.installation_version())
-    } else if config_schema < crate::PROJECT_CONFIG_SCHEMA {
+    } else if config_schema < 5 {
         (requested.to_owned(), requested.to_owned())
     } else {
         return Err(Error::ReadLockfile {

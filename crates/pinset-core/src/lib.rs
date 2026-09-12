@@ -1,4 +1,26 @@
+mod build_conditions;
 mod config;
+pub use build_conditions::check_build_conditions;
+#[cfg(feature = "http-client")]
+mod http_client;
+#[cfg(feature = "http-client")]
+pub use http_client::{client_builder_with_ca, http_client_builder};
+#[cfg(all(feature = "project-discovery", feature = "lockfile"))]
+mod compatibility;
+#[cfg(all(feature = "project-discovery", feature = "lockfile"))]
+mod compatibility_ranges;
+#[cfg(all(feature = "installer", feature = "lockfile"))]
+mod environment_delivery;
+#[cfg(feature = "installer")]
+mod network_diagnostics;
+#[cfg(all(feature = "project-discovery", feature = "lockfile"))]
+pub use compatibility::{check_bundled_npm, check_compatibility};
+#[cfg(all(feature = "installer", feature = "lockfile"))]
+pub use environment_delivery::{
+    DeliveryArtifact, DeliveryReport, artifacts_for_platform, inspect_offline_delivery,
+};
+#[cfg(feature = "installer")]
+pub use network_diagnostics::*;
 #[cfg(feature = "declarative-provider")]
 mod declarative_provider;
 #[cfg(all(
@@ -108,9 +130,10 @@ mod user_settings;
 #[cfg(feature = "lockfile")]
 pub use config::validate_project_lock_policy;
 pub use config::{
-    EnvironmentCollision, EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType,
-    PROJECT_CONFIG_FILENAME, PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext,
-    ProjectEnvironment, ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectTask,
+    ENVIRONMENT_BUILD_TARGETS, ENVIRONMENT_PLATFORMS, EnvironmentCollision, EnvironmentProfile,
+    EnvironmentVariableContract, EnvironmentVariableType, PROJECT_CONFIG_FILENAME,
+    PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext, ProjectEnvironment,
+    ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectRequirements, ProjectTask,
     ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
     find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
     load_effective_project_config, load_project_config, project_task_order,
@@ -151,6 +174,7 @@ pub use download_cache::{
 pub use environment_protocol::{decode_environment, encode_environment};
 pub use environment_report::{
     EnvironmentCheck, EnvironmentDescriptor, ExecutionEvidence, ReadinessState, RuntimeDescriptor,
+    VariableRequirement,
 };
 #[cfg(feature = "project-write")]
 pub use environment_selection::save_local_environment;

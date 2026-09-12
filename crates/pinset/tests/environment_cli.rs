@@ -32,6 +32,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
     save_project_config(
         &project.join("pinset.toml"),
         &ProjectConfig {
+            requirements: None,
             schema: 4,
             project_id: Some(project_id.to_owned()),
             policy: Default::default(),
@@ -82,6 +83,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
     let mut changed = environment;
     changed.collision = pinset_core::EnvironmentCollision::ProcessWins;
     let changed_config = ProjectConfig {
+        requirements: None,
         schema: 4,
         project_id: Some(project_id.to_owned()),
         policy: Default::default(),
@@ -166,6 +168,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
     save_project_config(
         &project.join("pinset.toml"),
         &ProjectConfig {
+            requirements: None,
             schema: 5,
             project_id: Some(project_id.to_owned()),
             policy: Default::default(),

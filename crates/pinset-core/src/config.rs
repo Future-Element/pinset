@@ -21,11 +21,13 @@ use crate::{
 };
 
 pub const PROJECT_CONFIG_FILENAME: &str = "pinset.toml";
-pub const PROJECT_CONFIG_SCHEMA: u32 = 5;
+pub const PROJECT_CONFIG_SCHEMA: u32 = 6;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     pub schema: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<ProjectRequirements>,
     #[serde(
         default,
         rename = "project-id",
@@ -52,6 +54,27 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<ProjectEnvironment>,
 }
+
+/// Optional team/build policy. Schema 5 projects keep their previous behavior.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectRequirements {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_rules: Vec<String>,
+}
+
+pub const ENVIRONMENT_PLATFORMS: [&str; 5] = [
+    "windows-x86_64",
+    "linux-x86_64",
+    "linux-aarch64",
+    "macos-x86_64",
+    "macos-aarch64",
+];
+pub const ENVIRONMENT_BUILD_TARGETS: [&str; 5] = ["android", "ios", "macos", "windows", "linux"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -369,7 +392,7 @@ fn parse_project_config(path: &Path) -> Result<ProjectConfig> {
             source,
         })?;
 
-    if !matches!(config.schema, 1 | 2 | 3 | 4 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | 4 | 5 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -394,6 +417,7 @@ pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<P
         });
     }
     let mut effective = root;
+    effective.schema = effective.schema.max(member.schema);
     effective.project_id = member.project_id.clone();
     effective.policy = member.policy.clone();
     for tool in member.tools.keys() {
@@ -407,6 +431,9 @@ pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<P
     }
     if member.environment.is_some() {
         effective.environment = member.environment.clone();
+    }
+    if member.requirements.is_some() {
+        effective.requirements = member.requirements.clone();
     }
     effective.workspace = None;
     validate_environment_config(&effective)?;
@@ -529,7 +556,7 @@ pub fn create_project_config(directory: &Path) -> Result<PathBuf> {
 
 #[cfg(feature = "project-write")]
 pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
-    if !matches!(config.schema, 1 | 2 | 3 | 4 | PROJECT_CONFIG_SCHEMA) {
+    if !matches!(config.schema, 1 | 2 | 3 | 4 | 5 | PROJECT_CONFIG_SCHEMA) {
         return Err(Error::UnsupportedSchema {
             actual: config.schema,
         });
@@ -559,17 +586,56 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
 }
 
 fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
-    if config.schema < PROJECT_CONFIG_SCHEMA && !config.tasks.is_empty() {
+    if let Some(requirements) = &config.requirements {
+        if config.schema < 6 {
+            return Err(Error::InvalidProjectConfig { reason: "environment requirements need schema 6; preview with `pinset migrate --dry-run` before migrating".to_owned() });
+        }
+        let valid = requirements
+            .platforms
+            .iter()
+            .all(|value| ENVIRONMENT_PLATFORMS.contains(&value.as_str()))
+            && requirements
+                .build_targets
+                .iter()
+                .all(|value| ENVIRONMENT_BUILD_TARGETS.contains(&value.as_str()))
+            && requirements.disabled_rules.iter().all(|value| {
+                value.len() <= 160
+                    && (value.starts_with("compatibility.") || value.starts_with("build."))
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b".-_/".contains(&byte))
+            });
+        for values in [
+            &requirements.platforms,
+            &requirements.build_targets,
+            &requirements.disabled_rules,
+        ] {
+            if values.len() > 64 || values.iter().collect::<BTreeSet<_>>().len() != values.len() {
+                return Err(Error::InvalidProjectConfig {
+                    reason:
+                        "environment requirements must have at most 64 unique entries per field"
+                            .to_owned(),
+                });
+            }
+        }
+        if !valid {
+            return Err(Error::InvalidProjectConfig {
+                reason: "unsupported environment platform, build target, or individual rule ID"
+                    .to_owned(),
+            });
+        }
+    }
+    if config.schema < 5 && !config.tasks.is_empty() {
         return Err(Error::InvalidProjectConfig {
             reason: "tasks require schema 5; run `pinset migrate`".to_owned(),
         });
     }
-    if config.schema < PROJECT_CONFIG_SCHEMA && config.python.is_some() {
+    if config.schema < 5 && config.python.is_some() {
         return Err(Error::InvalidProjectConfig {
             reason: "named Python environments require schema 5; run `pinset migrate`".to_owned(),
         });
     }
-    if config.schema < PROJECT_CONFIG_SCHEMA && config.workspace.is_some() {
+    if config.schema < 5 && config.workspace.is_some() {
         return Err(Error::InvalidProjectConfig {
             reason: "workspaces require schema 5; run `pinset migrate`".to_owned(),
         });
@@ -662,7 +728,7 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
         }
         return Ok(());
     };
-    if config.schema < PROJECT_CONFIG_SCHEMA && !environment.variables.is_empty() {
+    if config.schema < 5 && !environment.variables.is_empty() {
         return Err(Error::InvalidProjectConfig {
             reason: "environment variable contracts require schema 5; run `pinset migrate`"
                 .to_owned(),
@@ -1205,6 +1271,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn requirements_need_explicit_schema_migration_and_single_rule_overrides() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("pinset.toml");
+        let legacy = "schema = 5\nproject-id = '11111111-1111-4111-8111-111111111111'\n[tools]\nnode = '24.0.0'\n";
+        fs::write(&path, legacy).unwrap();
+        let loaded = load_project_config(&path).unwrap();
+        save_project_config(&path, &loaded).unwrap();
+        assert_eq!(load_project_config(&path).unwrap().schema, 5);
+        let requirements = "[requirements]\nplatforms = ['linux-x86_64']\ndisabled-rules = ['compatibility.node.engines.r1']\n";
+        fs::write(&path, format!("{legacy}{requirements}")).unwrap();
+        assert!(load_project_config(&path).is_err());
+        let migrated = format!(
+            "{}{requirements}",
+            legacy.replace("schema = 5", "schema = 6")
+        );
+        fs::write(&path, &migrated).unwrap();
+        assert!(load_project_config(&path).is_ok());
+        for invalid in [
+            migrated.replace("compatibility.node.engines.r1", "compatibility.*"),
+            migrated.replace("linux-x86_64", "arbitrary-platform"),
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert!(load_project_config(&path).is_err());
+        }
+    }
+
+    #[test]
     fn finds_nearest_config_from_nested_directory() {
         let root = tempdir().expect("temp directory");
         let nested = root.path().join("packages").join("web").join("src");
@@ -1284,10 +1377,10 @@ mod tests {
     fn rejects_unknown_schema() {
         let root = tempdir().expect("temp directory");
         let config_path = root.path().join("pinset.toml");
-        fs::write(&config_path, "schema = 6\n[tools]\nnode = \"20\"\n").expect("config");
+        fs::write(&config_path, "schema = 7\n[tools]\nnode = \"20\"\n").expect("config");
 
         let error = load_project_config(&config_path).expect_err("schema must fail");
-        assert!(matches!(error, Error::UnsupportedSchema { actual: 6 }));
+        assert!(matches!(error, Error::UnsupportedSchema { actual: 7 }));
     }
 
     #[test]
@@ -1676,6 +1769,7 @@ date = "2026-07-16"
         let root = tempdir().expect("temp directory");
         let path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
+            requirements: None,
             schema: 4,
             project_id: Some("4c5652e4-0000-4000-8000-000000000006".to_owned()),
             policy: ProjectPolicy::default(),
@@ -1734,6 +1828,7 @@ date = "2026-07-16"
         let root = tempdir().expect("project");
         let config_path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
+            requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: ProjectPolicy::default(),

@@ -8,38 +8,39 @@ publish = false
 
 [features]
 default = []
+http-client = ["dep:reqwest"]
 installer = [
     "dep:base64",
     "dep:flate2",
     "dep:fs4",
     "dep:hex",
-    "dep:reqwest",
+    "http-client",
     "dep:sha2",
     "dep:tar",
     "dep:tempfile",
     "dep:xz2",
     "dep:zip",
 ]
-go-metadata = ["lockfile", "sources", "dep:reqwest", "dep:serde_json"]
+go-metadata = ["lockfile", "sources", "http-client", "dep:serde_json"]
 go-provider = ["sources"]
-flutter-metadata = ["lockfile", "sources", "dep:reqwest", "dep:serde_json"]
+flutter-metadata = ["lockfile", "sources", "http-client", "dep:serde_json"]
 flutter-provider = ["sources"]
-java-metadata = ["lockfile", "dep:reqwest", "dep:serde_json"]
+java-metadata = ["lockfile", "http-client", "dep:serde_json"]
 java-provider = []
-rust-metadata = ["lockfile", "dep:reqwest", "dep:sha2"]
+rust-metadata = ["lockfile", "http-client", "dep:sha2"]
 rust-provider = []
-dotnet-metadata = ["lockfile", "dep:reqwest", "dep:serde_json"]
+dotnet-metadata = ["lockfile", "http-client", "dep:serde_json"]
 dotnet-provider = []
-python-metadata = ["lockfile", "sources", "dep:md5", "dep:reqwest", "dep:serde_json", "dep:sha2", "dep:tempfile"]
+python-metadata = ["lockfile", "sources", "dep:md5", "http-client", "dep:serde_json", "dep:sha2", "dep:tempfile"]
 python-provider = ["sources"]
-lockfile = ["node-provider", "go-provider", "flutter-provider", "java-provider", "rust-provider", "dotnet-provider", "python-provider", "dep:atomic-write-file", "dep:base64", "dep:hex"]
-node-metadata = ["lockfile", "dep:pgp", "dep:reqwest", "dep:serde_json"]
+lockfile = ["node-provider", "go-provider", "flutter-provider", "java-provider", "rust-provider", "dotnet-provider", "python-provider", "dep:atomic-write-file", "dep:base64", "dep:hex", "dep:sha2"]
+node-metadata = ["lockfile", "dep:pgp", "http-client", "dep:serde_json"]
 node-provider = ["sources"]
 npm-metadata = [
     "lockfile",
     "sources",
     "dep:p256",
-    "dep:reqwest",
+    "http-client",
     "dep:semver",
     "dep:serde_json",
 ]
@@ -47,7 +48,7 @@ environment-selection = ["dep:sha2"]
 project-write = ["environment-selection", "dep:atomic-write-file", "dep:fs4", "dep:sha2", "dep:tempfile", "dep:uuid"]
 project-discovery = ["dep:json5", "dep:serde_json", "dep:serde_yaml"]
 provider-registry = ["dep:hex", "dep:pgp", "dep:serde_json"]
-declarative-provider = ["lockfile", "provider-registry", "dep:reqwest", "dep:semver", "dep:serde_json"]
+declarative-provider = ["lockfile", "provider-registry", "http-client", "dep:semver", "dep:serde_json"]
 state-write = ["dep:atomic-write-file", "dep:fs4"]
 sources = [
     "dep:atomic-write-file",

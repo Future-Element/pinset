@@ -12,6 +12,7 @@ use std::{
 
 mod bundle;
 mod candidate;
+mod delivery;
 mod diagnostics;
 mod environment;
 mod i18n;
@@ -412,6 +413,8 @@ enum Commands {
     },
     /// Check redacted diagnostic state and fail when action is required.
     Check {
+        #[command(flatten)]
+        delivery: delivery::Options,
         #[arg(long)]
         cwd: Option<PathBuf>,
         #[arg(long)]
@@ -424,7 +427,7 @@ enum Commands {
         repair_preview: bool,
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
         report_version: u32,
-        /// Execute bounded Node/Python probes. Implies environment report 2.
+        /// Execute bounded SDK probes. Implies environment report 2.
         #[arg(long)]
         probe: bool,
     },
@@ -623,6 +626,9 @@ enum CacheCommands {
         /// Maximum simultaneous downloads.
         #[arg(long, default_value_t = 4)]
         jobs: usize,
+        /// Prefetch these platforms; defaults to declared requirements, then this machine.
+        #[arg(long = "target", value_delimiter = ',')]
+        targets: Vec<String>,
         #[arg(long)]
         json: bool,
     },
@@ -1246,6 +1252,7 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
         | Error::ReadUserSettings { .. }
         | Error::ParseUserSettings { .. }
         | Error::UnsupportedUserSettingsSchema { .. } => "config_error",
+        Error::InvalidNetworkConfig { .. } => "network_configuration_invalid",
         Error::ReadLockfile { .. }
         | Error::ParseLockfile { .. }
         | Error::UnsupportedLockfileSchema { .. }
@@ -1817,6 +1824,7 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             );
         }
         Commands::Check {
+            delivery,
             cwd,
             json,
             save,
@@ -1825,6 +1833,21 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             report_version,
             probe,
         } => {
+            if delivery.requested() {
+                if repair_preview {
+                    return Err("--repair-preview is supported only by diagnostic report v1".into());
+                }
+                return delivery::run(
+                    &effective_cwd(cwd)?,
+                    delivery,
+                    probe,
+                    json,
+                    save.as_deref(),
+                    compare.as_deref(),
+                    cli.profile.as_deref(),
+                    cli.no_env,
+                );
+            }
             if report_version == 2 || probe {
                 return readiness::run(
                     "check",
@@ -2053,6 +2076,7 @@ struct MigrationReport {
     receipt_upgrade_needed: usize,
     changed: bool,
     dry_run: bool,
+    backup_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2936,7 +2960,7 @@ fn selected_version_from_lock(
                 .clone(),
         );
     }
-    if config_schema < PROJECT_CONFIG_SCHEMA {
+    if config_schema < 5 {
         return Ok(requested.to_owned());
     }
     load_lockfile(lock_path)?;
@@ -3317,8 +3341,13 @@ fn run_cache(command: CacheCommands, catalog: Catalog) -> Result<(), Box<dyn std
                 catalog.cache_imported(&entry.integrity, entry.size, &entry.path)
             );
         }
-        CacheCommands::Prefetch { cwd, jobs, json } => {
-            let report = prefetch_project_artifacts(&effective_cwd(cwd)?, jobs)?;
+        CacheCommands::Prefetch {
+            cwd,
+            jobs,
+            targets,
+            json,
+        } => {
+            let report = prefetch_project_artifacts(&effective_cwd(cwd)?, jobs, &targets)?;
             if json {
                 print_json_success("cache.prefetch", report)?;
             } else {
@@ -3350,6 +3379,7 @@ struct PrefetchItem {
 fn prefetch_project_artifacts(
     cwd: &Path,
     jobs: usize,
+    targets: &[String],
 ) -> Result<PrefetchReport, Box<dyn std::error::Error>> {
     if !(1..=16).contains(&jobs) {
         return Err("--jobs must be between 1 and 16".into());
@@ -3362,7 +3392,18 @@ fn prefetch_project_artifacts(
     validate_lock_matches_tools(&lock, &config.tools, &config_path)?;
     validate_lock_matches_tool_options(&lock, &config.tool_options, &config_path)?;
     let sources = load_source_config(&source_config_path(&home))?;
-    let items = locked_prefetch_items(&lock, &sources)?;
+    let declared = config
+        .requirements
+        .as_ref()
+        .map(|requirements| requirements.platforms.as_slice())
+        .unwrap_or_default();
+    let targets = if targets.is_empty() {
+        declared
+    } else {
+        targets
+    };
+    delivery::validate_targets(targets)?;
+    let items = locked_prefetch_items_for_platforms(&lock, &sources, targets)?;
     let total = items.len();
     let queue = Arc::new(Mutex::new(VecDeque::from(items)));
     let results = Arc::new(Mutex::new(Vec::new()));
@@ -3424,49 +3465,73 @@ fn locked_prefetch_items(
     lock: &Lockfile,
     sources: &pinset_core::SourceConfig,
 ) -> Result<Vec<PrefetchItem>, Box<dyn std::error::Error>> {
+    locked_prefetch_items_for_platforms(lock, sources, &[])
+}
+
+fn locked_prefetch_items_for_platforms(
+    lock: &Lockfile,
+    sources: &pinset_core::SourceConfig,
+    platforms: &[String],
+) -> Result<Vec<PrefetchItem>, Box<dyn std::error::Error>> {
     let mut items = Vec::new();
     let mut identities = BTreeSet::new();
+    let mut missing = Vec::new();
     for tool in &lock.tools {
-        let target = current_target_for_tool(&tool.name);
-        let Some(artifact) = tool.artifacts.iter().find(|value| value.target == target) else {
-            continue;
+        let native = vec![current_target_for_tool(&tool.name)];
+        let targets = if platforms.is_empty() {
+            native.as_slice()
+        } else {
+            platforms
         };
-        let identity = artifact.artifact_integrity()?.canonical();
-        if identities.insert(identity.clone()) {
-            items.push(PrefetchItem {
-                tool: tool.name.clone(),
-                artifact: ArtifactSpec {
-                    canonical_url: artifact.canonical_url.clone(),
-                    sources: artifact_sources(
-                        &tool.name,
-                        &artifact.artifact_path,
-                        &artifact.canonical_url,
-                        sources,
-                    )?,
-                    integrity: identity,
-                    format: artifact_format(artifact.format),
-                },
-            });
+        let mut selected = Vec::new();
+        for target in targets {
+            let artifacts = pinset_core::artifacts_for_platform(tool, target);
+            if artifacts.is_empty() {
+                missing.push(format!("{}:{target}", tool.name));
+            }
+            selected.extend(artifacts);
         }
-        for overlay in &artifact.overlays {
-            let identity = overlay.artifact_integrity()?.canonical();
+        for artifact in selected {
+            let identity = artifact.artifact_integrity()?.canonical();
             if identities.insert(identity.clone()) {
                 items.push(PrefetchItem {
                     tool: tool.name.clone(),
                     artifact: ArtifactSpec {
-                        canonical_url: overlay.canonical_url.clone(),
+                        canonical_url: artifact.canonical_url.clone(),
                         sources: artifact_sources(
                             &tool.name,
-                            &overlay.artifact_path,
-                            &overlay.canonical_url,
+                            &artifact.artifact_path,
+                            &artifact.canonical_url,
                             sources,
                         )?,
                         integrity: identity,
-                        format: artifact_format(overlay.format),
+                        format: artifact_format(artifact.format),
                     },
                 });
             }
+            for overlay in &artifact.overlays {
+                let identity = overlay.artifact_integrity()?.canonical();
+                if identities.insert(identity.clone()) {
+                    items.push(PrefetchItem {
+                        tool: tool.name.clone(),
+                        artifact: ArtifactSpec {
+                            canonical_url: overlay.canonical_url.clone(),
+                            sources: artifact_sources(
+                                &tool.name,
+                                &overlay.artifact_path,
+                                &overlay.canonical_url,
+                                sources,
+                            )?,
+                            integrity: identity,
+                            format: artifact_format(overlay.format),
+                        },
+                    });
+                }
+            }
         }
+    }
+    if !missing.is_empty() {
+        return Err(format!("locked platform artifacts missing: {}", missing.join(", ")).into());
     }
     Ok(items)
 }
@@ -4531,7 +4596,8 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
+            status) values="--cwd --json --save --compare --repair-preview --report-version --lang --help" ;;
+            check) values="--cwd --json --save --compare --repair-preview --report-version --probe --delivery --offline --network --target --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
@@ -4579,7 +4645,8 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
+            status) values="--cwd --json --save --compare --repair-preview --report-version --lang --help" ;;
+            check) values="--cwd --json --save --compare --repair-preview --report-version --probe --delivery --offline --network --target --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
@@ -4630,7 +4697,8 @@ complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-i
 complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -n '__fish_seen_subcommand_from doctor' -a '--deep'
-complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview --report-version --probe'
+complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview --report-version'
+complete -c pinset -f -n '__fish_seen_subcommand_from check' -a '--probe --delivery --offline --network --target'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -4656,7 +4724,8 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --deep --json --lang --help' -split ' ' }
-        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --report-version --probe --lang --help' -split ' ' }
+        'status' { '--cwd --json --save --compare --repair-preview --report-version --lang --help' -split ' ' }
+        'check' { '--cwd --json --save --compare --repair-preview --report-version --probe --delivery --offline --network --target --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
@@ -5487,6 +5556,7 @@ fn load_project_import_state(
         load_project_config(config_path)?
     } else {
         ProjectConfig {
+            requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: Default::default(),
@@ -5733,6 +5803,7 @@ fn run_migrate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = effective_cwd(cwd)?;
     let home = pinset_home()?;
+    let mut backup_directory = None;
     let (scope, config_path, lock_path, config_schema, lock_schema, target_refresh_tools) =
         if global {
             let config_path = global_config_path(&home);
@@ -5800,6 +5871,13 @@ fn run_migrate(
                 lockfile.as_ref().map(|(lockfile, _)| lockfile.schema),
                 target_refresh_tools.clone(),
             );
+            if config.schema != PROJECT_CONFIG_SCHEMA
+                || lockfile.as_ref().is_some_and(|(lock, tools)| {
+                    lock.schema != pinset_core::LOCKFILE_SCHEMA || !tools.is_empty()
+                })
+            {
+                backup_directory = Some(backup_migration(&config_path, &lock_path, dry_run)?);
+            }
             if !dry_run {
                 config.schema = PROJECT_CONFIG_SCHEMA;
                 if config.project_id.is_none() {
@@ -5845,10 +5923,22 @@ fn run_migrate(
         receipt_upgrade_needed,
         changed,
         dry_run,
+        backup_directory,
     };
     if json {
         print_json_success("migrate", report)?;
     } else if report.changed {
+        if let Some(backup) = &report.backup_directory {
+            println!(
+                "{}: {}",
+                if dry_run {
+                    "planned backup directory"
+                } else {
+                    "backup directory"
+                },
+                backup.display()
+            );
+        }
         println!(
             "{} config-schema={} -> {} lock-schema={} -> {}{}",
             report.scope,
@@ -5883,6 +5973,49 @@ fn run_migrate(
         );
     }
     Ok(())
+}
+
+fn backup_migration(
+    config: &Path,
+    lock: &Path,
+    dry_run: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let directory = config
+        .parent()
+        .ok_or("project configuration has no parent")?
+        .join(format!(".pinset-migration-{}", uuid::Uuid::new_v4()));
+    let mut originals = Vec::new();
+    for path in [config, lock] {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && path == lock => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 1024 * 1024
+        {
+            return Err("migration input must be a regular file of at most 1 MiB".into());
+        }
+        originals.push((
+            path.file_name().ok_or("migration input name missing")?,
+            fs::read(path)?,
+        ));
+    }
+    if !dry_run {
+        fs::create_dir(&directory)?;
+        for (name, bytes) in originals {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(directory.join(name))?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+    }
+    Ok(directory)
 }
 
 fn install_tool_selection(
@@ -6917,7 +7050,7 @@ fn run_project_task(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
     let config = load_effective_project_config(&config_path)?;
-    if config.schema < PROJECT_CONFIG_SCHEMA {
+    if config.schema < 5 {
         return Err("project tasks require schema 5; run `pinset migrate --dry-run` and then `pinset migrate`".into());
     }
     if !config.tasks.contains_key(task_name) {
@@ -7079,13 +7212,28 @@ fn execute_selected(
                 }
                 .into());
             }
-            let locked_tool = resolve_locked_tool(&tool, &selector)?;
-            let version = locked_tool.version.clone();
+            // An installed exact selection already names its runtime directory. Metadata
+            // is only needed for aliases/ranges or an explicitly requested installation.
+            let locked_tool =
+                if install_ephemeral || validate_exact_tool_version(&tool, &selector).is_err() {
+                    Some(resolve_locked_tool(&tool, &selector)?)
+                } else {
+                    None
+                };
+            let version = locked_tool
+                .as_ref()
+                .map_or_else(|| selector.clone(), |locked| locked.version.clone());
             if selector != version {
                 println!("{tool}@{selector} resolved to {tool}@{version}");
             }
             if install_ephemeral {
-                install_ephemeral_selection(&home, cwd, &tool, locked_tool, catalog)?;
+                install_ephemeral_selection(
+                    &home,
+                    cwd,
+                    &tool,
+                    locked_tool.expect("installation resolves locked metadata"),
+                    catalog,
+                )?;
             }
             let install_dir = home
                 .join("installs")
@@ -9463,6 +9611,7 @@ mod tests {
     #[test]
     fn import_replacement_check_is_limited_to_discovered_tools() {
         let project = ProjectConfig {
+            requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),
             policy: Default::default(),
@@ -9719,6 +9868,7 @@ mod tests {
         save_project_config(
             &project_path,
             &ProjectConfig {
+                requirements: None,
                 schema: PROJECT_CONFIG_SCHEMA,
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),
@@ -10059,6 +10209,7 @@ mod tests {
         save_project_config(
             &project_path,
             &ProjectConfig {
+                requirements: None,
                 schema: PROJECT_CONFIG_SCHEMA,
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
                 policy: Default::default(),

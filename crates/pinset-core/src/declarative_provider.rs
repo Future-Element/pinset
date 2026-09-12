@@ -44,7 +44,7 @@ struct GitHubAsset {
 
 impl DeclarativeProviderClient {
     pub fn official() -> Result<Self> {
-        let http = Client::builder()
+        let http = crate::http_client_builder()?
             .timeout(Duration::from_secs(30))
             .user_agent(concat!("pinset/", env!("CARGO_PKG_VERSION")))
             .build()

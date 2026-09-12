@@ -1087,19 +1087,15 @@ pub enum Error {
     )]
     InvalidArtifactIntegrity { value: String },
 
-    #[cfg(any(
-        feature = "installer",
-        feature = "go-metadata",
-        feature = "node-metadata",
-        feature = "npm-metadata",
-        feature = "rust-metadata",
-        feature = "dotnet-metadata"
-    ))]
+    #[cfg(feature = "http-client")]
     #[error("failed to build the HTTP client: {source}")]
     HttpClient {
         #[source]
         source: reqwest::Error,
     },
+
+    #[error("invalid network configuration: {reason}")]
+    InvalidNetworkConfig { reason: String },
 
     #[cfg(feature = "installer")]
     #[error("failed to request artifact {url}: {source}")]

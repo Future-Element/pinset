@@ -15,6 +15,14 @@ pub const RUST_TARGETS: [&str; 5] = [
 pub const RUST_PROFILE: &str = "default";
 pub const RUST_COMPONENTS: &str = "rustc,cargo,rust-std,rust-docs,rustfmt,clippy";
 
+pub(crate) fn rust_component_name(component: &str) -> &str {
+    match component {
+        "rustfmt-preview" => "rustfmt",
+        "clippy-preview" => "clippy",
+        other => other,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustArchiveFormat {
     TarXz,

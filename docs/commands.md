@@ -245,7 +245,7 @@ Import never reads installed state from another runtime manager, executes manage
 
 | Field | Description |
 | --- | --- |
-| Purpose | Validate and rewrite schema 1–4 project configuration as schema 5 and schema 1–4 runtime locks as schema 5. Schema-only changes preserve comments and use atomic replacement. It also repairs safely recognized pre-1.0 Provider records at their existing exact versions. Use `--global` to migrate an old global lock manually. |
+| Purpose | Explicitly migrate schema 1–5 project configuration to schema 6 and older runtime locks to schema 5. Project migration backs up the original config/lock bytes before changes; dry-run reports the planned backup without creating it. Schema-only changes preserve comments. Recognized legacy Provider records retain their exact versions. |
 | Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
@@ -332,7 +332,7 @@ Stable reason codes are grouped as follows:
 | Exit | `0` when the diagnostic completes; `2` if its inputs cannot be read or validated. Findings are reported in data and do not necessarily make the command fail. |
 | Key errors | Unreadable config/lock, malformed state, unsafe path, or filesystem failure. |
 
-### `status` and `check`
+### `status`
 
 | Field | Description |
 | --- | --- |
@@ -343,6 +343,31 @@ Stable reason codes are grouped as follows:
 | JSON | **Yes**; command name `status` or `check`. The report has its own schema field, independent of the CLI envelope. |
 | Exit | `status` returns `0` after collection. `check` returns `1` for errors, warnings, or comparison changes. Invalid input returns `2`. |
 | Privacy | Reports omit filesystem paths, environment values, encrypted payloads, checksums, and secret digests. Comparisons return changed JSON Pointer paths only. |
+
+`--report-version 2` selects the environment report with runtime options, artifact identities, four-state compatibility checks and optional requirements. `--save` removes machine paths and contextual fingerprints. The default diagnostic report remains v1; its privacy and comparison fields are unchanged.
+
+### `setup`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Preview and prepare the project's locked development environment, including managed Python environments and explicitly selected tasks. |
+| Syntax and arguments | `pinset setup [--plan] [--yes] [--offline] [--resume <run-id>] [--task <name>] [--json]`. |
+| Modifies state | `--plan` is read-only. Execution reuses/verifies locked SDKs and prepares owned environments; declared tasks run only when requested. |
+| Example | `pinset -e dev setup --yes --task test` |
+| Exit | `0` when requested preparation succeeds; review environment readiness separately from task/application verification. |
+
+### `check`
+
+| Field | Description |
+| --- | --- |
+| Purpose | Check environment compatibility and delivery, or explicitly probe SDK execution. |
+| Syntax and arguments | `pinset check [--report-version 2] [--probe] [--delivery] [--offline | --network] [--target <platform,...>] [--save <file>] [--compare <file>] [--json]`. |
+| Modifies state | Explicit profile validation may open an identity in memory. Network probes require `--network`; SDK probes require `--probe`. Only `--save` writes a report. |
+| Example | `pinset check --offline --target linux-x86_64,windows-x86_64 --json` |
+| Exit | `0` for the selected check passing, `1` for findings, `2` for invalid input. Delivery comparison changes are data and do not independently change this exit status. |
+| Privacy | Environment v2 includes SDK artifact identities, never secret values, defaults, private source URLs or machine paths. |
+
+Schema 6 optionally declares `[requirements]` with `platforms`, `build-targets` and exact `disabled-rules`. Each compatibility rule has a revision and source; unknown declarations remain unknown. Node keeps bundled npm. `check --offline` verifies complete SDK archives, not npm/pip/Maven dependencies or application builds. `--network` preserves selected/official/fallback order; `PINSET_CA_BUNDLE` adds process-scoped organization roots while retaining TLS verification. Report comparison ignores path/order differences and separates declared platform differences from version/options/artifact/contract changes. See the [team environment guide](https://github.com/Future-Element/pinset/blob/main/docs/team-environments.md) in the source documentation.
 
 ## Download cache commands
 
@@ -1131,6 +1156,6 @@ Self updates use a cross-process lock and a 60-second HTTP timeout. Windows repl
 
 ## Stable protocol boundary
 
-The current development line writes schema 5 project configuration, schema 3 global configuration, and schema 5 runtime locks. Schema 1–4 projects and schema 1–4 locks remain readable and are migrated explicitly. Existing schema 4 encrypted environments continue to operate before migration. Installation receipts use independent schema 4 while schema 1–3 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the optional upstream `released-at` timestamp. A configured policy is enforced during state writes, project installation, updates including dry runs, and lock audits; unavailable release time fails closed, and replacing an existing tool lock with weaker verification is rejected.
+The current development line creates schema 6 project configuration, schema 3 global configuration, and schema 5 runtime locks. Existing schema 1–5 projects remain readable; schema 5 writes do not silently migrate to schema 6. Migration is explicit and backs up project inputs. Existing schema 4 encrypted environments continue to operate. Installation receipts use independent schema 4 while schema 1–3 receipts remain readable. Project `[policy]` accepts optional `verification-strength = "checksum" | "signed-checksum" | "provenance"` and `minimum-release-age = "<positive integer><d|h|m|s>"`. New locks may record the upstream `released-at` timestamp. These policies remain enforced on selection, installation, updates and audits; replacing a lock with weaker verification is rejected.
 
 The JSON schema 1 envelope remains unchanged in v2.0. New JSON commands include `paths`, `env.list`, `env.identity.list`, `trust.status`, and `self.outdated`. Automation should branch on stable command and reason/code fields, not human-facing messages. JSON output and errors never include environment values, identities, or passphrases.
