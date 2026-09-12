@@ -687,7 +687,9 @@ pub(crate) fn resolve_environment(
     let mut document = read_encrypted_profile(root, &selected.file, &identities)?;
     let issues = contract_issues(&config, profile, &document.variables);
     if !issues.is_empty() {
-        for value in document.variables.values_mut() { value.zeroize(); }
+        for value in document.variables.values_mut() {
+            value.zeroize();
+        }
         return Err(Box::new(ContractError { issues }));
     }
     for (name, contract) in &environment.variables {
@@ -709,19 +711,35 @@ struct ContractIssue {
 }
 
 #[derive(Debug)]
-pub(crate) struct ContractError { issues: Vec<ContractIssue> }
+pub(crate) struct ContractError {
+    issues: Vec<ContractIssue>,
+}
 
 impl ContractError {
     pub(crate) fn reason(&self) -> &'static str {
-        if self.issues.iter().any(|issue| issue.reason == "is required but missing") { "environment_variable_missing" }
-        else { "environment_variable_invalid" }
+        if self
+            .issues
+            .iter()
+            .any(|issue| issue.reason == "is required but missing")
+        {
+            "environment_variable_missing"
+        } else {
+            "environment_variable_invalid"
+        }
     }
 }
 
 impl std::fmt::Display for ContractError {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(output, "environment contract check failed: {}", self.issues.iter()
-            .map(|issue| format!("{} {}", issue.name, issue.reason)).collect::<Vec<_>>().join(", "))
+        write!(
+            output,
+            "environment contract check failed: {}",
+            self.issues
+                .iter()
+                .map(|issue| format!("{} {}", issue.name, issue.reason))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 impl std::error::Error for ContractError {}

@@ -406,6 +406,9 @@ enum Commands {
         /// Select the compatible diagnostic report or the new environment descriptor.
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
         report_version: u32,
+        /// Execute bounded runtime probes. Implies environment report 2.
+        #[arg(long)]
+        probe: bool,
     },
     /// Check redacted diagnostic state and fail when action is required.
     Check {
@@ -1525,12 +1528,28 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     };
 
     match command {
-        Commands::Setup { plan, yes, resume, task, offline, json } => {
-            return setup::run(&env::current_dir()?, setup::SetupOptions {
-                preview: plan, yes, resume: resume.as_deref(), json, offline,
-                profile: cli.profile.as_deref(), no_env: cli.no_env,
-                task: task.as_deref(),
-            }, catalog);
+        Commands::Setup {
+            plan,
+            yes,
+            resume,
+            task,
+            offline,
+            json,
+        } => {
+            return setup::run(
+                &env::current_dir()?,
+                setup::SetupOptions {
+                    preview: plan,
+                    yes,
+                    resume: resume.as_deref(),
+                    json,
+                    offline,
+                    profile: cli.profile.as_deref(),
+                    no_env: cli.no_env,
+                    task: task.as_deref(),
+                },
+                catalog,
+            );
         }
         Commands::Init => {
             let path = create_project_config(&env::current_dir()?)?;
@@ -1770,11 +1789,23 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             compare,
             repair_preview,
             report_version,
+            probe,
         } => {
-            if report_version == 2 {
-                return readiness::run("status", &effective_cwd(cwd)?, json, save.as_deref(), compare.as_deref(), false, cli.profile.as_deref(), cli.no_env);
+            if report_version == 2 || probe {
+                return readiness::run(
+                    "status",
+                    &effective_cwd(cwd)?,
+                    json,
+                    save.as_deref(),
+                    compare.as_deref(),
+                    probe,
+                    cli.profile.as_deref(),
+                    cli.no_env,
+                );
             }
-            if cli.profile.is_some() || cli.no_env { return Err("environment selection requires --report-version 2".into()); }
+            if cli.profile.is_some() || cli.no_env {
+                return Err("environment selection requires --report-version 2".into());
+            }
             return run_diagnostic_command(
                 "status",
                 cwd,
@@ -1795,9 +1826,20 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             probe,
         } => {
             if report_version == 2 || probe {
-                return readiness::run("check", &effective_cwd(cwd)?, json, save.as_deref(), compare.as_deref(), probe, cli.profile.as_deref(), cli.no_env);
+                return readiness::run(
+                    "check",
+                    &effective_cwd(cwd)?,
+                    json,
+                    save.as_deref(),
+                    compare.as_deref(),
+                    probe,
+                    cli.profile.as_deref(),
+                    cli.no_env,
+                );
             }
-            if cli.profile.is_some() || cli.no_env { return Err("environment selection requires --report-version 2".into()); }
+            if cli.profile.is_some() || cli.no_env {
+                return Err("environment selection requires --report-version 2".into());
+            }
             return run_diagnostic_command("check", cwd, json, save, compare, repair_preview, true);
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
@@ -6249,12 +6291,14 @@ fn ensure_project_python_environment(
         &target,
         recreate,
     )?;
-    if print_outcome { println!(
-        "python@{} project environment {} ready at {}",
-        environment.distribution,
-        environment.name,
-        environment.root.display()
-    ); }
+    if print_outcome {
+        println!(
+            "python@{} project environment {} ready at {}",
+            environment.distribution,
+            environment.name,
+            environment.root.display()
+        );
+    }
     Ok(())
 }
 
@@ -8328,7 +8372,11 @@ struct EditorTaskReport {
 
 fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        EditorCommands::Context { cwd, json, protocol } => {
+        EditorCommands::Context {
+            cwd,
+            json,
+            protocol,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let config_path = find_optional_project_config(&cwd)?;
             let config = config_path
@@ -8401,7 +8449,8 @@ fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error:
                     let mut value = serde_json::to_value(&report)?;
                     value["protocol_schema"] = serde_json::json!(2);
                     value["minimum_extension_version"] = serde_json::json!("1.2.0");
-                    value["descriptor"] = serde_json::to_value(readiness::collect(&cwd, None, false)?)?;
+                    value["descriptor"] =
+                        serde_json::to_value(readiness::collect(&cwd, None, false)?)?;
                     print_json_success("editor.context", value)?;
                 } else {
                     print_json_success("editor.context", report)?;

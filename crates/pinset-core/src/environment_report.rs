@@ -86,10 +86,21 @@ impl EnvironmentDescriptor {
 
     pub fn update_readiness(&mut self) {
         self.environment_ready = !self.runtimes.is_empty()
-            && self.checks.iter().chain(self.runtimes.iter().flat_map(|runtime| &runtime.checks))
-                .all(|check| matches!(check.state, ReadinessState::Pass | ReadinessState::NotApplicable));
+            && self
+                .checks
+                .iter()
+                .chain(self.runtimes.iter().flat_map(|runtime| &runtime.checks))
+                .all(|check| {
+                    matches!(
+                        check.state,
+                        ReadinessState::Pass | ReadinessState::NotApplicable
+                    )
+                });
         // This flag describes the requested evidence set, never unobserved IDE entry points.
         self.execution_verified = !self.evidence.is_empty()
-            && self.evidence.iter().all(|evidence| evidence.state == ReadinessState::Pass);
+            && self
+                .evidence
+                .iter()
+                .all(|evidence| evidence.state == ReadinessState::Pass);
     }
 }
