@@ -212,7 +212,7 @@ impl Drop for InstallLock {
 
 impl Installer {
     pub fn new(limits: InstallLimits) -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client_builder()?
             .timeout(limits.request_timeout)
             .build()
             .map_err(|source| Error::HttpClient { source })?;

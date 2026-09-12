@@ -821,6 +821,7 @@ fn validate_java_metadata(tool: &LockedTool) -> Result<()> {
 }
 
 fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
+    use crate::rust_provider::rust_component_name;
     let date = tool
         .metadata
         .get("manifest_date")
@@ -853,7 +854,10 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
         .metadata
         .get("components")
         .filter(|value| {
-            let values = value.split(',').collect::<Vec<_>>();
+            let values = value
+                .split(',')
+                .map(rust_component_name)
+                .collect::<Vec<_>>();
             !values.is_empty()
                 && values.iter().all(|component| !component.is_empty())
                 && values.iter().collect::<HashSet<_>>().len() == values.len()
@@ -890,9 +894,13 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
         .get("profile")
         .is_some_and(|value| value != profile)
         || tool.options.get("components").is_some_and(|value| {
-            let resolved = components.split(',').collect::<HashSet<_>>();
+            let resolved = components
+                .split(',')
+                .map(rust_component_name)
+                .collect::<HashSet<_>>();
             value
                 .split(',')
+                .map(rust_component_name)
                 .any(|component| !resolved.contains(component))
         })
         || tool.options.get("date").is_some_and(|value| value != date)
@@ -902,11 +910,7 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
                 && tool.options.get("date").is_some_and(|value| value == date)))
         || (channel == "stable" && tool.requested.starts_with("nightly"))
         || (tool.options.is_empty()
-            && (profile != RUST_PROFILE
-                || !matches!(
-                    components.as_str(),
-                    RUST_COMPONENTS | "rustc,cargo,rust-std,rust-docs"
-                )))
+            && (profile != RUST_PROFILE || !valid_rust_default_components(components)))
     {
         return Err(Error::InvalidLockfile {
             reason: "Rust lock metadata does not match its selector and structured options"
@@ -914,6 +918,18 @@ fn validate_rust_metadata(tool: &LockedTool) -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn valid_rust_default_components(components: &str) -> bool {
+    // Official profiles use package aliases and include the Windows-only
+    // rust-mingw component even in a manifest consumed on Linux or macOS.
+    let actual = components
+        .split(',')
+        .map(crate::rust_provider::rust_component_name)
+        .filter(|component| *component != "rust-mingw")
+        .collect::<HashSet<_>>();
+    actual == RUST_COMPONENTS.split(',').collect()
+        || actual == "rustc,cargo,rust-std,rust-docs".split(',').collect()
 }
 
 fn validate_dotnet_metadata(tool: &LockedTool) -> Result<()> {

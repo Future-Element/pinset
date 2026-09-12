@@ -60,6 +60,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
     fs::create_dir(&project).expect("project");
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
+        requirements: None,
         schema: 3,
         project_id: None,
         policy: Default::default(),
@@ -783,7 +784,8 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
         serde_json::from_slice(&preview.stdout).expect("migration preview JSON");
     assert_eq!(preview["data"]["from_config_schema"], 2);
     assert_eq!(preview["data"]["from_lock_schema"], 2);
-    assert_eq!(preview["data"]["to_config_schema"], 5);
+    assert_eq!(preview["data"]["to_config_schema"], 6);
+    assert!(!Path::new(preview["data"]["backup_directory"].as_str().unwrap()).exists());
     assert_eq!(
         preview["data"]["to_lock_schema"],
         pinset_core::LOCKFILE_SCHEMA
@@ -794,14 +796,27 @@ fn migrate_previews_and_upgrades_schema_two_without_resolving_versions() {
             .contains("schema = 2 # schema comment")
     );
 
-    let migrated = pinset(&project, &home, &["migrate"]);
+    let original_config = fs::read(&config_path).unwrap();
+    let original_lock = fs::read(&lock_path).unwrap();
+    let migrated = pinset(&project, &home, &["migrate", "--json"]);
     assert!(
         migrated.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&migrated.stderr)
     );
     let config = fs::read_to_string(config_path).expect("migrated config");
-    assert!(config.contains("schema = 5"));
+    assert!(config.contains("schema = 6"));
+    let migrated_report: serde_json::Value = serde_json::from_slice(&migrated.stdout).unwrap();
+    let backup = Path::new(
+        migrated_report["data"]["backup_directory"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(
+        fs::read(backup.join("pinset.toml")).unwrap(),
+        original_config
+    );
+    assert_eq!(fs::read(backup.join("pinset.lock")).unwrap(), original_lock);
     assert!(config.contains("project-id = \""));
     assert!(config.contains("# project comment"));
     assert!(config.contains("# schema comment"));
@@ -835,7 +850,7 @@ fn migrate_upgrades_a_config_only_project_without_inventing_a_lockfile() {
         String::from_utf8_lossy(&migrated.stderr)
     );
     let config = fs::read_to_string(config_path).expect("migrated config");
-    assert!(config.contains("schema = 5"));
+    assert!(config.contains("schema = 6"));
     assert!(config.contains("project-id = \""));
     assert!(!project.join("pinset.lock").exists());
 }
@@ -843,6 +858,7 @@ fn migrate_upgrades_a_config_only_project_without_inventing_a_lockfile() {
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
+        requirements: None,
         schema: 1,
         project_id: None,
         policy: Default::default(),

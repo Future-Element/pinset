@@ -39,7 +39,7 @@ pub struct NodeMetadataClient {
 
 impl NodeMetadataClient {
     pub fn official() -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client_builder()?
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|source| Error::HttpClient { source })?;
@@ -57,7 +57,7 @@ impl NodeMetadataClient {
     }
 
     pub fn for_source(base_url: &str, alias: &str) -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client_builder()?
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|source| Error::HttpClient { source })?;

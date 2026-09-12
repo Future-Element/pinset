@@ -1,5 +1,6 @@
 //! Secret-free environment and execution evidence shared by CLI and editor consumers.
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +33,11 @@ pub struct RuntimeDescriptor {
     /// Present only in a local report. Never included in portable exports.
     pub executable: Option<String>,
     pub checks: Vec<EnvironmentCheck>,
+    #[serde(default)]
+    pub options: BTreeMap<String, String>,
+    /// Content identities indexed by target. Contains no source URLs or machine paths.
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +71,19 @@ pub struct EnvironmentDescriptor {
     pub evidence: Vec<ExecutionEvidence>,
     pub environment_ready: bool,
     pub execution_verified: bool,
+    #[serde(default)]
+    pub requirements: Option<crate::ProjectRequirements>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, VariableRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VariableRequirement {
+    pub kind: crate::EnvironmentVariableType,
+    pub required: bool,
+    pub secret: bool,
+    pub profiles: Vec<String>,
 }
 
 impl EnvironmentDescriptor {

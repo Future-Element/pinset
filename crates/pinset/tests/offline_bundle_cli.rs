@@ -71,6 +71,7 @@ fn offline_install_reports_all_missing_artifacts_without_network() {
 
 fn write_project(project: &Path, hash: &str) {
     let config = ProjectConfig {
+        requirements: None,
         schema: 5,
         project_id: Some("565652e4-0000-4000-8000-000000000025".to_owned()),
         policy: Default::default(),

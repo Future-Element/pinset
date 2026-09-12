@@ -18,7 +18,10 @@ const LIMIT: u64 = 64 * 1024;
 pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<()> {
     for runtime in &report.runtimes {
         let Some(executable) = runtime.executable.as_deref().map(Path::new) else {
-            if matches!(runtime.tool.as_str(), "node" | "python" | "flutter") {
+            if matches!(
+                runtime.tool.as_str(),
+                "node" | "python" | "flutter" | "go" | "rust" | "dotnet" | "java"
+            ) {
                 report.evidence.push(evidence(
                     report.context_fingerprint.as_deref(),
                     "managed-command",
@@ -32,6 +35,14 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
             }
             continue;
         };
+        if matches!(runtime.tool.as_str(), "go" | "rust" | "dotnet" | "java") {
+            report.evidence.push(version_probe(
+                cwd,
+                runtime,
+                report.context_fingerprint.as_deref(),
+            )?);
+            continue;
+        }
         let arguments: Vec<&str> = match runtime.tool.as_str() {
             "node" => vec![
                 "-e",
@@ -154,6 +165,131 @@ pub fn collect(cwd: &Path, report: &mut EnvironmentDescriptor) -> ReportResult<(
     }
     report.update_readiness();
     Ok(())
+}
+
+/// These SDKs report a version but do not report their executable path in this
+/// bounded command. Keep that evidence separate from self-observed path probes.
+fn version_probe(
+    cwd: &Path,
+    runtime: &pinset_core::RuntimeDescriptor,
+    fingerprint: Option<&str>,
+) -> ReportResult<ExecutionEvidence> {
+    let home = pinset_core::pinset_home()?;
+    let command_name = if runtime.tool == "rust" {
+        "rustc"
+    } else {
+        &runtime.tool
+    };
+    let resolution = match pinset_core::resolve_command(command_name, cwd, &home) {
+        Ok(resolution) => resolution,
+        Err(_) => {
+            return Ok(evidence(
+                fingerprint,
+                "managed-version",
+                &runtime.tool,
+                ReadinessState::Fail,
+                None,
+                None,
+                None,
+                "managed_sdk_command_unavailable",
+            ));
+        }
+    };
+    let executable = resolution.executable;
+    let context = pinset_core::execution_context(&runtime.tool, &executable, cwd, &home)?;
+    let mut command = Command::new(&executable);
+    command.current_dir(cwd).env("PATH", context.path);
+    for value in context.environment {
+        command.env(value.name, value.value);
+    }
+    for name in context.remove_environment {
+        command.env_remove(name);
+    }
+    for name in [
+        "PINSET_IDENTITY",
+        "PINSET_IDENTITY_FILE",
+        "PINSET_ENV_PROFILE",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "JAVA_TOOL_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "_JAVA_OPTIONS",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC",
+        "RUSTFLAGS",
+        "GOFLAGS",
+        "DOTNET_STARTUP_HOOKS",
+        "DOTNET_ADDITIONAL_DEPS",
+        "DOTNET_SHARED_STORE",
+    ] {
+        command.env_remove(name);
+    }
+    // A version probe must not download a Go toolchain, execute compiler wrappers,
+    // load Java agents, or initialize the user's .NET CLI home.
+    let scratch = tempfile::tempdir()?;
+    command
+        .env("GOTOOLCHAIN", "local")
+        .env("GOENV", "off")
+        .env("GOWORK", "off")
+        .env("DOTNET_CLI_HOME", scratch.path())
+        .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1")
+        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
+        .env("DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE", "true")
+        .env("DOTNET_CLI_UI_LANGUAGE", "en-US");
+    command.arg(if runtime.tool == "go" {
+        "version"
+    } else {
+        "--version"
+    });
+    let output = capture(command, Duration::from_secs(10));
+    let version = output
+        .ok()
+        .and_then(|bytes| parse_sdk_version(&runtime.tool, &bytes));
+    let matched = version
+        .as_deref()
+        .zip(runtime.locked_version.as_deref())
+        .is_some_and(|(actual, locked)| {
+            actual == locked || locked.starts_with(&format!("{actual}+"))
+        });
+    Ok(evidence(
+        fingerprint,
+        "managed-version",
+        &runtime.tool,
+        if matched {
+            ReadinessState::Pass
+        } else {
+            ReadinessState::Fail
+        },
+        Some(&executable),
+        None,
+        version,
+        if matched {
+            "selected_command_reported_version_path_not_self_observed"
+        } else {
+            "sdk_version_probe_failed_or_mismatched"
+        },
+    ))
+}
+
+fn parse_sdk_version(tool: &str, bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    let version = match tool {
+        "go" => text
+            .strip_prefix("go version go")?
+            .split_whitespace()
+            .next()?,
+        "rust" => text.strip_prefix("rustc ")?.split_whitespace().next()?,
+        "java" => text.lines().next()?.split_whitespace().nth(1)?,
+        "dotnet" => text.lines().last()?,
+        _ => return None,
+    };
+    let version = version.split('+').next()?;
+    // Reject arbitrary output and prereleases whose selection semantics are not covered.
+    semver::Version::parse(version)
+        .ok()
+        .filter(|version| version.pre.is_empty())?;
+    Some(version.to_owned())
 }
 
 fn same_executable(expected: &Path, actual: &Path) -> bool {
@@ -305,6 +441,31 @@ fn capture(mut command: Command, timeout: Duration) -> ReportResult<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sdk_version_parsing_rejects_unrecognized_output() {
+        for (tool, text, expected) in [
+            ("go", "go version go1.24.0 linux/amd64\n", Some("1.24.0")),
+            (
+                "rust",
+                "rustc 1.97.1 (fixture 2026-09-01)\n",
+                Some("1.97.1"),
+            ),
+            (
+                "java",
+                "openjdk 21.0.8 2025-07-15\nOpenJDK Runtime Environment",
+                Some("21.0.8"),
+            ),
+            ("dotnet", "8.0.303\n", Some("8.0.303")),
+            ("dotnet", "Welcome\nnot-a-version", None),
+            ("go", "go version go1.25rc1 linux/amd64", None),
+        ] {
+            assert_eq!(
+                parse_sdk_version(tool, text.as_bytes()).as_deref(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn missing_paths_never_count_as_matching() {

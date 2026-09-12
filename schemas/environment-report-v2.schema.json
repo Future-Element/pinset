@@ -20,6 +20,10 @@
     "execution_verified"
   ],
   "properties": {
+    "requirements": { "anyOf": [{ "type": "null" }, { "$ref": "pinset.schema.json#/properties/requirements" }] },
+    "variables": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["kind", "required", "secret", "profiles"], "properties": {
+      "kind": { "enum": ["string", "integer", "boolean", "url", "enum"] }, "required": { "type": "boolean" }, "secret": { "type": "boolean" }, "profiles": { "type": "array", "items": { "type": "string" } }
+    } } },
     "schema": {
       "const": 2
     },
@@ -138,6 +142,8 @@
         "tool": {
           "type": "string"
         },
+        "options": { "type": "object", "additionalProperties": { "type": "string" } },
+        "artifacts": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
         "requested": {
           "type": "string"
         },

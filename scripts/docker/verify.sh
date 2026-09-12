@@ -8,6 +8,7 @@ case "${1:-rust}" in
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --workspace --all-features --locked
     python3 scripts/tests/integrations_test.py
+    python3 scripts/tests/team_delivery_test.py target/debug/pinset
     ;;
   extension)
     npm ci --prefix editors/vscode

@@ -133,11 +133,11 @@ fn latest_release_from_feed(feed: &str) -> Result<Version, Box<dyn std::error::E
         .ok_or_else(|| "no published Pinset release was found in the GitHub release feed".into())
 }
 
-fn client() -> Result<Client, reqwest::Error> {
-    Client::builder()
+fn client() -> Result<Client, Box<dyn std::error::Error>> {
+    Ok(pinset_core::http_client_builder()?
         .user_agent(format!("pinset/{}", pinset_core::pinset_version()))
         .timeout(Duration::from_secs(60))
-        .build()
+        .build()?)
 }
 
 fn parse_tag(tag: &str) -> Result<Version, semver::Error> {

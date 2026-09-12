@@ -115,7 +115,7 @@ impl DotnetMetadataClient {
     }
 
     pub fn for_base_url(base_url: &str) -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client_builder()?
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(|source| Error::HttpClient { source })?;

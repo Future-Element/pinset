@@ -65,7 +65,7 @@ impl RustMetadataClient {
     }
 
     pub fn for_base_url(base_url: &str) -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client_builder()?
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(|source| Error::HttpClient { source })?;
@@ -420,6 +420,9 @@ fn resolve_manifest_tool(
     if let Some(extra_components) = options.map(|value| &value.components) {
         components.extend(extra_components.iter().cloned());
     }
+    for component in &mut components {
+        *component = crate::rust_provider::rust_component_name(component).to_owned();
+    }
     let mut seen_components = BTreeSet::new();
     components.retain(|component| seen_components.insert(component.clone()));
     for component in &components {
@@ -691,6 +694,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn official_package_aliases_and_mingw_round_trip_through_lock_validation() {
+        let mut manifest: ChannelManifest = toml::from_str(&fixture_manifest()).unwrap();
+        // Rust 1.86's official default profile, also used on non-Windows hosts.
+        manifest.profiles.insert(
+            "default".into(),
+            [
+                "rustc",
+                "cargo",
+                "rust-std",
+                "rust-mingw",
+                "rust-docs",
+                "rustfmt-preview",
+                "clippy-preview",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        );
+        let mingw = manifest.pkg["rust-std"].clone();
+        manifest.pkg.insert("rust-mingw".into(), mingw);
+        let mut tool = resolve_manifest_tool(
+            "1.97.1",
+            "2026-07-16",
+            manifest,
+            &"ab".repeat(32),
+            None,
+            "stable",
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pinset.lock");
+        let validate = |tool: &LockedTool| {
+            crate::save_lockfile(
+                &path,
+                &crate::Lockfile {
+                    schema: crate::LOCKFILE_SCHEMA,
+                    generated_by: "test".into(),
+                    tools: vec![tool.clone()],
+                },
+            )?;
+            crate::load_lockfile(&path).map(|_| ())
+        };
+        validate(&tool).unwrap();
+        tool.metadata.insert(
+            "components".into(),
+            "clippy-preview,rust-docs,rustc,rust-mingw,rustfmt-preview,rust-std,cargo".into(),
+        );
+        validate(&tool).unwrap();
+        tool.metadata.insert(
+            "components".into(),
+            "rustc,cargo,rust-std,rust-docs,clippy".into(),
+        );
+        assert!(validate(&tool).is_err());
+    }
     #[test]
     fn rejects_a_manifest_that_does_not_match_the_indexed_release_date() {
         let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).expect("manifest");

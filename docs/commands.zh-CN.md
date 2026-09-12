@@ -245,7 +245,7 @@ python-environment = "docs"
 
 | 字段 | 说明 |
 | --- | --- |
-| 用途 | 验证并把 schema 1–4 项目配置重写为 schema 5，同时把 schema 1–4 运行时锁写为 schema 5；只涉及 schema 的变更会保留注释并原子替换文件。还会按原精确版本修复可安全识别的 pre-1.0 Provider 记录。使用 `--global` 可手动迁移旧的全局锁。 |
+| 用途 | 明确把 schema 1–5 项目配置迁移到 schema 6、旧运行时锁迁移到 schema 5；项目变更前逐字节备份配置及锁，dry-run 只预览备份路径。仅 schema 变更保留注释；已识别的旧 Provider 保留精确版本。 |
 | 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
@@ -332,7 +332,7 @@ python-environment = "docs"
 | 退出码 | 诊断完成为 `0`；输入无法读取或验证为 `2`。诊断发现会写入数据，并不一定导致命令失败。 |
 | 关键错误 | 配置/锁无法读取、状态格式错误、路径不安全或文件系统失败。 |
 
-### `status` 与 `check`
+### `status`
 
 | 字段 | 说明 |
 | --- | --- |
@@ -343,6 +343,31 @@ python-environment = "docs"
 | JSON | **支持**；命令名为 `status` 或 `check`。报告拥有独立于 CLI 外层封装的 schema 字段。 |
 | 退出码 | `status` 完成收集后返回 `0`；`check` 遇到错误、警告或基线变化返回 `1`；输入无效返回 `2`。 |
 | 隐私 | 报告省略文件系统路径、环境值、密文内容、校验和及秘密摘要；比较结果只包含变化的 JSON Pointer 路径。 |
+
+`--report-version 2` 选择开发环境报告，包含运行时选项、制品身份、四态兼容性检查和可选环境要求；`--save` 移除机器路径和上下文指纹。默认诊断报告仍为 v1，其隐私和比较字段保持原语义。
+
+### `setup`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 预览并准备项目已锁定的开发环境，包括受管 Python 环境及明确选择的任务。 |
+| 语法与参数 | `pinset setup [--plan] [--yes] [--offline] [--resume <运行编号>] [--task <名称>] [--json]`。 |
+| 修改状态 | `--plan` 只读；执行时复用/校验 SDK 并准备有归属标记的环境，只运行明确指定的任务。 |
+| 示例 | `pinset -e dev setup --yes --task test` |
+| 退出码 | 请求的准备成功为 `0`；环境就绪与任务/应用验证分别查看。 |
+
+### `check`
+
+| 字段 | 说明 |
+| --- | --- |
+| 用途 | 检查环境兼容性和交付条件，或明确探测 SDK 执行。 |
+| 语法与参数 | `pinset check [--report-version 2] [--probe] [--delivery] [--offline | --network] [--target <平台,...>] [--save <文件>] [--compare <文件>] [--json]`。 |
+| 修改状态 | 显式 profile 检查可能在内存中打开身份；联网需 `--network`，SDK 探测需 `--probe`。仅 `--save` 写报告。 |
+| 示例 | `pinset check --offline --target linux-x86_64,windows-x86_64 --json` |
+| 退出码 | 所选检查通过为 `0`，发现问题为 `1`，输入错误为 `2`。交付比较差异记录在数据中，不单独改变退出码。 |
+| 隐私 | v2 包含 SDK 制品身份，不含秘密值、默认值、私有来源地址或机器路径。 |
+
+Schema 6 可选声明 `[requirements]` 的 `platforms`、`build-targets` 和精确 `disabled-rules`。兼容性规则附修订日期和来源，无法判断的声明保持未知。npm 随 Node 提供。`check --offline` 校验完整 SDK 归档，不验证 npm/pip/Maven 项目依赖或应用构建。`--network` 沿用当前源、官方回退及显式回退的顺序；`PINSET_CA_BUNDLE` 补充当前进程的企业根证书，继续验证 TLS。报告比较忽略路径/排列差异，分别呈现声明的平台差异与版本、选项、制品及变量约定变化。详见源码文档中的团队环境指南。
 
 ## 下载缓存命令
 
@@ -1131,6 +1156,6 @@ Action 输入不是秘密，也不保存 identity。Pinset 会在子进程启动
 
 ## 稳定协议边界
 
-当前开发版本写入 schema 5 项目配置、schema 3 全局配置与 schema 5 运行时锁。schema 1–4 项目和 schema 1–4 锁仍可读取，并通过显式迁移升级；现有 schema 4 加密环境在迁移前继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可以记录可选的上游 `released-at`。配置策略会在状态写入、项目安装、包括 dry-run 在内的更新和锁审计中执行；缺少发布时间会失败关闭，已有工具锁也不允许被更弱验证静默替换。
+当前开发版本创建 schema 6 项目配置、schema 3 全局配置与 schema 5 运行时锁。schema 1–5 项目仍可读取，写入 schema 5 项目不会静默升级到 6；显式迁移会备份项目输入。现有 schema 4 加密环境继续可用。安装收据独立使用 schema 4，同时继续读取 schema 1–3。项目 `[policy]` 支持可选的 `verification-strength = "checksum" | "signed-checksum" | "provenance"` 和 `minimum-release-age = "<正整数><d|h|m|s>"`；新锁可记录上游 `released-at`。这些策略仍在选择、安装、更新和审计时执行，禁止用更弱验证替换已有锁。
 
 v2.0 不修改 JSON schema 1 外层结构。新增 JSON 命令包括 `paths`、`env.list`、`env.identity.list`、`trust.status` 与 `self.outdated`。自动化应依据稳定的 command 与 reason/code 字段分支，不要匹配面向用户的消息；JSON 输出和错误绝不包含环境变量值、身份或口令。

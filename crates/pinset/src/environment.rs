@@ -716,6 +716,12 @@ pub(crate) struct ContractError {
 }
 
 impl ContractError {
+    pub(crate) fn issue_for(&self, name: &str) -> Option<&'static str> {
+        self.issues
+            .iter()
+            .find(|issue| issue.name == name)
+            .map(|issue| issue.reason)
+    }
     pub(crate) fn reason(&self) -> &'static str {
         if self
             .issues

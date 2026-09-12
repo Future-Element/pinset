@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import ast
+import os
 import pathlib
 import re
 import subprocess
@@ -14,7 +15,7 @@ import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-for script in ("scripts/verify_published_release.py", "scripts/tests/environment_wizard_test.py"):
+for script in ("scripts/verify_published_release.py", "scripts/tests/environment_wizard_test.py", "scripts/tests/team_delivery_test.py", "scripts/tests/sdk_versions_test.py", "scripts/environment_summary.py"):
     ast.parse((ROOT / script).read_text(encoding="utf-8"), filename=script)
 WORKSPACE_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"][
     "package"
@@ -151,3 +152,19 @@ with tempfile.TemporaryDirectory() as temporary:
     )
 
 print(f"v{WORKSPACE_VERSION} integration contracts passed")
+
+with tempfile.TemporaryDirectory() as temporary:
+    root = pathlib.Path(temporary)
+    report = root / "report.json"
+    summary = root / "summary.md"
+    report.write_text(json.dumps({"schema": 2, "environment_ready": False, "execution_verified": False,
+        "project_root": "/private/path", "secret": "do-not-export-this-value", "runtimes": [
+            {"tool": "node", "locked_version": "24.0.0", "target": "linux-x86_64"},
+            {"tool": "[link](https://private.invalid)", "locked_version": "<script>", "target": "a|b"}]}))
+    subprocess.run([sys.executable, str(ROOT / "scripts/environment_summary.py"), str(report)],
+                   env=os.environ | {"GITHUB_STEP_SUMMARY": str(summary)}, check=True)
+    rendered = summary.read_text()
+    assert "node | 24.0.0 | linux-x86_64" in rendered
+    for value in ("/private/path", "do-not-export-this-value", "private.invalid", "<script>", "a|b"):
+        assert value not in rendered
+print("Environment summary privacy contract passed")

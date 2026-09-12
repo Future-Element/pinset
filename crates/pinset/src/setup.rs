@@ -162,6 +162,25 @@ pub fn plan(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportResult<Set
     } else {
         None
     };
+    if let Some(environment) = &environment {
+        blockers.extend(
+            environment
+                .checks
+                .iter()
+                .chain(
+                    environment
+                        .runtimes
+                        .iter()
+                        .flat_map(|runtime| &runtime.checks),
+                )
+                .filter(|check| {
+                    check.state == pinset_core::ReadinessState::Fail
+                        && (check.id.starts_with("compatibility.")
+                            || check.id.starts_with("platform."))
+                })
+                .map(|check| format!("{}: {}", check.id, check.reason)),
+        );
+    }
     Ok(SetupPlan {
         schema: 1,
         root,
@@ -404,6 +423,25 @@ fn execute(
     catalog: Catalog,
 ) -> ReportResult<()> {
     let home = pinset_home()?;
+    if id.starts_with("install") {
+        // Initial import/resolution can establish a conflict that was unknown in
+        // the preview. Recheck before downloading or mutating any installation.
+        let current =
+            readiness::collect(&plan.root, plan.requested_profile.as_deref(), plan.no_env)?;
+        if current
+            .checks
+            .iter()
+            .chain(current.runtimes.iter().flat_map(|runtime| &runtime.checks))
+            .any(|check| {
+                check.state == ReadinessState::Fail
+                    && (check.id.starts_with("compatibility.") || check.id.starts_with("platform."))
+            })
+        {
+            return Err(Box::new(PreparationFailure {
+                reason: "environment_compatibility_conflict".to_owned(),
+            }));
+        }
+    }
     match id {
         "import" => {
             if find_optional_project_config(&plan.root)?.is_some() {

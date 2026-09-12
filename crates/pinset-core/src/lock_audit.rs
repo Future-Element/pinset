@@ -336,7 +336,12 @@ fn load_config_selection(
                 LockAuditScope::Project => PROJECT_CONFIG_SCHEMA,
                 LockAuditScope::Global => GLOBAL_STATE_SCHEMA,
             };
-            if config.schema < expected_schema {
+            // Schema 6 adds optional requirements; schema 5 retains its full behavior.
+            let minimum_schema = match scope {
+                LockAuditScope::Project => 5,
+                LockAuditScope::Global => GLOBAL_STATE_SCHEMA,
+            };
+            if config.schema < minimum_schema {
                 report.push(finding(
                     LockAuditReasonCode::ConfigSchemaLegacy,
                     LockAuditSeverity::Warning,

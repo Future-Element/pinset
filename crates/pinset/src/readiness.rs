@@ -59,6 +59,39 @@ pub fn fingerprint(cwd: &Path, profile: Option<&str>, no_env: bool) -> ReportRes
         if let Some(lock) = load_optional_lockfile(&lockfile_path(&path))? {
             digest.update(serde_json::to_vec(&lock)?);
         }
+        for relative in [
+            "package.json",
+            "pyproject.toml",
+            "go.mod",
+            "go.work",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "global.json",
+            "gradle/wrapper/gradle-wrapper.properties",
+            "android/gradle/wrapper/gradle-wrapper.properties",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "android/build.gradle",
+            "android/build.gradle.kts",
+            "android/settings.gradle",
+            "android/settings.gradle.kts",
+        ] {
+            digest.update(relative.as_bytes());
+            let declaration = root.join(relative);
+            let safe = fs::symlink_metadata(&declaration).is_ok_and(|metadata| {
+                metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.len() <= 1024 * 1024
+            }) && fs::canonicalize(&declaration)
+                .is_ok_and(|path| path.starts_with(&root));
+            if safe {
+                digest.update(fs::read(declaration)?);
+            } else {
+                digest.update(b"unavailable-or-unsafe");
+            }
+        }
     } else {
         digest.update(serde_json::to_vec(&pinset_core::scan_project_sources(
             &root,
@@ -78,88 +111,20 @@ pub fn run(
     profile: Option<&str>,
     no_env: bool,
 ) -> ReportResult<i32> {
-    use std::io::Write;
     let mut report = collect(cwd, profile, no_env)?;
     if probe {
         verify_environment(cwd, &mut report, no_env);
-        // A failed trust/identity/contract check must not launch project-context probes.
-        if !report
-            .checks
-            .iter()
-            .any(|item| item.id == "environment" && item.state == ReadinessState::Fail)
-        {
-            crate::probes::collect(cwd, &mut report)?;
-            let current = collect(cwd, profile, no_env)?;
-            if current.context_fingerprint != report.context_fingerprint {
-                for item in &mut report.evidence {
-                    item.state = ReadinessState::Unknown;
-                    item.reason = "project_changed_during_probe".to_owned();
-                }
-                report.checks.push(check(
-                    "probe_context",
-                    ReadinessState::Fail,
-                    "project_changed_during_probe",
-                    Some("pinset check --probe"),
-                ));
-                report.update_readiness();
-            }
-        }
+        probe_report(cwd, &mut report, profile, no_env)?;
     }
     let report = report.portable();
-    let comparison = if let Some(path) = compare {
-        let metadata = fs::symlink_metadata(path)?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 1024 * 1024
-        {
-            return Err("environment report must be a regular file of at most 1 MiB".into());
-        }
-        let previous: EnvironmentDescriptor = serde_json::from_slice(&fs::read(path)?)?;
-        if previous.schema != 2 {
-            return Err("unsupported environment report schema".into());
-        }
-        let mut changes = Vec::new();
-        for runtime in &report.runtimes {
-            let old = previous
-                .runtimes
-                .iter()
-                .find(|old| old.tool == runtime.tool);
-            if old.is_none_or(|old| {
-                old.locked_version != runtime.locked_version
-                    || old.installation_identity != runtime.installation_identity
-            }) {
-                changes.push(format!("runtime:{}", runtime.tool));
-            }
-        }
-        for old in &previous.runtimes {
-            if !report
-                .runtimes
-                .iter()
-                .any(|runtime| runtime.tool == old.tool)
-            {
-                changes.push(format!("removed:{}", old.tool));
-            }
-        }
-        if previous.profile != report.profile {
-            changes.push("environment:profile".to_owned());
-        }
-        Some(
-            serde_json::json!({"changes": changes, "platform_changed": previous.target != report.target,
-            "execution_comparable": false, "secret_values_compared": false}),
-        )
-    } else {
-        None
-    };
+    let comparison = compare
+        .map(|path| {
+            crate::delivery::read_report(path)
+                .map(|previous| crate::delivery::compare_reports(&previous, &report))
+        })
+        .transpose()?;
     if let Some(path) = save {
-        if fs::symlink_metadata(path)
-            .is_ok_and(|metadata| metadata.file_type().is_symlink() || !metadata.is_file())
-        {
-            return Err("report destination must be a regular file".into());
-        }
-        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = atomic_write_file::AtomicWriteFile::options().open(path)?;
-        file.write_all(&serde_json::to_vec_pretty(&report)?)?;
-        file.commit()?;
+        crate::delivery::save_report(path, &report)?;
     }
     if json {
         crate::print_json_success(
@@ -246,6 +211,8 @@ pub fn collect(
         evidence: Vec::new(),
         environment_ready: false,
         execution_verified: false,
+        requirements: None,
+        variables: Default::default(),
     };
     let Some(path) = path else {
         report.checks.push(check(
@@ -260,6 +227,24 @@ pub fn collect(
     let root = path.parent().ok_or("project configuration has no parent")?;
     report.project_root = Some(fs::canonicalize(root)?.display().to_string());
     report.project_id = config.project_id.clone();
+    report.requirements = config.requirements.clone();
+    if let Some(environment) = &config.environment {
+        report.variables = environment
+            .variables
+            .iter()
+            .map(|(name, variable)| {
+                (
+                    name.clone(),
+                    pinset_core::VariableRequirement {
+                        kind: variable.kind,
+                        required: variable.required,
+                        secret: variable.secret,
+                        profiles: variable.profiles.clone(),
+                    },
+                )
+            })
+            .collect();
+    }
     if !no_env {
         let selection = environment_selection(&home, &path, &config, profile)?;
         report.profile = selection.profile;
@@ -344,6 +329,18 @@ pub fn collect(
                 None
             },
         ));
+        if name == "node"
+            && let Some(node) = locked
+        {
+            checks.push(pinset_core::check_bundled_npm(
+                &home
+                    .join("installs/node")
+                    .join(node.installation_version())
+                    .join(&target),
+                &node.version,
+                &target,
+            ));
+        }
         report.runtimes.push(RuntimeDescriptor {
             tool: name.clone(),
             requested: requested.clone(),
@@ -359,7 +356,71 @@ pub fn collect(
                 .ok()
                 .map(|resolution| resolution.executable.display().to_string()),
             checks,
+            options: locked.map(|tool| tool.options.clone()).unwrap_or_default(),
+            artifacts: locked
+                .map(|tool| {
+                    tool.artifacts
+                        .iter()
+                        .map(|artifact| {
+                            let mut identities = vec![
+                                artifact
+                                    .artifact_integrity()
+                                    .map(|value| value.canonical())
+                                    .unwrap_or_default(),
+                            ];
+                            identities.extend(artifact.overlays.iter().map(|overlay| {
+                                overlay
+                                    .artifact_integrity()
+                                    .map(|value| value.canonical())
+                                    .unwrap_or_default()
+                            }));
+                            identities.sort();
+                            (artifact.target.clone(), identities)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         });
+    }
+    if let Some(lock) = &lock {
+        let overrides = [
+            "GOTOOLCHAIN",
+            "GOWORK",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+        ]
+        .into_iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| (name.to_owned(), value))
+        })
+        .collect();
+        report
+            .checks
+            .extend(pinset_core::check_compatibility(root, lock, &overrides));
+        if let Some(requirements) = &config.requirements {
+            for platform in &requirements.platforms {
+                for tool in &lock.tools {
+                    let present = !pinset_core::artifacts_for_platform(tool, platform).is_empty();
+                    report.checks.push(check(
+                        &format!("platform.{}.{}", tool.name, platform),
+                        if present {
+                            ReadinessState::Pass
+                        } else {
+                            ReadinessState::Fail
+                        },
+                        if present {
+                            "required_platform_artifact_locked_execution_not_verified"
+                        } else {
+                            "required_platform_artifact_missing"
+                        },
+                        Some("pinset check --delivery --offline"),
+                    ));
+                }
+            }
+        }
     }
     let audit = pinset_core::audit_project_environment(&home, cwd);
     for finding in audit.findings {
@@ -407,6 +468,96 @@ pub fn collect(
         )
     };
     report.checks.push(environment);
+    if !no_env
+        && let Some(profile) = report.profile.as_deref()
+        && let Some(environment) = &config.environment
+    {
+        let trust = config.project_id.as_deref().map(|id| {
+            pinset_env::verify_project_trust(
+                &home,
+                root,
+                id,
+                &toml::to_string(environment).unwrap_or_default(),
+            )
+        });
+        let (trusted, reason) = match trust {
+            Some(Ok(())) => (ReadinessState::Pass, "project_trusted"),
+            Some(Err(pinset_env::Error::TrustMissing)) => (ReadinessState::Fail, "trust_missing"),
+            Some(Err(pinset_env::Error::TrustChanged)) => (ReadinessState::Fail, "trust_changed"),
+            _ => (ReadinessState::Unknown, "trust_not_established"),
+        };
+        report.checks.push(check(
+            "environment.trust",
+            trusted,
+            reason,
+            Some("pinset trust add --project-id <reviewed-project-id>"),
+        ));
+        let identity = std::env::var_os("PINSET_IDENTITY").is_some_and(|value| !value.is_empty())
+            || std::env::var_os("PINSET_IDENTITY_FILE").is_some()
+            || pinset_env::list_identities(&home).is_ok_and(|identities| !identities.is_empty());
+        report.checks.push(check(
+            "environment.identity",
+            if identity {
+                ReadinessState::Unknown
+            } else {
+                ReadinessState::Fail
+            },
+            if identity {
+                "identity_registered_not_opened"
+            } else {
+                "identity_missing"
+            },
+            Some("pinset env identity list"),
+        ));
+        for (name, variable) in &environment.variables {
+            if variable.profiles.is_empty()
+                || variable.profiles.iter().any(|value| value == profile)
+            {
+                report.checks.push(check(
+                    &format!("environment.variable.{name}"),
+                    ReadinessState::Unknown,
+                    "variable_not_decrypted",
+                    Some("pinset env check"),
+                ));
+            }
+        }
+    }
+    if let Some(requirements) = &config.requirements {
+        let values = [
+            "ANDROID_HOME",
+            "ANDROID_SDK_ROOT",
+            "LOCALAPPDATA",
+            "HOME",
+            "ProgramFiles(x86)",
+            "VSINSTALLDIR",
+            "WindowsSdkDir",
+            "DEVELOPER_DIR",
+            "PATH",
+        ]
+        .into_iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| (name.to_owned(), value))
+        })
+        .collect();
+        report.checks.extend(pinset_core::check_build_conditions(
+            &requirements.build_targets,
+            &report.target,
+            &values,
+        ));
+        for check in report.checks.iter_mut().chain(
+            report
+                .runtimes
+                .iter_mut()
+                .flat_map(|runtime| &mut runtime.checks),
+        ) {
+            if requirements.disabled_rules.contains(&check.id) {
+                check.state = ReadinessState::NotApplicable;
+                check.reason = "individual_rule_disabled_by_project_requirements".to_owned();
+            }
+        }
+    }
     report.update_readiness();
     Ok(report)
 }
@@ -434,6 +585,27 @@ pub fn verify_environment(cwd: &Path, report: &mut EnvironmentDescriptor, no_env
             ),
     };
     let valid = result.is_ok();
+    let issues = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<crate::environment::ContractError>());
+    if valid || issues.is_some() {
+        for item in &mut report.checks {
+            if item.id == "environment.identity" {
+                item.state = ReadinessState::Pass;
+                item.reason = "identity_decrypted_selected_profile".to_owned();
+            }
+            if let Some(name) = item.id.strip_prefix("environment.variable.") {
+                let issue = issues.and_then(|issues| issues.issue_for(name));
+                item.state = if issue.is_some() {
+                    ReadinessState::Fail
+                } else {
+                    ReadinessState::Pass
+                };
+                item.reason = issue.unwrap_or("variable_contract_satisfied").to_owned();
+            }
+        }
+    }
     if let Some(item) = report
         .checks
         .iter_mut()
@@ -455,4 +627,36 @@ pub fn verify_environment(cwd: &Path, report: &mut EnvironmentDescriptor, no_env
         );
     }
     report.update_readiness();
+}
+
+pub fn probe_report(
+    cwd: &Path,
+    report: &mut EnvironmentDescriptor,
+    profile: Option<&str>,
+    no_env: bool,
+) -> ReportResult<()> {
+    // A failed trust/identity/contract check must not launch project-context probes.
+    if report
+        .checks
+        .iter()
+        .any(|item| item.id == "environment" && item.state == ReadinessState::Fail)
+    {
+        return Ok(());
+    }
+    crate::probes::collect(cwd, report)?;
+    let current = collect(cwd, profile, no_env)?;
+    if current.context_fingerprint != report.context_fingerprint {
+        for item in &mut report.evidence {
+            item.state = ReadinessState::Unknown;
+            item.reason = "project_changed_during_probe".to_owned();
+        }
+        report.checks.push(check(
+            "probe_context",
+            ReadinessState::Fail,
+            "project_changed_during_probe",
+            Some("pinset check --probe"),
+        ));
+        report.update_readiness();
+    }
+    Ok(())
 }

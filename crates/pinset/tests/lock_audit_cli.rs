@@ -86,6 +86,7 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
     let home = root.path().join("home");
     fs::create_dir(&project).expect("project");
     let mut config = ProjectConfig {
+        requirements: None,
         schema: 3,
         project_id: None,
         policy: Default::default(),
@@ -118,6 +119,7 @@ fn lock_audit_json_exposes_provenance_policy_reason_codes() {
 
 fn write_project(project: &Path, version: &str) {
     let config = ProjectConfig {
+        requirements: None,
         schema: 5,
         project_id: Some("4c5652e4-0000-4000-8000-000000000007".to_owned()),
         policy: Default::default(),

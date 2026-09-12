@@ -66,44 +66,51 @@ pub fn export(
     }
     let mut artifacts = BTreeMap::<String, BundleArtifact>::new();
     for tool in &lock.tools {
-        let Some(artifact) = tool.artifacts.iter().find(|value| value.target == target) else {
-            continue;
-        };
-        let mut identities = vec![artifact.artifact_integrity()?];
-        for overlay in &artifact.overlays {
-            identities.push(overlay.artifact_integrity()?);
+        let selected = pinset_core::artifacts_for_platform(tool, target);
+        if selected.is_empty() {
+            return Err(format!(
+                "bundle is incomplete: {} has no locked artifact for {target}",
+                tool.name
+            )
+            .into());
         }
-        for identity in identities {
-            let canonical = identity.canonical();
-            let cache = home
-                .join("downloads")
-                .join(identity.algorithm().as_str())
-                .join(format!("{}.archive", identity.cache_key()));
-            let metadata = fs::symlink_metadata(&cache).map_err(|error| {
-                IoError::new(
-                    error.kind(),
-                    format!("bundle is missing cached artifact {canonical}"),
-                )
-            })?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(IoError::new(
-                    ErrorKind::InvalidData,
-                    "bundle source must be a regular cache file",
-                )
-                .into());
+        for artifact in selected {
+            let mut identities = vec![artifact.artifact_integrity()?];
+            for overlay in &artifact.overlays {
+                identities.push(overlay.artifact_integrity()?);
             }
-            artifacts
-                .entry(canonical.clone())
-                .or_insert(BundleArtifact {
-                    tool: tool.name.clone(),
-                    integrity: canonical,
-                    path: format!(
-                        "artifacts/{}/{}.archive",
-                        identity.algorithm().as_str(),
-                        identity.cache_key()
-                    ),
-                    bytes: metadata.len(),
-                });
+            for identity in identities {
+                let canonical = identity.canonical();
+                let cache = home
+                    .join("downloads")
+                    .join(identity.algorithm().as_str())
+                    .join(format!("{}.archive", identity.cache_key()));
+                let metadata = fs::symlink_metadata(&cache).map_err(|error| {
+                    IoError::new(
+                        error.kind(),
+                        format!("bundle is missing cached artifact {canonical}"),
+                    )
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(IoError::new(
+                        ErrorKind::InvalidData,
+                        "bundle source must be a regular cache file",
+                    )
+                    .into());
+                }
+                artifacts
+                    .entry(canonical.clone())
+                    .or_insert(BundleArtifact {
+                        tool: tool.name.clone(),
+                        integrity: canonical,
+                        path: format!(
+                            "artifacts/{}/{}.archive",
+                            identity.algorithm().as_str(),
+                            identity.cache_key()
+                        ),
+                        bytes: metadata.len(),
+                    });
+            }
         }
     }
     let artifacts = artifacts.into_values().collect::<Vec<_>>();
@@ -168,10 +175,21 @@ pub fn import(
     let staging = tempdir()?;
     let mut archive = Archive::new(GzDecoder::new(File::open(bundle)?));
     let mut seen = BTreeSet::new();
+    let mut expanded_bytes = 0u64;
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         validate_entry_path(&path)?;
+        expanded_bytes = expanded_bytes
+            .checked_add(entry.size())
+            .ok_or("bundle size overflow")?;
+        if expanded_bytes > MAX_BUNDLE_BYTES
+            || seen.len() >= 4096
+            || ((path == Path::new("manifest.json") || path == Path::new("pinset.lock"))
+                && entry.size() > MAX_MANIFEST_BYTES)
+        {
+            return Err("bundle expanded content exceeds its size or entry limit".into());
+        }
         if !seen.insert(path.clone()) {
             return Err(
                 IoError::new(ErrorKind::InvalidData, "bundle contains duplicate entries").into(),
@@ -215,10 +233,51 @@ pub fn import(
         .into());
     }
     let lock_bytes = fs::read(staging.path().join("pinset.lock"))?;
-    load_lockfile(&staging.path().join("pinset.lock"))?;
+    let lock = load_lockfile(&staging.path().join("pinset.lock"))?;
     let actual_lock = hex::encode(Sha256::digest(lock_bytes));
     if actual_lock != manifest.lock_sha256 {
         return Err(IoError::new(ErrorKind::InvalidData, "bundle lock identity mismatch").into());
+    }
+    let mut required = BTreeSet::new();
+    for tool in &lock.tools {
+        let selected = pinset_core::artifacts_for_platform(tool, expected_target);
+        if selected.is_empty() {
+            return Err("bundle lock does not cover every tool for its target".into());
+        }
+        for artifact in selected {
+            required.insert(artifact.artifact_integrity()?.canonical());
+            for overlay in &artifact.overlays {
+                required.insert(overlay.artifact_integrity()?.canonical());
+            }
+        }
+    }
+    let supplied = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            ArtifactIntegrity::parse(&artifact.integrity).map(|value| value.canonical())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if required.is_empty() || supplied != required || supplied.len() != manifest.artifacts.len() {
+        return Err(
+            "bundle manifest must contain exactly the complete locked target artifact set".into(),
+        );
+    }
+    let listed = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.as_str())
+        .chain(["manifest.json", "pinset.lock"])
+        .map(Path::new)
+        .collect::<BTreeSet<_>>();
+    if listed.len() != manifest.artifacts.len() + 2
+        || seen
+            .iter()
+            .map(|path| path.as_path())
+            .collect::<BTreeSet<_>>()
+            != listed
+    {
+        return Err("bundle contains unlisted, duplicate or missing content".into());
     }
     let mut bytes = 0;
     for artifact in &manifest.artifacts {

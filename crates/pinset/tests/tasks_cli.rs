@@ -83,6 +83,7 @@ fn named_tasks_preserve_arguments_cwd_and_exit_status_without_path_fallback() {
     cwd_task.cwd = Some("package".to_owned());
 
     let config = ProjectConfig {
+        requirements: None,
         schema: 5,
         project_id: Some("4c5652e4-0000-4000-8000-000000000001".to_owned()),
         policy: ProjectPolicy {
@@ -185,6 +186,7 @@ fn task_dependencies_run_once_in_order_and_stop_on_failure() {
     let mut blocked = write("blocked");
     blocked.depends_on = vec!["fail".to_owned()];
     let config = ProjectConfig {
+        requirements: None,
         schema: 5,
         project_id: Some("4c5652e4-0000-4000-8000-000000000003".to_owned()),
         policy: ProjectPolicy {

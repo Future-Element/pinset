@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.14.0 - Unreleased
+
+- Check declared Node/bundled npm, Python, Go, Rust, Java/Gradle/AGP and .NET compatibility with explicit pass, fail, unknown and not-applicable results, revisioned rules and primary references.
+- Add optional schema 6 platform/build requirements, explicit migration previews and byte-for-byte config/lock backups. Existing schema 5 projects retain their schema until migration.
+- Add portable semantic environment comparison, separate trust/identity/variable checks, explicit source diagnostics and process-scoped enterprise CA support with TLS verification retained.
+- Verify every required platform SDK archive and overlay for offline delivery; reject incomplete or altered bundles before importing cache entries. Exact installed ephemeral runtime execution no longer requires metadata access.
+- Add optional Action preparation and portable summaries. Keep published defaults on 2.12.3 until the final combined release.
+- Update the website's Next.js and Sharp dependencies to patched versions.
+- Accept official Rust default-profile package aliases and the platform-specific `rust-mingw` component when validating generated locks.
+
 ## 2.13.0 - Unreleased
 
 - Add explicit project preparation plans and restartable setup with locked runtime reuse, managed Python environments, contract checks and opt-in declared tasks.
