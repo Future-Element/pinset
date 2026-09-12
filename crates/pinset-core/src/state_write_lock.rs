@@ -28,6 +28,13 @@ pub fn acquire_self_update_lock(pinset_home: &Path) -> Result<StateWriteLock> {
 }
 
 #[cfg(feature = "project-write")]
+pub fn acquire_setup_state_write_lock(pinset_home: &Path, root: &Path) -> Result<StateWriteLock> {
+    let canonical = fs::canonicalize(root).map_err(|source| Error::OpenStateWriteLock { path: root.to_path_buf(), source })?;
+    let identity = if cfg!(windows) { canonical.to_string_lossy().to_lowercase() } else { canonical.to_string_lossy().into_owned() };
+    acquire(pinset_home, &format!("setup-{}.lock", hex_lower(&Sha256::digest(identity.as_bytes()))))
+}
+
+#[cfg(feature = "project-write")]
 pub fn acquire_project_state_write_lock(
     pinset_home: &Path,
     config_path: &Path,

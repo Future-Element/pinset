@@ -20,6 +20,7 @@ mod dotnet_runtime;
 #[cfg(feature = "installer")]
 mod download_cache;
 mod environment_protocol;
+mod environment_report;
 #[cfg(feature = "environment-selection")]
 mod environment_selection;
 mod error;
@@ -100,6 +101,8 @@ mod source_config;
 #[cfg(any(feature = "project-write", feature = "state-write"))]
 mod state_write_lock;
 mod target;
+#[cfg(feature = "project-write")]
+pub use state_write_lock::acquire_setup_state_write_lock;
 mod user_settings;
 
 #[cfg(feature = "lockfile")]
@@ -146,6 +149,9 @@ pub use download_cache::{
     repair_download_cache, verify_download_cache,
 };
 pub use environment_protocol::{decode_environment, encode_environment};
+pub use environment_report::{
+    EnvironmentCheck, EnvironmentDescriptor, ExecutionEvidence, ReadinessState, RuntimeDescriptor,
+};
 #[cfg(feature = "project-write")]
 pub use environment_selection::save_local_environment;
 #[cfg(feature = "environment-selection")]

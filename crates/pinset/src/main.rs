@@ -15,7 +15,10 @@ mod candidate;
 mod diagnostics;
 mod environment;
 mod i18n;
+mod probes;
+mod readiness;
 mod self_update;
+mod setup;
 
 use atomic_write_file::AtomicWriteFile;
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
@@ -95,6 +98,22 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
+    /// Preview or prepare the project environment without changing existing locked versions.
+    Setup {
+        #[arg(long, conflicts_with_all = ["yes", "resume"])]
+        plan: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, value_name = "RUN_ID")]
+        resume: Option<String>,
+        /// Run this declared task only after successful preparation.
+        #[arg(long, conflicts_with = "plan")]
+        task: Option<String>,
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Detect traditional runtime version files without network or writes.
     Detect {
         /// Directory from which repository-bounded discovery starts.
@@ -384,6 +403,9 @@ enum Commands {
         /// Include commands that would repair known findings; never run them.
         #[arg(long)]
         repair_preview: bool,
+        /// Select the compatible diagnostic report or the new environment descriptor.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        report_version: u32,
     },
     /// Check redacted diagnostic state and fail when action is required.
     Check {
@@ -397,6 +419,11 @@ enum Commands {
         compare: Option<PathBuf>,
         #[arg(long)]
         repair_preview: bool,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        report_version: u32,
+        /// Execute bounded Node/Python probes. Implies environment report 2.
+        #[arg(long)]
+        probe: bool,
     },
     /// Manage the Pinset-owned project Python environment without shell activation.
     Venv {
@@ -836,6 +863,8 @@ enum EditorCommands {
         cwd: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        protocol: u32,
     },
 }
 
@@ -860,6 +889,7 @@ impl Commands {
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
             Self::Status { json: true, .. } => Some("status"),
+            Self::Setup { json: true, .. } => Some("setup"),
             Self::Check { json: true, .. } => Some("check"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
@@ -1068,6 +1098,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
         matches!(
             value.as_ref(),
             "detect"
+                | "setup"
                 | "which"
                 | "current"
                 | "list"
@@ -1447,6 +1478,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             cli.command,
             Some(
                 Commands::Env { .. }
+                    | Commands::Setup { .. }
+                    | Commands::Status { .. }
+                    | Commands::Check { .. }
                     | Commands::Run { .. }
                     | Commands::Workspace {
                         command: WorkspaceCommands::Run { .. }
@@ -1463,6 +1497,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             cli.command,
             Some(
                 Commands::Run { .. }
+                    | Commands::Setup { .. }
+                    | Commands::Status { .. }
+                    | Commands::Check { .. }
                     | Commands::Workspace {
                         command: WorkspaceCommands::Run { .. }
                     }
@@ -1488,6 +1525,13 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     };
 
     match command {
+        Commands::Setup { plan, yes, resume, task, offline, json } => {
+            return setup::run(&env::current_dir()?, setup::SetupOptions {
+                preview: plan, yes, resume: resume.as_deref(), json, offline,
+                profile: cli.profile.as_deref(), no_env: cli.no_env,
+                task: task.as_deref(),
+            }, catalog);
+        }
         Commands::Init => {
             let path = create_project_config(&env::current_dir()?)?;
             println!("{}", catalog.created(&path));
@@ -1725,7 +1769,12 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             save,
             compare,
             repair_preview,
+            report_version,
         } => {
+            if report_version == 2 {
+                return readiness::run("status", &effective_cwd(cwd)?, json, save.as_deref(), compare.as_deref(), false, cli.profile.as_deref(), cli.no_env);
+            }
+            if cli.profile.is_some() || cli.no_env { return Err("environment selection requires --report-version 2".into()); }
             return run_diagnostic_command(
                 "status",
                 cwd,
@@ -1742,7 +1791,13 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             save,
             compare,
             repair_preview,
+            report_version,
+            probe,
         } => {
+            if report_version == 2 || probe {
+                return readiness::run("check", &effective_cwd(cwd)?, json, save.as_deref(), compare.as_deref(), probe, cli.profile.as_deref(), cli.no_env);
+            }
+            if cli.profile.is_some() || cli.no_env { return Err("environment selection requires --report-version 2".into()); }
             return run_diagnostic_command("check", cwd, json, save, compare, repair_preview, true);
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
@@ -6085,6 +6140,7 @@ fn install_project_with_python_environment(
                 environment_path,
                 &distribution,
                 recreate_venv,
+                true,
             )?;
         } else if environment_name != "default" || recreate_venv {
             return Err(Error::PythonEnvironmentUnsupported {
@@ -6162,6 +6218,7 @@ fn ensure_project_python_environment(
     environment_path: &str,
     distribution: &str,
     recreate: bool,
+    print_outcome: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let target = current_target_for_tool("python");
     let install_dir = home
@@ -6192,12 +6249,12 @@ fn ensure_project_python_environment(
         &target,
         recreate,
     )?;
-    println!(
+    if print_outcome { println!(
         "python@{} project environment {} ready at {}",
         environment.distribution,
         environment.name,
         environment.root.display()
-    );
+    ); }
     Ok(())
 }
 
@@ -8271,7 +8328,7 @@ struct EditorTaskReport {
 
 fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        EditorCommands::Context { cwd, json } => {
+        EditorCommands::Context { cwd, json, protocol } => {
             let cwd = effective_cwd(cwd)?;
             let config_path = find_optional_project_config(&cwd)?;
             let config = config_path
@@ -8340,7 +8397,15 @@ fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error:
                 diagnostics: diagnostics::collect(&cwd, false)?,
             };
             if json {
-                print_json_success("editor.context", report)?;
+                if protocol == 2 {
+                    let mut value = serde_json::to_value(&report)?;
+                    value["protocol_schema"] = serde_json::json!(2);
+                    value["minimum_extension_version"] = serde_json::json!("1.2.0");
+                    value["descriptor"] = serde_json::to_value(readiness::collect(&cwd, None, false)?)?;
+                    print_json_success("editor.context", value)?;
+                } else {
+                    print_json_success("editor.context", report)?;
+                }
             } else {
                 println!(
                     "Pinset editor protocol={} CLI={} tasks={} profiles={} diagnostics={}",
