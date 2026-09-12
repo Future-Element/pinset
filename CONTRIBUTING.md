@@ -29,7 +29,7 @@ Windows 完整卸载脚本使用独立 PowerShell 临时目录测试：
 ./scripts/tests/uninstall_ps1_test.ps1
 ```
 
-这些检查不会在维护者开发机运行。格式化、Clippy、构建、测试、依赖安全审计和真实运行时验收必须在 GitHub Actions 临时虚拟机中进行，并在 PR 中说明平台与结果；开发机和 WSL 只做编辑及静态差异检查。
+格式化、Clippy、构建、测试、依赖安全审计和真实运行时验收可在本地 Docker 隔离环境中进行，优先复用容器缓存完成验证，再运行合并所需的 CI 检查，减少重复消耗。`scripts/docker/Dockerfile.verify` 提供 Linux 验证环境。Windows/macOS 原生入口需要相应平台验收，不能以 Linux 容器结果替代。PR 必须说明实际验证的平台与边界；宿主机和 WSL 不直接运行这些检查。
 
 `RUSTSEC-2023-0071` 仅影响 RSA 私钥操作的可观察计时；Pinset 的 OpenPGP 路径只解析公开证书并验证公开签名，不持有私钥或执行解密。该无修复版本的中危告警是当前唯一的可达性例外；高危运行时依赖告警不得忽略。
 

@@ -19,6 +19,7 @@ for script in ("scripts/verify_published_release.py", "scripts/tests/environment
 WORKSPACE_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"][
     "package"
 ]["version"]
+DISTRIBUTION_VERSION = json.loads((ROOT / "release.json").read_text(encoding="utf-8"))["published"]
 subprocess.run([sys.executable, str(ROOT / "scripts/tests/release_version_test.py")], check=True)
 ARCHIVES = (
     "pinset-linux-x86_64.tar.gz",
@@ -36,7 +37,7 @@ def require_text(path: pathlib.Path, values: tuple[str, ...]) -> None:
             raise AssertionError(f"{display} is missing {value!r}")
 
 
-for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic-report.schema.json", "bundle-manifest.schema.json"):
+for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic-report.schema.json", "environment-report-v2.schema.json", "bundle-manifest.schema.json"):
     schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["additionalProperties"] is False
@@ -44,7 +45,7 @@ for schema_name in ("pinset.schema.json", "pinset-lock.schema.json", "diagnostic
 devcontainer = json.loads(
     (ROOT / "examples/devcontainer/.devcontainer/devcontainer.json").read_text(encoding="utf-8")
 )
-assert devcontainer["build"]["args"]["PINSET_VERSION"] == WORKSPACE_VERSION
+assert devcontainer["build"]["args"]["PINSET_VERSION"] == DISTRIBUTION_VERSION
 
 require_text(
     ROOT / "action.yml",
@@ -63,7 +64,7 @@ require_text(
 )
 action = (ROOT / "action.yml").read_text(encoding="utf-8")
 action_version = re.search(r"(?ms)^  version:\s*$.*?^    default: ([^\s]+)$", action)
-assert action_version and action_version.group(1) == WORKSPACE_VERSION
+assert action_version and action_version.group(1) == DISTRIBUTION_VERSION
 require_text(
     ROOT / "integrations/renovate/pinset.json5",
     ("customType: \"regex\"", "datasource", "depName", "currentValue"),
@@ -110,11 +111,11 @@ require_text(
 )
 require_text(
     ROOT / "examples/devcontainer/.devcontainer/Dockerfile",
-    (f"ARG PINSET_VERSION={WORKSPACE_VERSION}", "SHA256SUMS", "sha256sum"),
+    (f"ARG PINSET_VERSION={DISTRIBUTION_VERSION}", "SHA256SUMS", "sha256sum"),
 )
 
 install_ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
-assert f"[string] $Version = '{WORKSPACE_VERSION}'" in install_ps1
+assert f"[string] $Version = '{DISTRIBUTION_VERSION}'" in install_ps1
 for required in ("Get-FileHash", "SHA256SUMS", "pinset-shim.exe", "shim install --all"):
     assert required in install_ps1
 

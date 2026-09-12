@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.13.0 - Unreleased
+
+- Add explicit project preparation plans and restartable setup with locked runtime reuse, managed Python environments, contract checks and opt-in declared tasks.
+- Add opt-in environment report v2 and execution evidence; retain diagnostic and editor protocol v1 compatibility.
+- Keep public installer and Action defaults on the published release until the combined environment release is verified.
+
 ## 2.12.3 - 2026-09-11
 
 - Correct Windows audit of official CPython MSI installations and do not require a standard-library `venv` from Python 2 releases that do not provide it.

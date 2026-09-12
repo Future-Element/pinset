@@ -293,12 +293,14 @@ jobs:
         include:
           - os: ubuntu-24.04
             artifact: pinset-linux-x86_64
+          - os: ubuntu-24.04-arm
+            artifact: pinset-linux-aarch64
           - os: windows-2025
             artifact: pinset-windows-x86_64
           - os: macos-15
             artifact: pinset-macos-aarch64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Propagate prerequisite failures
         shell: bash
@@ -338,7 +340,9 @@ jobs:
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            python -m pip install --only-binary=:all: pywinpty==3.0.5
+            # 3.x has reported ConPTY read/write stalls (andfoy/pywinpty#545).
+            # Keep the native terminal fixture on the compatible pre-3.x transport.
+            python -m pip install --only-binary=:all: pywinpty==2.0.15
           elif [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
             sudo apt-get install -y gnome-keyring dbus-x11
@@ -357,6 +361,21 @@ jobs:
             dbus-run-session -- sh -c 'printf "%s" "disposable-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets; python3 scripts/tests/environment_wizard_test.py target/debug/pinset --keyring'
           else
             python scripts/tests/environment_wizard_test.py "target/debug/pinset${suffix}" --keyring
+          fi
+
+      - name: Validate real Node and Python environment preparation
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi
+          npm ci --prefix editors/vscode
+          npm run compile --prefix editors/vscode
+          npm install --prefix "${RUNNER_TEMP}/pinset-editor-test" --no-audit --no-fund @vscode/test-electron@3.1.0
+          export PINSET_EDITOR_TEST_MODULES="${RUNNER_TEMP}/pinset-editor-test/node_modules"
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            xvfb-run -a python scripts/tests/environment_setup_test.py "target/debug/pinset${suffix}"
+          else
+            python scripts/tests/environment_setup_test.py "target/debug/pinset${suffix}"
           fi
 
   website:

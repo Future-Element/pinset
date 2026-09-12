@@ -32,8 +32,19 @@ test("accepts the supported editor protocol", () => {
 });
 
 test("rejects incompatible protocol and extension versions", () => {
-  assert.throws(() => parseContext(envelope(2), "1.0.0"), /protocol 2/);
+  assert.throws(() => parseContext(envelope(3), "1.2.0"), /protocol 3/);
   assert.throws(() => parseContext(envelope(1, "1.1.0"), "1.0.0"), /requires extension 1.1.0/);
+});
+
+test("protocol 2 requires a well-formed descriptor and preserves unverified states", () => {
+  const value = JSON.parse(envelope(2, "1.2.0"));
+  assert.throws(() => parseContext(JSON.stringify(value), "1.2.0"), /invalid environment descriptor/);
+  value.data.descriptor = { schema: 2, cli_version: "2.13.0", target: "linux-x86_64", host: "ssh", runtimes: [], checks: [], evidence: [], environment_ready: false, execution_verified: false };
+  assert.equal(parseContext(JSON.stringify(value), "1.2.0").descriptor.execution_verified, false);
+  value.data.descriptor.checks.push({id: "identity", state: "unknown", reason: "not_opened"});
+  assert.equal(parseContext(JSON.stringify(value), "1.2.0").descriptor.checks[0].state, "unknown");
+  value.data.descriptor.checks[0].state = "green";
+  assert.throws(() => parseContext(JSON.stringify(value), "1.2.0"), /Invalid environment check/);
 });
 
 test("rejects non-protocol output", () => {

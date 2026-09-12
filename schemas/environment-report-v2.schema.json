@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pinset environment report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "cli_version",
+    "project_id",
+    "project_root",
+    "target",
+    "host",
+    "profile",
+    "profile_source",
+    "context_fingerprint",
+    "runtimes",
+    "checks",
+    "evidence",
+    "environment_ready",
+    "execution_verified"
+  ],
+  "properties": {
+    "schema": {
+      "const": 2
+    },
+    "cli_version": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project_root": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "type": "string"
+    },
+    "host": {
+      "type": "string"
+    },
+    "profile": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "profile_source": {
+      "type": "string"
+    },
+    "context_fingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "runtimes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/runtime"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "environment_ready": {
+      "type": "boolean"
+    },
+    "execution_verified": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "state": {
+      "enum": [
+        "pass",
+        "fail",
+        "unknown",
+        "not_applicable"
+      ]
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "reason",
+        "next_step"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "next_step": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "requested",
+        "locked_version",
+        "installation_identity",
+        "selection_source",
+        "target",
+        "commands",
+        "executable",
+        "checks"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "requested": {
+          "type": "string"
+        },
+        "locked_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installation_identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selection_source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "executable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "tool",
+        "state",
+        "expected_executable",
+        "observed_executable",
+        "observed_version",
+        "observed_unix_ms",
+        "context_fingerprint",
+        "reason"
+      ],
+      "properties": {
+        "entry": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "expected_executable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_executable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_unix_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "context_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -25,7 +25,10 @@ def interact_windows(binary, project, environment, arguments, replies, expected_
     )
     pending = ""
     replies = list(replies)
-    deadline = time.monotonic() + 90
+    started = time.monotonic()
+    deadline = started + 90
+    total_deadline = started + 300
+    answered = 0
     try:
         while time.monotonic() < deadline:
             readable, _, _ = select.select([process.fileobj], [], [], 0.2)
@@ -47,10 +50,16 @@ def interact_windows(binary, project, environment, arguments, replies, expected_
             while replies and replies[0][0].rstrip() in pending:
                 prompt, response = replies.pop(0)
                 pending = pending.split(prompt.rstrip(), 1)[1]
+                # The password library flushes its prompt before enabling raw input.
+                # Give ConPTY that mode transition before sending the complete line.
+                time.sleep(0.1)
                 process.write(response + "\r")
+                answered += 1
+                deadline = min(time.monotonic() + 90, total_deadline)
+                print(f"Windows wizard prompt {answered} answered at {time.monotonic() - started:.1f}s", flush=True)
         else:
             expected = replies[0][0] if replies else "process exit"
-            raise AssertionError(f"Windows wizard timed out waiting for {expected!r}: {pending[-2048:]!r}")
+            raise AssertionError(f"Windows wizard timed out waiting for {expected!r} after {answered} replies")
         while process.isalive() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert process.exitstatus in expected_codes, "interactive Windows command failed"

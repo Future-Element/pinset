@@ -15,7 +15,10 @@ mod candidate;
 mod diagnostics;
 mod environment;
 mod i18n;
+mod probes;
+mod readiness;
 mod self_update;
+mod setup;
 
 use atomic_write_file::AtomicWriteFile;
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
@@ -95,6 +98,22 @@ struct Cli {
 enum Commands {
     /// Create a minimal pinset.toml in the current directory.
     Init,
+    /// Preview or prepare the project environment without changing existing locked versions.
+    Setup {
+        #[arg(long, conflicts_with_all = ["yes", "resume"])]
+        plan: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, value_name = "RUN_ID")]
+        resume: Option<String>,
+        /// Run this declared task only after successful preparation.
+        #[arg(long, conflicts_with = "plan")]
+        task: Option<String>,
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Detect traditional runtime version files without network or writes.
     Detect {
         /// Directory from which repository-bounded discovery starts.
@@ -384,6 +403,12 @@ enum Commands {
         /// Include commands that would repair known findings; never run them.
         #[arg(long)]
         repair_preview: bool,
+        /// Select the compatible diagnostic report or the new environment descriptor.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        report_version: u32,
+        /// Execute bounded runtime probes. Implies environment report 2.
+        #[arg(long)]
+        probe: bool,
     },
     /// Check redacted diagnostic state and fail when action is required.
     Check {
@@ -397,6 +422,11 @@ enum Commands {
         compare: Option<PathBuf>,
         #[arg(long)]
         repair_preview: bool,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        report_version: u32,
+        /// Execute bounded Node/Python probes. Implies environment report 2.
+        #[arg(long)]
+        probe: bool,
     },
     /// Manage the Pinset-owned project Python environment without shell activation.
     Venv {
@@ -836,6 +866,8 @@ enum EditorCommands {
         cwd: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+        protocol: u32,
     },
 }
 
@@ -860,6 +892,7 @@ impl Commands {
             Self::Prune { json: true, .. } => Some("prune"),
             Self::Doctor { json: true, .. } => Some("doctor"),
             Self::Status { json: true, .. } => Some("status"),
+            Self::Setup { json: true, .. } => Some("setup"),
             Self::Check { json: true, .. } => Some("check"),
             Self::Lock { command } => command.json_command(),
             Self::Cache { command } => command.json_command(),
@@ -1068,6 +1101,7 @@ fn requested_json_command(arguments: &[OsString]) -> Option<String> {
         matches!(
             value.as_ref(),
             "detect"
+                | "setup"
                 | "which"
                 | "current"
                 | "list"
@@ -1447,6 +1481,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             cli.command,
             Some(
                 Commands::Env { .. }
+                    | Commands::Setup { .. }
+                    | Commands::Status { .. }
+                    | Commands::Check { .. }
                     | Commands::Run { .. }
                     | Commands::Workspace {
                         command: WorkspaceCommands::Run { .. }
@@ -1463,6 +1500,9 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             cli.command,
             Some(
                 Commands::Run { .. }
+                    | Commands::Setup { .. }
+                    | Commands::Status { .. }
+                    | Commands::Check { .. }
                     | Commands::Workspace {
                         command: WorkspaceCommands::Run { .. }
                     }
@@ -1488,6 +1528,29 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
     };
 
     match command {
+        Commands::Setup {
+            plan,
+            yes,
+            resume,
+            task,
+            offline,
+            json,
+        } => {
+            return setup::run(
+                &env::current_dir()?,
+                setup::SetupOptions {
+                    preview: plan,
+                    yes,
+                    resume: resume.as_deref(),
+                    json,
+                    offline,
+                    profile: cli.profile.as_deref(),
+                    no_env: cli.no_env,
+                    task: task.as_deref(),
+                },
+                catalog,
+            );
+        }
         Commands::Init => {
             let path = create_project_config(&env::current_dir()?)?;
             println!("{}", catalog.created(&path));
@@ -1725,7 +1788,24 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             save,
             compare,
             repair_preview,
+            report_version,
+            probe,
         } => {
+            if report_version == 2 || probe {
+                return readiness::run(
+                    "status",
+                    &effective_cwd(cwd)?,
+                    json,
+                    save.as_deref(),
+                    compare.as_deref(),
+                    probe,
+                    cli.profile.as_deref(),
+                    cli.no_env,
+                );
+            }
+            if cli.profile.is_some() || cli.no_env {
+                return Err("environment selection requires --report-version 2".into());
+            }
             return run_diagnostic_command(
                 "status",
                 cwd,
@@ -1742,7 +1822,24 @@ fn run(cli: Cli, catalog: Catalog) -> Result<i32, Box<dyn std::error::Error>> {
             save,
             compare,
             repair_preview,
+            report_version,
+            probe,
         } => {
+            if report_version == 2 || probe {
+                return readiness::run(
+                    "check",
+                    &effective_cwd(cwd)?,
+                    json,
+                    save.as_deref(),
+                    compare.as_deref(),
+                    probe,
+                    cli.profile.as_deref(),
+                    cli.no_env,
+                );
+            }
+            if cli.profile.is_some() || cli.no_env {
+                return Err("environment selection requires --report-version 2".into());
+            }
             return run_diagnostic_command("check", cwd, json, save, compare, repair_preview, true);
         }
         Commands::Venv { command } => run_venv_command(command, catalog)?,
@@ -4374,7 +4471,7 @@ fn workspace_update_preview(
     })
 }
 
-const COMPLETION_COMMANDS: &str = "init detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
+const COMPLETION_COMMANDS: &str = "init setup detect import global use unset install paths which current list outdated update migrate uninstall prune lock cache bundle candidate workspace editor run exec x doctor status check venv shim env trust activate completions source provider self";
 const COMPLETION_SHELLS: &str = "bash zsh fish powershell";
 const COMPLETION_LOCK_COMMANDS: &str = "audit";
 const COMPLETION_CACHE_COMMANDS: &str = "list info verify repair clean import prefetch";
@@ -4419,6 +4516,7 @@ fn completion_script(shell: ActivationShell) -> String {
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
             detect) values="--cwd --json --lang --help" ;;
+            setup) values="--plan --yes --resume --offline --task --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
@@ -4433,7 +4531,7 @@ fn completion_script(shell: ActivationShell) -> String {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
@@ -4466,6 +4564,7 @@ _pinset_completion() {
         case "$command" in
             global) values="__SELECTIONS__ --no-install --lang --help" ;;
             detect) values="--cwd --json --lang --help" ;;
+            setup) values="--plan --yes --resume --offline --task --json --lang --help" ;;
             import) values="--cwd --force --no-install --lang --help" ;;
             use) values="__SELECTIONS__ --no-install --global --lang --help" ;;
             install) values="__SELECTIONS__ --locked --offline --global --cwd --repair --lang --help" ;;
@@ -4480,7 +4579,7 @@ _pinset_completion() {
             prune) values="--cwd --project --dry-run --json --lang --help" ;;
             which) values="--cwd --explain --json --lang --help" ;;
             doctor) values="--cwd --deep --json --lang --help" ;;
-            status|check) values="--cwd --json --save --compare --repair-preview --lang --help" ;;
+            status|check) values="--cwd --json --save --compare --repair-preview --report-version --probe --lang --help" ;;
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
@@ -4505,6 +4604,7 @@ compdef _pinset_completion pinset"#
         ActivationShell::Fish => {
             r#"complete -c pinset -f -n '__fish_use_subcommand' -a '__COMMANDS__ -C --cwd -e --profile --no-env'
 complete -c pinset -f -n '__fish_seen_subcommand_from global use install uninstall' -a '__SELECTIONS__'
+complete -c pinset -f -n '__fish_seen_subcommand_from setup' -a '--plan --yes --resume --offline --task --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from install' -a '--repair --locked --offline --global --cwd'
 complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdated update' -a '__PROVIDERS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--remote --available --long'
@@ -4530,7 +4630,7 @@ complete -c pinset -f -n '__fish_seen_subcommand_from import' -a '--force --no-i
 complete -c pinset -f -n '__fish_seen_subcommand_from use unset install outdated update migrate lock' -a '--global'
 complete -c pinset -f -n '__fish_seen_subcommand_from update migrate uninstall prune cache' -a '--dry-run'
 complete -c pinset -f -n '__fish_seen_subcommand_from doctor' -a '--deep'
-complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview'
+complete -c pinset -f -n '__fish_seen_subcommand_from status check' -a '--save --compare --repair-preview --report-version --probe'
 complete -c pinset -f -a '--help --lang'"#
         }
         ActivationShell::Powershell => {
@@ -4540,6 +4640,7 @@ complete -c pinset -f -a '--help --lang'"#
     $command = if ($elements.Count -gt 1) { $elements[1] } else { '' }
     $values = switch ($command) {
         'global' { '__SELECTIONS__ --no-install --lang --help' -split ' ' }
+        'setup' { '--plan --yes --resume --offline --task --json --lang --help' -split ' ' }
         'detect' { '--cwd --json --lang --help' -split ' ' }
         'import' { '--cwd --force --no-install --lang --help' -split ' ' }
         'use' { '__SELECTIONS__ --no-install --global --lang --help' -split ' ' }
@@ -4555,7 +4656,7 @@ complete -c pinset -f -a '--help --lang'"#
         'prune' { '--cwd --project --dry-run --json --lang --help' -split ' ' }
         'which' { '--cwd --explain --json --lang --help' -split ' ' }
         'doctor' { '--cwd --deep --json --lang --help' -split ' ' }
-        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --lang --help' -split ' ' }
+        { $_ -in @('status', 'check') } { '--cwd --json --save --compare --repair-preview --report-version --probe --lang --help' -split ' ' }
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
@@ -6085,6 +6186,7 @@ fn install_project_with_python_environment(
                 environment_path,
                 &distribution,
                 recreate_venv,
+                true,
             )?;
         } else if environment_name != "default" || recreate_venv {
             return Err(Error::PythonEnvironmentUnsupported {
@@ -6162,6 +6264,7 @@ fn ensure_project_python_environment(
     environment_path: &str,
     distribution: &str,
     recreate: bool,
+    print_outcome: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let target = current_target_for_tool("python");
     let install_dir = home
@@ -6192,12 +6295,14 @@ fn ensure_project_python_environment(
         &target,
         recreate,
     )?;
-    println!(
-        "python@{} project environment {} ready at {}",
-        environment.distribution,
-        environment.name,
-        environment.root.display()
-    );
+    if print_outcome {
+        println!(
+            "python@{} project environment {} ready at {}",
+            environment.distribution,
+            environment.name,
+            environment.root.display()
+        );
+    }
     Ok(())
 }
 
@@ -8271,7 +8376,11 @@ struct EditorTaskReport {
 
 fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        EditorCommands::Context { cwd, json } => {
+        EditorCommands::Context {
+            cwd,
+            json,
+            protocol,
+        } => {
             let cwd = effective_cwd(cwd)?;
             let config_path = find_optional_project_config(&cwd)?;
             let config = config_path
@@ -8337,10 +8446,23 @@ fn run_editor_command(command: EditorCommands) -> Result<(), Box<dyn std::error:
                 workspace_members,
                 environment,
                 tasks,
-                diagnostics: diagnostics::collect(&cwd, false)?,
+                diagnostics: if protocol == 2 {
+                    diagnostics::collect_environment(&cwd)?
+                } else {
+                    diagnostics::collect(&cwd, false)?
+                },
             };
             if json {
-                print_json_success("editor.context", report)?;
+                if protocol == 2 {
+                    let mut value = serde_json::to_value(&report)?;
+                    value["protocol_schema"] = serde_json::json!(2);
+                    value["minimum_extension_version"] = serde_json::json!("1.2.0");
+                    value["descriptor"] =
+                        serde_json::to_value(readiness::collect(&cwd, None, false)?)?;
+                    print_json_success("editor.context", value)?;
+                } else {
+                    print_json_success("editor.context", report)?;
+                }
             } else {
                 println!(
                     "Pinset editor protocol={} CLI={} tasks={} profiles={} diagnostics={}",

@@ -4,9 +4,11 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { diagnosticDocument } from "./diagnostic-model";
+import { EnvironmentPanel, bindEnvironment, restoreBindings } from "./environment-panel";
+import { appendDebugEvidence, debugProbe } from "./debug-probe";
 import { INSTALL_GUIDE_URL, installerPlan } from "./install";
 import { isMissingExecutableError, PinsetProcessError, processStartError } from "./process-error";
-import { parseContext, type PinsetContext, type PinsetFinding } from "./protocol";
+import { parseContext, validateDescriptor, type PinsetContext, type PinsetFinding } from "./protocol";
 import { terminateProcessTree, terminationPlan } from "./process-tree";
 import { statusModel, type StatusItemModel } from "./status-model";
 
@@ -28,7 +30,9 @@ async function runCli(
   folder: vscode.WorkspaceFolder,
   args: readonly string[],
   token?: vscode.CancellationToken,
+  timeoutMs = 30_000,
 ): Promise<CapturedProcess> {
+  if (token?.isCancellationRequested) throw new vscode.CancellationError();
   return new Promise<CapturedProcess>((resolve, reject) => {
     const child = spawn(executable(), [...args], {
       cwd: folder.uri.fsPath,
@@ -41,6 +45,8 @@ async function runCli(
     let capturedBytes = 0;
     let overflow = false;
     let cancelled = false;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; void terminate(child); }, timeoutMs);
 
     const capture = (destination: Buffer[], chunk: Buffer): void => {
       capturedBytes += chunk.byteLength;
@@ -58,22 +64,41 @@ async function runCli(
       void terminate(child);
     });
     child.once("error", (error: NodeJS.ErrnoException) => {
+      clearTimeout(timeout);
       cancellation?.dispose();
       reject(processStartError(error));
     });
     child.once("close", (code, signal) => {
+      clearTimeout(timeout);
       cancellation?.dispose();
       const standardOutput = Buffer.concat(stdout).toString("utf8");
       const standardError = Buffer.concat(stderr).toString("utf8").trim();
-      if (overflow) {
+      if (timedOut) {
+        reject(new PinsetProcessError("Pinset timed out; the process tree was stopped", ""));
+      } else if (overflow) {
         reject(new PinsetProcessError("Pinset output exceeded the 4 MiB editor limit", standardError));
       } else if (cancelled) {
         reject(new vscode.CancellationError());
       } else if (code !== 0) {
+        let detail = standardError;
+        if (!detail && args.includes("--json")) {
+          try {
+            const response = JSON.parse(standardOutput);
+            if (typeof response.error?.message === "string") detail = response.error.message;
+            else if (Array.isArray(response.data?.blockers)) detail = response.data.blockers.join("; ");
+            else if (response.data?.run?.task?.state === "failed") {
+              detail = `Environment preparation completed; explicit task ${response.data.run.task.id} failed. Inspect the task, then retry it explicitly with pinset run ${response.data.run.task.id}.`;
+            }
+            else if (response.data?.run?.id) {
+              const failed = response.data.run.plan?.steps?.filter((step: { state: string }) => step.state === "failed") ?? [];
+              detail = `${failed.map((step: { id: string; reason?: string }) => `${step.id}: ${step.reason ?? "failed"}`).join("; ")}. Resume: pinset setup --resume ${response.data.run.id}`;
+            }
+          } catch { /* Keep the existing process error for incompatible CLI output. */ }
+        }
         reject(
           new PinsetProcessError(
-            standardError || `Pinset exited with ${code ?? signal ?? "an unknown status"}`,
-            standardError,
+            detail || `Pinset exited with ${code ?? signal ?? "an unknown status"}`,
+            detail,
           ),
         );
       } else {
@@ -90,6 +115,7 @@ async function terminate(child: ChildProcessWithoutNullStreams): Promise<void> {
 class ContextStore {
   private readonly contexts = new Map<string, PinsetContext>();
   private readonly errors = new Map<string, string>();
+  private readonly generations = new Map<string, number>();
 
   constructor(private readonly extensionVersion: string) {}
 
@@ -108,17 +134,26 @@ class ContextStore {
   clear(): void {
     this.contexts.clear();
     this.errors.clear();
+    for (const [key, generation] of this.generations) this.generations.set(key, generation + 1);
   }
 
   async refresh(folder: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<PinsetContext> {
     const key = folder.uri.toString();
+    const generation = (this.generations.get(key) ?? 0) + 1;
+    this.generations.set(key, generation);
     try {
-      const result = await runCli(folder, ["editor", "context", "--cwd", folder.uri.fsPath, "--json"], token);
+      const version = await runCli(folder, ["--version"], token);
+      const match = /^pinset (\d+)\.(\d+)\./.exec(version.stdout.trim());
+      if (!match) throw new Error("Pinset returned an unsupported version response.");
+      const modern = Number(match[1]) > 2 || (Number(match[1]) === 2 && Number(match[2]) >= 13);
+      const result = await runCli(folder, ["editor", "context", ...(modern ? ["--protocol", "2"] : []), "--cwd", folder.uri.fsPath, "--json"], token);
       const context = parseContext(result.stdout, this.extensionVersion);
+      if (this.generations.get(key) !== generation) throw new vscode.CancellationError();
       this.contexts.set(key, context);
       this.errors.delete(key);
       return context;
     } catch (error) {
+      if (this.generations.get(key) !== generation) throw new vscode.CancellationError();
       this.contexts.delete(key);
       const message = errorMessage(error);
       this.errors.set(key, message);
@@ -311,6 +346,7 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
   const output = vscode.window.createOutputChannel("Pinset");
   const status = new PinsetStatus();
   const taskProvider = new PinsetTaskProvider(store);
+  const panel = new EnvironmentPanel(folder => store.get(folder));
 
   const refreshFolder = async (folder: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<void> => {
     if (!vscode.workspace.isTrusted) {
@@ -323,10 +359,12 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
       const context = await store.refresh(folder, token);
       publishDiagnostics(diagnostics, store.values());
       taskProvider.changed();
+      panel.changed();
       if (folder === displayedFolder()) status.update(context);
     } catch (error) {
       if (error instanceof vscode.CancellationError) return;
       output.appendLine(`[${folder.name}] ${errorMessage(error)}`);
+      panel.changed();
       publishDiagnostics(diagnostics, store.values());
       if (folder === displayedFolder()) {
         if (isMissingExecutableError(error)) status.missingCli(errorMessage(error));
@@ -354,6 +392,81 @@ export async function activate(extensionContext: vscode.ExtensionContext): Promi
     diagnostics,
     output,
     taskProvider,
+    panel,
+    vscode.window.registerTreeDataProvider("pinset.environments", panel),
+    vscode.commands.registerCommand("pinset.probeDebug", async (requestedTool?: string) => {
+      const folder = await trustedFolder();
+      if (!folder || !extensionContext.storageUri) return undefined;
+      const context = await store.refresh(folder);
+      if (!context.descriptor) throw new Error("Native probes require Pinset 2.13 or newer.");
+      const runtimes = context.descriptor.runtimes.filter(runtime => ["node", "python", "flutter"].includes(runtime.tool));
+      const runtime = typeof requestedTool === "string" ? runtimes.find(runtime => runtime.tool === requestedTool)
+        : (await vscode.window.showQuickPick(runtimes.map(runtime => ({label: runtime.tool, runtime})), {placeHolder: "Observe a controlled native debug launch (encrypted profiles are not loaded)"}))?.runtime;
+      if (!runtime) return undefined;
+      const evidence = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: `Observing ${runtime.tool} debugger`, cancellable: true},
+        (_progress, token) => debugProbe(folder, runtime, extensionContext.storageUri!, token));
+      const fresh = await store.refresh(folder);
+      if (fresh.descriptor?.context_fingerprint !== context.descriptor.context_fingerprint
+        || JSON.stringify(fresh.descriptor?.runtimes) !== JSON.stringify(context.descriptor.runtimes)) {
+        throw new Error("Project changed while probing; repeat the probe.");
+      }
+      appendDebugEvidence(fresh.descriptor!, evidence); panel.changed();
+      return evidence;
+    }),
+    vscode.commands.registerCommand("pinset.prepareEnvironment", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      try {
+        const preview = await runCli(folder, ["setup", "--plan", "--json"]);
+        const plan = JSON.parse(preview.stdout).data;
+        const answer = await vscode.window.showWarningMessage(`Prepare ${folder.name}?`, { modal: true,
+          detail: `Runtimes: ${(plan.environment?.runtimes ?? []).map((runtime: { tool: string; requested: string; locked_version?: string }) => `${runtime.tool}: ${runtime.locked_version ?? "resolve required"} (requested ${runtime.requested})`).join(", ")}\nProfile: ${plan.profile ?? "none"}\nSteps: ${plan.steps.map((step: { id: string }) => step.id).join(", ")}\nDeclared tasks require a separate explicit action.` }, "Prepare");
+        if (answer !== "Prepare") return;
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Preparing Pinset environment", cancellable: true },
+          async (_progress, token) => { const result = await runCli(folder, ["setup", "--yes", "--json"], token, 20 * 60_000); output.appendLine(result.stdout); });
+      } catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
+      await refreshFolder(folder);
+    }),
+    vscode.commands.registerCommand("pinset.probeEnvironment", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      try {
+        await refreshFolder(folder);
+        const context = store.get(folder);
+        if (!context?.descriptor) throw new Error("Environment probes require Pinset 2.13 or newer.");
+        const fingerprint = context.descriptor.context_fingerprint;
+        const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Probing selected runtimes", cancellable: true },
+          async (_progress, token) => runCli(folder, ["status", "--report-version", "2", "--probe", "--json"], token));
+        const report: unknown = JSON.parse(result.stdout).data.report;
+        validateDescriptor(report);
+        const fresh = await store.refresh(folder);
+        if (!fresh.descriptor || fresh.descriptor.context_fingerprint !== fingerprint
+          || JSON.stringify(fresh.descriptor.runtimes) !== JSON.stringify(context.descriptor.runtimes)) throw new Error("Project changed while probing; refresh and retry.");
+        fresh.descriptor.evidence = report.evidence;
+        fresh.descriptor.execution_verified = report.execution_verified;
+        fresh.descriptor.environment_ready = report.environment_ready;
+        panel.changed();
+      } catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
+    }),
+    vscode.commands.registerCommand("pinset.bindEnvironment", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      try { const context = await store.refresh(folder); if (!context.descriptor) throw new Error("Binding requires Pinset 2.13 or newer.");
+        await bindEnvironment(folder, context.descriptor, extensionContext.workspaceState, async () => {
+          const fresh = await store.refresh(folder);
+          if (fresh.descriptor?.context_fingerprint !== context.descriptor?.context_fingerprint
+            || JSON.stringify(fresh.descriptor?.runtimes) !== JSON.stringify(context.descriptor?.runtimes)) {
+            throw new Error("Project selection changed while previewing. Review the binding again.");
+          }
+        }); await refreshFolder(folder);
+      } catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
+    }),
+    vscode.commands.registerCommand("pinset.restoreBindings", async () => {
+      const folder = await trustedFolder();
+      if (!folder) return;
+      try { await restoreBindings(folder, extensionContext.workspaceState); await refreshFolder(folder); }
+      catch (error) { void vscode.window.showErrorMessage(errorMessage(error)); }
+    }),
     vscode.tasks.registerTaskProvider("pinset", taskProvider),
     vscode.commands.registerCommand("pinset.refresh", refreshAll),
     vscode.commands.registerCommand("pinset.install", async () => {
