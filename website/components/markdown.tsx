@@ -9,6 +9,7 @@ export function Markdown({ source }: { source: string }) {
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ href, children }) => <a href={href} target={href?.startsWith("http") ? "_blank" : undefined} rel={href?.startsWith("http") ? "noreferrer" : undefined}>{children}</a>,
+          table: ({ children }) => <div className="markdownTable" tabIndex={0}><table>{children}</table></div>,
           pre: ({ children }) => {
             const code = String((children as React.ReactElement<{ children?: React.ReactNode }>)?.props?.children || "").replace(/\n$/, "");
             return <div className="markdownCode"><CopyButton value={code} /><pre>{children}</pre></div>;

@@ -13,7 +13,7 @@ export const siteConfig = {
   titleEn: "Pinset — Polyglot Runtime Version Manager",
   descriptionZh: "Pinset 是免费开源的多语言运行时版本管理器。一份配置与精确锁文件管理 Node.js、Python、Rust、Go、Bun 等工具，统一团队与 CI 的开发环境，支持 Windows、macOS 和 Linux。",
   descriptionEn: "Pinset is a free, open-source runtime version manager. Lock Node.js, Python, Rust, Go, Bun, and more in one project. Reproducible toolchains for your team and CI.",
-  contentUpdatedAt: "2026-09-07T00:00:00.000Z",
+  contentUpdatedAt: "2026-09-14T00:00:00.000Z",
   homepageUpdatedAt: "2026-09-08T00:00:00.000Z",
 };
 

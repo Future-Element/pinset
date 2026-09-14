@@ -159,7 +159,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 删除一个项目或全局选择，但不卸载对应运行时。 |
-| 语法与参数 | `pinset unset <tool> [--global | --cwd <path>]`。 |
+| 语法与参数 | `pinset unset <tool> [--global \| --cwd <path>]`。 |
 | 修改状态 | **是。** 只更新所选配置和锁。 |
 | 示例 | `pinset unset python --cwd ./app` |
 | JSON | 不支持。 |
@@ -171,7 +171,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 安装一个显式精确运行时，或安装项目/全局锁中的全部目标。 |
-| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。`--offline` 只适用于项目或全局锁。 |
+| 语法与参数 | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global \| --cwd <path>]`。显式选择与锁作用域选项冲突；项目安装默认要求锁定状态。`--offline` 只适用于项目或全局锁。 |
 | 修改状态 | **是。** 写入缓存、运行时文件、收据和命令路由；锁定的 Python 项目可能创建或验证 `.venv`。不会修改选择。 |
 | 示例 | `pinset install --locked --cwd ./app` |
 | JSON | 不支持。 |
@@ -222,7 +222,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 将每个精确锁定版本同时与“请求选择器允许的最新版本”和“最新稳定版本”比较。 |
-| 语法与参数 | `pinset outdated [tool] [--global | --cwd <path>] [--json]`。 |
+| 语法与参数 | `pinset outdated [tool] [--global \| --cwd <path>] [--json]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset outdated --cwd ./app --json` |
 | JSON | **支持**；命令名为 `outdated`，`data.runtimes` 包含 `requested`、`current`、`latest_compatible`、`latest`、`update_available` 与 `upgrade_available`。 |
@@ -234,7 +234,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 重新解析请求选择器并刷新精确锁记录，不改变选择器，也不安装运行时。 |
-| 语法与参数 | `pinset update [tool] [--global | --cwd <path>] [--dry-run] [--json]`。 |
+| 语法与参数 | `pinset update [tool] [--global \| --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；只更新所选锁文件。 |
 | 示例 | `pinset update node --cwd ./app --dry-run` |
 | JSON | **支持**；命令名为 `update`，包含旧/新精确版本和请求选择器。 |
@@ -246,7 +246,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 明确把 schema 1–5 项目配置迁移到 schema 6、旧运行时锁迁移到 schema 5；项目变更前逐字节备份配置及锁，dry-run 只预览备份路径。仅 schema 变更保留注释；已识别的旧 Provider 保留精确版本。 |
-| 语法与参数 | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`。 |
+| 语法与参数 | `pinset migrate [--global \| --cwd <path>] [--dry-run] [--json]`。 |
 | 修改状态 | **是**，但 `--dry-run` 时不修改；仅以逐文件原子替换方式规范化配置与锁。 |
 | 示例 | `pinset migrate --cwd ./app --dry-run` |
 | JSON | **支持**；命令名为 `migrate`，包含来源与目标 schema。 |
@@ -258,7 +258,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 审计一组项目或全局配置/锁、当前平台制品、相关内容寻址缓存、安装收据与由收据证明的所有权。项目选择 Python 时还会审计 `.venv` 所有权标记。 |
-| 语法与参数 | `pinset lock audit [--global | --cwd <path>] [--json]`。默认使用项目作用域，并遵循正常的仓库边界发现规则。 |
+| 语法与参数 | `pinset lock audit [--global \| --cwd <path>] [--json]`。默认使用项目作用域，并遵循正常的仓库边界发现规则。 |
 | 修改状态 | **否。** 命令始终只读，不会执行修复计划，也不会访问 Provider 元数据或归档服务。缓存检查只散列当前选择、当前平台制品所引用的缓存项。 |
 | 示例 | `pinset lock audit --cwd ./app --json` |
 | JSON | **支持**；命令名为 `lock.audit`。审计正常完成时，即使 `data.passed` 为 false，外层仍为 `ok: true`。`data.findings` 中返回稳定的 `reason_code`、`severity`、`category`、`subject`，以及可选的 `path` 和 `repair`。 |
@@ -337,7 +337,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 生成可移植的诊断报告 schema 1。`status` 负责展示，`check` 可作为 CI 策略门禁。 |
-| 语法与参数 | `pinset <status|check> [--cwd <路径>] [--json] [--save <文件>] [--compare <文件>] [--repair-preview]`。 |
+| 语法与参数 | `pinset <status\|check> [--cwd <路径>] [--json] [--save <文件>] [--compare <文件>] [--repair-preview]`。 |
 | 修改状态 | 只有 `--save` 会原子写入指定报告文件。修复预览不会执行命令。 |
 | 示例 | `pinset check --save .pinset-diagnostic.json --repair-preview` |
 | JSON | **支持**；命令名为 `status` 或 `check`。报告拥有独立于 CLI 外层封装的 schema 字段。 |
@@ -361,7 +361,7 @@ python-environment = "docs"
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 检查环境兼容性和交付条件，或明确探测 SDK 执行。 |
-| 语法与参数 | `pinset check [--report-version 2] [--probe] [--delivery] [--offline | --network] [--target <平台,...>] [--save <文件>] [--compare <文件>] [--json]`。 |
+| 语法与参数 | `pinset check [--report-version 2] [--probe] [--delivery] [--offline \| --network] [--target <平台,...>] [--save <文件>] [--compare <文件>] [--json]`。 |
 | 修改状态 | 显式 profile 检查可能在内存中打开身份；联网需 `--network`，SDK 探测需 `--probe`。仅 `--save` 写报告。 |
 | 示例 | `pinset check --offline --target linux-x86_64,windows-x86_64 --json` |
 | 退出码 | 所选检查通过为 `0`，发现问题为 `1`，输入错误为 `2`。交付比较差异记录在数据中，不单独改变退出码。 |
@@ -378,7 +378,7 @@ Schema 6 可选声明 `[requirements]` 的 `platforms`、`build-targets` 和精�
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合下载缓存检查、验证、修复、清理和离线导入操作。 |
-| 语法与参数 | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset cache <list\|info\|verify\|repair\|clean\|import\|prefetch> ...`；必须指定二级命令。 |
 | 修改状态 | 取决于二级命令：`repair`、`clean` 与 `import` 会修改缓存状态。 |
 | 示例 | `pinset cache info` |
 | JSON | 没有一级命令输出；`list`、`info`、`verify`、`repair` 与 `clean` 支持 `--json`。 |
@@ -464,7 +464,7 @@ pinset cache prefetch --jobs 4
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 把经过审查的归档导入已验证离线缓存。 |
-| 语法与参数 | `pinset cache import <archive> (--sha256 <hex> | --integrity <SRI>)`；两种完整性选项互斥。 |
+| 语法与参数 | `pinset cache import <archive> (--sha256 <hex> \| --integrity <SRI>)`；两种完整性选项互斥。 |
 | 修改状态 | **是。** 校验匹配后按内容标识复制归档，但不安装。 |
 | 示例 | `pinset cache import ./node.tar.xz --sha256 <reviewed-digest>` |
 | JSON | 不支持。 |
@@ -482,7 +482,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合项目所有的 Python 环境操作。 |
-| 语法与参数 | `pinset venv <create|status|recreate> [名称] ...`；名称默认为 `default`。 |
+| 语法与参数 | `pinset venv <create\|status\|recreate> [名称] ...`；名称默认为 `default`。 |
 | 修改状态 | 取决于二级命令；`create` 与 `recreate` 会修改状态。 |
 | 示例 | `pinset venv status` |
 | JSON | 不支持。 |
@@ -532,7 +532,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合 Provider 命令路由的检查与修复操作。 |
-| 语法与参数 | `pinset shim <path|install|migrate> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset shim <path\|install\|migrate> ...`；必须指定二级命令。 |
 | 修改状态 | 取决于二级命令；`install` 与 `migrate` 会修改路由条目。 |
 | 示例 | `pinset shim path` |
 | JSON | 不支持。 |
@@ -556,7 +556,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 修复命令 shim，但不覆盖不归 Pinset 所有的文件。 |
-| 语法与参数 | `pinset shim install [--binary <pinset-shim>] [--dir <path>] [--provider <tool> | <COMMAND>...]`。 |
+| 语法与参数 | `pinset shim install [--binary <pinset-shim>] [--dir <path>] [--provider <tool> \| <COMMAND>...]`。 |
 | 修改状态 | **是。** 在目标目录创建或修复受管 shim 条目。 |
 | 示例 | `pinset shim install --provider node` |
 | JSON | 不支持。 |
@@ -580,7 +580,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 输出把 Pinset 命令路由目录放到 `PATH` 前面的 Shell 代码。 |
-| 语法与参数 | `pinset activate <bash|zsh|fish|powershell>`。 |
+| 语法与参数 | `pinset activate <bash\|zsh\|fish\|powershell>`。 |
 | 修改状态 | 否。调用者自行决定是否执行或保存输出代码。 |
 | 示例 | `eval "$(pinset activate zsh)"` |
 | JSON | 不支持。 |
@@ -592,7 +592,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 为受支持 Shell 生成 Pinset 补全代码。 |
-| 语法与参数 | `pinset completions <bash|zsh|fish|powershell>`。 |
+| 语法与参数 | `pinset completions <bash\|zsh\|fish\|powershell>`。 |
 | 修改状态 | 否；Shell 重定向可能创建文件。 |
 | 示例 | `pinset completions fish > ~/.config/fish/completions/pinset.fish` |
 | JSON | 不支持。 |
@@ -608,7 +608,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 组合本机 Provider 下载源检查、选择、策略与验证操作。 |
-| 语法与参数 | `pinset source <list|add|use|fallback|remove|test> ...`；必须指定二级命令。 |
+| 语法与参数 | `pinset source <list\|add\|use\|fallback\|remove\|test> ...`；必须指定二级命令。 |
 | 修改状态 | 取决于二级命令；`add`、`use`、`fallback` 与 `remove` 会修改本机源配置。 |
 | 示例 | `pinset source list` |
 | JSON | 不支持。 |
@@ -620,7 +620,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 列出内置与自定义源，可限制为一个 Provider。 |
-| 语法与参数 | `pinset source list [node|go|python|flutter]`。 |
+| 语法与参数 | `pinset source list [node\|go\|python\|flutter]`。 |
 | 修改状态 | 否。 |
 | 示例 | `pinset source list node` |
 | JSON | 不支持。 |
@@ -632,7 +632,7 @@ Python 3.3 起才提供标准库 `venv`。对于 Python 2.x 和 3.0–3.2，`use
 | 字段 | 说明 |
 | --- | --- |
 | 用途 | 添加具名自定义制品源，并可选择授予可信元数据权限。 |
-| 语法与参数 | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`。HTTP 必须指定 `--allow-insecure`，且与元数据权限冲突。使用 `source use` 选择可信源后，该源会成为首选。 |
+| 语法与参数 | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure \| --trust-metadata]`。HTTP 必须指定 `--allow-insecure`，且与元数据权限冲突。使用 `source use` 选择可信源后，该源会成为首选。 |
 | 修改状态 | **是。** 写入本机 `sources.toml`；项目锁文件不变。 |
 | 示例 | `pinset source add node mirror --base-url https://mirror.example/node` |
 | JSON | 不支持。 |
