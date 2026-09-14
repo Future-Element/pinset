@@ -1,6 +1,6 @@
 # Team development environments / 团队开发环境
 
-Development version 2.14.0; distribution defaults remain on the published release until the final combined release.
+Available in the combined Pinset 2.15.0 environment release; first implemented in the 2.14 development milestone.
 
 ## Requirements / 环境要求
 

@@ -1,6 +1,6 @@
 # Project environment preparation / 项目开发环境准备
 
-Development version: 2.13.0. Public installers continue to install the published version until the combined roadmap release is complete.
+Available in the combined Pinset 2.15.0 environment release; first implemented in the 2.13 development milestone.
 
 ## Prepare / 准备
 
