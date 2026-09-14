@@ -52,6 +52,11 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
     downloaded = root / "assets"
     downloaded.mkdir()
     run("gh", "release", "download", tag, "--repo", repository, "--dir", str(downloaded))
+    previous_downloaded = root / "previous-assets"
+    previous_downloaded.mkdir()
+    previous_installer = "install.ps1" if os.name == "nt" else "install.sh"
+    run("gh", "release", "download", f"v{previous}", "--repo", repository,
+        "--pattern", previous_installer, "--dir", str(previous_downloaded))
     checksums = {}
     for line in (downloaded / "SHA256SUMS").read_text().splitlines():
         digest, name = line.split("  ", 1)
@@ -91,20 +96,30 @@ with tempfile.TemporaryDirectory(prefix="pinset-published-") as temporary:
     for name in ("PINSET_IDENTITY", "PINSET_IDENTITY_FILE", "PINSET_ENV_PROFILE", "PINSET_ENV_DISABLE"):
         environment.pop(name, None)
 
-    def install(version, destination):
+    def installer_arguments(installer_directory, version, destination):
         if os.name == "nt":
-            run("pwsh", "-NoProfile", "-File", str(downloaded / "install.ps1"),
-                "-Version", version, "-InstallDir", str(destination), env=environment)
-        else:
-            run("sh", str(downloaded / "install.sh"), "--version", version,
-                "--install-dir", str(destination), env=environment)
+            return ("pwsh", "-NoProfile", "-File", str(installer_directory / "install.ps1"),
+                    "-Version", version, "-InstallDir", str(destination))
+        return ("sh", str(installer_directory / "install.sh"), "--version", version,
+                "--install-dir", str(destination))
 
-    install(tag[1:], installed)
+    def install(installer_directory, version, destination):
+        run(*installer_arguments(installer_directory, version, destination), env=environment)
+
+    install(downloaded, tag[1:], installed)
     binary = installed / f"pinset{suffix}"
     assert run(str(binary), "--version", env=environment) == f"pinset {tag[1:]}"
     assert (installed / f"pinset-shim{suffix}").is_file()
     run(sys.executable, "scripts/tests/environment_wizard_test.py", str(binary), "--keyring", env=environment)
-    install(previous, updated)
+    previous_stable = tuple(int(part) for part in previous.split("-", 1)[0].split("."))
+    if previous_stable < (2, 16, 0):
+        rejected = subprocess.run(
+            installer_arguments(downloaded, previous, root / "blocked legacy install"),
+            env=environment, text=True, capture_output=True, check=False,
+        )
+        assert rejected.returncode != 0, "current installer accepted a pre-2.16 release"
+        assert "before 2.16.0" in rejected.stdout + rejected.stderr
+    install(previous_downloaded, previous, updated)
     binary = updated / f"pinset{suffix}"
     assert run(str(binary), "--version", env=environment) == f"pinset {previous}"
     # Windows replaces the running executable using its background update helper.
