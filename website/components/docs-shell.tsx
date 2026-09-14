@@ -17,8 +17,10 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const searchPanelRef = useRef<HTMLDivElement>(null);
+  const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const zh = locale === "zh-CN";
   const otherLocaleHref = locale === "en" ? pathname.replace(/^\/en/, "") || "/" : `/en${pathname}`;
+  const sidebarScrollStorageKey = `pinset:command-sidebar-scroll:${locale}`;
 
   const results = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -62,6 +64,47 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
     };
   }, [searchOpen]);
 
+  useEffect(() => {
+    if (landing) return;
+    const sidebar = sidebarScrollRef.current;
+    if (!sidebar) return;
+
+    window.scrollTo(0, 0);
+
+    let savedScrollTop = 0;
+    try {
+      const storedValue = window.sessionStorage.getItem(sidebarScrollStorageKey);
+      const parsedValue = storedValue === null ? 0 : Number(storedValue);
+      if (Number.isFinite(parsedValue) && parsedValue >= 0) savedScrollTop = parsedValue;
+    } catch {
+      return;
+    }
+
+    const restoreScrollPosition = () => {
+      sidebar.scrollTop = savedScrollTop;
+    };
+    restoreScrollPosition();
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      restoreScrollPosition();
+      secondFrame = window.requestAnimationFrame(restoreScrollPosition);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [landing, pathname, sidebarScrollStorageKey]);
+
+  const rememberSidebarScroll = () => {
+    if (landing || !sidebarScrollRef.current) return;
+    try {
+      window.sessionStorage.setItem(sidebarScrollStorageKey, String(sidebarScrollRef.current.scrollTop));
+    } catch {
+      // Navigation remains usable when session storage is unavailable.
+    }
+  };
+
   return (
     <LatestReleaseProvider>
     <div className={`siteFrame ${landing ? "landingFrame" : "docsFrame"}`} lang={locale}>
@@ -70,7 +113,7 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
         <Brand href={prefix || "/"} />
         <nav className="topnav" aria-label={zh ? "主导航" : "Primary navigation"}>
           {landing ? <><a href="#features">{zh ? "功能" : "Features"}</a><a href="#providers">{zh ? "支持的工具" : "Toolchains"}</a></> : <Link href={prefix || "/"}>{zh ? "首页" : "Home"}</Link>}
-          <Link className={pathname.includes("/commands") ? "active" : ""} href={`${prefix}/docs/commands`}>{zh ? "命令" : "Commands"}</Link>
+          <Link className={pathname.includes("/commands") ? "active" : ""} href={`${prefix}/docs/commands`} scroll={false}>{zh ? "命令" : "Commands"}</Link>
         </nav>
         <div className="topActions">
           <button className="searchButton" type="button" onClick={() => setSearchOpen(true)} aria-label={zh ? "搜索命令" : "Search commands"}>
@@ -86,11 +129,11 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
       </header>
 
       <aside className={`sidebar ${menuOpen ? "open" : ""}`} aria-label={zh ? "文档导航" : "Documentation navigation"}>
-        <div className="sidebarScroll">
+        <div className="sidebarScroll" ref={sidebarScrollRef} onScroll={rememberSidebarScroll} onClickCapture={rememberSidebarScroll}>
           <div className="navGroup">
             <div className="navHeading">{zh ? "文档" : "Documentation"}</div>
             <Link className={pathname === prefix || pathname === `${prefix}/` ? "navLink active" : "navLink"} href={prefix || "/"} onClick={() => setMenuOpen(false)}>{zh ? "介绍" : "Introduction"}</Link>
-            <Link className={pathname === `${prefix}/docs/commands` ? "navLink active" : "navLink"} href={`${prefix}/docs/commands`} onClick={() => setMenuOpen(false)}>{zh ? "命令索引" : "Command index"}</Link>
+            <Link className={pathname === `${prefix}/docs/commands` ? "navLink active" : "navLink"} href={`${prefix}/docs/commands`} scroll={false} onClick={() => setMenuOpen(false)}>{zh ? "命令索引" : "Command index"}</Link>
           </div>
           {landing && <div className="navGroup"><a className="navLink" href="#features" onClick={() => setMenuOpen(false)}>{zh ? "功能" : "Features"}</a><a className="navLink" href="#providers" onClick={() => setMenuOpen(false)}>{zh ? "支持的工具" : "Toolchains"}</a><a className="navLink" href="#getting-started" onClick={() => setMenuOpen(false)}>{zh ? "开始使用" : "Get started"}</a><a className="navLink" href="#faq" onClick={() => setMenuOpen(false)}>FAQ</a></div>}
           {!landing && groups.map((group) => (
@@ -98,7 +141,7 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
               <div className="navHeading">{group.title}</div>
               {group.commands.map((command) => {
                 const href = `${prefix}/docs/commands/${command.slug}`;
-                return <Link className={pathname === href ? "navLink active" : "navLink"} href={href} key={command.slug} onClick={() => setMenuOpen(false)}><code>{command.title}</code></Link>;
+                return <Link className={pathname === href ? "navLink active" : "navLink"} href={href} key={command.slug} scroll={false} onClick={() => setMenuOpen(false)}><code>{command.title}</code></Link>;
               })}
             </div>
           ))}
@@ -119,7 +162,7 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
               <button className="closeSearch" type="button" onClick={() => setSearchOpen(false)} aria-label={zh ? "关闭搜索" : "Close search"}>ESC</button>
             </div>
             <div className="searchResults">
-              {results.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug} onClick={() => setSearchOpen(false)}><code>pinset {command.title}</code><span>{command.description}</span></Link>)}
+              {results.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug} scroll={false} onClick={() => setSearchOpen(false)}><code>pinset {command.title}</code><span>{command.description}</span></Link>)}
               {!results.length && <p>{zh ? "没有找到相关命令。" : "No matching commands."}</p>}
             </div>
           </div>
