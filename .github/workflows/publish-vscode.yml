@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: publish-vscode-${{ github.ref }}
@@ -48,13 +49,14 @@ jobs:
       - name: Type-check, test, and package
         run: npm run package
 
+      - name: Log in with Microsoft Entra ID
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
       - name: Publish extension
         env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        shell: bash
-        run: |
-          if [[ -z "${VSCE_PAT}" ]]; then
-            echo "Repository secret VSCE_PAT is required" >&2
-            exit 1
-          fi
-          npm exec -- vsce publish --packagePath dist/pinset-vscode.vsix --pat "${VSCE_PAT}"
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: npm exec -- vsce publish --packagePath dist/pinset-vscode.vsix --azure-credential
