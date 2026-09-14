@@ -13,6 +13,8 @@ export interface EnvironmentDescriptor {
   evidence: { entry: string; tool: string; state: Readiness; reason: string; observed_version?: string | null;
     expected_executable?: string | null; observed_executable?: string | null; observed_unix_ms?: number; context_fingerprint?: string | null }[];
   environment_ready: boolean; execution_verified: boolean;
+  directory_identity?: string | null;
+  configuration_origins?: Record<string, string>;
 }
 
 export interface PinsetTaskContext {

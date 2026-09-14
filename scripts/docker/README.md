@@ -17,6 +17,7 @@ Native Linux execution acceptance / Linux 实际执行验收：
 
 ```powershell
 docker exec pinset-environment-dev sh scripts/docker/verify.sh native
+docker exec -e PINSET_ACCEPTANCE_CACHE=/var/cache/pinset-acceptance pinset-environment-dev cargo test -p pinset-cli --test worktree_runtime_cli --all-features --locked -- --ignored --nocapture
 ```
 
 Native acceptance reuses content-addressed SDK archives and VS Code downloads in `/var/cache/pinset-acceptance` inside the retained container. Each run creates fresh projects, installations, venvs, trust records and editor state. Docker Desktop's WSL kernel prompt is suppressed only in this container test entry point.

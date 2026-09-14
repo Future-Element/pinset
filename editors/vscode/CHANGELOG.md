@@ -1,11 +1,11 @@
 # Change Log
 
-## 1.2.0 (unreleased)
+## 1.2.0
 
 - Add per-folder environment preparation, readiness and execution evidence.
 - Preview and restore Node, Python and Flutter workspace bindings.
 - Observe controlled native debugger launches independently of configuration readiness.
-- Negotiate protocol 2 with CLI 2.13+ while retaining protocol 1 compatibility.
+- Negotiate protocol 2 with CLI 2.13+ while retaining protocol 1 compatibility. Environment bindings require CLI 2.15+ and are checked against the local host and directory generation before restoration.
 
 ## 1.1.1
 

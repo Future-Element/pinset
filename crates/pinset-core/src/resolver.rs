@@ -351,6 +351,7 @@ pub fn resolve_command_with_path(
         .join(tool)
         .join(&installation_version)
         .join(current_target_for_tool(tool));
+    let install_dir = selected_runtime_directory(pinset_home, &selection, install_dir)?;
     let candidates = runtime_command_candidates(tool, command, &install_dir);
     let executable = candidates
         .iter()
@@ -772,6 +773,7 @@ pub fn path_with_selected_tools(
                 .join(provider.tool)
                 .join(&selection.installation_version)
                 .join(current_target_for_tool(provider.tool));
+            let install_dir = selected_runtime_directory(pinset_home, &selection, install_dir)?;
             let command_dir = if provider.tool == "python"
                 && selection.source == SelectionSource::Project
                 && python_supports_stdlib_venv(&selection.version)
@@ -809,6 +811,7 @@ pub fn path_with_selected_tools(
             .join(provider.tool)
             .join(&selection.installation_version)
             .join(current_target_for_tool(provider.tool));
+        let install_dir = selected_runtime_directory(pinset_home, &selection, install_dir)?;
         let command_dir = if provider.tool == "python"
             && selection.source == SelectionSource::Project
             && python_supports_stdlib_venv(&selection.version)
@@ -901,6 +904,10 @@ pub fn selected_runtime_environment(
             .join(provider.tool)
             .join(&selection.installation_version)
             .join(current_target_for_tool(provider.tool));
+        let Ok(install_dir) = selected_runtime_directory(pinset_home, &selection, install_dir)
+        else {
+            continue;
+        };
         if provider.capabilities.environment == RuntimeEnvironmentKind::Python {
             if selection.source == SelectionSource::Project
                 && python_supports_stdlib_venv(&selection.version)
@@ -1003,6 +1010,23 @@ pub fn runtime_command_directory(tool: &str, install_dir: &Path) -> PathBuf {
         Some(RuntimeCommandLayout::Python) => install_dir.join("bin"),
         Some(RuntimeCommandLayout::Java) => java_home_for_install(install_dir).join("bin"),
         Some(RuntimeCommandLayout::Root) | None => install_dir.to_path_buf(),
+    }
+}
+
+fn selected_runtime_directory(
+    home: &Path,
+    selection: &ToolSelection,
+    shared: PathBuf,
+) -> Result<PathBuf> {
+    if selection.tool == "flutter" && selection.source == SelectionSource::Project {
+        crate::prepared_workspace_flutter(
+            home,
+            &selection.config_path,
+            &selection.installation_version,
+            &current_target_for_tool("flutter"),
+        )
+    } else {
+        Ok(shared)
     }
 }
 

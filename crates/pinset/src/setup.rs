@@ -518,7 +518,17 @@ fn execute(
                 offline,
                 !quiet,
                 catalog,
-            )
+            )?;
+            if &id[8..] == "flutter" {
+                let flutter = lock.tool("flutter").ok_or("Flutter is not locked")?;
+                pinset_core::prepare_workspace_flutter(
+                    &home,
+                    &path,
+                    &flutter.installation_version(),
+                    &pinset_core::current_target_for_tool("flutter"),
+                )?;
+            }
+            Ok(())
         }
         _ if id.starts_with("venv:") => {
             let path = pinset_core::find_project_config(&plan.root)?;

@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Result, global_state_dir};
 
-const PROJECT_REGISTRY_SCHEMA: u32 = 1;
+const PROJECT_REGISTRY_SCHEMA: u32 = 2;
 const MAX_PROJECT_RECORD_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ const MAX_PROJECT_RECORD_BYTES: u64 = 64 * 1024;
 struct ProjectRecord {
     schema: u32,
     config: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    directory: Option<crate::WorkDirectoryIdentity>,
 }
 
 #[cfg(feature = "project-write")]
@@ -43,6 +45,14 @@ pub fn register_project_config(pinset_home: &Path, config_path: &Path) -> Result
     let path = directory.join(filename);
     let serialized = toml::to_string_pretty(&ProjectRecord {
         schema: PROJECT_REGISTRY_SCHEMA,
+        directory: Some(
+            crate::work_directory_identity(canonical.parent().unwrap_or(Path::new("."))).map_err(
+                |source| Error::ReadProjectRegistry {
+                    path: canonical.clone(),
+                    source,
+                },
+            )?,
+        ),
         config: canonical,
     })
     .map_err(|source| Error::InvalidProjectRegistry {
@@ -122,7 +132,9 @@ pub fn registered_project_configs(pinset_home: &Path) -> Result<Vec<PathBuf>> {
                 path: path.clone(),
                 reason: source.to_string(),
             })?;
-        if record.schema != PROJECT_REGISTRY_SCHEMA {
+        if !matches!(record.schema, 1 | PROJECT_REGISTRY_SCHEMA)
+            || (record.schema == PROJECT_REGISTRY_SCHEMA && record.directory.is_none())
+        {
             return Err(Error::InvalidProjectRegistry {
                 path,
                 reason: format!("unsupported schema {}", record.schema),
@@ -138,7 +150,24 @@ pub fn registered_project_configs(pinset_home: &Path) -> Result<Vec<PathBuf>> {
                     ),
                 });
             }
-            Ok(_) => configs.push(record.config),
+            Ok(_) => {
+                if let Some(previous) = &record.directory {
+                    let current = crate::work_directory_identity(
+                        record.config.parent().unwrap_or(Path::new(".")),
+                    )
+                    .map_err(|source| Error::ReadProjectRegistry {
+                        path: record.config.clone(),
+                        source,
+                    })?;
+                    if current.host != previous.host {
+                        return Err(Error::InvalidProjectRegistry { path, reason: "another host registered this project; shared SDK cleanup requires checking that host's references".into() });
+                    }
+                    if current != *previous {
+                        continue;
+                    }
+                }
+                configs.push(record.config);
+            }
             Err(source) if source.kind() == ErrorKind::NotFound => {}
             Err(source) => {
                 return Err(Error::ReadProjectRegistry {

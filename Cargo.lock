@@ -2740,12 +2740,13 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinset-cli"
-version = "2.14.0"
+version = "2.15.0"
 dependencies = [
  "atomic-write-file",
  "clap",
  "flate2",
  "hex",
+ "libc",
  "pinset-core",
  "pinset-env",
  "reqwest",
@@ -2761,13 +2762,14 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "unicode-width",
  "uuid",
+ "windows-sys 0.61.2",
  "zeroize",
  "zip",
 ]
 
 [[package]]
 name = "pinset-core"
-version = "2.14.0"
+version = "2.15.0"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -2775,6 +2777,7 @@ dependencies = [
  "fs4",
  "hex",
  "json5",
+ "libc",
  "md5",
  "p256",
  "pgp",
@@ -2791,18 +2794,20 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "xz2",
  "zip",
 ]
 
 [[package]]
 name = "pinset-env"
-version = "2.14.0"
+version = "2.15.0"
 dependencies = [
  "age",
  "atomic-write-file",
  "fs4",
  "keyring",
+ "pinset-core",
  "secrecy",
  "serde",
  "sha2 0.11.0",
@@ -2815,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-shim"
-version = "2.14.0"
+version = "2.15.0"
 dependencies = [
  "pinset-core",
  "tempfile",

@@ -16,7 +16,7 @@ use crate::{Error, Result};
 
 pub const PYTHON_ENVIRONMENT_DIR: &str = ".venv";
 pub const PYTHON_ENVIRONMENT_MARKER: &str = ".pinset-venv.toml";
-const PYTHON_ENVIRONMENT_SCHEMA: u32 = 2;
+const PYTHON_ENVIRONMENT_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectPythonEnvironment {
@@ -36,6 +36,8 @@ struct PythonEnvironmentMarker {
     environment: Option<String>,
     distribution: String,
     target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    directory: Option<crate::WorkDirectoryIdentity>,
 }
 
 pub fn project_python_environment_path(project_config_path: &Path) -> PathBuf {
@@ -133,6 +135,7 @@ pub fn load_project_python_environment_for(
     let root =
         project_python_environment_path_for(project_config_path, environment_name, relative_path)?;
     let marker = read_marker(&root)?;
+    validate_directory_identity(project_config_path, &root, &marker)?;
     let marker_environment = marker.environment.as_deref().unwrap_or("default");
     if marker_environment != environment_name {
         return Err(Error::PythonEnvironmentMismatch {
@@ -196,17 +199,39 @@ pub fn create_project_python_environment_for(
             }
             // The marker is deliberately checked before recursive removal. `recreate` is not
             // permission to replace an environment created by the user or another tool.
-            load_project_python_environment_for(
-                project_config_path,
-                environment_name,
-                relative_path,
-                distribution,
-                target,
-            )?;
-            fs::remove_dir_all(&root).map_err(|source| Error::RemovePythonEnvironment {
-                path: root.clone(),
-                source,
-            })?;
+            let previous = read_marker(&root)?;
+            if previous.environment.as_deref().unwrap_or("default") != environment_name {
+                return Err(Error::PythonEnvironmentNotOwned { path: root });
+            }
+            if previous.schema < PYTHON_ENVIRONMENT_SCHEMA {
+                // An old marker proves Pinset provenance, not directory/host
+                // ownership. Explicit recreation preserves the entire old venv.
+                let backup = root.with_file_name(format!(
+                    "{}.pinset-backup-{}-{}",
+                    root.file_name().unwrap_or_default().to_string_lossy(),
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ));
+                fs::create_dir(&backup).map_err(|source| Error::RemovePythonEnvironment {
+                    path: root.clone(),
+                    source,
+                })?;
+                fs::rename(&root, backup.join("environment")).map_err(|source| {
+                    Error::RemovePythonEnvironment {
+                        path: root.clone(),
+                        source,
+                    }
+                })?;
+            } else {
+                validate_directory_identity(project_config_path, &root, &previous)?;
+                fs::remove_dir_all(&root).map_err(|source| Error::RemovePythonEnvironment {
+                    path: root.clone(),
+                    source,
+                })?;
+            }
         }
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
         Err(source) => {
@@ -241,14 +266,11 @@ pub fn create_project_python_environment_for(
     }
 
     let marker = PythonEnvironmentMarker {
-        schema: if environment_name == "default" {
-            1
-        } else {
-            PYTHON_ENVIRONMENT_SCHEMA
-        },
+        schema: PYTHON_ENVIRONMENT_SCHEMA,
         environment: (environment_name != "default").then(|| environment_name.to_owned()),
         distribution: distribution.to_owned(),
         target: target.to_owned(),
+        directory: Some(venv_directory_identity(project_config_path)?),
     };
     let serialized = toml::to_string_pretty(&marker).map_err(|source| {
         Error::InvalidPythonEnvironmentMarker {
@@ -328,7 +350,7 @@ fn read_marker(root: &Path) -> Result<PythonEnvironmentMarker> {
         })?;
     let valid_schema = match marker.schema {
         1 => marker.environment.is_none(),
-        PYTHON_ENVIRONMENT_SCHEMA => marker.environment.as_deref().is_some_and(|name| {
+        2 => marker.environment.as_deref().is_some_and(|name| {
             name != "default"
                 && !name.is_empty()
                 && name.len() <= 64
@@ -336,6 +358,10 @@ fn read_marker(root: &Path) -> Result<PythonEnvironmentMarker> {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         }),
+        PYTHON_ENVIRONMENT_SCHEMA => marker
+            .directory
+            .as_ref()
+            .is_some_and(|directory| directory.schema == 1),
         _ => false,
     };
     if !valid_schema || marker.distribution.trim().is_empty() || marker.target.trim().is_empty() {
@@ -346,6 +372,26 @@ fn read_marker(root: &Path) -> Result<PythonEnvironmentMarker> {
         });
     }
     Ok(marker)
+}
+
+fn venv_directory_identity(config_path: &Path) -> Result<crate::WorkDirectoryIdentity> {
+    crate::work_directory_identity(config_path.parent().unwrap_or(Path::new("."))).map_err(
+        |source| Error::ReadPythonEnvironmentMarker {
+            path: config_path.to_path_buf(),
+            source,
+        },
+    )
+}
+
+fn validate_directory_identity(
+    config_path: &Path,
+    root: &Path,
+    marker: &PythonEnvironmentMarker,
+) -> Result<()> {
+    if marker.directory.as_ref() != Some(&venv_directory_identity(config_path)?) {
+        return Err(Error::InvalidPythonEnvironmentMarker { path: root.join(PYTHON_ENVIRONMENT_MARKER), reason: if marker.schema < PYTHON_ENVIRONMENT_SCHEMA { "legacy environment needs explicit `pinset venv recreate`; the old directory will be backed up" } else { "environment belongs to another directory generation or host; prepare a new environment without deleting the existing one" }.into() });
+    }
+    Ok(())
 }
 
 fn environment_from_marker(
@@ -462,7 +508,14 @@ mod tests {
         .expect("python");
         fs::write(
             root.join(PYTHON_ENVIRONMENT_MARKER),
-            "schema = 1\ndistribution = \"3.14.7+20260807\"\ntarget = \"windows-x86_64\"\n",
+            toml::to_string(&PythonEnvironmentMarker {
+                schema: 3,
+                environment: None,
+                distribution: "3.14.7+20260807".into(),
+                target: "windows-x86_64".into(),
+                directory: Some(venv_directory_identity(&config).unwrap()),
+            })
+            .unwrap(),
         )
         .expect("marker");
         let environment =
@@ -502,6 +555,41 @@ mod tests {
     }
 
     #[test]
+    fn explicit_legacy_recreation_preserves_the_old_directory() {
+        let project = tempfile::tempdir().unwrap();
+        let config = project.path().join("pinset.toml");
+        let base = fake_base_python(project.path());
+        let target = crate::current_target_for_tool("python");
+        let environment =
+            create_project_python_environment(&config, &base, "3.14.7+20260807", &target, false)
+                .unwrap();
+        fs::write(environment.root.join("sentinel"), "user data").unwrap();
+        fs::write(
+            environment.root.join(PYTHON_ENVIRONMENT_MARKER),
+            format!("schema=1\ndistribution=\"3.14.7+20260807\"\ntarget=\"{target}\"\n"),
+        )
+        .unwrap();
+        assert!(load_project_python_environment(&config, "3.14.7+20260807", &target).is_err());
+        create_project_python_environment(&config, &base, "3.14.7+20260807", &target, true)
+            .unwrap();
+        let backup = fs::read_dir(project.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".venv.pinset-backup-")
+            })
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(backup.join("environment/sentinel")).unwrap(),
+            "user data"
+        );
+        assert!(!environment.root.join("sentinel").exists());
+    }
+
+    #[test]
     fn creates_named_environment_with_distinct_marker_and_path() {
         let project = tempfile::tempdir().expect("project");
         let config = project.path().join("pinset.toml");
@@ -526,7 +614,7 @@ mod tests {
         assert!(!project.path().join(PYTHON_ENVIRONMENT_DIR).exists());
         let marker =
             fs::read_to_string(environment.root.join(PYTHON_ENVIRONMENT_MARKER)).expect("marker");
-        assert!(marker.contains("schema = 2"));
+        assert!(marker.contains("schema = 3"));
         assert!(marker.contains("environment = \"docs\""));
         assert!(
             load_project_python_environment_for(

@@ -35,6 +35,14 @@ fn resolves_lists_and_executes_a_managed_flutter_sdk_with_its_bundled_dart() {
         ),
     )
     .expect("receipt");
+    let install_dir = pinset_core::prepare_workspace_flutter(
+        &home,
+        &project.join("pinset.toml"),
+        "3.47.0",
+        &pinset_core::current_target_for_tool("flutter"),
+    )
+    .expect("workspace SDK");
+    let bin_dir = install_dir.join("bin");
 
     assert_success_contains(
         &pinset(&project, &home, &["list", "flutter"]),

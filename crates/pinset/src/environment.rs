@@ -251,7 +251,7 @@ pub(crate) fn run_env_command(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let Some(command) = command else {
         let config_path = find_project_config(&env::current_dir()?)?;
-        let config = load_project_config(&config_path)?;
+        let config = pinset_core::load_effective_project_config(&config_path)?;
         let selection = pinset_core::environment_selection(
             &pinset_home()?,
             &config_path,
@@ -281,7 +281,7 @@ pub(crate) fn run_env_command(
                 &pinset_home()?,
                 root,
                 required_project_id(&config)?,
-                &toml::to_string(environment)?,
+                &environment_trust_context(&config_path, environment)?,
             );
             println!(
                 "trust={}",
@@ -474,7 +474,7 @@ pub(crate) fn run_env_command(
             let cwd = effective_cwd(cwd)?;
             let (config_path, profile_name, _, document) =
                 load_profile(&cwd, profile.as_deref().or(default_profile))?;
-            let config = load_project_config(&config_path)?;
+            let config = pinset_core::load_effective_project_config(&config_path)?;
             let issues = contract_issues(&config, &profile_name, &document.variables);
             if json {
                 print_json(
@@ -508,7 +508,7 @@ pub(crate) fn run_env_command(
             let cwd = effective_cwd(cwd)?;
             let (config_path, _, _, left_document) = load_profile(&cwd, Some(&left))?;
             let (_, _, _, right_document) = load_profile(&cwd, Some(&right))?;
-            let config = load_project_config(&config_path)?;
+            let config = pinset_core::load_effective_project_config(&config_path)?;
             let left_names = effective_contract_names(&config, &left, &left_document.variables);
             let right_names = effective_contract_names(&config, &right, &right_document.variables);
             let only_left = left_names
@@ -656,7 +656,7 @@ pub(crate) fn resolve_environment(
     let root = config_path
         .parent()
         .ok_or("project configuration has no parent")?;
-    let config = load_project_config(&config_path)?;
+    let config = pinset_core::load_effective_project_config(&config_path)?;
     let Some(environment) = config.environment.as_ref() else {
         if explicit_profile.is_some() || env::var_os("PINSET_ENV_PROFILE").is_some() {
             return Err("project has no encrypted environment configuration".into());
@@ -672,7 +672,7 @@ pub(crate) fn resolve_environment(
     let Some(profile) = selection.profile.as_deref() else {
         return Ok((environment.collision, BTreeMap::new()));
     };
-    let serialized = toml::to_string(environment)?;
+    let serialized = environment_trust_context(&config_path, environment)?;
     verify_project_trust(
         &pinset_home()?,
         root,
@@ -684,7 +684,11 @@ pub(crate) fn resolve_environment(
         .get(profile)
         .ok_or("selected environment profile is not declared")?;
     let identities = selected_identities(&pinset_home()?)?;
-    let mut document = read_encrypted_profile(root, &selected.file, &identities)?;
+    let source = pinset_core::project_environment_source(&config_path)?;
+    let source_root = source
+        .parent()
+        .ok_or("environment declaration has no parent")?;
+    let mut document = read_encrypted_profile(source_root, &selected.file, &identities)?;
     let issues = contract_issues(&config, profile, &document.variables);
     if !issues.is_empty() {
         for value in document.variables.values_mut() {
@@ -848,7 +852,7 @@ fn prompt_line(prompt: &str, default: Option<&str>) -> Result<String, Box<dyn st
 
 fn profile_name(cwd: &Path, explicit: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let config = load_project_config(&config_path)?;
+    let config = pinset_core::load_effective_project_config(&config_path)?;
     pinset_core::environment_selection(&pinset_home()?, &config_path, &config, explicit)?
         .profile
         .ok_or_else(|| "select a profile with `pinset env use <name>` or -e <name>".into())
@@ -964,7 +968,8 @@ fn mutate_profile<T>(
     mutation: impl FnOnce(&mut EnvironmentDocument) -> pinset_env::Result<T>,
 ) -> Result<T, Box<dyn std::error::Error>> {
     let (config_path, _, selected, identities) = selected_profile(cwd, profile)?;
-    let root = config_path
+    let source = pinset_core::project_environment_source(&config_path)?;
+    let root = source
         .parent()
         .ok_or("project configuration has no parent")?;
     mutate_encrypted_profile(
@@ -983,7 +988,8 @@ fn load_profile(
 ) -> Result<(PathBuf, String, EnvironmentProfile, EnvironmentDocument), Box<dyn std::error::Error>>
 {
     let (config_path, profile_name, selected, identities) = selected_profile(cwd, profile)?;
-    let root = config_path
+    let source = pinset_core::project_environment_source(&config_path)?;
+    let root = source
         .parent()
         .ok_or("project configuration has no parent")?;
     let document = read_encrypted_profile(root, &selected.file, &identities)?;
@@ -995,7 +1001,7 @@ fn selected_profile(
     profile: Option<&str>,
 ) -> Result<SelectedProfile, Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
-    let config = load_project_config(&config_path)?;
+    let config = pinset_core::load_effective_project_config(&config_path)?;
     if config.schema < 4 {
         return Err(
             "encrypted environments require schema 4 or newer; run `pinset migrate` first".into(),
@@ -1022,7 +1028,7 @@ fn run_recipient(command: RecipientCommands) -> Result<(), Box<dyn std::error::E
     match command {
         RecipientCommands::List { profile, cwd } => {
             let config_path = find_project_config(&effective_cwd(cwd)?)?;
-            let config = load_project_config(&config_path)?;
+            let config = pinset_core::load_effective_project_config(&config_path)?;
             let selected = config
                 .environment
                 .as_ref()
@@ -1056,6 +1062,7 @@ fn change_recipient(
         return Err("invalid age X25519 recipient".into());
     }
     let (config_path, _, selected, document) = load_profile(cwd, Some(profile))?;
+    let config_path = pinset_core::project_environment_source(&config_path)?;
     let mut config = load_project_config(&config_path)?;
     let configured = config
         .environment
@@ -1154,14 +1161,35 @@ fn project_environment(
         .parent()
         .ok_or("project configuration has no parent")?
         .to_path_buf();
-    let config = load_project_config(&config_path)?;
-    let serialized = toml::to_string(
+    let config = pinset_core::load_effective_project_config(&config_path)?;
+    let serialized = environment_trust_context(
+        &config_path,
         config
             .environment
             .as_ref()
             .ok_or("project has no encrypted environment configuration")?,
     )?;
     Ok((root, config, serialized))
+}
+
+pub(crate) fn environment_trust_context(
+    config_path: &Path,
+    environment: &ProjectEnvironment,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut serialized = toml::to_string(environment)?;
+    let source = pinset_core::project_environment_source(config_path)?;
+    if source != config_path {
+        let identity = pinset_core::work_directory_identity(
+            source
+                .parent()
+                .ok_or("environment declaration has no parent")?,
+        )?;
+        serialized.push_str(&format!(
+            "\n# pinset-environment-source={}\n",
+            identity.namespace
+        ));
+    }
+    Ok(serialized)
 }
 
 fn required_project_id(config: &ProjectConfig) -> Result<&str, Box<dyn std::error::Error>> {

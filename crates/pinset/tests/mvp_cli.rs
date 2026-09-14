@@ -60,6 +60,7 @@ fn current_keeps_requested_selector_separate_from_locked_version() {
     fs::create_dir(&project).expect("project");
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
+        verification: None,
         requirements: None,
         schema: 3,
         project_id: None,
@@ -858,6 +859,7 @@ fn migrate_upgrades_a_config_only_project_without_inventing_a_lockfile() {
 fn write_project(project: &Path, configured_version: &str, locked_version: &str) {
     let config_path = project.join("pinset.toml");
     let config = ProjectConfig {
+        verification: None,
         requirements: None,
         schema: 1,
         project_id: None,
