@@ -2777,6 +2777,7 @@ dependencies = [
  "fs4",
  "hex",
  "json5",
+ "libc",
  "md5",
  "p256",
  "pgp",
@@ -2793,6 +2794,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "xz2",
  "zip",
 ]

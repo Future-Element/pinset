@@ -152,7 +152,10 @@ def main() -> None:
         if os.environ.get("PINSET_EDITOR_TEST_MODULES"):
             run_editor(["node", str(Path(__file__).with_name("editor_environment_test.cjs")), str(cli), str(project), env["PINSET_HOME"]], env)
         # Compare exact SDK locks on independent copies, including real venvs.
-        probe = "const fs=require('fs'); console.log('PINSET_CANDIDATE_PROBE:'+JSON.stringify({cwd:process.cwd(),python:require('child_process').execFileSync('python',['-c','import sys; print(sys.executable)'],{encoding:'utf8'}).trim()})); fs.writeFileSync('candidate-only-output','isolated');"
+        # Compare live filesystem identities: macOS /var aliases and Windows
+        # verbatim paths can spell the same snapshot differently in Node/Python.
+        python_probe = "import json,sys; from pathlib import Path; print(json.dumps(dict(executable=sys.executable, isolated=sys.prefix != sys.base_prefix and any(Path.cwd().samefile(parent) for parent in Path(sys.prefix).parents))))"
+        probe = "const fs=require('fs'); console.log('PINSET_CANDIDATE_PROBE:'+JSON.stringify({cwd:process.cwd(),python:JSON.parse(require('child_process').execFileSync('python',['-c'," + json.dumps(python_probe) + "],{encoding:'utf8'}))})); fs.writeFileSync('candidate-only-output','isolated');"
         candidate_failure = "process.exit(require('fs').readFileSync('pinset.lock','utf8').includes(' candidate') ? 23 : 0)"
         with (project / "pinset.toml").open("a", encoding="utf-8") as config:
             config.write('\n[verification]\ntasks = ["candidate-probe", "candidate-failure"]\ntimeout-seconds = 120\n')
@@ -166,7 +169,7 @@ def main() -> None:
         assert len(snapshots) == 2 and snapshots[0]["cwd"] != snapshots[1]["cwd"], compared
         for snapshot in snapshots:
             assert Path(snapshot["cwd"]).resolve() != project.resolve()
-            assert Path(snapshot["python"]).is_relative_to(Path(snapshot["cwd"]))
+            assert snapshot["python"]["isolated"], snapshot
         assert not (project / "candidate-only-output").exists()
         assert Path(run("which", "python").strip()).resolve() == original_python
         assert (project / "pinset.lock").read_bytes() == before_lock

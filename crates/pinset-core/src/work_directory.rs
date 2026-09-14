@@ -61,8 +61,15 @@ fn host_identity() -> io::Result<String> {
     let mut digest = Sha256::new();
     digest.update(env::consts::OS.as_bytes());
     digest.update(env::consts::ARCH.as_bytes());
-    let mut identified = false;
-    if cfg!(unix) && !cfg!(target_os = "macos") {
+    // Directory file IDs are not unique across hosts. Use the OS machine ID,
+    // independently of terminal/GUI exports and without starting an external tool.
+    digest.update(native_host_identifier()?);
+    Ok(hex(&digest.finalize()))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn native_host_identifier() -> io::Result<Vec<u8>> {
+    if cfg!(unix) {
         for path in [
             "/etc/machine-id",
             "/var/lib/dbus/machine-id",
@@ -74,57 +81,88 @@ fn host_identity() -> io::Result<String> {
             {
                 let bytes = fs::read(path)?;
                 if !bytes.is_empty() {
-                    digest.update(path.as_bytes());
-                    digest.update(bytes);
-                    identified = true;
-                    break;
+                    let mut identity = path.as_bytes().to_vec();
+                    identity.extend(bytes);
+                    return Ok(identity);
                 }
             }
         }
     }
-    // macOS shells need not export HOSTNAME. Its /private directory identity is
-    // host-local and survives normal shell/SSH sessions without executing a tool.
-    if cfg!(target_os = "macos") {
-        let mut handle = IdentityHasher(Sha256::new());
-        same_file::Handle::from_path("/private")?.hash(&mut handle);
-        digest.update(handle.0.finalize());
-        identified = true;
-    }
-    if cfg!(windows) {
-        let system = env::var_os("SystemRoot")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:\\Windows"));
-        let mut handle = IdentityHasher(Sha256::new());
-        same_file::Handle::from_path(&system)?.hash(&mut handle);
-        digest.update(handle.0.finalize());
-        digest.update(
-            fs::metadata(system)?
-                .created()?
-                .duration_since(UNIX_EPOCH)
-                .map_err(io::Error::other)?
-                .as_nanos()
-                .to_le_bytes(),
-        );
-        identified = true;
-    }
     // Shell-only HOSTNAME/WSL_DISTRO_NAME exports must not change GUI, terminal
     // or SSH ownership when the operating system already provides an identity.
-    if !identified {
-        for name in ["COMPUTERNAME", "HOSTNAME"] {
-            if let Some(value) = env::var_os(name).filter(|value| !value.is_empty()) {
-                digest.update(name.as_bytes());
-                digest.update(value.to_string_lossy().as_bytes());
-                identified = true;
-                break;
-            }
+    for name in ["COMPUTERNAME", "HOSTNAME"] {
+        if let Some(value) = env::var_os(name).filter(|value| !value.is_empty()) {
+            let mut identity = name.as_bytes().to_vec();
+            identity.extend(value.to_string_lossy().as_bytes());
+            return Ok(identity);
         }
     }
-    if !identified {
+    Err(io::Error::other(
+        "cannot identify the local environment host",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn native_host_identifier() -> io::Result<Vec<u8>> {
+    let mut uuid = [0_u8; 16];
+    let timeout = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    // SAFETY: both pointers reference valid, correctly sized values for the call.
+    if unsafe { libc::gethostuuid(uuid.as_mut_ptr(), &timeout) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if uuid == [0; 16] {
+        return Err(io::Error::other("macOS returned an empty host identifier"));
+    }
+    Ok(uuid.to_vec())
+}
+
+#[cfg(windows)]
+fn native_host_identifier() -> io::Result<Vec<u8>> {
+    use windows_sys::Win32::System::Registry::{
+        HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW,
+    };
+    let key: Vec<u16> = "SOFTWARE\\Microsoft\\Cryptography\0"
+        .encode_utf16()
+        .collect();
+    let name: Vec<u16> = "MachineGuid\0".encode_utf16().collect();
+    let mut buffer = [0_u16; 128];
+    let mut bytes = std::mem::size_of_val(&buffer) as u32;
+    // SAFETY: names are terminated UTF-16, and the output buffer's byte size is
+    // supplied. This reads a predefined key; no registry handle is acquired.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut bytes,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    if bytes == 0 || bytes as usize > std::mem::size_of_val(&buffer) || !bytes.is_multiple_of(2) {
         return Err(io::Error::other(
-            "cannot identify the local environment host",
+            "Windows returned an invalid host identifier",
         ));
     }
-    Ok(hex(&digest.finalize()))
+    let value = &buffer[..bytes as usize / 2];
+    let end = value
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(value.len());
+    let value = String::from_utf16(&value[..end]).map_err(io::Error::other)?;
+    if value.trim().is_empty() {
+        return Err(io::Error::other(
+            "Windows returned an empty host identifier",
+        ));
+    }
+    Ok(value.into_bytes())
 }
 
 struct IdentityHasher(Sha256);

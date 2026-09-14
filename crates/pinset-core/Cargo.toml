@@ -79,5 +79,11 @@ uuid = { workspace = true, optional = true }
 xz2 = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry"] }
+
 [dev-dependencies]
 tempfile.workspace = true
