@@ -159,7 +159,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Remove one project or global selection without uninstalling its runtime. |
-| Syntax and arguments | `pinset unset <tool> [--global | --cwd <path>]`. |
+| Syntax and arguments | `pinset unset <tool> [--global \| --cwd <path>]`. |
 | Modifies state | **Yes.** Updates the chosen config and lock only. |
 | Example | `pinset unset python --cwd ./app` |
 | JSON | No. |
@@ -171,7 +171,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Install one explicit exact runtime, or install every target from a project/global lock. |
-| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global | --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. `--offline` is valid only with a project or global lock. |
+| Syntax and arguments | `pinset install [<tool>@<exact-version>] [--locked] [--offline] [--global \| --cwd <path>]`. An explicit selection conflicts with lock-scope options; locked installation is the default project behavior. `--offline` is valid only with a project or global lock. |
 | Modifies state | **Yes.** Writes cache entries, runtime files, receipts, and command routes; a locked Python project may create or validate `.venv`. It does not change a selection. |
 | Example | `pinset install --locked --cwd ./app` |
 | JSON | No. |
@@ -222,7 +222,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Compare each exact locked version with the newest version compatible with its requested selector and with the latest stable release. |
-| Syntax and arguments | `pinset outdated [tool] [--global | --cwd <path>] [--json]`. |
+| Syntax and arguments | `pinset outdated [tool] [--global \| --cwd <path>] [--json]`. |
 | Modifies state | No. |
 | Example | `pinset outdated --cwd ./app --json` |
 | JSON | **Yes**; command name `outdated`, with `requested`, `current`, `latest_compatible`, `latest`, `update_available`, and `upgrade_available` under `data.runtimes`. |
@@ -234,7 +234,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Re-resolve requested selectors and refresh exact lock records without changing selectors or installing runtimes. |
-| Syntax and arguments | `pinset update [tool] [--global | --cwd <path>] [--dry-run] [--json]`. |
+| Syntax and arguments | `pinset update [tool] [--global \| --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; updates only the selected lockfile. |
 | Example | `pinset update node --cwd ./app --dry-run` |
 | JSON | **Yes**; command name `update`, with previous/resolved exact versions and requested selector. |
@@ -246,7 +246,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Explicitly migrate schema 1–5 project configuration to schema 6 and older runtime locks to schema 5. Project migration backs up the original config/lock bytes before changes; dry-run reports the planned backup without creating it. Schema-only changes preserve comments. Recognized legacy Provider records retain their exact versions. |
-| Syntax and arguments | `pinset migrate [--global | --cwd <path>] [--dry-run] [--json]`. |
+| Syntax and arguments | `pinset migrate [--global \| --cwd <path>] [--dry-run] [--json]`. |
 | Modifies state | **Yes**, unless `--dry-run`; normalizes the config and lock with atomic per-file replacement only. |
 | Example | `pinset migrate --cwd ./app --dry-run` |
 | JSON | **Yes**; command name `migrate`, including source and target schemas. |
@@ -258,7 +258,7 @@ Import never reads installed state from another runtime manager, executes manage
 | Field | Description |
 | --- | --- |
 | Purpose | Audit one project or global configuration/lock pair, its current-platform artifacts, relevant content-addressed cache entries, install receipts, and receipt-backed ownership. Project Python selections also audit the `.venv` ownership marker. |
-| Syntax and arguments | `pinset lock audit [--global | --cwd <path>] [--json]`. Project scope is the default and follows normal repository-bounded discovery. |
+| Syntax and arguments | `pinset lock audit [--global \| --cwd <path>] [--json]`. Project scope is the default and follows normal repository-bounded discovery. |
 | Modifies state | **No.** The command is always read-only, never runs a repair plan, and never contacts Provider metadata or archive services. Cache checks hash only entries referenced by the selected current-platform artifacts. |
 | Example | `pinset lock audit --cwd ./app --json` |
 | JSON | **Yes**; command name `lock.audit`. A completed audit uses `ok: true` even when `data.passed` is false. Stable `reason_code`, `severity`, `category`, `subject`, optional `path`, and optional `repair` fields are returned under `data.findings`. |
@@ -337,7 +337,7 @@ Stable reason codes are grouped as follows:
 | Field | Description |
 | --- | --- |
 | Purpose | Produce portable diagnostic report schema 1. `status` always reports; `check` is suitable for CI policy gates. |
-| Syntax and arguments | `pinset <status|check> [--cwd <path>] [--json] [--save <file>] [--compare <file>] [--repair-preview]`. |
+| Syntax and arguments | `pinset <status\|check> [--cwd <path>] [--json] [--save <file>] [--compare <file>] [--repair-preview]`. |
 | Modifies state | Only `--save` writes the requested report file atomically. Repair preview never executes a command. |
 | Example | `pinset check --save .pinset-diagnostic.json --repair-preview` |
 | JSON | **Yes**; command name `status` or `check`. The report has its own schema field, independent of the CLI envelope. |
@@ -361,7 +361,7 @@ Stable reason codes are grouped as follows:
 | Field | Description |
 | --- | --- |
 | Purpose | Check environment compatibility and delivery, or explicitly probe SDK execution. |
-| Syntax and arguments | `pinset check [--report-version 2] [--probe] [--delivery] [--offline | --network] [--target <platform,...>] [--save <file>] [--compare <file>] [--json]`. |
+| Syntax and arguments | `pinset check [--report-version 2] [--probe] [--delivery] [--offline \| --network] [--target <platform,...>] [--save <file>] [--compare <file>] [--json]`. |
 | Modifies state | Explicit profile validation may open an identity in memory. Network probes require `--network`; SDK probes require `--probe`. Only `--save` writes a report. |
 | Example | `pinset check --offline --target linux-x86_64,windows-x86_64 --json` |
 | Exit | `0` for the selected check passing, `1` for findings, `2` for invalid input. Delivery comparison changes are data and do not independently change this exit status. |
@@ -378,7 +378,7 @@ The cache stores verified archives by integrity identity. Cache inspection never
 | Field | Description |
 | --- | --- |
 | Purpose | Group download-cache inspection, verification, repair, cleanup, and offline import operations. |
-| Syntax and arguments | `pinset cache <list|info|verify|repair|clean|import|prefetch> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset cache <list\|info\|verify\|repair\|clean\|import\|prefetch> ...`; a subcommand is required. |
 | Modifies state | Depends on the subcommand: `repair`, `clean`, and `import` modify cache state. |
 | Example | `pinset cache info` |
 | JSON | No group-level output; `list`, `info`, `verify`, `repair`, and `clean` support `--json`. |
@@ -464,7 +464,7 @@ After import, `pinset install --locked --offline` makes no network requests. It 
 | Field | Description |
 | --- | --- |
 | Purpose | Import a reviewed archive into the verified offline cache. |
-| Syntax and arguments | `pinset cache import <archive> (--sha256 <hex> | --integrity <SRI>)`; the integrity options conflict. |
+| Syntax and arguments | `pinset cache import <archive> (--sha256 <hex> \| --integrity <SRI>)`; the integrity options conflict. |
 | Modifies state | **Yes.** Copies a matching archive under its content identity; does not install it. |
 | Example | `pinset cache import ./node.tar.xz --sha256 <reviewed-digest>` |
 | JSON | No. |
@@ -482,7 +482,7 @@ The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.
 | Field | Description |
 | --- | --- |
 | Purpose | Group project-owned Python environment operations. |
-| Syntax and arguments | `pinset venv <create|status|recreate> [name] ...`; `name` defaults to `default`. |
+| Syntax and arguments | `pinset venv <create\|status\|recreate> [name] ...`; `name` defaults to `default`. |
 | Modifies state | Depends on the subcommand; `create` and `recreate` modify state. |
 | Example | `pinset venv status` |
 | JSON | No. |
@@ -532,7 +532,7 @@ The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.
 | Field | Description |
 | --- | --- |
 | Purpose | Group inspection and repair operations for Provider command routes. |
-| Syntax and arguments | `pinset shim <path|install|migrate> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset shim <path\|install\|migrate> ...`; a subcommand is required. |
 | Modifies state | Depends on the subcommand; `install` and `migrate` modify routing entries. |
 | Example | `pinset shim path` |
 | JSON | No. |
@@ -556,7 +556,7 @@ The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.
 | Field | Description |
 | --- | --- |
 | Purpose | Repair command shims without overwriting files Pinset does not own. |
-| Syntax and arguments | `pinset shim install [--binary <pinset-shim>] [--dir <path>] [--provider <tool> | <COMMAND>...]`. |
+| Syntax and arguments | `pinset shim install [--binary <pinset-shim>] [--dir <path>] [--provider <tool> \| <COMMAND>...]`. |
 | Modifies state | **Yes.** Creates or repairs owned shim entries in the destination. |
 | Example | `pinset shim install --provider node` |
 | JSON | No. |
@@ -580,7 +580,7 @@ The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.
 | Field | Description |
 | --- | --- |
 | Purpose | Print shell code that prepends Pinset's command-routing directory to `PATH`. |
-| Syntax and arguments | `pinset activate <bash|zsh|fish|powershell>`. |
+| Syntax and arguments | `pinset activate <bash\|zsh\|fish\|powershell>`. |
 | Modifies state | No. The caller chooses whether to evaluate or save the printed code. |
 | Example | `eval "$(pinset activate zsh)"` |
 | JSON | No. |
@@ -592,7 +592,7 @@ The standard-library `venv` module begins with Python 3.3. For Python 2.x and 3.
 | Field | Description |
 | --- | --- |
 | Purpose | Generate Pinset completion code for a supported shell. |
-| Syntax and arguments | `pinset completions <bash|zsh|fish|powershell>`. |
+| Syntax and arguments | `pinset completions <bash\|zsh\|fish\|powershell>`. |
 | Modifies state | No; shell redirection may create a file. |
 | Example | `pinset completions fish > ~/.config/fish/completions/pinset.fish` |
 | JSON | No. |
@@ -608,7 +608,7 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 | Field | Description |
 | --- | --- |
 | Purpose | Group local Provider source inspection, selection, policy, and validation operations. |
-| Syntax and arguments | `pinset source <list|add|use|fallback|remove|test> ...`; a subcommand is required. |
+| Syntax and arguments | `pinset source <list\|add\|use\|fallback\|remove\|test> ...`; a subcommand is required. |
 | Modifies state | Depends on the subcommand; `add`, `use`, `fallback`, and `remove` modify local source configuration. |
 | Example | `pinset source list` |
 | JSON | No. |
@@ -620,7 +620,7 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 | Field | Description |
 | --- | --- |
 | Purpose | List built-in and custom sources, optionally for one Provider. |
-| Syntax and arguments | `pinset source list [node|go|python|flutter]`. |
+| Syntax and arguments | `pinset source list [node\|go\|python\|flutter]`. |
 | Modifies state | No. |
 | Example | `pinset source list node` |
 | JSON | No. |
@@ -632,7 +632,7 @@ Custom source configuration currently applies to Node.js, Go, Python, and Flutte
 | Field | Description |
 | --- | --- |
 | Purpose | Add a named custom archive source, optionally granting trusted metadata authority. |
-| Syntax and arguments | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure | --trust-metadata]`. HTTP requires `--allow-insecure`, which conflicts with metadata trust. Select a trusted source with `source use` to make it preferred. |
+| Syntax and arguments | `pinset source add <provider> <alias> --base-url <url> [--allow-insecure \| --trust-metadata]`. HTTP requires `--allow-insecure`, which conflicts with metadata trust. Select a trusted source with `source use` to make it preferred. |
 | Modifies state | **Yes.** Writes local `sources.toml`; project lockfiles are unchanged. |
 | Example | `pinset source add node mirror --base-url https://mirror.example/node` |
 | JSON | No. |

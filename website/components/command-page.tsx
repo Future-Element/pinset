@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { commandNavigation, type CommandDoc, type CommandGroup } from "@/lib/commands";
+import type { CommandDoc, CommandGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig, siteUrl } from "@/lib/site";
-import { DocsShell } from "./docs-shell";
 import { LatestReleaseVersion } from "./latest-release";
 import { Markdown } from "./markdown";
 
@@ -37,7 +36,7 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
   };
 
   return (
-    <DocsShell groups={commandNavigation(groups)} locale={locale}>
+    <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb).replace(/</g, "\\u003c") }} />
       <article className="docPage commandPage">
@@ -55,6 +54,6 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
         </nav>
         <div className="pageMeta"><span>{path}</span><span>Pinset <LatestReleaseVersion fallback={zh ? "最新版本" : "latest"} /></span></div>
       </article>
-    </DocsShell>
+    </>
   );
 }
