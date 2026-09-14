@@ -9,13 +9,13 @@ const REQUIRED_CUTOFF_ASSETS = [
 ];
 
 function parseVersion(value) {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/.exec(value);
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value);
   if (!match) return null;
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
-    rc: match[4] === undefined ? null : Number(match[4]),
+    prerelease: match[4] === undefined ? null : match[4].split("."),
   };
 }
 
@@ -23,10 +23,22 @@ function compareVersions(left, right) {
   for (const field of ["major", "minor", "patch"]) {
     if (left[field] !== right[field]) return left[field] - right[field];
   }
-  if (left.rc === right.rc) return 0;
-  if (left.rc === null) return 1;
-  if (right.rc === null) return -1;
-  return left.rc - right.rc;
+  if (left.prerelease === null && right.prerelease === null) return 0;
+  if (left.prerelease === null) return 1;
+  if (right.prerelease === null) return -1;
+  for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index += 1) {
+    const leftPart = left.prerelease[index];
+    const rightPart = right.prerelease[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) return Number(leftPart) - Number(rightPart);
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
 }
 
 function argument(name, fallback) {
@@ -64,6 +76,10 @@ async function main() {
   if (process.argv.includes("--self-test")) {
     const cutoff = parseVersion("2.16.0");
     if (!cutoff || compareVersions(parseVersion("2.15.0"), cutoff) >= 0) process.exit(1);
+    if (compareVersions(parseVersion("v0.1.0-alpha.6"), cutoff) >= 0) process.exit(1);
+    if (compareVersions(parseVersion("v0.1.0-beta.1"), cutoff) >= 0) process.exit(1);
+    if (compareVersions(parseVersion("2.16.0-beta.11"), parseVersion("2.16.0-rc.1")) >= 0) process.exit(1);
+    if (compareVersions(parseVersion("2.16.0-beta.2"), parseVersion("2.16.0-beta.11")) >= 0) process.exit(1);
     if (compareVersions(parseVersion("2.16.0-rc.2"), cutoff) >= 0) process.exit(1);
     if (compareVersions(parseVersion("2.16.0"), cutoff) !== 0) process.exit(1);
     if (compareVersions(parseVersion("2.17.0-rc.1"), cutoff) <= 0) process.exit(1);
