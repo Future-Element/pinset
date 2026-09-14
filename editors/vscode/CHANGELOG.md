@@ -7,6 +7,10 @@
 - Observe controlled native debugger launches independently of configuration readiness.
 - Negotiate protocol 2 with CLI 2.13+ while retaining protocol 1 compatibility. Environment bindings require CLI 2.15+ and are checked against the local host and directory generation before restoration.
 
+## 1.1.2
+
+- Center the Pinset mark on a white extension-icon background for clearer Marketplace and VS Code rendering at small sizes.
+
 ## 1.1.1
 
 - Add the Pinset brand icon to the Visual Studio Marketplace package.
