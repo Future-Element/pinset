@@ -16,6 +16,7 @@ const RELEASE_FEED: &str = "https://github.com/Future-Element/pinset/releases.at
 const RELEASE_TAG_PATH: &str = "/Future-Element/pinset/releases/tag/";
 const RELEASE_TAG_URL: &str = "https://github.com/Future-Element/pinset/releases/tag/";
 const RELEASES: &str = "https://github.com/Future-Element/pinset/releases/download";
+const MINIMUM_DOWNLOAD_VERSION: &str = "2.16.0";
 const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_RELEASE_FEED_BYTES: u64 = 1024 * 1024;
 
@@ -30,6 +31,7 @@ struct SelfUpdateResult {
 pub(crate) fn outdated(prerelease: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     report_previous_result()?;
     let available = latest_release(prerelease)?;
+    ensure_download_supported(&available)?;
     let current = Version::parse(pinset_core::pinset_version())?;
     let is_outdated = available > current;
     if json {
@@ -64,6 +66,7 @@ where
         Some(value) => Version::parse(value.trim_start_matches('v'))?,
         None => latest_release(false)?,
     };
+    ensure_download_supported(&version)?;
     if version < current {
         return Err(format!("refusing to downgrade Pinset from {current} to {version}").into());
     }
@@ -142,6 +145,17 @@ fn client() -> Result<Client, Box<dyn std::error::Error>> {
 
 fn parse_tag(tag: &str) -> Result<Version, semver::Error> {
     Version::parse(tag.trim_start_matches('v'))
+}
+
+fn ensure_download_supported(version: &Version) -> Result<(), Box<dyn std::error::Error>> {
+    let minimum = Version::parse(MINIMUM_DOWNLOAD_VERSION)?;
+    if version < &minimum {
+        return Err(format!(
+            "Pinset versions before {MINIMUM_DOWNLOAD_VERSION} are no longer available for download"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn download(client: &Client, url: &str, limit: u64) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -499,6 +513,9 @@ mod tests {
         assert!(parse_tag("v2.2.0-rc.10").unwrap() < parse_tag("v2.2.0").unwrap());
         assert!(Version::parse("1.9.0").unwrap() < Version::parse("2.0.0-rc.1").unwrap());
         assert_eq!(parse_tag("v2.0.0-rc.1").unwrap().to_string(), "2.0.0-rc.1");
+        assert!(ensure_download_supported(&Version::parse("2.15.0").unwrap()).is_err());
+        assert!(ensure_download_supported(&Version::parse("2.16.0-rc.1").unwrap()).is_err());
+        assert!(ensure_download_supported(&Version::parse("2.16.0").unwrap()).is_ok());
     }
 
     #[test]

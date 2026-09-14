@@ -48,6 +48,13 @@ else
 fi
 printf '%s  %s\n' "$HASH" "$ARCHIVE" > "$RELEASE_DIR/SHA256SUMS"
 
+if PINSET_INSTALL_TEST_MODE=1 \
+    PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \
+    sh "$ROOT/install.sh" --version 2.15.0 --install-dir "$INSTALL_DIR" >/dev/null 2>&1; then
+    printf 'installer accepted a release older than 2.16.0\n' >&2
+    exit 1
+fi
+
 INSTALL_OUTPUT=$(
     PINSET_INSTALL_TEST_MODE=1 \
     PINSET_TEST_RELEASE_BASE_URL="file://$RELEASE_DIR" \

@@ -19,7 +19,8 @@ foreach ($required in @(
     'Get-FileHash',
     'pinset.exe',
     'pinset-shim.exe',
-    'shim install --all'
+    'shim install --all',
+    'Versions before $minimumVersion are no longer available for download.'
 )) {
     if (-not $content.Contains($required)) {
         throw "install.ps1 is missing required contract text: $required"

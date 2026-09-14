@@ -12,20 +12,19 @@ use pinset_core::{
     save_project_config, validate_environment_variable_value,
 };
 use pinset_env::{
-    EnvironmentDocument, backup_identity, generate_identity, import_identity, list_identities,
-    load_identity_secret, load_identity_secrets, mutate_encrypted_profile, read_encrypted_profile,
-    restore_encrypted_profile, restore_identity, revoke_project_trust, store_identity,
-    trust_project, validate_variable_name, verify_project_trust, write_encrypted_profile,
+    EnvironmentDocument, generate_identity, list_identities, list_profile_names,
+    load_identity_secret, load_identity_secrets, read_encrypted_profile, restore_encrypted_profile,
+    revoke_project_trust, set_encrypted_profile_values, store_identity, trust_project,
+    unset_encrypted_profile_value, validate_variable_name, verify_project_trust,
+    write_encrypted_profile,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use zeroize::Zeroize;
 
-type SelectedProfile = (PathBuf, String, EnvironmentProfile, Vec<SecretString>);
-
 #[derive(Debug, Subcommand)]
 pub(crate) enum EnvCommands {
-    /// Create a profile, device identity, and optional recovery identity.
+    /// Create a dotenv-style encrypted profile and store its identity in the OS credential store.
     Init {
         /// New profile name (defaults to dev in the interactive setup).
         #[arg(value_name = "NAME", conflicts_with = "profile")]
@@ -34,15 +33,8 @@ pub(crate) enum EnvCommands {
         profile: Option<String>,
         #[arg(long)]
         auto: bool,
-        #[arg(long, conflicts_with = "no_recovery")]
-        recovery: Option<PathBuf>,
-        #[arg(long)]
-        no_recovery: bool,
-        /// Store the device identity in this passphrase-protected file instead of the system keyring.
-        #[arg(long)]
-        identity_file: Option<PathBuf>,
         /// Reuse an identity already stored on this device.
-        #[arg(long, conflicts_with = "identity_file")]
+        #[arg(long)]
         identity: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
@@ -83,6 +75,11 @@ pub(crate) enum EnvCommands {
         profile: Option<String>,
         #[arg(long)]
         cwd: Option<PathBuf>,
+    },
+    /// Request, grant, revoke, or inspect device access without private-key files.
+    Access {
+        #[command(subcommand)]
+        command: AccessCommands,
     },
     /// Set one encrypted variable. The value is hidden unless --stdin is used.
     Set {
@@ -164,10 +161,43 @@ pub(crate) enum EnvCommands {
         #[command(subcommand)]
         command: RecipientCommands,
     },
-    /// Manage local age identities and recovery files.
+    /// Manage identities stored in the OS credential store.
     Identity {
         #[command(subcommand)]
         command: IdentityCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AccessCommands {
+    /// Create a device identity in the OS credential store and print its public request code.
+    Request {
+        /// Create a CI identity for immediate transfer to a platform secret; do not store it locally.
+        #[arg(long)]
+        ci: bool,
+    },
+    /// Grant a public request code access to one profile.
+    Grant {
+        request: String,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Revoke a public request code from one profile.
+    Revoke {
+        request: String,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// List the public device identities authorized for one profile.
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
     },
 }
 
@@ -197,30 +227,10 @@ pub(crate) enum RecipientCommands {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum IdentityCommands {
-    Create {
-        /// Store the new identity in a passphrase-protected file instead of the system keyring.
-        #[arg(long)]
-        output: Option<PathBuf>,
-    },
-    Import {
-        #[arg(long)]
-        from: PathBuf,
-    },
+    Create,
     List {
         #[arg(long)]
         json: bool,
-    },
-    Backup {
-        id: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    Export {
-        id: String,
-        #[arg(long)]
-        output: PathBuf,
-        #[arg(long)]
-        allow_plaintext: bool,
     },
 }
 
@@ -299,38 +309,24 @@ pub(crate) fn run_env_command(
             name,
             profile,
             auto,
-            recovery,
-            no_recovery,
-            identity_file,
             identity,
             cwd,
         } => {
             let profile = name
                 .or(profile)
                 .or_else(|| default_profile.map(str::to_owned));
-            let wizard = profile.is_none() || (recovery.is_none() && !no_recovery);
+            let wizard = profile.is_none();
             if wizard && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
-                return Err("non-interactive setup requires a profile and --recovery <file> or explicit --no-recovery; example: pinset env init dev --no-recovery".into());
+                return Err(
+                    "non-interactive setup requires a profile; example: pinset env init dev".into(),
+                );
             }
             let profile = match profile {
                 Some(profile) => profile,
                 None => prompt_line("Profile [dev]: ", Some("dev"))?,
             };
-            let mut recovery = recovery;
-            let mut no_recovery = no_recovery;
-            if recovery.is_none() && !no_recovery {
-                let answer = prompt_line(
-                    "Recovery file outside the repository (or type 'none' to explicitly skip recovery): ",
-                    None,
-                )?;
-                if answer == "none" {
-                    no_recovery = true;
-                } else {
-                    recovery = Some(PathBuf::from(answer));
-                }
-            }
             let mut identity = identity;
-            if wizard && identity.is_none() && identity_file.is_none() {
+            if wizard && identity.is_none() {
                 let identities = list_identities(&pinset_home()?)?;
                 if !identities.is_empty() {
                     for entry in identities {
@@ -343,15 +339,7 @@ pub(crate) fn run_env_command(
                 }
             }
             let cwd = effective_cwd(cwd)?;
-            init_profile(
-                &cwd,
-                &profile,
-                auto,
-                recovery.as_deref(),
-                no_recovery,
-                identity_file.as_deref(),
-                identity.as_deref(),
-            )?;
+            init_profile(&cwd, &profile, auto, identity.as_deref())?;
             if wizard {
                 let config_path = find_project_config(&cwd)?;
                 pinset_core::save_local_environment(&pinset_home()?, &config_path, Some(&profile))?;
@@ -413,6 +401,9 @@ pub(crate) fn run_env_command(
                 cwd: Some(cwd),
             })?;
         }
+        EnvCommands::Access { command } => {
+            run_access(command, default_profile)?;
+        }
         EnvCommands::Set {
             name,
             profile,
@@ -435,30 +426,25 @@ pub(crate) fn run_env_command(
                     .expose_secret()
                     .to_owned()
             };
-            mutate_profile(
+            set_profile_values(
                 &effective_cwd(cwd)?,
                 profile.as_deref().or(default_profile),
-                |document| {
-                    remove_case_insensitive(&mut document.variables, &name);
-                    document.variables.insert(name.clone(), value);
-                    Ok(())
-                },
+                BTreeMap::from([(name.clone(), value)]),
             )?;
             println!("set {name}");
         }
         EnvCommands::Unset { name, profile, cwd } => {
             validate_variable_name(&name)?;
-            let removed = mutate_profile(
+            let removed = unset_profile_value(
                 &effective_cwd(cwd)?,
                 profile.as_deref().or(default_profile),
-                |document| Ok(remove_case_insensitive(&mut document.variables, &name)),
+                &name,
             )?;
             println!("{} {name}", if removed { "unset" } else { "not set" });
         }
         EnvCommands::List { profile, json, cwd } => {
-            let (_, profile_name, _, document) =
-                load_profile(&effective_cwd(cwd)?, profile.as_deref().or(default_profile))?;
-            let names = document.variables.keys().cloned().collect::<Vec<_>>();
+            let (profile_name, names) =
+                load_profile_names(&effective_cwd(cwd)?, profile.as_deref().or(default_profile))?;
             if json {
                 print_json(
                     "env.list",
@@ -506,11 +492,19 @@ pub(crate) fn run_env_command(
             cwd,
         } => {
             let cwd = effective_cwd(cwd)?;
-            let (config_path, _, _, left_document) = load_profile(&cwd, Some(&left))?;
-            let (_, _, _, right_document) = load_profile(&cwd, Some(&right))?;
+            let (config_path, left_profile, left_names) = profile_names(&cwd, Some(&left))?;
+            let (_, right_profile, right_names) = profile_names(&cwd, Some(&right))?;
             let config = pinset_core::load_effective_project_config(&config_path)?;
-            let left_names = effective_contract_names(&config, &left, &left_document.variables);
-            let right_names = effective_contract_names(&config, &right, &right_document.variables);
+            let left_variables = left_names
+                .into_iter()
+                .map(|name| (name, String::new()))
+                .collect();
+            let right_variables = right_names
+                .into_iter()
+                .map(|name| (name, String::new()))
+                .collect();
+            let left_names = effective_contract_names(&config, &left_profile, &left_variables);
+            let right_names = effective_contract_names(&config, &right_profile, &right_variables);
             let only_left = left_names
                 .difference(&right_names)
                 .cloned()
@@ -552,13 +546,7 @@ pub(crate) fn run_env_command(
             let content = fs::read_to_string(&from)?;
             let imported = parse_dotenv(&content)?;
             let count = imported.len();
-            mutate_profile(&effective_cwd(cwd)?, Some(&profile), move |document| {
-                for (name, value) in imported {
-                    remove_case_insensitive(&mut document.variables, &name);
-                    document.variables.insert(name, value);
-                }
-                Ok(())
-            })?;
+            set_profile_values(&effective_cwd(cwd)?, Some(&profile), imported)?;
             println!("imported {count} variable names into {profile}");
         }
         EnvCommands::Export {
@@ -862,9 +850,6 @@ fn init_profile(
     cwd: &Path,
     profile: &str,
     auto: bool,
-    recovery: Option<&Path>,
-    no_recovery: bool,
-    identity_file: Option<&Path>,
     existing_identity: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if profile.is_empty()
@@ -875,12 +860,6 @@ fn init_profile(
     {
         return Err(
             "profile names must contain 1–64 letters, digits, dots, underscores or hyphens".into(),
-        );
-    }
-    if (identity_file.is_some() || recovery.is_some()) && !io::stdin().is_terminal() {
-        return Err(
-            "passphrase-protected identity and recovery files require an interactive terminal"
-                .into(),
         );
     }
     let config_path = find_project_config(cwd)?;
@@ -900,6 +879,10 @@ fn init_profile(
     {
         return Err("environment profile already exists".into());
     }
+    let relative = format!(".env.{profile}");
+    if root.join(&relative).exists() {
+        return Err("profile ciphertext already exists".into());
+    }
     let recipient = if let Some(id) = existing_identity {
         // Check that the private identity is available before declaring its public recipient.
         let _secret = load_identity_secret(&pinset_home()?, id)?;
@@ -910,27 +893,10 @@ fn init_profile(
             .recipient
     } else {
         let device = generate_identity();
-        if let Some(path) = identity_file {
-            let passphrase = prompt_new_passphrase("Device identity passphrase: ")?;
-            backup_identity(path, device.secret(), passphrase)?;
-        } else {
-            store_identity(&pinset_home()?, &device)?;
-        }
+        store_identity(&pinset_home()?, &device)?;
         device.record.recipient
     };
-    let mut recipients = vec![recipient];
-    if !no_recovery {
-        let recovery_path =
-            recovery.ok_or("--recovery is required unless --no-recovery is explicit")?;
-        let recovery_identity = generate_identity();
-        let passphrase = prompt_new_passphrase("Recovery passphrase: ")?;
-        backup_identity(recovery_path, recovery_identity.secret(), passphrase)?;
-        recipients.push(recovery_identity.record.recipient);
-    }
-    let relative = format!("pinset.env/{profile}.age");
-    if root.join(&relative).exists() {
-        return Err("profile ciphertext already exists".into());
-    }
+    let recipients = vec![recipient];
     write_encrypted_profile(
         root,
         &relative,
@@ -957,29 +923,38 @@ fn init_profile(
         }
         return Err(error.into());
     }
-    println!("initialized encrypted environment profile {profile}");
+    println!("initialized encrypted dotenv profile {profile} at {relative}");
+    println!("private identity stored in the OS credential store; no key file was created");
+    println!("add another device with `pinset env access request` and `pinset env access grant`");
     println!("run `pinset trust add` before automatic injection");
     Ok(())
 }
 
-fn mutate_profile<T>(
+fn set_profile_values(
     cwd: &Path,
     profile: Option<&str>,
-    mutation: impl FnOnce(&mut EnvironmentDocument) -> pinset_env::Result<T>,
-) -> Result<T, Box<dyn std::error::Error>> {
-    let (config_path, _, selected, identities) = selected_profile(cwd, profile)?;
+    values: BTreeMap<String, String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (config_path, _, selected) = selected_profile(cwd, profile)?;
     let source = pinset_core::project_environment_source(&config_path)?;
     let root = source
         .parent()
         .ok_or("project configuration has no parent")?;
-    mutate_encrypted_profile(
-        root,
-        &selected.file,
-        &identities,
-        &selected.recipients,
-        mutation,
-    )
-    .map_err(Into::into)
+    set_encrypted_profile_values(root, &selected.file, &selected.recipients, values)
+        .map_err(Into::into)
+}
+
+fn unset_profile_value(
+    cwd: &Path,
+    profile: Option<&str>,
+    name: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let (config_path, _, selected) = selected_profile(cwd, profile)?;
+    let source = pinset_core::project_environment_source(&config_path)?;
+    let root = source
+        .parent()
+        .ok_or("project configuration has no parent")?;
+    unset_encrypted_profile_value(root, &selected.file, name).map_err(Into::into)
 }
 
 fn load_profile(
@@ -987,11 +962,12 @@ fn load_profile(
     profile: Option<&str>,
 ) -> Result<(PathBuf, String, EnvironmentProfile, EnvironmentDocument), Box<dyn std::error::Error>>
 {
-    let (config_path, profile_name, selected, identities) = selected_profile(cwd, profile)?;
+    let (config_path, profile_name, selected) = selected_profile(cwd, profile)?;
     let source = pinset_core::project_environment_source(&config_path)?;
     let root = source
         .parent()
         .ok_or("project configuration has no parent")?;
+    let identities = selected_identities(&pinset_home()?)?;
     let document = read_encrypted_profile(root, &selected.file, &identities)?;
     Ok((config_path, profile_name, selected, document))
 }
@@ -999,7 +975,7 @@ fn load_profile(
 fn selected_profile(
     cwd: &Path,
     profile: Option<&str>,
-) -> Result<SelectedProfile, Box<dyn std::error::Error>> {
+) -> Result<(PathBuf, String, EnvironmentProfile), Box<dyn std::error::Error>> {
     let config_path = find_project_config(cwd)?;
     let config = pinset_core::load_effective_project_config(&config_path)?;
     if config.schema < 4 {
@@ -1020,8 +996,28 @@ fn selected_profile(
         .get(&profile_name)
         .cloned()
         .ok_or("selected environment profile is not declared")?;
-    let identities = selected_identities(&pinset_home()?)?;
-    Ok((config_path, profile_name, selected, identities))
+    Ok((config_path, profile_name, selected))
+}
+
+fn profile_names(
+    cwd: &Path,
+    profile: Option<&str>,
+) -> Result<(PathBuf, String, Vec<String>), Box<dyn std::error::Error>> {
+    let (config_path, profile_name, selected) = selected_profile(cwd, profile)?;
+    let source = pinset_core::project_environment_source(&config_path)?;
+    let root = source
+        .parent()
+        .ok_or("project configuration has no parent")?;
+    let names = list_profile_names(root, &selected.file)?;
+    Ok((config_path, profile_name, names))
+}
+
+fn load_profile_names(
+    cwd: &Path,
+    profile: Option<&str>,
+) -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+    let (_, profile_name, names) = profile_names(cwd, profile)?;
+    Ok((profile_name, names))
 }
 
 fn run_recipient(command: RecipientCommands) -> Result<(), Box<dyn std::error::Error>> {
@@ -1048,6 +1044,60 @@ fn run_recipient(command: RecipientCommands) -> Result<(), Box<dyn std::error::E
             profile,
             cwd,
         } => change_recipient(&effective_cwd(cwd)?, &profile, &recipient, false)?,
+    }
+    Ok(())
+}
+
+fn run_access(
+    command: AccessCommands,
+    default_profile: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        AccessCommands::Request { ci } => {
+            let material = generate_identity();
+            if ci {
+                if !io::stdout().is_terminal() {
+                    return Err("CI identity creation requires an interactive terminal".into());
+                }
+                println!("request={}", material.record.recipient);
+                println!("PINSET_IDENTITY={}", material.secret().expose_secret());
+                println!(
+                    "store PINSET_IDENTITY in the CI platform secret manager now; Pinset did not save it locally"
+                );
+            } else {
+                store_identity(&pinset_home()?, &material)?;
+                println!("{}", material.record.recipient);
+                println!(
+                    "private identity stored in the OS credential store; send only the public request code above to an authorized teammate"
+                );
+            }
+        }
+        AccessCommands::Grant {
+            request,
+            profile,
+            cwd,
+        } => {
+            let cwd = effective_cwd(cwd)?;
+            let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
+            change_recipient(&cwd, &profile, &request, true)?;
+        }
+        AccessCommands::Revoke {
+            request,
+            profile,
+            cwd,
+        } => {
+            let cwd = effective_cwd(cwd)?;
+            let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
+            change_recipient(&cwd, &profile, &request, false)?;
+        }
+        AccessCommands::List { profile, cwd } => {
+            let cwd = effective_cwd(cwd)?;
+            let profile = profile_name(&cwd, profile.as_deref().or(default_profile))?;
+            run_recipient(RecipientCommands::List {
+                profile,
+                cwd: Some(cwd),
+            })?;
+        }
     }
     Ok(())
 }
@@ -1101,22 +1151,11 @@ fn change_recipient(
 fn run_identity(command: IdentityCommands) -> Result<(), Box<dyn std::error::Error>> {
     let home = pinset_home()?;
     match command {
-        IdentityCommands::Create { output } => {
+        IdentityCommands::Create => {
             let material = generate_identity();
-            if let Some(path) = output {
-                let passphrase = prompt_new_passphrase("Identity passphrase: ")?;
-                backup_identity(&path, material.secret(), passphrase)?;
-            } else {
-                store_identity(&home, &material)?;
-            }
+            store_identity(&home, &material)?;
             println!("{} {}", material.record.id, material.record.recipient);
-        }
-        IdentityCommands::Import { from } => {
-            let passphrase =
-                SecretString::from(rpassword::prompt_password("Recovery passphrase: ")?);
-            let secret = restore_identity(&from, passphrase)?;
-            let record = import_identity(&home, secret)?;
-            println!("{} {}", record.id, record.recipient);
+            println!("private identity stored in the OS credential store; no key file was created");
         }
         IdentityCommands::List { json } => {
             let identities = list_identities(&home)?;
@@ -1130,24 +1169,6 @@ fn run_identity(command: IdentityCommands) -> Result<(), Box<dyn std::error::Err
                     );
                 }
             }
-        }
-        IdentityCommands::Backup { id, output } => {
-            let secret = load_identity_secret(&home, &id)?;
-            let passphrase = prompt_new_passphrase("Backup passphrase: ")?;
-            backup_identity(&output, &secret, passphrase)?;
-            println!("backed up identity {id} to {}", output.display());
-        }
-        IdentityCommands::Export {
-            id,
-            output,
-            allow_plaintext,
-        } => {
-            if !allow_plaintext {
-                return Err("plaintext identity export requires --allow-plaintext".into());
-            }
-            let secret = load_identity_secret(&home, &id)?;
-            write_private_new(&output, secret.expose_secret().as_bytes())?;
-            println!("exported identity {id} to {}", output.display());
         }
     }
     Ok(())
@@ -1221,23 +1242,7 @@ fn ensure_environment_size(
 }
 
 fn selected_identities(home: &Path) -> Result<Vec<SecretString>, Box<dyn std::error::Error>> {
-    let mut identities = Vec::new();
-    if let Some(path) = env::var_os("PINSET_IDENTITY_FILE").map(PathBuf::from) {
-        if !io::stdin().is_terminal() {
-            return Err(
-                "PINSET_IDENTITY_FILE requires an interactive terminal for its passphrase".into(),
-            );
-        }
-        let passphrase =
-            SecretString::from(rpassword::prompt_password("Identity file passphrase: ")?);
-        identities.push(restore_identity(&path, passphrase)?);
-    }
-    match load_identity_secrets(home) {
-        Ok(mut system_identities) => identities.append(&mut system_identities),
-        Err(_) if !identities.is_empty() => {}
-        Err(error) => return Err(error.into()),
-    }
-    Ok(identities)
+    load_identity_secrets(home).map_err(Into::into)
 }
 
 fn parse_dotenv(content: &str) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
@@ -1410,18 +1415,6 @@ fn restrict_windows_private_file(path: &Path) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn prompt_new_passphrase(prompt: &str) -> Result<SecretString, Box<dyn std::error::Error>> {
-    let one = rpassword::prompt_password(prompt)?;
-    if one.is_empty() {
-        return Err("passphrase must not be empty".into());
-    }
-    let two = rpassword::prompt_password("Confirm passphrase: ")?;
-    if one != two {
-        return Err("passphrases do not match".into());
-    }
-    Ok(SecretString::from(one))
-}
-
 fn find_case_insensitive<'a>(
     variables: &'a BTreeMap<String, String>,
     name: &str,
@@ -1430,14 +1423,6 @@ fn find_case_insensitive<'a>(
         .iter()
         .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
-}
-
-fn remove_case_insensitive(variables: &mut BTreeMap<String, String>, name: &str) -> bool {
-    let key = variables
-        .keys()
-        .find(|candidate| candidate.eq_ignore_ascii_case(name))
-        .cloned();
-    key.is_some_and(|key| variables.remove(&key).is_some())
 }
 
 fn effective_cwd(cwd: Option<PathBuf>) -> io::Result<PathBuf> {

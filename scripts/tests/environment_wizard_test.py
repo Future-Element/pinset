@@ -130,35 +130,36 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
     config_path = project / "pinset.toml"
     config_path.write_text(config_path.read_text().replace(
         "system-fallback = false", "system-fallback = true"))
-    identity = root / "identity.age"
-    recovery = root / "recovery.age"
-    # These passphrases protect disposable test identities only.
-    interact(binary, project, environment, ["env", "init", "--identity-file", str(identity)], [
+    subprocess.run([str(binary), "env", "identity", "create"], cwd=project,
+                   env=environment, check=True, stdout=subprocess.DEVNULL)
+    metadata_path = root / "home" / "state" / "identities.toml"
+    metadata = tomllib.loads(metadata_path.read_text())
+    record, = metadata["identities"]
+    assert record["backend"] == "keyring"
+    interact(binary, project, environment, ["env", "init"], [
         ("Profile [dev]: ", ""),
-        ("skip recovery): ", str(recovery)),
-        ("Device identity passphrase: ", "wizard-device-fixture"),
-        ("Confirm passphrase: ", "wizard-device-fixture"),
-        ("Recovery passphrase: ", "wizard-recovery-fixture"),
-        ("Confirm passphrase: ", "wizard-recovery-fixture"),
+        ("Identity ID to reuse [new]: ", record["id"]),
         ("[y/N]: ", "y"),
     ])
     config = tomllib.loads((project / "pinset.toml").read_text())
     assert config["schema"] == 6
     assert "auto-profile" not in config["environment"]
-    assert len(config["environment"]["profiles"]["dev"]["recipients"]) == 2
-    assert identity.is_file() and recovery.is_file()
+    assert config["environment"]["profiles"]["dev"]["recipients"] == [record["recipient"]]
+    assert config["environment"]["profiles"]["dev"]["file"] == ".env.dev"
+    assert (project / ".env.dev").is_file()
+    assert "wizard-variable-fixture" not in (project / ".env.dev").read_text()
+    assert not (project / ".env.keys").exists()
+    assert not list(project.rglob("*.age"))
     assert not (project / "pinset.lock").exists()
     status = subprocess.check_output([str(binary), "env"], cwd=project, env=environment, text=True)
     assert "profile=dev source=local" in status and "trust=trusted" in status
-    environment["PINSET_IDENTITY_FILE"] = str(identity)
     interact(binary, project, environment, ["env", "set", "APP_WIZARD_VALUE"], [
         ("Value for APP_WIZARD_VALUE: ", "wizard-variable-fixture"),
-        ("Identity file passphrase: ", "wizard-device-fixture"),
     ])
     probe = [sys.executable, "-c",
              'import os; assert os.environ["APP_WIZARD_VALUE"] == "wizard-variable-fixture"']
-    interact(binary, project, environment, ["--", *probe],
-             [("Identity file passphrase: ", "wizard-device-fixture")])
+    subprocess.run([str(binary), "--", *probe], cwd=project,
+                   env=environment, check=True)
 
     child_pid_path = root / "cancel-child.pid"
     cancellation_probe = (
@@ -202,16 +203,14 @@ with tempfile.TemporaryDirectory(prefix="pinset-wizard-") as temporary:
     print("Native terminal cancellation and child termination passed")
 
     if "--keyring" in sys.argv[2:]:
-        environment.pop("PINSET_IDENTITY_FILE")
+        prior_ids = {item["id"] for item in metadata["identities"]}
         subprocess.run([str(binary), "env", "identity", "create"], cwd=project,
                        env=environment, check=True, stdout=subprocess.DEVNULL)
-        metadata_path = root / "home" / "state" / "identities.toml"
         metadata = tomllib.loads(metadata_path.read_text())
-        record, = metadata["identities"]
-        assert record["backend"] == "keyring"
+        assert len(metadata["identities"]) == 2
+        record, = [item for item in metadata["identities"] if item["id"] not in prior_ids]
         interact(binary, project, environment, ["env", "init"], [
             ("Profile [dev]: ", "keyring"),
-            ("skip recovery): ", "none"),
             ("Identity ID to reuse [new]: ", record["id"]),
             ("[y/N]: ", "y"),
         ])

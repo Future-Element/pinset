@@ -6,7 +6,7 @@ inputs:
   version:
     description: Exact Pinset release version without the leading v.
     required: false
-    default: 2.15.0
+    default: 2.16.0
   install:
     description: Run pinset install --locked after Pinset is available.
     required: false
@@ -47,6 +47,26 @@ runs:
         PINSET_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
+        minimum="2.16.0"
+        if [[ ! "${PINSET_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+          echo "Pinset version must be an exact stable or rc release" >&2
+          exit 1
+        fi
+        if ! printf '%s\n' "${PINSET_VERSION}" | awk -v minimum="${minimum}" '
+          {
+            split($0, version_parts, "-")
+            split(version_parts[1], version, ".")
+            split(minimum, supported, ".")
+            for (part = 1; part <= 3; part++) {
+              if ((version[part] + 0) > (supported[part] + 0)) exit 0
+              if ((version[part] + 0) < (supported[part] + 0)) exit 1
+            }
+            exit length(version_parts[2]) > 0
+          }
+        '; then
+          echo "Pinset versions before ${minimum} are no longer available for download" >&2
+          exit 1
+        fi
         case "${RUNNER_OS}-$(uname -m)" in
           Linux-x86_64) archive="pinset-linux-x86_64.tar.gz" ;;
           Linux-aarch64|Linux-arm64) archive="pinset-linux-aarch64.tar.gz" ;;
@@ -72,6 +92,15 @@ runs:
         PINSET_VERSION: ${{ inputs.version }}
       run: |
         $ErrorActionPreference = 'Stop'
+        $minimumVersion = [version]'2.16.0'
+        if ($env:PINSET_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') {
+          throw 'Pinset version must be an exact stable or rc release'
+        }
+        $versionCore = [version]($env:PINSET_VERSION -replace '-.*$', '')
+        if ($versionCore -lt $minimumVersion -or
+            ($versionCore -eq $minimumVersion -and $env:PINSET_VERSION.Contains('-'))) {
+          throw "Pinset versions before $minimumVersion are no longer available for download"
+        }
         $archive = 'pinset-windows-x86_64.zip'
         $release = "https://github.com/Future-Element/pinset/releases/download/v$env:PINSET_VERSION"
         $root = Join-Path $env:RUNNER_TEMP "pinset-action-$env:PINSET_VERSION"

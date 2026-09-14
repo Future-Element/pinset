@@ -3,7 +3,8 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="2.15.0"
+DEFAULT_VERSION="2.16.0"
+MINIMUM_VERSION="2.16.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
@@ -22,7 +23,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 2.15.0.
+  --version VERSION       Install an exact release, for example 2.16.0.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
   -h, --help              Show this help.
@@ -145,6 +146,18 @@ printf '%s\n' "$VERSION" | awk '
     /^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/ { valid = 1 }
     END { exit !valid }
 ' || fail "version must be an exact stable or rc release: $VERSION"
+printf '%s\n' "$VERSION" | awk -v minimum="$MINIMUM_VERSION" '
+    {
+        split($0, version_parts, "-")
+        split(version_parts[1], version, ".")
+        split(minimum, supported, ".")
+        for (part = 1; part <= 3; part++) {
+            if ((version[part] + 0) > (supported[part] + 0)) exit 0
+            if ((version[part] + 0) < (supported[part] + 0)) exit 1
+        }
+        exit length(version_parts[2]) > 0
+    }
+' || fail "versions before $MINIMUM_VERSION are no longer available for download"
 
 download() {
     url=$1

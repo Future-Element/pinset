@@ -61,6 +61,7 @@ require_text(
         "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
         "pinset-action-home/downloads",
         "pinset cache verify",
+        "versions before ${minimum} are no longer available for download",
     ),
 )
 action = (ROOT / "action.yml").read_text(encoding="utf-8")
@@ -85,6 +86,10 @@ require_text(
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 assert "--clobber" not in release_workflow
 assert "stable release assets are immutable" in release_workflow
+require_text(
+    ROOT / ".github/workflows/release-verify.yml",
+    ("close-legacy-downloads", "close_legacy_release_downloads.mjs", "needs: verify"),
+)
 require_text(
     ROOT / ".github/workflows/ci.yml",
     (

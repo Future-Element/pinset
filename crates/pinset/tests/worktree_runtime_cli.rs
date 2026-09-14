@@ -60,7 +60,7 @@ fn real_git_worktrees_run_different_node_versions_and_profiles_concurrently() {
                 (
                     name.into(),
                     EnvironmentProfile {
-                        file: format!("pinset.env/{name}.age"),
+                        file: format!(".env.{name}"),
                         recipients: vec![identity.record.recipient.clone()],
                     },
                 )
@@ -72,7 +72,7 @@ fn real_git_worktrees_run_different_node_versions_and_profiles_concurrently() {
     for name in ["dev", "test"] {
         write_encrypted_profile(
             &one,
-            &format!("pinset.env/{name}.age"),
+            &format!(".env.{name}"),
             &EnvironmentDocument {
                 schema: 1,
                 variables: BTreeMap::from([("WORKTREE_PROFILE".into(), name.into())]),
@@ -83,7 +83,14 @@ fn real_git_worktrees_run_different_node_versions_and_profiles_concurrently() {
     }
     for arguments in [
         vec!["init", "--quiet"],
-        vec!["add", "-f", "pinset.toml", "pinset.lock", "pinset.env"],
+        vec![
+            "add",
+            "-f",
+            "pinset.toml",
+            "pinset.lock",
+            ".env.dev",
+            ".env.test",
+        ],
         vec![
             "-c",
             "user.name=Pinset fixture",

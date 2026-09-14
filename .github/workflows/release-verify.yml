@@ -65,3 +65,21 @@ jobs:
           else
             python scripts/verify_published_release.py "${RELEASE_TAG}" "${RELEASE_COMMIT}" "${RELEASE_ARCHIVE}" "${PREVIOUS_VERSION}"
           fi
+
+  close-legacy-downloads:
+    name: Close pre-2.16 binary downloads
+    if: ${{ inputs.tag == 'v2.16.0' }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release maintenance script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+
+      - name: Remove assets from releases older than 2.16.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/close_legacy_release_downloads.mjs --cutoff 2.16.0 --apply

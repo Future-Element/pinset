@@ -4,7 +4,10 @@ use pinset_core::{
     EnvironmentProfile, EnvironmentVariableContract, EnvironmentVariableType, ProjectConfig,
     ProjectEnvironment, decode_environment, save_project_config,
 };
-use pinset_env::{EnvironmentDocument, generate_identity, trust_project, write_encrypted_profile};
+use pinset_env::{
+    EnvironmentDocument, generate_identity, read_encrypted_profile, trust_project,
+    write_encrypted_profile,
+};
 use secrecy::ExposeSecret;
 use tempfile::tempdir;
 
@@ -22,7 +25,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
         profiles: BTreeMap::from([(
             "development".to_owned(),
             EnvironmentProfile {
-                file: "pinset.env/development.age".to_owned(),
+                file: ".env.development".to_owned(),
                 recipients: vec![recipient.clone()],
             },
         )]),
@@ -48,7 +51,7 @@ fn hidden_broker_requires_bound_trust_and_returns_only_the_selected_profile() {
     .expect("project config");
     write_encrypted_profile(
         &project,
-        "pinset.env/development.age",
+        ".env.development",
         &EnvironmentDocument {
             schema: 1,
             variables: BTreeMap::from([("DATABASE_URL".to_owned(), "secret-value".to_owned())]),
@@ -117,7 +120,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
             (
                 name.to_owned(),
                 EnvironmentProfile {
-                    file: format!("pinset.env/{name}.age"),
+                    file: format!(".env.{name}"),
                     recipients: vec![recipient.clone()],
                 },
             )
@@ -186,7 +189,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
     .expect("project config");
     write_encrypted_profile(
         &project,
-        "pinset.env/dev.age",
+        ".env.dev",
         &EnvironmentDocument {
             schema: 1,
             variables: BTreeMap::from([
@@ -199,7 +202,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
     .expect("development profile");
     write_encrypted_profile(
         &project,
-        "pinset.env/test.age",
+        ".env.test",
         &EnvironmentDocument {
             schema: 1,
             variables: BTreeMap::from([
@@ -244,7 +247,7 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
 
     write_encrypted_profile(
         &project,
-        "pinset.env/dev.age",
+        ".env.dev",
         &EnvironmentDocument {
             schema: 1,
             variables: BTreeMap::from([
@@ -270,6 +273,120 @@ fn environment_contracts_validate_without_revealing_values_and_apply_defaults() 
         Some("development")
     );
     assert_eq!(variables.get("PORT").map(String::as_str), Some("3000"));
+}
+
+#[test]
+fn encrypted_dotenv_supports_write_only_updates_and_device_access() {
+    let temporary = tempdir().expect("temporary root");
+    let project = temporary.path().join("project");
+    let home = temporary.path().join("home");
+    fs::create_dir(&project).expect("project directory");
+    let identity = generate_identity();
+    let recipient = identity.record.recipient.clone();
+    let environment = ProjectEnvironment {
+        profiles: BTreeMap::from([(
+            "dev".to_owned(),
+            EnvironmentProfile {
+                file: ".env.dev".to_owned(),
+                recipients: vec![recipient.clone()],
+            },
+        )]),
+        ..ProjectEnvironment::default()
+    };
+    save_project_config(
+        &project.join("pinset.toml"),
+        &ProjectConfig {
+            verification: None,
+            requirements: None,
+            schema: 6,
+            project_id: Some("4c5652e4-0000-4000-8000-000000000004".to_owned()),
+            policy: Default::default(),
+            tools: BTreeMap::new(),
+            tool_options: Default::default(),
+            tasks: BTreeMap::new(),
+            python: None,
+            workspace: None,
+            environment: Some(environment),
+        },
+    )
+    .expect("project config");
+    write_encrypted_profile(
+        &project,
+        ".env.dev",
+        &EnvironmentDocument::default(),
+        std::slice::from_ref(&recipient),
+    )
+    .expect("dotenv profile");
+    let set = Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .current_dir(&project)
+        .env("PINSET_HOME", &home)
+        .args(["env", "set", "TOKEN", "--profile", "dev", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write as _;
+            child.stdin.take().unwrap().write_all(b"write-only\n")?;
+            child.wait()
+        })
+        .expect("write-only set");
+    assert!(set.success());
+    let listed = Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .current_dir(&project)
+        .env("PINSET_HOME", &home)
+        .args(["env", "list", "--profile", "dev"])
+        .output()
+        .expect("list without identity");
+    assert!(listed.status.success());
+    assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "TOKEN");
+
+    let second_identity = generate_identity();
+    let granted = Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .current_dir(&project)
+        .env("PINSET_HOME", &home)
+        .env("PINSET_IDENTITY", identity.secret().expose_secret())
+        .args([
+            "env",
+            "access",
+            "grant",
+            &second_identity.record.recipient,
+            "--profile",
+            "dev",
+        ])
+        .output()
+        .expect("grant device access");
+    assert!(granted.status.success());
+    let shared = read_encrypted_profile(
+        &project,
+        ".env.dev",
+        std::slice::from_ref(second_identity.secret()),
+    )
+    .expect("new device decrypts profile");
+    assert_eq!(shared.variables["TOKEN"], "write-only");
+
+    let revoked = Command::new(env!("CARGO_BIN_EXE_pinset"))
+        .current_dir(&project)
+        .env("PINSET_HOME", &home)
+        .env("PINSET_IDENTITY", identity.secret().expose_secret())
+        .args([
+            "env",
+            "access",
+            "revoke",
+            &second_identity.record.recipient,
+            "--profile",
+            "dev",
+        ])
+        .output()
+        .expect("revoke device access");
+    assert!(revoked.status.success());
+    assert!(
+        read_encrypted_profile(
+            &project,
+            ".env.dev",
+            std::slice::from_ref(second_identity.secret()),
+        )
+        .is_err()
+    );
 }
 
 fn broker(

@@ -212,11 +212,7 @@ fn gather(
         if name == ".git" || name.starts_with(".pinset-") {
             return Ok(());
         }
-        if name == "pinset.env"
-            || name == ".env"
-            || name.starts_with(".env.")
-            || name.ends_with(".age")
-        {
+        if name == ".env" || name.starts_with(".env.") {
             *excluded = true;
             if explicit {
                 return Err("secret/environment files are not snapshot inputs; use explicit encrypted profile injection".into());

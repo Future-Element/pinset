@@ -373,7 +373,7 @@ impl Catalog {
                 "查看、修复或迁移 Pinset Provider 命令路由。\n\n用法：\n  pinset shim path\n  pinset shim install [--provider <工具>] [--binary <文件>] [--dir <目录>] [命令...]\n  pinset shim migrate [--provider <工具>] [--dir <目录>]"
             }
             Some("env") => {
-                "管理按 profile 隔离的 age 加密项目环境变量。无子命令时显示当前环境与选择来源。env init 交互初始化；env use dev 记住本机选择；env reset 清除选择；-e 临时覆盖环境。\n\n用法：pinset env <init|use|reset|set|unset|list|reveal|import|export|share|unshare|members|recipient|identity> [参数...]"
+                "管理按 profile 隔离、逐值加密的 dotenv 项目环境。私有身份仅从系统凭据库或 PINSET_IDENTITY 读取，不创建密钥文件。env access 管理设备授权。\n\n用法：pinset env <init|use|reset|set|unset|list|check|diff|reveal|import|export|access> [参数...]"
             }
             Some("trust") => {
                 "管理直接 shim 自动注入所需的本机项目信任。\n\n用法：pinset trust <add|status|revoke> [参数...]"

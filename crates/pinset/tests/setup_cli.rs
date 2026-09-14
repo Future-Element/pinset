@@ -48,7 +48,7 @@ fn setup_preview_is_read_only_and_never_executes_project_tasks() {
 fn preview_preserves_effective_profile_source_without_decryption() {
     let root = tempdir().unwrap();
     let home = root.path().join("home");
-    fs::write(root.path().join("pinset.toml"), "schema = 5\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n[tools]\nnode = \"24.0.0\"\n[environment]\nauto-profile = \"dev\"\n[environment.profiles.dev]\nfile = \".pinset/dev.age\"\nrecipients = [\"age1example\"]\n").unwrap();
+    fs::write(root.path().join("pinset.toml"), "schema = 5\nproject-id = \"11111111-1111-4111-8111-111111111111\"\n[tools]\nnode = \"24.0.0\"\n[environment]\nauto-profile = \"dev\"\n[environment.profiles.dev]\nfile = \".env.dev\"\nrecipients = [\"age1example\"]\n").unwrap();
     let output = cli(root.path(), &home, &["setup", "--plan", "--json"]);
     assert!(
         output.status.success(),

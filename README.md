@@ -12,7 +12,7 @@
 
 Pinset is a predictable, project-boundary-aware runtime version manager for polyglot projects.
 
-It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, Flutter/Dart, and declarative development CLIs through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, `flutter`, and `jq` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected age-encrypted environment profile.
+It manages Node.js, pnpm, Bun, Go, Python, Java, Rust, .NET, Flutter/Dart, and declarative development CLIs through one project configuration and one exact lockfile. Inside a project, commands such as `node`, `python`, `cargo`, `flutter`, and `jq` run directly through a lightweight shim. When the project is trusted, the same shim can inject the selected encrypted dotenv profile.
 
 ```text
 pinset.toml  ──selection intent, project policy, environment profiles
@@ -29,7 +29,7 @@ pinset.toml  ──selection intent, project policy, environment profiles
 - **Direct project commands**: after one Shell setup, `node`, `pnpm`, `python`, `cargo`, and other commands route automatically without requiring `pinset exec` every time.
 - **Strict project boundaries**: projects do not inherit global versions or silently fall back to system `PATH` unless policy explicitly permits it. Network installs and traditional version-file imports are also explicit.
 - **Safe installation**: Providers verify integrity, extract safely, install atomically, and create ownership receipts used by audit, repair, uninstall, and prune operations.
-- **Encrypted project environments**: every profile has its own age ciphertext and recipients. Private identities stay in the system keyring, a passphrase-protected recovery file, or a CI secret.
+- **Encrypted project environments**: `.env.<profile>` keeps variable names visible and encrypts each value independently for its authorized devices. Private identities stay in the OS credential store or a CI secret; Pinset does not create private-key files.
 - **Automation-friendly**: stable JSON schema 1, reason codes, exit codes, Shell completions, offline lock auditing, and a GitHub Composite Action.
 
 ## Supported Providers
@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.15.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,12 +114,12 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.15.0
+.\install.ps1 -Version 2.16.0
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
 
-Archives are also available from [GitHub Releases](https://github.com/Future-Element/pinset/releases), together with checksums, SBOMs, and build provenance.
+Archives are also available from [GitHub Releases](https://github.com/Future-Element/pinset/releases), together with checksums, SBOMs, and build provenance. Pinset 2.16.0 is the minimum downloadable version; installers, the Action, and self-update reject earlier versions, whose binary Release assets are removed after the 2.16.0 release passes native verification.
 
 ## Shell setup
 
@@ -257,13 +257,13 @@ Verification strength is ordered as `checksum < signed-checksum < provenance`. P
 
 ## Encrypted project environments
 
-Pinset 2.0 manages a deliberately limited layer of project-scoped string environment variables. It is not a general Secrets Vault. Every profile is a separate age ciphertext with its own recipients.
+Pinset 2.16 manages a deliberately limited layer of project-scoped string environment variables. It is not a general Secrets Vault. Profiles use a dotenv-style `.env.<profile>` file: names remain reviewable while every value is independently encrypted for the profile's public recipients. Whole-file `.age` profiles are not accepted.
 
 ### Initialize and run directly
 
 ```sh
 pinset migrate
-pinset env init --profile development --auto --recovery ~/pinset-development-recovery.age
+pinset env init development --auto
 pinset env set DATABASE_URL --profile development
 pinset env list --profile development
 pinset trust add
@@ -275,13 +275,13 @@ node app.js
 Important rules:
 
 - `env set` uses hidden input by default, keeping the value out of process arguments.
-- `env list` prints names only; revealing one value requires an interactive `env reveal`.
+- `env set`, `env unset`, and `env list` need only the committed public recipients for new profiles; revealing or running values still requires an authorized private identity.
 - Without `auto-profile`, direct shims do not inject an environment automatically.
 - `PINSET_ENV_PROFILE=ci` explicitly selects another profile.
 - `PINSET_ENV_DISABLE=1` or `pinset exec --no-env` disables injection for one command.
 - Process and encrypted variables with the same name fail by default; `process-wins` and `encrypted-wins` are explicit alternatives.
 - Recipient, profile-path, automatic-profile, or collision-policy changes invalidate local trust. Ciphertext value changes do not.
-- Pinset never scans `.env` automatically and does not create a temporary plaintext `.env`.
+- Pinset does not create `.env.keys`, recovery files, identity files, or temporary plaintext dotenv files.
 
 ### Import an existing `.env`
 
@@ -293,22 +293,26 @@ pinset env import --from .env --profile development
 
 The portable subset supports empty values, comments, single or double quotes, and quoted multiline values. Matching names update the target profile. `export`, interpolation, command substitution, and Shell expressions are rejected. Pinset does not discover or delete the source file; after verifying the migration, the user remains responsible for removing or otherwise protecting the plaintext `.env`.
 
-### Move to a new computer
+### Authorize another computer
 
-After cloning the project, install its runtimes, import the recovery identity, and trust the project again:
+The new computer creates its own private identity directly in the OS credential store and prints only a public request code. An already authorized computer grants that request, then the new computer trusts its own checkout:
 
 ```sh
 pinset install --locked
-pinset env identity import --from ~/pinset-development-recovery.age
+pinset env access request
+
+# Run on an already authorized computer:
+pinset env access grant <request-code> --profile development
+
 pinset trust add
 node app.js
 ```
 
-Keep recovery files outside the repository and back them up securely. Linux or SSH environments without an available system keyring require an explicit passphrase-protected identity file; Pinset never falls back to a plaintext private identity.
+No shared private key or recovery file is created. If every authorized OS credential and CI secret is lost, the ciphertext cannot be recovered. Linux or SSH environments without a usable Secret Service must receive `PINSET_IDENTITY` from an external secret manager; Pinset does not fall back to a key file.
 
 ### GitHub Actions
 
-Store the age private identity as the repository secret `PINSET_IDENTITY`. The profile and `project-id` are not secret and may be committed in project configuration:
+Create a dedicated CI identity with `pinset env access request --ci`, immediately store the displayed `PINSET_IDENTITY` in the platform secret manager, and grant its public request code. The profile and `project-id` are not secret and may be committed in project configuration:
 
 ```yaml
 jobs:
@@ -319,9 +323,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.15.0
+      - uses: Future-Element/pinset@v2.16.0
         with:
-          version: 2.15.0
+          version: 2.16.0
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -410,7 +414,7 @@ pinset uninstall node@24.0.0
 pinset prune --dry-run
 ```
 
-To remove Pinset itself, delete the CLI, shim, and routes from the command directory, then remove the initialization line you added to the Shell profile. Delete `PINSET_HOME` only when you also intend to remove every managed runtime, cache entry, global selection, and local trust record. Project `pinset.toml`, `pinset.lock`, `pinset.env/*.age`, and `.venv` files are never removed automatically.
+To remove Pinset itself, delete the CLI, shim, and routes from the command directory, then remove the initialization line you added to the Shell profile. Delete `PINSET_HOME` only when you also intend to remove every managed runtime, cache entry, global selection, and local trust record. Project `pinset.toml`, `pinset.lock`, `.env.<profile>`, and `.venv` files are never removed automatically.
 
 ## Current release and roadmap
 

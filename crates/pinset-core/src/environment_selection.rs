@@ -316,7 +316,7 @@ mod tests {
                     (
                         name.into(),
                         EnvironmentProfile {
-                            file: format!("pinset.env/{name}.age"),
+                            file: format!(".env.{name}"),
                             recipients: vec!["age1example".into()],
                         },
                     )

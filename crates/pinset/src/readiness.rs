@@ -503,7 +503,6 @@ pub fn collect(
             Some("pinset trust add --project-id <reviewed-project-id>"),
         ));
         let identity = std::env::var_os("PINSET_IDENTITY").is_some_and(|value| !value.is_empty())
-            || std::env::var_os("PINSET_IDENTITY_FILE").is_some()
             || pinset_env::list_identities(&home).is_ok_and(|identities| !identities.is_empty());
         report.checks.push(check(
             "environment.identity",

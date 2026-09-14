@@ -101,7 +101,7 @@ fn workspace_members_inherit_ciphertext_but_keep_profile_and_trust_local() {
                 (
                     name.into(),
                     EnvironmentProfile {
-                        file: format!("pinset.env/{name}.age"),
+                        file: format!(".env.{name}"),
                         recipients: vec![identity.record.recipient.clone()],
                     },
                 )
@@ -115,7 +115,7 @@ fn workspace_members_inherit_ciphertext_but_keep_profile_and_trust_local() {
     for name in ["dev", "test"] {
         write_encrypted_profile(
             &root,
-            &format!("pinset.env/{name}.age"),
+            &format!(".env.{name}"),
             &EnvironmentDocument {
                 schema: 1,
                 variables: BTreeMap::from([("APP_TEST_VALUE".into(), name.into())]),
@@ -258,7 +258,7 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
                 (
                     name.into(),
                     EnvironmentProfile {
-                        file: format!("pinset.env/{name}.age"),
+                        file: format!(".env.{name}"),
                         recipients: vec![identity.record.recipient.clone()],
                     },
                 )
@@ -274,7 +274,7 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
     for name in ["dev", "test"] {
         write_encrypted_profile(
             &project,
-            &format!("pinset.env/{name}.age"),
+            &format!(".env.{name}"),
             &EnvironmentDocument {
                 schema: 1,
                 variables: BTreeMap::from([("APP_TEST_VALUE".into(), name.into())]),
@@ -381,7 +381,7 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
     assert!(
         pinset_env::read_encrypted_profile(
             &project,
-            "pinset.env/test.age",
+            ".env.test",
             std::slice::from_ref(colleague.secret())
         )
         .is_ok()
@@ -396,7 +396,7 @@ fn local_profiles_apply_to_execution_and_broker_with_explicit_and_ci_overrides()
     assert!(
         pinset_env::read_encrypted_profile(
             &project,
-            "pinset.env/test.age",
+            ".env.test",
             std::slice::from_ref(colleague.secret())
         )
         .is_err()
@@ -493,7 +493,7 @@ fn paired_shim_uses_the_local_profile_without_a_shared_default() {
         profiles: BTreeMap::from([(
             "dev".into(),
             EnvironmentProfile {
-                file: "pinset.env/dev.age".into(),
+                file: ".env.dev".into(),
                 recipients: vec![identity.record.recipient.clone()],
             },
         )]),
@@ -502,7 +502,7 @@ fn paired_shim_uses_the_local_profile_without_a_shared_default() {
     pinset_core::save_project_config(&config_path, &config).unwrap();
     write_encrypted_profile(
         &project,
-        "pinset.env/dev.age",
+        ".env.dev",
         &EnvironmentDocument {
             schema: 1,
             variables: BTreeMap::from([("APP_TEST_VALUE".into(), "local-dev".into())]),
@@ -579,11 +579,12 @@ fn incomplete_noninteractive_setup_has_no_side_effects() {
     let home = root.path().join("home");
     let config_path = pinset_core::create_project_config(root.path()).unwrap();
     let original = fs::read(&config_path).unwrap();
-    for args in [vec!["env", "init"], vec!["env", "init", "dev"]] {
-        let output = cli(root.path(), &home).args(args).output().unwrap();
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("non-interactive"));
-    }
+    let output = cli(root.path(), &home)
+        .args(["env", "init"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("non-interactive"));
     assert_eq!(fs::read(config_path).unwrap(), original);
     assert!(!home.exists());
 }

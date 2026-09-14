@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 age.workspace = true
 atomic-write-file.workspace = true
+base64.workspace = true
 fs4.workspace = true
 keyring.workspace = true
 pinset-core = { path = "../pinset-core", features = ["lockfile"] }

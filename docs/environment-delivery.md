@@ -7,6 +7,7 @@ Implementation authorized on 2026-09-12. Development versions merge after valida
 | 2.13.0 | M0–M2: shared environment report, setup, execution evidence, VS Code integration | Merged as 4f7e2d7; four-platform native acceptance and CI Gate passed |
 | 2.14.0 | M3–M4: compatibility and team delivery | Implemented; local Docker validation passed, native merge checks pending |
 | 2.15.0 | M5–M6: worktree isolation and candidate evidence | Pending |
+| 2.16.0 | dotenv-style independently encrypted values and fileless identity onboarding | Implemented locally; release and platform-native acceptance pending |
 
 `release.json` records the published distribution version. Installers, the Action default and downloadable devcontainer examples keep using that version during development. Release preparation updates it and distribution defaults together with the final version, before the final preflight. No intermediate development version is advertised as downloadable.
 

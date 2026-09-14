@@ -4754,8 +4754,7 @@ const COMPLETION_VENV_COMMANDS: &str = "create status recreate";
 const COMPLETION_SHIM_COMMANDS: &str = "path install migrate";
 const COMPLETION_SOURCE_COMMANDS: &str = "list add use fallback remove test";
 const COMPLETION_PROVIDER_COMMANDS: &str = "list verify status trust untrust validate scaffold";
-const COMPLETION_ENV_COMMANDS: &str =
-    "init use reset set unset list reveal import export share unshare members recipient identity";
+const COMPLETION_ENV_COMMANDS: &str = "init use reset set unset list check diff reveal import export share unshare members access recipient identity";
 const COMPLETION_TRUST_COMMANDS: &str = "add status revoke";
 const COMPLETION_SELF_COMMANDS: &str = "outdated update";
 
@@ -10815,6 +10814,45 @@ mod tests {
         ])
         .expect("environment list");
         assert_eq!(environment.json_command(), Some("env.list"));
+
+        assert!(Cli::try_parse_from(["pinset", "env", "access", "request", "--ci"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "pinset",
+                "env",
+                "access",
+                "grant",
+                "age1example",
+                "--profile",
+                "development",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["pinset", "env", "migrate", "--profile", "development",]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "pinset",
+                "env",
+                "init",
+                "development",
+                "--identity-file",
+                "identity.txt",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "pinset",
+                "env",
+                "identity",
+                "create",
+                "--output",
+                "identity.txt",
+            ])
+            .is_err()
+        );
 
         let trust =
             Cli::try_parse_from(["pinset", "trust", "status", "--json"]).expect("trust status");

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.16.0 - 2026-09-14
+
+- Store environment profiles exclusively as dotenv-style `.env.<profile>` files with visible variable names and independently encrypted values. Updating one value preserves unrelated ciphertext and requires only the committed public recipients; whole-file `.age` profiles are rejected.
+- Keep device identities in the operating-system credential store, remove new private-key/recovery-file creation paths, and add `pinset env access request|grant|revoke|list` for device onboarding.
+- Continue accepting `PINSET_IDENTITY` from CI or a platform secret manager; file-based runtime identities and recovery imports are no longer loaded.
+- Set 2.16.0 as the minimum downloadable release across installers, the Action, and self-update. After the 2.16.0 published-release verification succeeds, remove binary assets from earlier Releases while retaining their notes and Git tags.
+
 ## 2.15.0 - 2026-09-14
 
 - Validate explicitly listed tasks in independent current/candidate input snapshots, bind results to bounded content fingerprints and public environment context, kill timed-out task trees, preview lock changes and require explicit acceptance of limited evidence. Preserve old history without trusting obsolete evidence for application or restore.

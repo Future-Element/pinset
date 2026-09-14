@@ -69,7 +69,7 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
   const features = zh ? [
     ["01", "锁定整个工具链", "Node.js、Python、Rust 和更多工具共享一份项目配置。版本选择与精确制品分别记录，团队直接按锁文件安装。", "pinset install --locked", "install"],
     ["02", "每一次选择，都能解释", "项目边界、全局继承、系统回退由策略决定。遇到版本不一致，可以查看来源、路由与诊断结果。", "pinset current --explain", "current"],
-    ["03", "环境跟着项目走", "使用 age 加密的项目环境，在本地信任授权后注入命令进程。切换项目时，工具版本和选中的环境一起就位。", "pinset trust status", "trust-status"],
+    ["03", "环境跟着项目走", "使用逐值加密的 dotenv 项目环境，私钥只进系统凭据库或平台 Secret；本地信任后才注入命令进程。", "pinset trust status", "trust-status"],
   ] : [
     ["01", "Lock the whole toolchain", "Node.js, Python, Rust, and more share one project configuration. Keep version intent separate from exact artifacts, then install from the lockfile.", "pinset install --locked", "install"],
     ["02", "Know why a version runs", "Project boundaries, global inheritance, and system fallback are explicit policy. Inspect the source, routing, and diagnostics behind every selection.", "pinset current --explain", "current"],

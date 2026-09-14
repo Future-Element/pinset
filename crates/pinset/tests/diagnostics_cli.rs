@@ -15,7 +15,7 @@ fn status_saves_a_redacted_portable_report_and_check_detects_changes() {
     fs::create_dir(&project).expect("project");
     write_project(&project, false);
     fs::write(
-        project.join("dev.age"),
+        project.join(".env.dev"),
         "DATABASE_URL=postgres://diagnostic-secret-value\n",
     )
     .expect("secret fixture");
@@ -140,7 +140,7 @@ boundary = "git"
 auto-profile = "dev"
 
 [environment.profiles.dev]
-file = "dev.age"
+file = ".env.dev"
 recipients = ["age1diagnostic"]
 
 [environment.variables.DATABASE_URL]

@@ -12,7 +12,7 @@
 
 Pinset 是一个行为可预测、理解项目边界的多语言运行时版本管理器。
 
-它使用一份项目配置和一份精确锁文件管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET、Flutter/Dart 与声明式开发 CLI。进入项目后可以直接运行 `node`、`python`、`cargo`、`flutter`、`jq` 等命令；Pinset shim 会选择项目锁定的运行时，并在项目受信任时注入选定的 age 加密环境 profile。
+它使用一份项目配置和一份精确锁文件管理 Node.js、pnpm、Bun、Go、Python、Java、Rust、.NET、Flutter/Dart 与声明式开发 CLI。进入项目后可以直接运行 `node`、`python`、`cargo`、`flutter`、`jq` 等命令；Pinset shim 会选择项目锁定的运行时，并在项目受信任时注入选定的加密 dotenv profile。
 
 ```text
 pinset.toml  ──用户意图、项目策略、环境 profile
@@ -29,7 +29,7 @@ pinset.toml  ──用户意图、项目策略、环境 profile
 - **项目内直接使用**：完成一次 Shell 初始化后，项目中的 `node`、`pnpm`、`python`、`cargo` 等命令自动路由，无需每次添加 `pinset exec`。
 - **严格项目边界**：项目默认不继承全局版本，也不静默回退到系统 `PATH`；联网安装和传统版本文件导入都需要显式命令。
 - **安全安装**：Provider 执行完整性校验、安全解压和原子安装，并通过所有权收据支持审计、修复、卸载和清理。
-- **加密项目环境**：每个 profile 使用独立的 age 密文与 recipient；私钥保存在系统密钥库、口令保护的恢复文件或 CI Secret 中。
+- **加密项目环境**：`.env.<profile>` 保留可审查的变量名，并为已授权设备逐值加密；私钥只进入系统凭据库或 CI Secret，Pinset 不创建私钥文件。
 - **适合自动化**：提供稳定的 JSON schema 1、reason code、退出码、Shell 补全、离线锁审计和 GitHub Composite Action。
 
 ## 支持的 Provider
@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.15.0
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.0
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,12 +114,12 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.15.0
+.\install.ps1 -Version 2.16.0
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
 
-也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载归档。Release 同时提供 checksum、SBOM 与构建来源证明。
+也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载归档。Release 同时提供 checksum、SBOM 与构建来源证明。2.16.0 是最低可下载版本；安装器、Action 与自更新会拒绝更早版本，并在 2.16.0 完成原生发布验收后移除旧 Release 的二进制资产。
 
 ## Shell 初始化
 
@@ -257,13 +257,13 @@ pnpm = "11"
 
 ## 加密项目环境
 
-Pinset 2.0 管理项目范围、字符串类型的加密环境变量，但不定位为通用 Secrets Vault。每个 profile 是独立的 age 文件，并拥有独立 recipient。
+Pinset 2.16 管理项目范围、字符串类型的加密环境变量，但不定位为通用 Secrets Vault。profile 统一使用 dotenv 风格的 `.env.<profile>`：变量名可审查，每个值分别为该 profile 的公开 recipient 加密；不接受整文件 `.age` profile。
 
 ### 初始化与直接运行
 
 ```sh
 pinset migrate
-pinset env init --profile development --auto --recovery ~/pinset-development-recovery.age
+pinset env init development --auto
 pinset env set DATABASE_URL --profile development
 pinset env list --profile development
 pinset trust add
@@ -275,13 +275,13 @@ node app.js
 重要规则：
 
 - `env set` 默认隐藏输入，变量值不会出现在命令参数中。
-- `env list` 只显示变量名；查看单个值需要交互式 `env reveal`。
+- 新 profile 的 `env set`、`env unset` 和 `env list` 只需要已提交的公开 recipient；查看或运行变量值仍需要已授权私钥。
 - 没有 `auto-profile` 时，直接 shim 不自动注入环境。
 - `PINSET_ENV_PROFILE=ci` 可显式选择 profile。
 - `PINSET_ENV_DISABLE=1` 或 `pinset exec --no-env` 可关闭单次注入。
 - 进程变量与密文变量同名时默认报错；也可显式使用 `process-wins` 或 `encrypted-wins`。
 - 修改 recipient、profile 路径、自动 profile 或冲突策略后必须重新信任；只修改密文值不需要。
-- 不会自动扫描 `.env`，也不会创建临时明文 `.env`。
+- 不创建 `.env.keys`、恢复文件、identity 文件或临时明文 dotenv 文件。
 
 ### 导入现有 `.env`
 
@@ -293,22 +293,26 @@ pinset env import --from .env --profile development
 
 导入支持空值、注释、单/双引号和带引号多行值。同名变量会在目标 profile 中更新；`export`、变量插值、命令替换和 Shell 表达式会被拒绝。Pinset 不会自动查找或删除来源文件，确认迁移成功后仍需由用户自行处理原来的明文 `.env`。
 
-### 换电脑
+### 授权另一台电脑
 
-Clone 项目后，安装锁定运行时、导入恢复身份并重新信任：
+新电脑把自己的私钥直接保存到系统凭据库，只输出公开请求码；已有权限的电脑批准请求后，新电脑再信任自己的 checkout：
 
 ```sh
 pinset install --locked
-pinset env identity import --from ~/pinset-development-recovery.age
+pinset env access request
+
+# 在已有权限的电脑上执行：
+pinset env access grant <request-code> --profile development
+
 pinset trust add
 node app.js
 ```
 
-恢复文件必须保存在仓库外并妥善备份。Linux/SSH 环境没有可用系统密钥库时，必须显式使用口令保护的身份文件；Pinset 不会退化为明文私钥。
+不会创建共享私钥或恢复文件。如果所有已授权的系统凭据和 CI Secret 都丢失，密文将无法恢复。Linux/SSH 没有可用 Secret Service 时，必须由外部 Secret Manager 注入 `PINSET_IDENTITY`；Pinset 不会退化为密钥文件。
 
 ### GitHub Actions
 
-将 age 私有身份文本保存为仓库 Secret `PINSET_IDENTITY`。profile 和 `project-id` 不是秘密，可以提交到项目配置：
+用 `pinset env access request --ci` 创建专用 CI 身份，立即把显示的 `PINSET_IDENTITY` 保存到平台 Secret Manager，并批准其公开请求码。profile 和 `project-id` 不是秘密，可以提交到项目配置：
 
 ```yaml
 jobs:
@@ -319,9 +323,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.15.0
+      - uses: Future-Element/pinset@v2.16.0
         with:
-          version: 2.15.0
+          version: 2.16.0
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
@@ -410,7 +414,7 @@ pinset uninstall node@24.0.0
 pinset prune --dry-run
 ```
 
-完整卸载 Pinset 时，删除安装目录中的 CLI、shim 和路由命令，再删除自己加入 Shell 配置的初始化行。只有确定不再需要任何受管运行时、缓存、全局选择和本机信任时，才删除 `PINSET_HOME`。项目中的 `pinset.toml`、`pinset.lock`、`pinset.env/*.age` 与 `.venv` 不会自动删除。
+完整卸载 Pinset 时，删除安装目录中的 CLI、shim 和路由命令，再删除自己加入 Shell 配置的初始化行。只有确定不再需要任何受管运行时、缓存、全局选择和本机信任时，才删除 `PINSET_HOME`。项目中的 `pinset.toml`、`pinset.lock`、`.env.<profile>` 与 `.venv` 不会自动删除。
 
 ## 当前版本与未来规划
 

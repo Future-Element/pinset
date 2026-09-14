@@ -1,6 +1,6 @@
 # Team development environments / 团队开发环境
 
-Available in the combined Pinset 2.15.0 environment release; first implemented in the 2.14 development milestone.
+The compatibility and delivery workflow shipped in Pinset 2.15.0. Pinset 2.16 replaces environment profiles with independently encrypted dotenv files and credential-store-only local identities. Whole-file `.age` profiles are not accepted.
 
 ## Requirements / 环境要求
 
@@ -59,9 +59,9 @@ pinset bundle import linux.bundle.tar.gz
 pinset setup --yes --offline
 ```
 
-The team checklist distinguishes configuration, artifact/routing checks, trust, registered versus usable identity, and each applicable variable contract. Background status never opens identities. Explicit checks may decrypt a trusted selected profile in memory, validate it, and zeroize returned values; no values, defaults, secret digests or private keys are exported. Missing keyring credentials and non-interactive encrypted identity files still require the existing explicit identity flow.
+The team checklist distinguishes configuration, artifact/routing checks, trust, registered versus usable identity, and each applicable variable contract. Background status never opens identities. Explicit checks may decrypt a trusted selected profile in memory, validate it, and zeroize returned values; no values, defaults, secret digests or private keys are exported. Local identities require the OS credential store; headless and CI environments must inject `PINSET_IDENTITY` from a platform secret manager.
 
-团队清单分别报告配置、制品/路由、信任、已注册与实际可用的身份，以及每个适用变量的约定。后台状态不打开身份；显式检查可在内存中解密已信任的所选 profile、校验并清除返回值。导出不含值、默认值、秘密摘要或私钥。缺少密钥环凭据、非交互场景使用加密身份文件时，仍需按现有身份流程准备。
+团队清单分别报告配置、制品/路由、信任、已注册与实际可用的身份，以及每个适用变量的约定。后台状态不打开身份；显式检查可在内存中解密已信任的所选 profile、校验并清除返回值。导出不含值、默认值、秘密摘要或私钥。本机 identity 必须进入操作系统凭据库；无头环境和 CI 必须从平台 Secret Manager 注入 `PINSET_IDENTITY`，不回退为密钥文件。
 
 Report comparison matches runtimes by name and compares exact versions, options, full artifact identities, public project/profile identity, requirements and variable contracts. Ordering and machine paths are ignored. Declared cross-platform differences are separate from configuration differences. A legacy report lacking artifact identities produces an incomplete-comparison result. Independent successful probes do not establish identical secret values or equivalence of unobserved execution. Comparison findings are returned as data; delivery exit status describes the selected readiness check.
 
@@ -79,6 +79,6 @@ Set `PINSET_CA_BUNDLE` to a regular PEM certificate bundle of at most 1 MiB to a
 
 `--offline` 不联网，逐一校验所需平台的基础归档与覆盖归档。预取默认使用声明的平台，再回退当前主机。可移植 Bun x64 包需同时包含 baseline 和 AVX2。离线包缺失/多出条目、清单不一致或内容损坏时，在写入缓存前拒绝。SDK 交付不涵盖 npm/pip/Maven/Gradle 项目依赖、Android/Xcode 或应用构建产物；相关缓存通过明确的项目任务准备。
 
-The Action's optional `prepare: "true"` runs setup after the requested project trust step; `environment-report: "true"` saves a portable report and emits a small job summary. Both default to false and require Pinset 2.15.0 or later. Summary output contains only readiness booleans and runtime/version/target, not decrypted values or paths.
+The Action's optional `prepare: "true"` runs setup after the requested project trust step; `environment-report: "true"` saves a portable report and emits a small job summary. Both default to false and require Pinset 2.16.0 or later. Summary output contains only readiness booleans and runtime/version/target, not decrypted values or paths.
 
-Action 可选 `prepare: "true"` 在指定信任步骤后执行准备；`environment-report: "true"` 保存可移植报告和简短作业摘要。这两项默认关闭，需要 Pinset 2.15.0 或更高版本。摘要仅含就绪布尔值及运行时/版本/平台，不含解密值或路径。
+Action 可选 `prepare: "true"` 在指定信任步骤后执行准备；`environment-report: "true"` 保存可移植报告和简短作业摘要。这两项默认关闭，需要 Pinset 2.16.0 或更高版本。摘要仅含就绪布尔值及运行时/版本/平台，不含解密值或路径。

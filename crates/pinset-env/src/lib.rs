@@ -13,6 +13,7 @@ use age::{
     x25519,
 };
 use atomic_write_file::AtomicWriteFile;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use fs4::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,6 +21,8 @@ use zeroize::Zeroize;
 
 pub const PROFILE_SCHEMA: u32 = 1;
 pub const PROFILE_MAX_BYTES: usize = 1024 * 1024;
+pub const DOTENV_PROFILE_HEADER: &str = "# pinset-encrypted-env v1";
+const DOTENV_VALUE_PREFIX: &str = "encrypted:pinset:v1:";
 const IDENTITY_SERVICE: &str = "dev.pinset.identity";
 
 #[derive(Debug, thiserror::Error)]
@@ -150,69 +153,42 @@ pub fn validate_document(document: &EnvironmentDocument) -> Result<()> {
     Ok(())
 }
 
-pub fn encrypt_document(
-    document: &EnvironmentDocument,
-    recipient_strings: &[String],
-) -> Result<Vec<u8>> {
-    validate_document(document)?;
-    if recipient_strings.is_empty() {
-        return Err(Error::MissingRecipient);
-    }
-    let recipients = recipient_strings
-        .iter()
-        .map(|recipient| {
-            recipient
-                .parse::<x25519::Recipient>()
-                .map_err(|_| Error::InvalidRecipient)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut plaintext = toml::to_string(document)
-        .map_err(|_| Error::InvalidProfile("cannot serialize profile".to_owned()))?;
-    let result = (|| {
-        if plaintext.len() > PROFILE_MAX_BYTES {
-            return Err(Error::ProfileTooLarge);
-        }
-        let encryptor = Encryptor::with_recipients(
-            recipients
-                .iter()
-                .map(|recipient| recipient as &dyn age::Recipient),
-        )
-        .map_err(|_| Error::Crypto)?;
-        let mut output = Vec::with_capacity(plaintext.len() + 512);
-        let mut writer = encryptor
-            .wrap_output(&mut output)
-            .map_err(|_| Error::Crypto)?;
-        writer
-            .write_all(plaintext.as_bytes())
-            .and_then(|()| writer.finish())
-            .map_err(|_| Error::Crypto)?;
-        Ok(output)
-    })();
-    plaintext.zeroize();
-    result
+#[derive(Debug, Clone, Default)]
+struct EncryptedDotenvDocument {
+    variables: BTreeMap<String, String>,
 }
 
-pub fn decrypt_document(
-    ciphertext: &[u8],
-    identity_strings: &[SecretString],
-) -> Result<EnvironmentDocument> {
-    if ciphertext.len() > PROFILE_MAX_BYTES + 64 * 1024 {
-        return Err(Error::ProfileTooLarge);
+fn encrypt_value(value: &str, recipient_strings: &[String]) -> Result<String> {
+    if value.contains('\0') {
+        return Err(Error::InvalidProfile("value contains NUL".to_owned()));
     }
-    let identities = identity_strings
-        .iter()
-        .filter_map(|secret| {
-            secret
-                .expose_secret()
-                .trim()
-                .parse::<x25519::Identity>()
-                .ok()
-        })
-        .collect::<Vec<_>>();
-    if identities.is_empty() {
-        return Err(Error::NoMatchingIdentity);
-    }
-    let decryptor = Decryptor::new_buffered(ciphertext).map_err(|_| Error::Crypto)?;
+    let recipients = parse_recipients(recipient_strings)?;
+    let encryptor = Encryptor::with_recipients(
+        recipients
+            .iter()
+            .map(|recipient| recipient as &dyn age::Recipient),
+    )
+    .map_err(|_| Error::Crypto)?;
+    let mut output = Vec::with_capacity(value.len() + 512);
+    let mut writer = encryptor
+        .wrap_output(&mut output)
+        .map_err(|_| Error::Crypto)?;
+    writer
+        .write_all(value.as_bytes())
+        .and_then(|()| writer.finish())
+        .map_err(|_| Error::Crypto)?;
+    Ok(format!("{DOTENV_VALUE_PREFIX}{}", BASE64.encode(output)))
+}
+
+fn decrypt_value(value: &str, identity_strings: &[SecretString]) -> Result<String> {
+    let encoded = value
+        .strip_prefix(DOTENV_VALUE_PREFIX)
+        .ok_or_else(|| Error::InvalidProfile("dotenv value is not encrypted".to_owned()))?;
+    let ciphertext = BASE64
+        .decode(encoded)
+        .map_err(|_| Error::InvalidProfile("dotenv ciphertext is not valid base64".to_owned()))?;
+    let identities = parse_identities(identity_strings)?;
+    let decryptor = Decryptor::new_buffered(ciphertext.as_slice()).map_err(|_| Error::Crypto)?;
     let mut reader = decryptor
         .decrypt(
             identities
@@ -232,16 +208,187 @@ pub fn decrypt_document(
         plaintext.zeroize();
         return Err(Error::ProfileTooLarge);
     }
-    let document = std::str::from_utf8(&plaintext)
-        .map_err(|_| Error::InvalidProfile("plaintext is not UTF-8".to_owned()))
-        .and_then(|plaintext_text| {
-            toml::from_str::<EnvironmentDocument>(plaintext_text)
-                .map_err(|_| Error::InvalidProfile("plaintext is not canonical TOML".to_owned()))
-        });
+    let value = String::from_utf8(plaintext.clone())
+        .map_err(|_| Error::InvalidProfile("dotenv plaintext is not UTF-8".to_owned()));
     plaintext.zeroize();
-    let document = document?;
+    value
+}
+
+fn parse_recipients(recipient_strings: &[String]) -> Result<Vec<x25519::Recipient>> {
+    if recipient_strings.is_empty() {
+        return Err(Error::MissingRecipient);
+    }
+    recipient_strings
+        .iter()
+        .map(|recipient| {
+            recipient
+                .parse::<x25519::Recipient>()
+                .map_err(|_| Error::InvalidRecipient)
+        })
+        .collect()
+}
+
+fn parse_identities(identity_strings: &[SecretString]) -> Result<Vec<x25519::Identity>> {
+    let identities = identity_strings
+        .iter()
+        .filter_map(|secret| {
+            secret
+                .expose_secret()
+                .trim()
+                .parse::<x25519::Identity>()
+                .ok()
+        })
+        .collect::<Vec<_>>();
+    if identities.is_empty() {
+        return Err(Error::NoMatchingIdentity);
+    }
+    Ok(identities)
+}
+
+fn parse_encrypted_dotenv(bytes: &[u8]) -> Result<EncryptedDotenvDocument> {
+    if bytes.len() > PROFILE_MAX_BYTES + 64 * 1024 {
+        return Err(Error::ProfileTooLarge);
+    }
+    let content = std::str::from_utf8(bytes)
+        .map_err(|_| Error::InvalidProfile("encrypted dotenv is not UTF-8".to_owned()))?;
+    if content.lines().next() != Some(DOTENV_PROFILE_HEADER) {
+        return Err(Error::InvalidProfile(
+            "encrypted dotenv header is missing".to_owned(),
+        ));
+    }
+    let mut document = EncryptedDotenvDocument::default();
+    let mut seen = BTreeSet::new();
+    for (index, raw) in content.lines().enumerate().skip(1) {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, encoded) = line.split_once('=').ok_or_else(|| {
+            Error::InvalidProfile(format!("invalid dotenv assignment on line {}", index + 1))
+        })?;
+        let name = name.trim();
+        validate_variable_name(name)?;
+        if !seen.insert(name.to_ascii_uppercase()) {
+            return Err(invalid_variable(name, "name differs only by ASCII case"));
+        }
+        let encoded = encoded.trim();
+        let encoded = encoded
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(encoded);
+        if !encoded.starts_with(DOTENV_VALUE_PREFIX) {
+            return Err(Error::InvalidProfile(format!(
+                "{name} is not a Pinset-encrypted value"
+            )));
+        }
+        let ciphertext = BASE64
+            .decode(&encoded[DOTENV_VALUE_PREFIX.len()..])
+            .map_err(|_| Error::InvalidProfile(format!("{name} ciphertext is not valid base64")))?;
+        Decryptor::new_buffered(ciphertext.as_slice()).map_err(|_| {
+            Error::InvalidProfile(format!("{name} ciphertext is not a valid age payload"))
+        })?;
+        document
+            .variables
+            .insert(name.to_owned(), encoded.to_owned());
+    }
+    Ok(document)
+}
+
+fn render_encrypted_dotenv(document: &EncryptedDotenvDocument) -> Result<Vec<u8>> {
+    let mut output = String::from(DOTENV_PROFILE_HEADER);
+    output.push_str(
+        "\n# Ciphertext is safe to commit. Private identities stay in the OS credential store.\n",
+    );
+    for (name, value) in &document.variables {
+        validate_variable_name(name)?;
+        if !value.starts_with(DOTENV_VALUE_PREFIX) {
+            return Err(Error::InvalidProfile(format!(
+                "{name} is not a Pinset-encrypted value"
+            )));
+        }
+        output.push_str(name);
+        output.push_str("=\"");
+        output.push_str(value);
+        output.push_str("\"\n");
+    }
+    if output.len() > PROFILE_MAX_BYTES + 64 * 1024 {
+        return Err(Error::ProfileTooLarge);
+    }
+    Ok(output.into_bytes())
+}
+
+fn decrypt_dotenv_document(
+    encrypted: &EncryptedDotenvDocument,
+    identities: &[SecretString],
+) -> Result<EnvironmentDocument> {
+    let mut variables = BTreeMap::new();
+    for (name, value) in &encrypted.variables {
+        variables.insert(name.clone(), decrypt_value(value, identities)?);
+    }
+    let document = EnvironmentDocument {
+        schema: PROFILE_SCHEMA,
+        variables,
+    };
     validate_document(&document)?;
     Ok(document)
+}
+
+fn encrypt_dotenv_document(
+    document: &EnvironmentDocument,
+    recipients: &[String],
+) -> Result<EncryptedDotenvDocument> {
+    validate_document(document)?;
+    let mut variables = BTreeMap::new();
+    for (name, value) in &document.variables {
+        variables.insert(name.clone(), encrypt_value(value, recipients)?);
+    }
+    Ok(EncryptedDotenvDocument { variables })
+}
+
+pub fn list_profile_names(project_root: &Path, relative: &str) -> Result<Vec<String>> {
+    let path = safe_profile_path(project_root, relative, false)?;
+    let bytes = fs::read(&path).map_err(|source| Error::Io { path, source })?;
+    Ok(parse_encrypted_dotenv(&bytes)?
+        .variables
+        .into_keys()
+        .collect())
+}
+
+pub fn set_encrypted_profile_values(
+    project_root: &Path,
+    relative: &str,
+    recipients: &[String],
+    values: BTreeMap<String, String>,
+) -> Result<()> {
+    let path = safe_profile_path(project_root, relative, false)?;
+    let lock = lock_profile(&path)?;
+    let bytes = read_regular_file(&path)?;
+    let mut encrypted = parse_encrypted_dotenv(&bytes)?;
+    for (name, value) in values {
+        validate_variable_name(&name)?;
+        remove_case_insensitive(&mut encrypted.variables, &name);
+        encrypted
+            .variables
+            .insert(name, encrypt_value(&value, recipients)?);
+    }
+    atomic_write(&path, &render_encrypted_dotenv(&encrypted)?)?;
+    let _ = FileExt::unlock(&lock);
+    Ok(())
+}
+
+pub fn unset_encrypted_profile_value(
+    project_root: &Path,
+    relative: &str,
+    name: &str,
+) -> Result<bool> {
+    let path = safe_profile_path(project_root, relative, false)?;
+    let lock = lock_profile(&path)?;
+    let bytes = read_regular_file(&path)?;
+    let mut encrypted = parse_encrypted_dotenv(&bytes)?;
+    let removed = remove_case_insensitive(&mut encrypted.variables, name);
+    atomic_write(&path, &render_encrypted_dotenv(&encrypted)?)?;
+    let _ = FileExt::unlock(&lock);
+    Ok(removed)
 }
 
 pub fn read_encrypted_profile(
@@ -261,7 +408,7 @@ pub fn read_encrypted_profile(
         path: path.clone(),
         source,
     })?;
-    decrypt_document(&bytes, identities)
+    decrypt_dotenv_document(&parse_encrypted_dotenv(&bytes)?, identities)
 }
 
 pub fn mutate_encrypted_profile<T>(
@@ -284,9 +431,9 @@ pub fn mutate_encrypted_profile<T>(
         path: path.clone(),
         source,
     })?;
-    let mut document = decrypt_document(&ciphertext, identities)?;
+    let mut document = decrypt_dotenv_document(&parse_encrypted_dotenv(&ciphertext)?, identities)?;
     let result = mutation(&mut document)?;
-    let encrypted = encrypt_document(&document, recipients)?;
+    let encrypted = render_encrypted_dotenv(&encrypt_dotenv_document(&document, recipients)?)?;
     atomic_write(&path, &encrypted)?;
     let _ = FileExt::unlock(&lock);
     Ok(result)
@@ -299,7 +446,7 @@ pub fn write_encrypted_profile(
     recipients: &[String],
 ) -> Result<PathBuf> {
     let path = safe_profile_path(project_root, relative, true)?;
-    let encrypted = encrypt_document(document, recipients)?;
+    let encrypted = render_encrypted_dotenv(&encrypt_dotenv_document(document, recipients)?)?;
     let lock = lock_profile(&path)?;
     atomic_write(&path, &encrypted)?;
     let _ = FileExt::unlock(&lock);
@@ -307,7 +454,12 @@ pub fn write_encrypted_profile(
 }
 
 fn lock_profile(path: &Path) -> Result<fs::File> {
-    let lock_path = path.with_extension("age.lock");
+    let lock_path = path.with_file_name(format!(
+        "{}.lock",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::UnsafePath(path.to_path_buf()))?
+    ));
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -323,6 +475,28 @@ fn lock_profile(path: &Path) -> Result<fs::File> {
         source,
     })?;
     Ok(lock)
+}
+
+fn read_regular_file(path: &Path) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(Error::UnsafePath(path.to_path_buf()));
+    }
+    fs::read(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn remove_case_insensitive(values: &mut BTreeMap<String, String>, name: &str) -> bool {
+    let existing = values
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case(name))
+        .cloned();
+    existing.and_then(|key| values.remove(&key)).is_some()
 }
 
 /// Atomically restores previously validated ciphertext at a project-relative profile path.
@@ -366,24 +540,6 @@ pub fn store_identity(home: &Path, material: &IdentityMaterial) -> Result<()> {
         .identities
         .sort_by(|left, right| left.id.cmp(&right.id));
     save_identity_metadata(home, &metadata)
-}
-
-pub fn import_identity(home: &Path, secret: SecretString) -> Result<IdentityRecord> {
-    let identity = secret
-        .expose_secret()
-        .trim()
-        .parse::<x25519::Identity>()
-        .map_err(|_| Error::NoMatchingIdentity)?;
-    let material = IdentityMaterial {
-        record: IdentityRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            recipient: identity.to_public().to_string(),
-            backend: "keyring".to_owned(),
-        },
-        secret,
-    };
-    store_identity(home, &material)?;
-    Ok(material.record)
 }
 
 pub fn list_identities(home: &Path) -> Result<Vec<IdentityRecord>> {
@@ -431,33 +587,6 @@ pub fn load_identity_secret(home: &Path, id: &str) -> Result<SecretString> {
     String::from_utf8(secret)
         .map(SecretString::from)
         .map_err(|_| Error::InvalidIdentityMetadata)
-}
-
-pub fn backup_identity(path: &Path, secret: &SecretString, passphrase: SecretString) -> Result<()> {
-    if path.exists() {
-        return Err(Error::UnsafePath(path.to_path_buf()));
-    }
-    let encrypted = age::encrypt(
-        &age::scrypt::Recipient::new(passphrase),
-        secret.expose_secret().as_bytes(),
-    )
-    .map_err(|_| Error::Crypto)?;
-    atomic_write(path, &encrypted)
-}
-
-pub fn restore_identity(path: &Path, passphrase: SecretString) -> Result<SecretString> {
-    let ciphertext = fs::read(path).map_err(|source| Error::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let plaintext = age::decrypt(&age::scrypt::Identity::new(passphrase), &ciphertext)
-        .map_err(|_| Error::Crypto)?;
-    let value = String::from_utf8(plaintext).map_err(|_| Error::Crypto)?;
-    value
-        .trim()
-        .parse::<x25519::Identity>()
-        .map_err(|_| Error::Crypto)?;
-    Ok(SecretString::from(value.trim().to_owned()))
 }
 
 pub fn trust_project(
@@ -658,24 +787,110 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encrypts_for_multiple_recipients_and_rejects_another_identity() {
-        let one = x25519::Identity::generate();
-        let two = x25519::Identity::generate();
-        let other = x25519::Identity::generate();
-        let document = EnvironmentDocument {
-            schema: 1,
-            variables: BTreeMap::from([("TOKEN".to_owned(), "secret".to_owned())]),
-        };
-        let encrypted = encrypt_document(
-            &document,
-            &[one.to_public().to_string(), two.to_public().to_string()],
+    fn encrypted_dotenv_keeps_names_visible_and_values_independently_encrypted() {
+        let root = tempfile::tempdir().unwrap();
+        let identity = x25519::Identity::generate();
+        let recipient = identity.to_public().to_string();
+        let identity_text = identity.to_string();
+        write_encrypted_profile(
+            root.path(),
+            ".env.development",
+            &EnvironmentDocument {
+                schema: PROFILE_SCHEMA,
+                variables: BTreeMap::from([
+                    ("DATABASE_URL".to_owned(), "postgres://secret".to_owned()),
+                    ("TOKEN".to_owned(), "hidden".to_owned()),
+                ]),
+            },
+            std::slice::from_ref(&recipient),
         )
         .unwrap();
-        for identity in [one, two] {
-            let decrypted = decrypt_document(&encrypted, &[identity.to_string()]).unwrap();
-            assert_eq!(decrypted, document);
-        }
-        assert!(decrypt_document(&encrypted, &[other.to_string()]).is_err());
+
+        let ciphertext = fs::read_to_string(root.path().join(".env.development")).unwrap();
+        assert!(ciphertext.starts_with(DOTENV_PROFILE_HEADER));
+        assert!(ciphertext.contains("DATABASE_URL=\"encrypted:pinset:v1:"));
+        assert!(ciphertext.contains("TOKEN=\"encrypted:pinset:v1:"));
+        assert!(!ciphertext.contains("postgres://secret"));
+        assert!(!ciphertext.contains("hidden"));
+        assert_eq!(
+            list_profile_names(root.path(), ".env.development").unwrap(),
+            vec!["DATABASE_URL", "TOKEN"]
+        );
+
+        let before = parse_encrypted_dotenv(ciphertext.as_bytes()).unwrap();
+        set_encrypted_profile_values(
+            root.path(),
+            ".env.development",
+            std::slice::from_ref(&recipient),
+            BTreeMap::from([("TOKEN".to_owned(), "changed".to_owned())]),
+        )
+        .unwrap();
+        let after_bytes = fs::read(root.path().join(".env.development")).unwrap();
+        let after = parse_encrypted_dotenv(&after_bytes).unwrap();
+        assert_eq!(
+            before.variables.get("DATABASE_URL"),
+            after.variables.get("DATABASE_URL"),
+            "an unrelated ciphertext must remain stable"
+        );
+        assert_ne!(before.variables.get("TOKEN"), after.variables.get("TOKEN"));
+
+        let document = read_encrypted_profile(
+            root.path(),
+            ".env.development",
+            std::slice::from_ref(&identity_text),
+        )
+        .unwrap();
+        assert_eq!(document.variables["TOKEN"], "changed");
+        assert_eq!(document.variables["DATABASE_URL"], "postgres://secret");
+    }
+
+    #[test]
+    fn encrypted_dotenv_writes_need_only_public_recipients() {
+        let root = tempfile::tempdir().unwrap();
+        let identity = x25519::Identity::generate();
+        let recipient = identity.to_public().to_string();
+        write_encrypted_profile(
+            root.path(),
+            ".env.dev",
+            &EnvironmentDocument::default(),
+            std::slice::from_ref(&recipient),
+        )
+        .unwrap();
+
+        set_encrypted_profile_values(
+            root.path(),
+            ".env.dev",
+            std::slice::from_ref(&recipient),
+            BTreeMap::from([("WRITE_ONLY".to_owned(), "secret".to_owned())]),
+        )
+        .unwrap();
+        assert!(unset_encrypted_profile_value(root.path(), ".env.dev", "WRITE_ONLY").unwrap());
+        assert!(
+            list_profile_names(root.path(), ".env.dev")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn whole_file_age_profiles_are_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let identity = x25519::Identity::generate();
+        let recipient = identity.to_public();
+        let encryptor =
+            Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient)).unwrap();
+        let mut ciphertext = Vec::new();
+        let mut writer = encryptor.wrap_output(&mut ciphertext).unwrap();
+        writer
+            .write_all(b"schema = 1\n[variables]\nTOKEN = \"secret\"\n")
+            .unwrap();
+        writer.finish().unwrap();
+        fs::write(root.path().join(".env.dev"), ciphertext).unwrap();
+
+        assert!(matches!(
+            read_encrypted_profile(root.path(), ".env.dev", &[identity.to_string()]),
+            Err(Error::InvalidProfile(_))
+        ));
     }
 
     #[test]
@@ -739,7 +954,7 @@ mod tests {
         let identity_text = identity.to_string();
         write_encrypted_profile(
             root.path(),
-            "pinset.env/development.age",
+            ".env.development",
             &EnvironmentDocument::default(),
             std::slice::from_ref(&recipient),
         )
@@ -756,7 +971,7 @@ mod tests {
                 barrier.wait();
                 mutate_encrypted_profile(
                     &project,
-                    "pinset.env/development.age",
+                    ".env.development",
                     &[SecretString::from(identity_text)],
                     &[recipient],
                     |document| {
@@ -772,8 +987,7 @@ mod tests {
         }
 
         let document =
-            read_encrypted_profile(root.path(), "pinset.env/development.age", &[identity_text])
-                .unwrap();
+            read_encrypted_profile(root.path(), ".env.development", &[identity_text]).unwrap();
         assert_eq!(
             document.variables.get("FIRST").map(String::as_str),
             Some("one")

@@ -84,7 +84,7 @@ profile = "{profile}"
 auto-profile = "{profile}"
 
 [environment.profiles.{profile}]
-file = ".pinset/{profile}.age"
+file = ".env.{profile}"
 recipients = ["age1example"]
 
 [environment.variables.DATABASE_PASSWORD]

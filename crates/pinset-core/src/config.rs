@@ -846,9 +846,12 @@ fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
                 reason: format!("invalid environment profile name: {name}"),
             });
         }
-        if profile.file.is_empty() || profile.file.len() > 4096 {
+        let expected_file = format!(".env.{name}");
+        if profile.file != expected_file {
             return Err(Error::InvalidProjectConfig {
-                reason: format!("environment profile {name} has an invalid file path"),
+                reason: format!(
+                    "environment profile {name} must use the encrypted dotenv file {expected_file}"
+                ),
             });
         }
         if profile.recipients.is_empty() {
@@ -1551,7 +1554,7 @@ command = ["cargo", "test"]
 profile = "test"
 
 [environment.profiles.test]
-file = "pinset.env/test.age"
+file = ".env.test"
 recipients = ["age1test"]
 
 [environment.variables.PORT]
@@ -1573,6 +1576,15 @@ values = ["development", "production"]
             config.environment.as_ref().expect("environment").variables["PORT"].kind,
             EnvironmentVariableType::Integer
         );
+
+        let whole_file_age = fs::read_to_string(&path)
+            .expect("config")
+            .replace(".env.test", "pinset.env/test.age");
+        fs::write(&path, whole_file_age).expect("whole-file age config");
+        assert!(matches!(
+            load_project_config(&path),
+            Err(Error::InvalidProjectConfig { reason }) if reason.contains("must use the encrypted dotenv file .env.test")
+        ));
 
         fs::write(
             &path,
@@ -1663,7 +1675,7 @@ command = ["cargo", "test", "--workspace"]
 path = ".venv-docs"
 
 [environment.profiles.dev]
-file = ".env.dev.age"
+file = ".env.dev"
 recipients = ["age1workspace"]
 "#,
         )
