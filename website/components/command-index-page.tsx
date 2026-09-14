@@ -22,7 +22,7 @@ export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: C
             <section key={group.title} id={group.commands[0]?.slug}>
               <div className="directoryHeading"><h2>{group.title}</h2><span>{group.commands.length}</span></div>
               <div className="directoryList">
-                {group.commands.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug}><code>pinset {command.title}</code><span>{command.description}</span><b>→</b></Link>)}
+                {group.commands.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug} scroll={false}><code>pinset {command.title}</code><span>{command.description}</span><b>→</b></Link>)}
               </div>
             </section>
           ))}
