@@ -351,7 +351,7 @@ jobs:
       - name: Validate native execution and local environments
         shell: bash
         run: |
-          cargo test --locked -p pinset-cli --test short_execution_cli --test python_cli
+          cargo test --locked -p pinset-cli --test short_execution_cli --test python_cli --test candidate_cli
           cargo test --locked -p pinset-shim
           suffix=""
           if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi

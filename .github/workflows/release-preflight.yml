@@ -277,7 +277,8 @@ jobs:
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            python -m pip install --only-binary=:all: pywinpty==3.0.5
+            # Match the native CI fixture: pywinpty 3.x stalls ConPTY I/O.
+            python -m pip install --only-binary=:all: pywinpty==2.0.15
           elif [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
             sudo apt-get install -y gnome-keyring dbus-x11
@@ -286,7 +287,7 @@ jobs:
       - name: Validate native execution and local environments
         shell: bash
         run: |
-          cargo test --release --locked -p pinset-cli --test short_execution_cli --test python_cli
+          cargo test --release --locked -p pinset-cli --test short_execution_cli --test python_cli --test candidate_cli
           cargo test --release --locked -p pinset-shim
           suffix=""
           if [[ "${RUNNER_OS}" == "Windows" ]]; then suffix=".exe"; fi

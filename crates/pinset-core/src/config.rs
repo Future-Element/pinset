@@ -28,6 +28,8 @@ pub struct ProjectConfig {
     pub schema: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements: Option<ProjectRequirements>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<ProjectVerification>,
     #[serde(
         default,
         rename = "project-id",
@@ -65,6 +67,22 @@ pub struct ProjectRequirements {
     pub build_targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProjectVerification {
+    pub tasks: Vec<String>,
+    /// Additional ignored input files/directories, always relative to the member.
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub external_state: bool,
+    #[serde(default = "default_verification_timeout")]
+    pub timeout_seconds: u64,
+}
+fn default_verification_timeout() -> u64 {
+    300
 }
 
 pub const ENVIRONMENT_PLATFORMS: [&str; 5] = [
@@ -494,6 +512,9 @@ pub fn effective_project_config(path: &Path, member: &ProjectConfig) -> Result<P
     if member.requirements.is_some() {
         effective.requirements = member.requirements.clone();
     }
+    if member.verification.is_some() {
+        effective.verification = member.verification.clone();
+    }
     effective.workspace = None;
     validate_environment_config(&effective)?;
     Ok(effective)
@@ -645,6 +666,25 @@ pub fn save_project_config(path: &Path, config: &ProjectConfig) -> Result<()> {
 }
 
 fn validate_environment_config(config: &ProjectConfig) -> Result<()> {
+    if let Some(verification) = &config.verification
+        && (config.schema < 6
+            || verification.tasks.is_empty()
+            || verification.tasks.len() > 64
+            || verification.tasks.iter().collect::<BTreeSet<_>>().len() != verification.tasks.len()
+            || verification.tasks.iter().any(|name| !valid_task_name(name))
+            || !(1..=3600).contains(&verification.timeout_seconds)
+            || verification.inputs.len() > 64
+            || verification.inputs.iter().any(|value| {
+                value.is_empty()
+                    || value.len() > 1024
+                    || value.contains(['\\', ':'])
+                    || Path::new(value)
+                        .components()
+                        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            }))
+    {
+        return Err(Error::InvalidProjectConfig { reason: "verification needs schema 6, unique declared tasks, at most 64 relative inputs and a timeout of 1..3600 seconds".into() });
+    }
     if let Some(requirements) = &config.requirements {
         if config.schema < 6 {
             return Err(Error::InvalidProjectConfig { reason: "environment requirements need schema 6; preview with `pinset migrate --dry-run` before migrating".to_owned() });
@@ -1828,6 +1868,7 @@ date = "2026-07-16"
         let root = tempdir().expect("temp directory");
         let path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
+            verification: None,
             requirements: None,
             schema: 4,
             project_id: Some("4c5652e4-0000-4000-8000-000000000006".to_owned()),
@@ -1887,6 +1928,7 @@ date = "2026-07-16"
         let root = tempdir().expect("project");
         let config_path = root.path().join(PROJECT_CONFIG_FILENAME);
         let config = ProjectConfig {
+            verification: None,
             requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),

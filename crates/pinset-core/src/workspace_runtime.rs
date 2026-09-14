@@ -15,6 +15,15 @@ pub fn workspace_flutter_directory(
     installation: &str,
     target: &str,
 ) -> Result<PathBuf> {
+    Ok(workspace_flutter_spec(home, config_path, installation, target)?.0)
+}
+
+fn workspace_flutter_spec(
+    home: &Path,
+    config_path: &Path,
+    installation: &str,
+    target: &str,
+) -> Result<(PathBuf, String)> {
     if [installation, target].iter().any(|value| {
         value.is_empty()
             || !value
@@ -41,13 +50,19 @@ pub fn workspace_flutter_directory(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    Ok(home
-        .join("state/workspaces")
-        .join(identity.namespace)
-        .join("flutter")
-        .join(installation)
-        .join(target)
-        .join(digest))
+    let marker = format!(
+        "2\n{}\n{digest}\n{installation}\n{target}\n",
+        identity.namespace
+    );
+    // Compact path components keep Windows batch launch paths usable. The
+    // marker retains both full digests; a truncated-name collision fails closed.
+    Ok((
+        home.join("state/workspaces")
+            .join(&identity.namespace[..32])
+            .join("flutter")
+            .join(&digest[..32]),
+        marker,
+    ))
 }
 
 pub fn prepared_workspace_flutter(
@@ -56,12 +71,13 @@ pub fn prepared_workspace_flutter(
     installation: &str,
     target: &str,
 ) -> Result<PathBuf> {
-    let path = workspace_flutter_directory(home, config_path, installation, target)?;
+    let (path, expected_marker) = workspace_flutter_spec(home, config_path, installation, target)?;
     let marker = path.join(".pinset-workspace-runtime");
     if fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
-        && fs::symlink_metadata(&marker)
-            .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink() && m.len() == 2)
-        && fs::read(&marker).is_ok_and(|bytes| bytes == b"1\n")
+        && fs::symlink_metadata(&marker).is_ok_and(|m| {
+            m.is_file() && !m.file_type().is_symlink() && m.len() == expected_marker.len() as u64
+        })
+        && fs::read(&marker).is_ok_and(|bytes| bytes == expected_marker.as_bytes())
     {
         Ok(path)
     } else {
@@ -80,7 +96,7 @@ pub fn prepare_workspace_flutter(
     target: &str,
 ) -> Result<PathBuf> {
     use fs4::FileExt;
-    let path = workspace_flutter_directory(home, config_path, installation, target)?;
+    let (path, expected_marker) = workspace_flutter_spec(home, config_path, installation, target)?;
     let parent = path.parent().expect("SDK parent");
     fs::create_dir_all(home).map_err(|error| failure(home, error))?;
     // Reject redirected ancestors before creating files in the local namespace.
@@ -139,7 +155,7 @@ pub fn prepare_workspace_flutter(
         .map_err(|error| failure(parent, error))?;
     let output = temp.path().join("sdk");
     copy_sdk(&source, &source, &output, &mut (0, 0), 0).map_err(|error| failure(&source, error))?;
-    fs::write(output.join(".pinset-workspace-runtime"), b"1\n")
+    fs::write(output.join(".pinset-workspace-runtime"), expected_marker)
         .map_err(|error| failure(&output, error))?;
     fs::rename(&output, &path).map_err(|error| failure(&path, error))?;
     Ok(path)
@@ -250,6 +266,21 @@ mod tests {
             first,
             prepare_workspace_flutter(&home, &one.join("pinset.toml"), "3.35.3", "linux-x86_64")
                 .unwrap()
+        );
+        assert!(first.strip_prefix(&home).unwrap().to_string_lossy().len() < 100);
+        fs::write(
+            first.join(".pinset-workspace-runtime"),
+            fs::read(second.join(".pinset-workspace-runtime")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            prepared_workspace_flutter(&home, &one.join("pinset.toml"), "3.35.3", "linux-x86_64")
+                .is_err(),
+            "compact directory names never replace full ownership checks"
+        );
+        assert!(
+            prepared_workspace_flutter(&home, &two.join("pinset.toml"), "3.35.3", "linux-x86_64")
+                .is_ok()
         );
     }
 }

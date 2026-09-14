@@ -486,6 +486,19 @@ pub fn verify_project_trust(
     environment_toml: &str,
 ) -> Result<()> {
     let path = trust_path(home, root)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Error::TrustMissing
+        } else {
+            Error::Io {
+                path: path.clone(),
+                source,
+            }
+        }
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 1024 * 1024 {
+        return Err(Error::UnsafePath(path));
+    }
     let content = fs::read_to_string(&path).map_err(|source| {
         if source.kind() == std::io::ErrorKind::NotFound {
             Error::TrustMissing

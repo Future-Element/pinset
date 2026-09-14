@@ -140,6 +140,18 @@ fn workspace_members_inherit_ciphertext_but_keep_profile_and_trust_local() {
                 .unwrap(),
         );
         success(&cli(member, &home).args(["trust", "add"]).output().unwrap());
+        let status = success(
+            &cli(member, &home)
+                .arg("env")
+                .env("HOSTNAME", "different-shell-export")
+                .env("WSL_DISTRO_NAME", "shell-only-label")
+                .output()
+                .unwrap(),
+        );
+        assert!(
+            status.contains("trust=trusted"),
+            "shell exports must not change host ownership"
+        );
     }
     std::thread::scope(|scope| {
         for (member, profile) in [(&one, "test"), (&two, "dev")] {

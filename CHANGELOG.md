@@ -1,27 +1,28 @@
 # Changelog
 
-## 2.15.0 - Unreleased
+## 2.15.0 - 2026-09-14
 
+- Validate explicitly listed tasks in independent current/candidate input snapshots, bind results to bounded content fingerprints and public environment context, kill timed-out task trees, preview lock changes and require explicit acceptance of limited evidence. Preserve old history without trusting obsolete evidence for application or restore.
 - Bind local profiles, trust, Python environments, editor bindings and readiness evidence to the canonical work directory, its filesystem generation and the runtime host.
 - Resolve inherited workspace environment files from their declaring root while retaining member-specific profile choice and trust; explain effective configuration origins.
 - Isolate Flutter SDK caches in owned work-directory copies while reusing verified downloads and base installations. Preserve legacy local state for explicit migration and keep SDK pruning reference-aware.
 
-## 2.14.0 - Unreleased
+### 2.14 development milestone (included in 2.15.0)
 
 - Check declared Node/bundled npm, Python, Go, Rust, Java/Gradle/AGP and .NET compatibility with explicit pass, fail, unknown and not-applicable results, revisioned rules and primary references.
 - Add optional schema 6 platform/build requirements, explicit migration previews and byte-for-byte config/lock backups. Existing schema 5 projects retain their schema until migration.
 - Add portable semantic environment comparison, separate trust/identity/variable checks, explicit source diagnostics and process-scoped enterprise CA support with TLS verification retained.
 - Verify every required platform SDK archive and overlay for offline delivery; reject incomplete or altered bundles before importing cache entries. Exact installed ephemeral runtime execution no longer requires metadata access.
-- Add optional Action preparation and portable summaries. Keep published defaults on 2.12.3 until the final combined release.
+- Add optional Action preparation and portable summaries.
 - Update the website's Next.js and Sharp dependencies to patched versions.
 - Accept official Rust default-profile package aliases and the platform-specific `rust-mingw` component when validating generated locks.
 - Install official .NET tarballs containing a `./` root entry while retaining archive traversal and collision checks.
 
-## 2.13.0 - Unreleased
+### 2.13 development milestone (included in 2.15.0)
 
 - Add explicit project preparation plans and restartable setup with locked runtime reuse, managed Python environments, contract checks and opt-in declared tasks.
 - Add opt-in environment report v2 and execution evidence; retain diagnostic and editor protocol v1 compatibility.
-- Keep public installer and Action defaults on the published release until the combined environment release is verified.
+- Update installer and Action defaults together for the combined 2.15.0 release.
 
 ## 2.12.3 - 2026-09-11
 

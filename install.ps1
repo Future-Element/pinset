@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '2.12.3',
+    [string] $Version = '2.15.0',
     [string] $InstallDir = (Join-Path $env:LOCALAPPDATA 'Pinset\bin')
 )
 

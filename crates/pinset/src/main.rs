@@ -12,11 +12,13 @@ use std::{
 
 mod bundle;
 mod candidate;
+mod candidate_inputs;
 mod delivery;
 mod diagnostics;
 mod environment;
 mod i18n;
 mod probes;
+mod process_tree;
 mod readiness;
 mod self_update;
 mod setup;
@@ -726,6 +728,9 @@ enum CandidateCommands {
     /// Run one project task against the prepared exact candidate toolchain and record its result.
     Test {
         task: String,
+        /// Compare current and candidate locks using independent copies of the same inputs.
+        #[arg(long)]
+        compare: bool,
         #[arg(long)]
         workspace: bool,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -740,6 +745,12 @@ enum CandidateCommands {
     },
     /// Apply the last passing, baseline-matched exact candidate lock.
     Apply {
+        /// Preview lock changes and restoration boundaries without applying.
+        #[arg(long)]
+        plan: bool,
+        /// Explicitly accept reported limits in the latest validation evidence.
+        #[arg(long)]
+        allow_limited: bool,
         #[arg(long)]
         workspace: bool,
         #[arg(long)]
@@ -1362,6 +1373,12 @@ fn json_error(error: &(dyn std::error::Error + 'static)) -> (&'static str, serde
 }
 
 fn main() {
+    if env::args_os()
+        .nth(1)
+        .is_some_and(|value| value == "__candidate-worker")
+    {
+        process::exit(process_tree::worker());
+    }
     process::exit(main_exit_code());
 }
 
@@ -3786,6 +3803,7 @@ fn run_candidate_command(
         }
         CandidateCommands::Test {
             task,
+            compare,
             workspace,
             arguments,
         } => {
@@ -3797,24 +3815,141 @@ fn run_candidate_command(
                     .ok_or("candidate projects require project-id")?;
                 let mut record = candidate::load_active(&home, &target.config_path, project_id)?;
                 candidate::verify_candidate_for_test(&record)?;
-                println!("{}: candidate {} test {task}", target.member, record.id);
-                let code = run_candidate_task(
-                    &home,
-                    &target,
-                    &project,
-                    &record,
-                    &task,
-                    &arguments,
-                    CandidateTaskOptions {
+                let verification = project
+                    .verification
+                    .as_ref()
+                    .ok_or("candidate tests require explicit [verification] tasks in schema 6")?;
+                if !verification.tasks.contains(&task) {
+                    return Err(
+                        format!("task {task:?} is not declared in verification.tasks").into(),
+                    );
+                }
+                for dependency in pinset_core::project_task_order(&project, &task)? {
+                    if !verification.tasks.contains(&dependency) {
+                        return Err(format!("dependency task {dependency:?} must also be explicitly listed in verification.tasks").into());
+                    }
+                }
+                let inputs = candidate_inputs::capture(&target.root, &project)?;
+                let mut limited_reasons = Vec::new();
+                if verification.external_state {
+                    limited_reasons.push("declared_external_state".into());
+                }
+                if !no_environment && project.environment.is_some() {
+                    limited_reasons.push("secret_profile_values_are_not_fingerprinted".into());
+                }
+                if !arguments.is_empty() {
+                    limited_reasons.push("additional_arguments_are_redacted".into());
+                }
+                if inputs.source != "git-tracked-and-untracked" {
+                    limited_reasons.push("non_git_input_inventory".into());
+                }
+                if inputs.excluded_sensitive_files {
+                    limited_reasons.push("sensitive_files_excluded_from_snapshot".into());
+                }
+                for name in pinset_core::project_task_order(&project, &task)? {
+                    let executable = &project.tasks[&name].command[0];
+                    if command_tool(executable).is_none() {
+                        limited_reasons.push("task_uses_unmanaged_executable".into());
+                        break;
+                    }
+                }
+                let evidence = candidate::CandidateEvidence {
+                    schema: 1,
+                    inputs: inputs.clone(),
+                    context: candidate::evidence_context(
+                        &target.config_path,
+                        &task,
                         profile,
                         no_environment,
-                    },
-                )?;
+                    )?,
+                    platform: pinset_core::current_target(),
+                    explicit_profile: profile.map(str::to_owned),
+                    no_environment,
+                    limited_reasons,
+                    current_exit_code: None,
+                    failed_task: None,
+                };
                 let recorded_arguments = arguments
                     .iter()
                     .map(|value| value.to_string_lossy().into_owned())
                     .collect::<Vec<_>>();
-                candidate::record_test(&home, &mut record, &task, &recorded_arguments, code)?;
+                if !evidence.limited_reasons.is_empty() {
+                    println!(
+                        "Validation scope is limited: {}. Tasks retain OS permissions; apply --plan reports restoration boundaries.",
+                        evidence.limited_reasons.join(", ")
+                    );
+                }
+                candidate::start_test(&home, &mut record, &task, &recorded_arguments, evidence)?;
+                println!("{}: candidate {} test {task}", target.member, record.id);
+                let mut current_code = None;
+                let mut failed_task = None;
+                let outcome = (|| -> Result<i32, Box<dyn std::error::Error>> {
+                    let mut runs = Vec::new();
+                    if compare {
+                        runs.push((
+                            "current",
+                            load_lockfile(&lockfile_path(&target.config_path))?,
+                        ));
+                    }
+                    runs.push(("candidate", record.lock.clone()));
+                    let mut candidate_code = 125;
+                    for (label, lock) in runs {
+                        let snapshot = candidate_inputs::Snapshot::create(
+                            &home,
+                            &target.root,
+                            &project,
+                            &lock,
+                            &inputs,
+                        )?;
+                        let snapshot_target = CandidateTarget {
+                            member: target.member.clone(),
+                            root: snapshot.root().to_path_buf(),
+                            config_path: snapshot.root().join("pinset.toml"),
+                        };
+                        let mut run_record = record.clone();
+                        run_record.lock = lock;
+                        let (code, failed) = run_candidate_task(
+                            &home,
+                            &snapshot_target,
+                            &project,
+                            &run_record,
+                            &task,
+                            &arguments,
+                            CandidateTaskOptions {
+                                profile,
+                                no_environment,
+                            },
+                        )?;
+                        if failed.is_some() {
+                            failed_task = failed;
+                        }
+                        println!("{label}: task {task} exit={code}");
+                        if label == "current" {
+                            current_code = Some(code);
+                        } else {
+                            candidate_code = code;
+                        }
+                        if code == 124 || code == 130 {
+                            return Ok(code);
+                        }
+                    }
+                    Ok(candidate_code)
+                })();
+                let code = match outcome {
+                    Ok(code) => {
+                        candidate::finish_test(&home, &mut record, code, current_code, failed_task)?
+                    }
+                    Err(error) => {
+                        candidate::finish_test(
+                            &home,
+                            &mut record,
+                            125,
+                            current_code,
+                            Some(task.clone()),
+                        )?;
+                        return Err(error);
+                    }
+                };
                 if code != 0 {
                     return Ok(code);
                 }
@@ -3854,7 +3989,12 @@ fn run_candidate_command(
             }
             Ok(0)
         }
-        CandidateCommands::Apply { workspace, json } => {
+        CandidateCommands::Apply {
+            workspace,
+            json,
+            plan,
+            allow_limited,
+        } => {
             let mut records = Vec::new();
             for target in candidate_targets(workspace)? {
                 let project = load_effective_project_config(&target.config_path)?;
@@ -3868,7 +4008,20 @@ fn run_candidate_command(
                     project_id,
                 )?);
             }
-            let histories = candidate::apply_records(&home, &records)?;
+            if plan {
+                let mut previews = Vec::new();
+                for record in &records {
+                    let previous = load_lockfile(&lockfile_path(&record.config_path))?;
+                    previews.push(serde_json::json!({"candidate_id":record.id,"config_path":record.config_path,"previous_lock":previous,"candidate_lock":record.lock,"latest_test":record.tests.last(),"restoration_scope":candidate::restoration_scope()}));
+                }
+                if json {
+                    print_json_success("candidate.apply.plan", &previews)?;
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&previews)?);
+                }
+                return Ok(0);
+            }
+            let histories = candidate::apply_records(&home, &records, allow_limited)?;
             if json {
                 print_json_success("candidate.apply", &histories)?;
             } else {
@@ -3991,7 +4144,7 @@ fn run_candidate_task(
     task_name: &str,
     appended: &[OsString],
     options: CandidateTaskOptions<'_>,
-) -> Result<i32, Box<dyn std::error::Error>> {
+) -> Result<(i32, Option<String>), Box<dyn std::error::Error>> {
     if !project.tasks.contains_key(task_name) {
         return Err(format!("project task {task_name:?} is not declared").into());
     }
@@ -4000,10 +4153,10 @@ fn run_candidate_task(
         let code =
             run_candidate_task_once(home, target, project, record, &current, arguments, options)?;
         if code != 0 {
-            return Ok(code);
+            return Ok((code, Some(current)));
         }
     }
-    Ok(0)
+    Ok((0, None))
 }
 
 fn run_candidate_task_once(
@@ -4048,11 +4201,19 @@ fn run_candidate_task_once(
             .ok_or_else(|| Error::LockedToolMissing {
                 tool: provider.tool.to_owned(),
             })?;
-        let install_dir = home
+        let mut install_dir = home
             .join("installs")
             .join(provider.tool)
             .join(locked.installation_version())
             .join(current_target_for_tool(provider.tool));
+        if provider.tool == "flutter" {
+            install_dir = pinset_core::prepared_workspace_flutter(
+                home,
+                &target.config_path,
+                &locked.installation_version(),
+                &current_target_for_tool("flutter"),
+            )?;
+        }
         let command_dir = runtime_command_directory(provider.tool, &install_dir);
         if !command_dir.is_dir() {
             return Err(format!(
@@ -4088,13 +4249,11 @@ fn run_candidate_task_once(
             .into_iter()
             .find(|path| path.is_file())
             .ok_or_else(|| format!("candidate Python {} is not installed", locked.version))?;
-        let directory =
-            candidate::candidate_directory(home, &record.config_path, &record.project_id)?;
-        let relative = format!("venvs/{}/{}", record.id, environment_name);
+        let relative = python_environment_relative_path(project, environment_name)?;
         let environment = create_project_python_environment_for(
-            &directory.join("candidate-project.toml"),
+            &target.config_path,
             environment_name,
-            &relative,
+            relative,
             &base_python,
             &locked.version,
             &current_target_for_tool("python"),
@@ -4136,11 +4295,19 @@ fn run_candidate_task_once(
                 .ok_or_else(|| Error::LockedToolMissing {
                     tool: tool.to_owned(),
                 })?;
-            let install_dir = home
+            let mut install_dir = home
                 .join("installs")
                 .join(tool)
                 .join(locked.installation_version())
                 .join(current_target_for_tool(tool));
+            if tool == "flutter" {
+                install_dir = pinset_core::prepared_workspace_flutter(
+                    home,
+                    &target.config_path,
+                    &locked.installation_version(),
+                    &current_target_for_tool("flutter"),
+                )?;
+            }
             runtime_command_candidates(tool, command_name, &install_dir)
                 .into_iter()
                 .find(|path| path.is_file())
@@ -4165,13 +4332,43 @@ fn run_candidate_task_once(
     };
     validate_windows_batch_arguments(&executable, &child_arguments)?;
     let mut child = command_for_runtime(&executable);
+    process_tree::system_environment(&mut child);
+    for (name, relative) in [
+        ("HOME", "home"),
+        ("USERPROFILE", "home"),
+        ("TMP", "tmp"),
+        ("TEMP", "tmp"),
+        ("TMPDIR", "tmp"),
+        ("CARGO_HOME", "cargo"),
+        ("GOMODCACHE", "go-mod"),
+        ("GOCACHE", "go-build"),
+        ("GRADLE_USER_HOME", "gradle"),
+        ("NUGET_PACKAGES", "nuget"),
+        ("DOTNET_CLI_HOME", "dotnet"),
+        ("PUB_CACHE", "pub"),
+        ("NPM_CONFIG_CACHE", "npm"),
+        ("NPM_CONFIG_PREFIX", "npm-global"),
+        ("PNPM_HOME", "pnpm"),
+        ("GOPATH", "go-path"),
+        ("CARGO_INSTALL_ROOT", "cargo-install"),
+        ("XDG_CACHE_HOME", "cache"),
+    ] {
+        let directory = target.root.join(".pinset-candidate-state").join(relative);
+        fs::create_dir_all(&directory)?;
+        child.env(name, directory);
+    }
     child
         .args(child_arguments)
         .current_dir(&task_cwd)
         .env("PATH", candidate_path)
         .env("PINSET_CANDIDATE_ID", &record.id)
         .env("PINSET_SELECTION_SOURCE", "candidate")
-        .env("PINSET_CONFIG_PATH", &record.config_path);
+        .env("PINSET_CONFIG_PATH", &target.config_path)
+        .env("PINSET_HOME", home)
+        .env("PINSET_ENV_DISABLE", "1")
+        .env("GOTOOLCHAIN", "local")
+        .env("GOENV", "off")
+        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
     if let Some(tool) = managed_tool {
         let locked = record
             .lock
@@ -4181,8 +4378,9 @@ fn run_candidate_task_once(
             .env("PINSET_SELECTED_TOOL", tool)
             .env("PINSET_SELECTED_VERSION", &locked.version);
     }
-    let mut occupied_environment = env::vars_os()
-        .filter_map(|(name, _)| name.into_string().ok())
+    let mut occupied_environment = child
+        .get_envs()
+        .filter_map(|(name, value)| value.and_then(|_| name.to_str().map(str::to_owned)))
         .map(|name| name.to_ascii_uppercase())
         .collect::<BTreeSet<_>>();
     for variable in runtime_environment {
@@ -4195,7 +4393,11 @@ fn run_candidate_task_once(
         task.profile.as_deref()
     };
     if !options.no_environment {
-        let (collision, encrypted) = environment::resolve_environment(&target.root, task_profile)?;
+        let original_root = record
+            .config_path
+            .parent()
+            .ok_or("candidate original directory missing")?;
+        let (collision, encrypted) = environment::resolve_environment(original_root, task_profile)?;
         for (name, mut value) in encrypted {
             let exists = occupied_environment.contains(&name.to_ascii_uppercase());
             match (collision, exists) {
@@ -4218,12 +4420,16 @@ fn run_candidate_task_once(
         "PINSET_IDENTITY",
         "PINSET_IDENTITY_FILE",
         "PINSET_ENV_PROFILE",
-        "PINSET_ENV_DISABLE",
         "PYTHONHOME",
     ] {
         child.env_remove(name);
     }
-    Ok(child.status()?.code().unwrap_or(1))
+    let timeout = project
+        .verification
+        .as_ref()
+        .ok_or("verification declaration missing")?
+        .timeout_seconds;
+    Ok(process_tree::run(child, std::time::Duration::from_secs(timeout), None)?.code)
 }
 
 fn candidate_path_executable(command: &str, cwd: &Path, path: &[PathBuf]) -> Option<PathBuf> {
@@ -4601,7 +4807,7 @@ fn completion_script(shell: ActivationShell) -> String {
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
-            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help" ;;
+            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --compare --plan --allow-limited --workspace --no-install --json --lang --help" ;;
             workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
@@ -4650,7 +4856,7 @@ _pinset_completion() {
             lock) values="__LOCK_COMMANDS__ --global --cwd --json --lang --help" ;;
             cache) values="__CACHE_COMMANDS__ --lang --help" ;;
             bundle) values="__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help" ;;
-            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help" ;;
+            candidate) values="__CANDIDATE_COMMANDS__ __PROVIDERS__ --compare --plan --allow-limited --workspace --no-install --json --lang --help" ;;
             workspace) values="__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help" ;;
             venv) values="__VENV_COMMANDS__ --lang --help" ;;
             shim) values="__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help" ;;
@@ -4677,7 +4883,7 @@ complete -c pinset -f -n '__fish_seen_subcommand_from unset list current outdate
 complete -c pinset -f -n '__fish_seen_subcommand_from list' -a '--remote --available --long'
 complete -c pinset -f -n '__fish_seen_subcommand_from cache' -a '__CACHE_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from bundle' -a '__BUNDLE_COMMANDS__ --cwd --output --target --json'
-complete -c pinset -f -n '__fish_seen_subcommand_from candidate' -a '__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json'
+complete -c pinset -f -n '__fish_seen_subcommand_from candidate' -a '__CANDIDATE_COMMANDS__ __PROVIDERS__ --compare --plan --allow-limited --workspace --no-install --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from workspace' -a '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json'
 complete -c pinset -f -n '__fish_seen_subcommand_from lock' -a '__LOCK_COMMANDS__'
 complete -c pinset -f -n '__fish_seen_subcommand_from venv' -a '__VENV_COMMANDS__'
@@ -4729,7 +4935,7 @@ complete -c pinset -f -a '--help --lang'"#
         'lock' { '__LOCK_COMMANDS__ --global --cwd --json --lang --help' -split ' ' }
         'cache' { '__CACHE_COMMANDS__ --lang --help' -split ' ' }
         'bundle' { '__BUNDLE_COMMANDS__ --cwd --output --target --json --lang --help' -split ' ' }
-        'candidate' { '__CANDIDATE_COMMANDS__ __PROVIDERS__ --workspace --no-install --json --lang --help' -split ' ' }
+        'candidate' { '__CANDIDATE_COMMANDS__ __PROVIDERS__ --compare --plan --allow-limited --workspace --no-install --json --lang --help' -split ' ' }
         'workspace' { '__WORKSPACE_COMMANDS__ --member --changed-since --offline --json --lang --help' -split ' ' }
         'venv' { '__VENV_COMMANDS__ --lang --help' -split ' ' }
         'shim' { '__SHIM_COMMANDS__ __PROVIDERS__ --provider --all --binary --dir --lang --help' -split ' ' }
@@ -5556,6 +5762,7 @@ fn load_project_import_state(
         load_project_config(config_path)?
     } else {
         ProjectConfig {
+            verification: None,
             requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),
@@ -9619,6 +9826,7 @@ mod tests {
     #[test]
     fn import_replacement_check_is_limited_to_discovered_tools() {
         let project = ProjectConfig {
+            verification: None,
             requirements: None,
             schema: PROJECT_CONFIG_SCHEMA,
             project_id: Some(uuid::Uuid::new_v4().to_string()),
@@ -9876,6 +10084,7 @@ mod tests {
         save_project_config(
             &project_path,
             &ProjectConfig {
+                verification: None,
                 requirements: None,
                 schema: PROJECT_CONFIG_SCHEMA,
                 project_id: Some(uuid::Uuid::new_v4().to_string()),
@@ -10217,6 +10426,7 @@ mod tests {
         save_project_config(
             &project_path,
             &ProjectConfig {
+                verification: None,
                 requirements: None,
                 schema: PROJECT_CONFIG_SCHEMA,
                 project_id: Some(uuid::Uuid::new_v4().to_string()),

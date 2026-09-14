@@ -1,6 +1,6 @@
 # Work directory environments / 工作目录环境
 
-Development version 2.15.0. Public distribution defaults remain unchanged until the combined release.
+Available in the combined Pinset 2.15.0 environment release.
 
 Each worktree or workspace member uses its own checked-out `pinset.toml` and `pinset.lock`. Run `pinset setup --plan`, then `pinset setup` in an already-created directory. Pinset does not create branches or worktrees.
 
@@ -11,6 +11,8 @@ Each worktree or workspace member uses its own checked-out `pinset.toml` and `pi
 | Python venv | Member-local path with directory/host ownership marker |
 | Flutter SDK/cache | Owned local copy under `PINSET_HOME/state/workspaces`; never hard-linked to another directory's mutable files |
 | Project dependencies, build outputs and task files | Remain project-owned; Pinset does not link these between worktrees |
+
+Flutter uses compact directory components for Windows path compatibility; full directory and SDK receipt identities remain in its ownership marker and are checked before reuse.
 
 Directory identity includes the filesystem file ID and birth time, so editing project files retains the directory identity while deleting/recreating or moving the directory invalidates local state. Symbolic directory aliases resolve to one canonical identity. Filesystems without reliable birth-time support return an error rather than reusing unbound local state. Host identity stays local and is excluded from portable reports. This is a namespace boundary, not an OS sandbox or a promise to intercept arbitrary external tools.
 

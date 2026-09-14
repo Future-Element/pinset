@@ -79,6 +79,6 @@ Set `PINSET_CA_BUNDLE` to a regular PEM certificate bundle of at most 1 MiB to a
 
 `--offline` 不联网，逐一校验所需平台的基础归档与覆盖归档。预取默认使用声明的平台，再回退当前主机。可移植 Bun x64 包需同时包含 baseline 和 AVX2。离线包缺失/多出条目、清单不一致或内容损坏时，在写入缓存前拒绝。SDK 交付不涵盖 npm/pip/Maven/Gradle 项目依赖、Android/Xcode 或应用构建产物；相关缓存通过明确的项目任务准备。
 
-The Action's optional `prepare: "true"` runs setup after the requested project trust step; `environment-report: "true"` saves a portable report and emits a small job summary. Both require a release with the environment commands. They default to false while the Action's public version default remains 2.12.3. Summary output contains only readiness booleans and runtime/version/target, not decrypted values or paths.
+The Action's optional `prepare: "true"` runs setup after the requested project trust step; `environment-report: "true"` saves a portable report and emits a small job summary. Both default to false and require Pinset 2.15.0 or later. Summary output contains only readiness booleans and runtime/version/target, not decrypted values or paths.
 
-Action 可选 `prepare: "true"` 在指定信任步骤后执行准备；`environment-report: "true"` 保存可移植报告和简短作业摘要。这两项需要包含新环境命令的版本，当前默认关闭，公共版本默认值仍为 2.12.3。摘要仅含就绪布尔值及运行时/版本/平台，不含解密值或路径。
+Action 可选 `prepare: "true"` 在指定信任步骤后执行准备；`environment-report: "true"` 保存可移植报告和简短作业摘要。这两项默认关闭，需要 Pinset 2.15.0 或更高版本。摘要仅含就绪布尔值及运行时/版本/平台，不含解密值或路径。

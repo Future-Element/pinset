@@ -798,14 +798,14 @@ Root tools, tasks, Python environments, and environment settings provide member 
 | Command | Behavior |
 | --- | --- |
 | `candidate prepare [tool] [--workspace] [--no-install] [--json]` | Re-resolve all selectors or one tool, save a candidate record under `PINSET_HOME`, and prepare every exact runtime unless `--no-install` is set. The active lock is unchanged. |
-| `candidate test <task> [--workspace] [-- <arguments...>]` | Run a declared task with the candidate runtime directories, variables, and an isolated candidate Python environment; preserve and record the child exit code. |
+| `candidate test <task> [--compare] [--workspace] [-- <arguments...>]` | Run a declared task with the candidate runtime directories, variables, and an isolated candidate Python environment; preserve and record the child exit code. |
 | `candidate status [--workspace] [--json]` | Show candidate identity, exact-lock digest, and test records. |
-| `candidate apply [--workspace] [--json]` | Apply the exact candidate from the latest passing test after rechecking project, lock, and Git baselines. |
+| `candidate apply [--plan] [--allow-limited] [--workspace] [--json]` | Apply the exact candidate from the latest passing test after rechecking project, lock, and Git baselines. |
 | `candidate history [--json]` | List local application and restoration records for the current project. |
 | `candidate restore [history-id] [--json]` | Restore the previous lock from the selected or latest history entry when the current state still matches it. |
 | `candidate recover [--json]` | Complete history for fully applied interrupted transactions or roll a partially applied workspace transaction back to every previous member lock. |
 
-Candidate apply writes a recovery journal before changing any lock. It rejects concurrent configuration or lock changes and uses one deterministic history entry per member. Candidate history covers Pinset-managed lock state only; task side effects in source files, databases, or external services are outside recovery.
+Schema 6 `[verification]` must list each validation task and its dependencies. Tests run in independent snapshots; `--compare` runs both locks from the same inputs. Apply rechecks content fingerprints, including changes inside an already dirty worktree. See the [candidate validation guide](https://github.com/Future-Element/pinset/blob/main/docs/candidate-verification.md) for input limits, secret/external-state evidence and `--allow-limited`. Candidate apply writes a recovery journal before changing any lock. It rejects concurrent configuration or lock changes and uses one deterministic history entry per member. Candidate history covers Pinset-managed lock state only; task side effects in source files, databases, or external services are outside recovery.
 
 The initialization wizard chooses a profile, recovery setup, and a new or existing device identity. After creating the profile it saves a local preference and asks separately whether to trust the project. A fully explicit `env init` keeps the existing behavior: use `--auto` for a shared default or `env use` for a local one. No new project or lock schema is introduced.
 
@@ -1136,9 +1136,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.12.3
+      - uses: Future-Element/pinset@v2.15.0
         with:
-          version: 2.12.3
+          version: 2.15.0
           install: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
       - run: pinset exec -- node app.js

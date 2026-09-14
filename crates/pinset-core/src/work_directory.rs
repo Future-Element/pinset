@@ -62,7 +62,7 @@ fn host_identity() -> io::Result<String> {
     digest.update(env::consts::OS.as_bytes());
     digest.update(env::consts::ARCH.as_bytes());
     let mut identified = false;
-    if cfg!(unix) {
+    if cfg!(unix) && !cfg!(target_os = "macos") {
         for path in [
             "/etc/machine-id",
             "/var/lib/dbus/machine-id",
@@ -77,15 +77,9 @@ fn host_identity() -> io::Result<String> {
                     digest.update(path.as_bytes());
                     digest.update(bytes);
                     identified = true;
+                    break;
                 }
             }
-        }
-    }
-    for name in ["COMPUTERNAME", "HOSTNAME", "WSL_DISTRO_NAME"] {
-        if let Some(value) = env::var_os(name).filter(|value| !value.is_empty()) {
-            digest.update(name.as_bytes());
-            digest.update(value.to_string_lossy().as_bytes());
-            identified = true;
         }
     }
     // macOS shells need not export HOSTNAME. Its /private directory identity is
@@ -95,6 +89,35 @@ fn host_identity() -> io::Result<String> {
         same_file::Handle::from_path("/private")?.hash(&mut handle);
         digest.update(handle.0.finalize());
         identified = true;
+    }
+    if cfg!(windows) {
+        let system = env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\Windows"));
+        let mut handle = IdentityHasher(Sha256::new());
+        same_file::Handle::from_path(&system)?.hash(&mut handle);
+        digest.update(handle.0.finalize());
+        digest.update(
+            fs::metadata(system)?
+                .created()?
+                .duration_since(UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_nanos()
+                .to_le_bytes(),
+        );
+        identified = true;
+    }
+    // Shell-only HOSTNAME/WSL_DISTRO_NAME exports must not change GUI, terminal
+    // or SSH ownership when the operating system already provides an identity.
+    if !identified {
+        for name in ["COMPUTERNAME", "HOSTNAME"] {
+            if let Some(value) = env::var_os(name).filter(|value| !value.is_empty()) {
+                digest.update(name.as_bytes());
+                digest.update(value.to_string_lossy().as_bytes());
+                identified = true;
+                break;
+            }
+        }
     }
     if !identified {
         return Err(io::Error::other(

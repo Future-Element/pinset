@@ -140,7 +140,7 @@ pub use config::{
     EnvironmentVariableContract, EnvironmentVariableType, PROJECT_CONFIG_FILENAME,
     PROJECT_CONFIG_SCHEMA, ProjectBoundary, ProjectConfig, ProjectContext, ProjectEnvironment,
     ProjectPolicy, ProjectPython, ProjectPythonEnvironmentConfig, ProjectRequirements, ProjectTask,
-    ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
+    ProjectVerification, ProjectWorkspace, ToolOptions, WorkspaceMember, effective_project_config,
     find_optional_project_config, find_project_config, find_project_context, find_workspace_config,
     load_effective_project_config, load_project_config, project_configuration_origins,
     project_environment_source, project_task_order, validate_environment_variable_value,
