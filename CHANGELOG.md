@@ -3,6 +3,7 @@
 ## 2.16.1 - 2026-09-15
 
 - Install pnpm 12 standalone packages using their native executable layout while retaining pnpm 10/11 wrapper compatibility. Existing pnpm 12 locks now install successfully instead of requiring the removed `dist/pnpm.mjs` path.
+- Upgrade rustls to 0.23.45 to address RUSTSEC-2026-0285 before publishing the release.
 
 ## 2.16.0 - 2026-09-14
 
