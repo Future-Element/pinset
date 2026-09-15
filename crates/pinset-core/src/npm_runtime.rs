@@ -60,7 +60,7 @@ pub fn install_locked_npm_tool(
     };
     let base_artifacts = overlays
         .iter()
-        .map(overlay_install_spec)
+        .map(|overlay| overlay_install_spec(&locked_tool.name, &locked_tool.version, overlay))
         .collect::<Result<Vec<_>>>()?;
     let executable_paths = if locked_tool.name == "pnpm" && !target.starts_with("windows-") {
         vec![PathBuf::from(target_manifest.required_path)]
@@ -96,7 +96,11 @@ pub fn install_locked_npm_tool(
     installer.install(&request)
 }
 
-fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInstallSpec> {
+fn overlay_install_spec(
+    tool: &str,
+    version: &str,
+    overlay: &LockedArtifactOverlay,
+) -> Result<ArtifactInstallSpec> {
     let format = match overlay.format {
         LockedArtifactFormat::TarGz => ArtifactFormat::TarGz,
         LockedArtifactFormat::Zip => ArtifactFormat::Zip,
@@ -104,6 +108,14 @@ fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInsta
         LockedArtifactFormat::Binary => {
             return Err(Error::InvalidLockfile {
                 reason: "npm overlay cannot use binary format".to_owned(),
+            });
+        }
+    };
+    let required_runtime_path = match tool {
+        "pnpm" => pnpm_overlay_required_path(version)?,
+        _ => {
+            return Err(Error::InvalidLockfile {
+                reason: format!("{tool} cannot contain an npm wrapper overlay"),
             });
         }
     };
@@ -120,11 +132,21 @@ fn overlay_install_spec(overlay: &LockedArtifactOverlay) -> Result<ArtifactInsta
         },
         strip_components: 1,
         include_prefixes: vec![PathBuf::from("dist"), PathBuf::from("package.json")],
-        required_paths: vec![
-            PathBuf::from("dist/pnpm.mjs"),
-            PathBuf::from("package.json"),
-        ],
+        required_paths: vec![required_runtime_path, PathBuf::from("package.json")],
     })
+}
+
+fn pnpm_overlay_required_path(version: &str) -> Result<PathBuf> {
+    let version = Version::parse(version).map_err(|_| Error::InvalidLockfile {
+        reason: format!("invalid pnpm version {version}"),
+    })?;
+    // pnpm 11 loads its JavaScript runtime from the wrapper. pnpm 12's platform
+    // package is native, while the wrapper contributes the bundled node-gyp tools.
+    Ok(PathBuf::from(if version.major >= 12 {
+        "dist/node-gyp-bin/node-gyp"
+    } else {
+        "dist/pnpm.mjs"
+    }))
 }
 
 fn npm_install_aliases(tool: &str, target: &str) -> Vec<InstallAlias> {
@@ -153,5 +175,17 @@ mod tests {
         assert_eq!(aliases[0].source, Path::new("bin/bun"));
         assert_eq!(aliases[0].destination, Path::new("bin/bunx"));
         assert!(npm_install_aliases("pnpm", "linux-x86_64").is_empty());
+    }
+
+    #[test]
+    fn pnpm_overlay_required_path_matches_package_generation() {
+        assert_eq!(
+            pnpm_overlay_required_path("11.25.0").expect("pnpm 11 required path"),
+            Path::new("dist/pnpm.mjs")
+        );
+        assert_eq!(
+            pnpm_overlay_required_path("12.4.1").expect("pnpm 12 required path"),
+            Path::new("dist/node-gyp-bin/node-gyp")
+        );
     }
 }

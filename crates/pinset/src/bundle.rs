@@ -251,13 +251,10 @@ pub fn import(
             }
         }
     }
-    let supplied = manifest
-        .artifacts
-        .iter()
-        .map(|artifact| {
-            ArtifactIntegrity::parse(&artifact.integrity).map(|value| value.canonical())
-        })
-        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut supplied = BTreeSet::new();
+    for artifact in &manifest.artifacts {
+        supplied.insert(ArtifactIntegrity::parse(&artifact.integrity)?.canonical());
+    }
     if required.is_empty() || supplied != required || supplied.len() != manifest.artifacts.len() {
         return Err(
             "bundle manifest must contain exactly the complete locked target artifact set".into(),

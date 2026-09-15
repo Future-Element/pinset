@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.16.1 - 2026-09-15
+
+- Install pnpm 12 standalone packages using their native executable layout while retaining pnpm 10/11 wrapper compatibility. Existing pnpm 12 locks now install successfully instead of requiring the removed `dist/pnpm.mjs` path.
+
 ## 2.16.0 - 2026-09-14
 
 - Store environment profiles exclusively as dotenv-style `.env.<profile>` files with visible variable names and independently encrypted values. Updating one value preserves unrelated ciphertext and requires only the committed public recipients; whole-file `.age` profiles are rejected.
