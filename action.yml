@@ -6,7 +6,7 @@ inputs:
   version:
     description: Exact Pinset release version without the leading v.
     required: false
-    default: 2.16.1
+    default: 2.16.2
   install:
     description: Run pinset install --locked after Pinset is available.
     required: false
@@ -47,7 +47,7 @@ runs:
         PINSET_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        minimum="2.16.0"
+        minimum="2.16.1"
         if [[ ! "${PINSET_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
           echo "Pinset version must be an exact stable or rc release" >&2
           exit 1
@@ -92,7 +92,7 @@ runs:
         PINSET_VERSION: ${{ inputs.version }}
       run: |
         $ErrorActionPreference = 'Stop'
-        $minimumVersion = [version]'2.16.0'
+        $minimumVersion = [version]'2.16.1'
         if ($env:PINSET_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') {
           throw 'Pinset version must be an exact stable or rc release'
         }

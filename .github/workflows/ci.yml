@@ -197,12 +197,12 @@ jobs:
       - name: Smoke test the local composite action
         uses: ./
         with:
-          version: 2.16.1
+          version: 2.16.2
           install: "false"
 
       - name: Verify the action-installed CLI
         shell: bash
-        run: pinset --version | grep -F "pinset 2.16.1"
+        run: pinset --version | grep -F "pinset 2.16.2"
 
       - name: Prepare pinned Rust toolchain
         run: |

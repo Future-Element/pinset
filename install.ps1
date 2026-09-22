@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '2.16.1',
+    [string] $Version = '2.16.2',
     [string] $InstallDir = (Join-Path $env:LOCALAPPDATA 'Pinset\bin')
 )
 
@@ -10,7 +10,7 @@ Set-StrictMode -Version Latest
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') {
     throw 'Version must be an exact stable or rc release without a leading v.'
 }
-$minimumVersion = [version]'2.16.0'
+$minimumVersion = [version]'2.16.1'
 $versionCore = [version]($Version -replace '-.*$', '')
 if ($versionCore -lt $minimumVersion -or
     ($versionCore -eq $minimumVersion -and $Version.Contains('-'))) {

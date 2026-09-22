@@ -303,6 +303,11 @@ pub fn find_optional_project_config(start: &Path) -> Result<Option<PathBuf>> {
 }
 
 pub fn find_project_context(start: &Path) -> Result<ProjectContext> {
+    let home = user_home_directory();
+    find_project_context_with_home(start, home.as_deref())
+}
+
+fn find_project_context_with_home(start: &Path, home: Option<&Path>) -> Result<ProjectContext> {
     let start = normalized_search_start(start);
     let start = if start.is_absolute() {
         start.to_path_buf()
@@ -314,7 +319,12 @@ pub fn find_project_context(start: &Path) -> Result<ProjectContext> {
             })?
             .join(start)
     };
-    let default_boundary = nearest_git_root(&start).unwrap_or_else(|| start.clone());
+    let default_boundary = nearest_git_root(&start)
+        .or_else(|| {
+            home.filter(|home| home.is_absolute() && start.starts_with(home))
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_else(|| start.clone());
 
     for directory in ancestors_through(&start, &default_boundary) {
         let candidate = directory.join(PROJECT_CONFIG_FILENAME);
@@ -381,6 +391,14 @@ fn nearest_git_root(start: &Path) -> Option<PathBuf> {
             marker.is_file() || marker.is_dir()
         })
         .map(Path::to_path_buf)
+}
+
+fn user_home_directory() -> Option<PathBuf> {
+    if cfg!(windows) {
+        env::var_os("USERPROFILE").map(PathBuf::from)
+    } else {
+        env::var_os("HOME").map(PathBuf::from)
+    }
 }
 
 fn filesystem_root(start: &Path) -> PathBuf {
@@ -1422,6 +1440,45 @@ mod tests {
             find_project_config(&nested).expect("config"),
             package.join("pinset.toml")
         );
+    }
+
+    #[test]
+    fn non_git_project_inherits_root_config_within_home_boundary() {
+        let home = tempdir().expect("home directory");
+        let project = home.path().join("code").join("workspace");
+        let nested = project.join("apps").join("server");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(
+            project.join(PROJECT_CONFIG_FILENAME),
+            "schema = 1\n[tools]\nbun = \"1.4.2\"\n",
+        )
+        .expect("root config");
+
+        let context =
+            find_project_context_with_home(&nested, Some(home.path())).expect("project context");
+        assert_eq!(context.boundary, home.path());
+        assert_eq!(
+            context.config_path,
+            Some(project.join(PROJECT_CONFIG_FILENAME))
+        );
+    }
+
+    #[test]
+    fn non_git_project_does_not_cross_an_unrelated_home_boundary() {
+        let root = tempdir().expect("filesystem root");
+        let home = root.path().join("home");
+        let nested = home.join("workspace").join("apps").join("server");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(
+            root.path().join(PROJECT_CONFIG_FILENAME),
+            "schema = 1\n[tools]\nbun = \"1.4.2\"\n",
+        )
+        .expect("unrelated parent config");
+
+        let context =
+            find_project_context_with_home(&nested, Some(&home)).expect("project context");
+        assert_eq!(context.boundary, home);
+        assert_eq!(context.config_path, None);
     }
 
     #[test]

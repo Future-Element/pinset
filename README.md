@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install an exact version or choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,12 +114,12 @@ Remove-Item .\install.ps1
 Install an exact version:
 
 ```powershell
-.\install.ps1 -Version 2.16.1
+.\install.ps1 -Version 2.16.2
 ```
 
 Windows and WSL are separate environments and require separate installations. The installer registers Pinset and every built-in command route, but it does not pre-download language runtimes.
 
-Archives are also available from [GitHub Releases](https://github.com/Future-Element/pinset/releases), together with checksums, SBOMs, and build provenance. Pinset 2.16.0 is the minimum downloadable version; installers, the Action, and self-update reject earlier versions, whose binary Release assets are removed after the 2.16.0 release passes native verification.
+Archives are also available from [GitHub Releases](https://github.com/Future-Element/pinset/releases), together with checksums, SBOMs, and build provenance. Pinset 2.16.1 is the minimum downloadable version; installers, the Action, and self-update reject earlier versions, whose binary Release assets are removed after the 2.16.2 release passes native verification.
 
 ## Shell setup
 
@@ -323,9 +323,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.16.1
+      - uses: Future-Element/pinset@v2.16.2
         with:
-          version: 2.16.1
+          version: 2.16.2
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
