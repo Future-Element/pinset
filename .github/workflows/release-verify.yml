@@ -67,8 +67,8 @@ jobs:
           fi
 
   close-legacy-downloads:
-    name: Close pre-2.16 binary downloads
-    if: ${{ inputs.tag == 'v2.16.0' }}
+    name: Close pre-2.16.1 binary downloads
+    if: ${{ inputs.tag == 'v2.16.2' }}
     needs: verify
     runs-on: ubuntu-24.04
     permissions:
@@ -79,7 +79,7 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
 
-      - name: Remove assets from releases older than 2.16.0
+      - name: Remove assets from releases older than 2.16.1
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/close_legacy_release_downloads.mjs --cutoff 2.16.0 --apply
+        run: node scripts/close_legacy_release_downloads.mjs --cutoff 2.16.1 --apply

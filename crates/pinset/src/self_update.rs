@@ -16,7 +16,7 @@ const RELEASE_FEED: &str = "https://github.com/Future-Element/pinset/releases.at
 const RELEASE_TAG_PATH: &str = "/Future-Element/pinset/releases/tag/";
 const RELEASE_TAG_URL: &str = "https://github.com/Future-Element/pinset/releases/tag/";
 const RELEASES: &str = "https://github.com/Future-Element/pinset/releases/download";
-const MINIMUM_DOWNLOAD_VERSION: &str = "2.16.0";
+const MINIMUM_DOWNLOAD_VERSION: &str = "2.16.1";
 const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_RELEASE_FEED_BYTES: u64 = 1024 * 1024;
 
@@ -514,8 +514,9 @@ mod tests {
         assert!(Version::parse("1.9.0").unwrap() < Version::parse("2.0.0-rc.1").unwrap());
         assert_eq!(parse_tag("v2.0.0-rc.1").unwrap().to_string(), "2.0.0-rc.1");
         assert!(ensure_download_supported(&Version::parse("2.15.0").unwrap()).is_err());
-        assert!(ensure_download_supported(&Version::parse("2.16.0-rc.1").unwrap()).is_err());
-        assert!(ensure_download_supported(&Version::parse("2.16.0").unwrap()).is_ok());
+        assert!(ensure_download_supported(&Version::parse("2.16.1-rc.1").unwrap()).is_err());
+        assert!(ensure_download_supported(&Version::parse("2.16.0").unwrap()).is_err());
+        assert!(ensure_download_supported(&Version::parse("2.16.1").unwrap()).is_ok());
     }
 
     #[test]

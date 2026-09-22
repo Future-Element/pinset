@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.16.2 - 2026-09-22
+
+- Resolve every managed runtime from the nearest project configuration when commands run inside nested directories of a non-Git workspace, while retaining the user-home discovery boundary.
+- Make 2.16.1 the minimum downloadable release across installers, the Action, and self-update.
+- Remove binary assets from releases older than 2.16.1 only after the 2.16.2 published-release verification succeeds; historical notes, tags, and source archives remain available.
+
 ## 2.16.1 - 2026-09-15
 
 - Install pnpm 12 standalone packages using their native executable layout while retaining pnpm 10/11 wrapper compatibility. Existing pnpm 12 locks now install successfully instead of requiring the removed `dist/pnpm.mjs` path.

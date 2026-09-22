@@ -99,7 +99,7 @@ export PATH="$HOME/.local/bin:$PATH"
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.1
+curl -fsSL https://raw.githubusercontent.com/Future-Element/pinset/main/install.sh | sh -s -- --version 2.16.2
 PINSET_INSTALL_DIR=/opt/pinset/bin sh install.sh
 ```
 
@@ -114,12 +114,12 @@ Remove-Item .\install.ps1
 指定版本：
 
 ```powershell
-.\install.ps1 -Version 2.16.1
+.\install.ps1 -Version 2.16.2
 ```
 
 Windows 与 WSL 是两个独立环境，需要分别安装。安装器只安装 Pinset 和所有内置命令路由，不会预先下载语言运行时。
 
-也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载归档。Release 同时提供 checksum、SBOM 与构建来源证明。2.16.0 是最低可下载版本；安装器、Action 与自更新会拒绝更早版本，并在 2.16.0 完成原生发布验收后移除旧 Release 的二进制资产。
+也可以从 [GitHub Releases](https://github.com/Future-Element/pinset/releases) 手动下载归档。Release 同时提供 checksum、SBOM 与构建来源证明。2.16.1 是最低可下载版本；安装器、Action 与自更新会拒绝更早版本，并在 2.16.2 完成原生发布验收后移除旧 Release 的二进制资产。
 
 ## Shell 初始化
 
@@ -323,9 +323,9 @@ jobs:
       PINSET_ENV_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v2.16.1
+      - uses: Future-Element/pinset@v2.16.2
         with:
-          version: 2.16.1
+          version: 2.16.2
           install: "true"
           cache: "true"
           trust-project-id: "4c5652e4-0000-4000-8000-000000000000"
