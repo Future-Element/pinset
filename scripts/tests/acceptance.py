@@ -127,7 +127,7 @@ def python():
     native(a,'python','-c','import pinset_isolation_proof',expected=1)
     external=project('python-external');(external/'.venv').mkdir();(external/'.venv/user-data').write_text('preserve')
     data(external,'use','python@3.13',expected=1,timeout=1200)
-    data(external,'upgrade','recover')
+    data(external,'self','repair')
     assert (external/'.venv/user-data').read_text()=='preserve'
     return a,b
 
@@ -185,42 +185,34 @@ def lifecycle():
     data(root,'use',frozen_selector('java@17'),'--no-install',timeout=1200)
     data(root,'install','--offline',timeout=600)
 
-    config=root/'.pinset/config.toml';config.write_text(config.read_text().replace('timeout = 300','timeout = 1'))
-    candidate=data(root,'upgrade','prepare',frozen_selector('java@21'),timeout=1200)['candidate']['id']
-    cli(root,'upgrade','test',candidate,'--no-env','--','sh','-c','sleep 10 & wait',native=True,expected=124,timeout=120)
-    latest=data(root,'upgrade','status',candidate)['last_test'];assert latest['timed_out'] and latest['candidate_exit']==124
-    assert data(root,'upgrade','apply',candidate,'--allow-limited',expected=1)['error']['code']=='PINSET_CANDIDATE_FAILED'
-    config.write_text(config.read_text().replace('timeout = 1','timeout = 300').replace('external_state = []','external_state = ["temporary external state"]'))
-    candidate=data(root,'upgrade','prepare',frozen_selector('java@21'),timeout=1200)['candidate']['id']
-    cli(root,'upgrade','test',candidate,'--no-env','--','sh','-c','exit 0',native=True,timeout=600)
-    assert data(root,'upgrade','apply',candidate,expected=1)['error']['code']=='PINSET_CANDIDATE_LIMITED'
-    data(root,'upgrade','apply',candidate,'--allow-limited','--plan')
-    cli(root,'upgrade','test',candidate,'--no-env','--','sh','-c','exit 2',native=True,expected=2,timeout=600)
-    assert data(root,'upgrade','apply',candidate,'--allow-limited',expected=1)['error']['code']=='PINSET_CANDIDATE_FAILED'
 
 
-def upgrade():
-    root=project('java-upgrade');select_tool(root,'java@17')
+def switch_versions():
+    root=project('java-switch');select_tool(root,'java@17')
     (root/'verify.sh').write_text('#!/bin/sh\nset -eu\njavac Main.java\njava Main\n');(root/'verify.sh').chmod(0o755)
-    (root/'Main.java').write_text('public class Main { public static void main(String[] a) { System.out.println("UPGRADE_OK"); }}')
-    prep=data(root,'upgrade','prepare','java@21',timeout=1200);cid=prep['candidate']['id']
-    cli(root,'upgrade','test',cid,'--compare','--','./verify.sh',native=True,timeout=1200)
-    cli(root,'upgrade','test',cid,'--','sh','-c','exit 23',native=True,expected=23)
-    assert data(root,'upgrade','apply',cid,expected=1)['error']['code']=='PINSET_CANDIDATE_FAILED'
-    cli(root,'upgrade','test',cid,'--compare','--','./verify.sh',native=True,timeout=1200)
-    original=(root/'.pinset/lock.toml').read_bytes();data(root,'upgrade','apply',cid,'--plan')
-    assert (root/'.pinset/lock.toml').read_bytes()==original
-    applied=data(root,'upgrade','apply',cid);data(root,'upgrade','restore',applied['history_id'])
-    assert data(root,'which','java')['version'].startswith('17.')
+    (root/'Main.java').write_text('public class Main { public static void main(String[] a) { System.out.println("SWITCH_OK"); }}')
+    assert 'SWITCH_OK' in native(root,'./verify.sh')
+    original=data(root,'which','java')
+    select_tool(root,'java@21')
+    selected=data(root,'which','java')
+    assert selected['version'].startswith('21.') and selected['sdk']!=original['sdk']
+    assert 'SWITCH_OK' in native(root,'./verify.sh')
+    assert selected['sdk'] in native(root,'sh','-c','printf "%s" "$JAVA_HOME"')
+    data(root,'use','java@'+original['version'],timeout=1200)
+    assert data(root,'which','java')['sdk']==original['sdk']
+    assert 'SWITCH_OK' in native(root,'./verify.sh')
     (root/'Main.java').write_text('invalid source')
-    assert data(root,'upgrade','apply',cid,expected=1)['error']['code']=='PINSET_CANDIDATE_STALE'
+    native(root,'./verify.sh',expected=1)
+    assert data(root,'which','java')['version']==original['version']
+    assert not (Path(os.environ['PINSET_HOME'])/'v3/state/candidates').exists()
+    assert not (Path(os.environ['PINSET_HOME'])/'v3/state/history').exists()
     return root
 
 if __name__=='__main__':
     roots=[]
     try:
         for feature in ['8','11','17','21','25','latest']:roots.append(java(feature))
-        python();runtimes();upgrade();lifecycle()
+        python();runtimes();switch_versions();lifecycle()
         report('real-sdks',status='passed',manifest=manifest,java_versions=[lock['version'] for _,lock,_ in roots],
                gui_scope='JDK inventory only here; actual GUI starts belong to integrations')
     except Exception:

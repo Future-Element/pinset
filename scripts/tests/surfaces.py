@@ -4,7 +4,9 @@ from pathlib import Path
 from support import BIN, run, report
 
 root=Path.cwd();fixture=Path(tempfile.mkdtemp(prefix='pinset-distribution-'))
-archive=fixture/'pinset-v3.0.0-linux-x86_64.zip'
+version=__import__('tomllib').loads((root/'Cargo.toml').read_text())['workspace']['package']['version']
+tag='v'+version
+archive=fixture/f'pinset-{tag}-linux-x86_64.zip'
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as target:
     for name in ['pinset','pinset-shim']:
         info=zipfile.ZipInfo(name);info.create_system=3;info.external_attr=0o100755<<16
@@ -18,7 +20,7 @@ env={**os.environ,'HOME':str(fixture),'PINSET_HOME':str(home),'PINSET_INSTALL_TE
 try:
     run(['bash','install.sh'],env=env)
     assert (home/'v3/.pinset-home.json').exists()
-    assert 'pinset 3.0.0' in run([home/'v3/bin/pinset','--version'],env=env)
+    assert 'pinset '+version in run([home/'v3/bin/pinset','--version'],env=env)
     assert (home/'v3/bin/javac').is_file()
     before=(home/'v3/bin/pinset').read_bytes()
     (fixture/'SHA256SUMS').write_text('0'*64+'  '+archive.name+'\n')
@@ -54,7 +56,7 @@ assert re.findall(r'^### `([^`]+)`',english,re.M)==re.findall(r'^### `([^`]+)`',
 sysroot=str(root/'scripts');import sys;sys.path.insert(0,sysroot)
 from release_gate import validate, source_fingerprint
 from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
-try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,'v3.0.0')
+try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,tag)
 except ValueError:pass
 else:raise AssertionError('release gate accepted non-local report')
 # Synthetic metadata tests exercise the release gate locally; they never publish.
@@ -67,10 +69,10 @@ metadata={'protocol':'pinset-verification/3','suite':'all','execution':'local-do
   'evidence_files':{name:{'sha256':'2'*64,'bytes':1} for name in ['contracts.json','distribution.json','cargo-security.json','real-sdks.json','platform.json','integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json']},
   'arm64_execution':'QEMU emulation','unverified':['Windows native runtime','macOS native runtime',LARGE_ARTIFACT_BOUNDARY],
   'runtime_exemptions':RUNTIME_EXEMPTIONS}
-assert validate(metadata,source,'v3.0.0')==commit
+assert validate(metadata,source,tag)==commit
 for field,value in [('source_clean',False),('commit','0'*40),('source_fingerprint','0'*64),('runtime_exemptions',[]),('unverified',['Windows native runtime','macOS native runtime'])]:
     invalid={**metadata,field:value}
-    try:validate(invalid,source,'v3.0.0')
+    try:validate(invalid,source,tag)
     except ValueError:pass
     else:raise AssertionError('release gate accepted invalid '+field)
 report('distribution',installer='real fixture binaries with checksum verification',old_data='retained')

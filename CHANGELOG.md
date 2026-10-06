@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1 - 2026-10-06
+
+- Breaking: remove `upgrade` and its candidate snapshots, validation, history, apply and restore commands; remove `clean history` and the project `[verification]` configuration section. Version selection, upgrades and switches use `use` exclusively.
+- Extend `self repair [--plan]` to recover interrupted current-project and global selection transactions alongside CLI/shim updates. Atomic updates, artifact checks and concurrency locks remain.
+
+
 ## 3.0.0 - 2026-10-06
 
 - Breaking five-crate architecture and strict `.pinset/` project protocol with twelve public command families and eight built-in Providers.

@@ -1,6 +1,11 @@
 # Change Log
 
-## 3.0.0 (unreleased)
+## 3.0.1 - 2026-10-06
+
+- Package the extension alongside Pinset 3.0.1 and its simplified version-switching commands.
+- Keep project status, installation, explicit probes and SDK/JDK binding on protocol 3.
+
+## 3.0.0 - 2026-10-06
 
 - Require the Pinset 3 protocol and a trusted local project.
 - Retain five commands: refresh, install, check, probe and SDK binding.

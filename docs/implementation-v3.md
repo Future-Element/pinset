@@ -5,11 +5,11 @@ This branch implements the breaking Pinset 3.0 design. Publication is separate f
 Implemented scope:
 
 - Five crates with pure core models/routing, one engine installer/cache/transaction path, encrypted environment services, thin CLI and a paired read-only shim/private broker.
-- Eight compiled-in Providers, twelve public command families, strict `pinset/3` models, `.pinset/config.toml` and `lock.toml`, v3 home and bounded project discovery.
+- Eight compiled-in Providers, eleven public command families, strict `pinset/3` models, `.pinset/config.toml` and `lock.toml`, v3 home and bounded project discovery.
 - Standard-library root `.venv` ownership/package isolation without uv; Rust channel/date/profile/components/targets; complete untrimmed Temurin JDK inventory and Java runtime/compiler/target evidence separation.
 - Read-only checks, explicit probes, conservative reference-aware cleanup, locked installation, safe repair and concurrent state guards.
 - Age profiles, real OS credential-store integration, authorization, fingerprint-bound trust and child-process secret exclusion.
-- Independent baseline/candidate snapshots, latest-result and stale-fingerprint gating, limited-evidence rules, apply/restore and interrupted transaction recovery.
+- A single `use` flow for selecting and switching versions; atomic configuration/lock updates with interrupted project/global transaction recovery through `self repair [--plan]`.
 - Slim VS Code integration, installation-only GitHub Action, installers, bilingual command documentation, schemas, examples and the existing website stack.
 - Local Docker verification and metadata-bound reports; CI performs publication only. Legacy execution paths, compatibility models, task/workspace/dotnet/plugin/source/bundle surfaces and their tests/docs are removed.
 

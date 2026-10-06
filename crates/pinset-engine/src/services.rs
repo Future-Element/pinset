@@ -284,7 +284,7 @@ impl Services {
         if !no_install {
             self.install_sdk(&lock, None, false, false)?;
         }
-        let id = self.begin_commit(&context, &config, &lock, None)?;
+        let id = self.begin_commit(&context, &config, &lock)?;
         let notes = if no_install {
             vec![]
         } else {
@@ -378,7 +378,7 @@ impl Services {
         }
         config.validate_lock(&lock)?;
         if !plan {
-            self.commit(&context, &config, &lock, None)?;
+            self.commit(&context, &config, &lock)?;
         }
         Ok(
             json!({"protocol":PROTOCOL,"plan":plan,"selected":config.tools,"retained_installs":true}),
@@ -699,104 +699,6 @@ impl Services {
         write_atomic(&path.join(VENV_MARKER), toml::to_string(&owner)?.as_bytes())?;
         validate_venv(c, config, tool, &target)?;
         Ok(())
-    }
-    pub fn begin_commit(
-        &self,
-        c: &ProjectContext,
-        config: &ProjectConfig,
-        lock: &Lockfile,
-        history: Option<String>,
-    ) -> Result<String> {
-        config.validate_lock(lock)?;
-        if c.local.join("transaction.json").exists() {
-            return Err(service_error(
-                "PINSET_TRANSACTION_PENDING",
-                "recover the existing transaction first",
-            ));
-        }
-        let old_config = fs::read_to_string(&c.config_path).unwrap_or_default();
-        let old: Option<ProjectConfig> = (!old_config.is_empty())
-            .then(|| toml::from_str(&old_config))
-            .transpose()?;
-        let mut profile_before = BTreeMap::new();
-        for name in config
-            .environment
-            .profiles
-            .keys()
-            .chain(old.iter().flat_map(|c| c.environment.profiles.keys()))
-        {
-            let path = c.root.join(format!(".pinset/env/{name}.env"));
-            if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
-                return Err(service_error(
-                    "PINSET_PATH_UNSAFE",
-                    "encrypted profile is a symlink",
-                ));
-            }
-            let bytes = if path.exists() {
-                Some(fs::read_to_string(path)?)
-            } else {
-                None
-            };
-            profile_before.insert(name.clone(), bytes);
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let journal = TransactionJournal {
-            protocol: PROTOCOL.into(),
-            id: id.clone(),
-            project_id: config.project_id.clone(),
-            root: c.root.clone(),
-            phase: "prepared".into(),
-            old_config,
-            old_lock: fs::read_to_string(&c.lock_path).ok(),
-            new_config: toml::to_string_pretty(config)?,
-            new_lock: toml::to_string_pretty(lock)?,
-            history_before: history.as_ref().and_then(|h| {
-                fs::read_to_string(self.home.join("state/history").join(format!("{h}.json"))).ok()
-            }),
-            history_id: history,
-            profile_before,
-        };
-        let path = self
-            .home
-            .join("state/transactions")
-            .join(format!("{id}.json"));
-        write_json(&path, &journal)?;
-        write_json(
-            &c.local.join("transaction.json"),
-            &json!({"protocol":PROTOCOL,"id":id}),
-        )?;
-        write_atomic(&c.config_path, journal.new_config.as_bytes())?;
-        write_atomic(&c.lock_path, journal.new_lock.as_bytes())?;
-        Ok(id)
-    }
-    pub fn finish_commit(&self, c: &ProjectContext, id: &str) -> Result<()> {
-        let path = self
-            .home
-            .join("state/transactions")
-            .join(format!("{id}.json"));
-        let mut journal: TransactionJournal = read_json(&path)?;
-        if journal.root != c.root || journal.phase != "prepared" {
-            return Err(service_error(
-                "PINSET_TRANSACTION_INVALID",
-                "transaction cannot be finalized",
-            ));
-        }
-        self.register(c)?;
-        journal.phase = "committed".into();
-        write_json(&path, &journal)?;
-        fs::remove_file(c.local.join("transaction.json"))?;
-        Ok(())
-    }
-    pub fn commit(
-        &self,
-        c: &ProjectContext,
-        config: &ProjectConfig,
-        lock: &Lockfile,
-        history: Option<String>,
-    ) -> Result<String> {
-        let id = self.begin_commit(c, config, lock, history)?;
-        self.finish_commit(c, &id)?;
-        Ok(id)
     }
     pub fn register(&self, c: &ProjectContext) -> Result<()> {
         if c.global {

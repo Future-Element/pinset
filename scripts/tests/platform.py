@@ -29,7 +29,8 @@ for name in ['pinset','pinset-shim']:shutil.copy2(Path(os.environ['CARGO_TARGET_
 arm=arm_dir/'pinset'
 qemu=['qemu-aarch64-static','-cpu','cortex-a72','-L','/']
 os.environ['QEMU_CPU']='cortex-a72'
-assert 'pinset 3.0.0' in run(qemu+[arm,'--version'])
+version=__import__('tomllib').loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+assert 'pinset '+version in run(qemu+[arm,'--version'])
 root=Path(tempfile.mkdtemp(prefix='pinset-arm-project-'))
 def arm_cli(*args,expected=0,timeout=1200):
     return json.loads(run(qemu+[arm,'-C',root,'--json',*args],cwd=root,expected=expected,timeout=timeout))

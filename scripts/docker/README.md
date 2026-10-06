@@ -7,7 +7,7 @@ The original checkout is mounted read-only at `/source`, copied to `/workspace`,
 | Suite | Required checks |
 | --- | --- |
 | fast | Format, clippy, Rust contracts, command/project/failure contracts, dependency audit, distribution contracts |
-| acceptance | Official SDK installs and execution; Java 8/11/17/21/25/latest GA, Python package isolation, Node/pnpm/Bun/Go, Rust components and candidate upgrades |
+| acceptance | Official SDK installs and execution; Java 8/11/17/21/25/latest GA, Python package isolation, Node/pnpm/Bun/Go, Rust components and direct version switching |
 | platform | Linux ARM64 cross build and QEMU execution, official ARM64 SDK combinations, Windows/macOS target compilation and path/credential contracts |
 | integrations | Independent extension/website typechecks, package audits, packaging and SEO, real Linux Secret Service, VS Code under Xvfb, Java wrapper builds and GUI startup, Flutter metadata, locks, routing and Android evidence contracts |
 | all | Every suite above; missing/failed checks prevent success |

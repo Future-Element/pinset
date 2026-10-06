@@ -5,29 +5,6 @@ use std::{
     fs,
     path::PathBuf,
 };
-pub fn duration_seconds(value: &str) -> Result<u64> {
-    let i = value
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(value.len());
-    let (number, unit) = value.split_at(i);
-    let n = number
-        .parse::<u64>()
-        .map_err(|_| service_error("PINSET_DURATION_INVALID", "expected a duration such as 30d"))?;
-    n.checked_mul(match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86400,
-        _ => {
-            return Err(service_error(
-                "PINSET_DURATION_INVALID",
-                "expected s, m, h or d",
-            ));
-        }
-    })
-    .filter(|n| *n > 0)
-    .ok_or_else(|| service_error("PINSET_DURATION_INVALID", "duration is zero or too large"))
-}
 impl Services {
     fn references(&self) -> Result<(BTreeSet<String>, BTreeSet<String>, bool)> {
         let mut installs = BTreeSet::new();
@@ -79,41 +56,6 @@ impl Services {
                 }
             }
         }
-        for (directory, candidate) in [("state/candidates", true), ("state/history", false)] {
-            let dir = self.home.join(directory);
-            if dir.exists() {
-                for e in fs::read_dir(dir)? {
-                    let e = e?;
-                    let p = if candidate {
-                        e.path().join("record.json")
-                    } else {
-                        e.path()
-                    };
-                    if !p.is_file() {
-                        continue;
-                    }
-                    let value: Value = match read_json(&p) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            uncertain = true;
-                            continue;
-                        }
-                    };
-                    for key in if candidate {
-                        ["baseline", "candidate"]
-                    } else {
-                        ["old_lock", "new_lock"]
-                    } {
-                        if let Some(l) = value.get(key) {
-                            match serde_json::from_value::<Lockfile>(l.clone()) {
-                                Ok(l) => locks.push(l),
-                                Err(_) => uncertain = true,
-                            }
-                        }
-                    }
-                }
-            }
-        }
         let journal = self.home.join("state/transactions");
         if journal.exists() {
             for e in fs::read_dir(journal)? {
@@ -150,13 +92,13 @@ impl Services {
         }
         Ok((installs, cache, uncertain))
     }
-    pub fn clean(
-        &self,
-        kind: &str,
-        specs: &[String],
-        older: Option<&str>,
-        plan: bool,
-    ) -> Result<Value> {
+    pub fn clean(&self, kind: &str, specs: &[String], plan: bool) -> Result<Value> {
+        if !matches!(kind, "cache" | "installs") {
+            return Err(service_error(
+                "PINSET_ARGUMENT_INVALID",
+                "unknown cleanup kind",
+            ));
+        }
         let _guard = if plan {
             None
         } else {
@@ -244,35 +186,6 @@ impl Services {
                                 retained.push(platform.path());
                             }
                         }
-                    }
-                }
-            }
-        } else {
-            let age = duration_seconds(older.ok_or_else(|| {
-                service_error(
-                    "PINSET_DURATION_REQUIRED",
-                    "history cleanup requires --older-than",
-                )
-            })?)?;
-            let dir = self.home.join("state/history");
-            if dir.exists() {
-                for entry in fs::read_dir(dir)? {
-                    let entry = entry?;
-                    let h: UpgradeHistory = match read_json(&entry.path()) {
-                        Ok(h) => h,
-                        Err(_) => {
-                            retained.push(entry.path());
-                            continue;
-                        }
-                    };
-                    if h.protocol == PROTOCOL
-                        && h.restored
-                        && now().saturating_sub(h.applied_at) > age
-                        && !uncertain
-                    {
-                        removals.push(entry.path());
-                    } else {
-                        retained.push(entry.path());
                     }
                 }
             }

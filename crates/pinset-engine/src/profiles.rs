@@ -102,7 +102,7 @@ impl Services {
                 grants: BTreeMap::new(),
             },
         );
-        let transaction = self.begin_commit(&c, &config, &lock, None)?;
+        let transaction = self.begin_commit(&c, &config, &lock)?;
         pinset_env::write_encrypted_profile(
             &c.root,
             &rel,
@@ -122,7 +122,7 @@ impl Services {
         }
         if project {
             config.environment.default = name.map(str::to_string);
-            self.commit(&c, &config, &lock, None)?;
+            self.commit(&c, &config, &lock)?;
             self.refresh_trust(&c)?;
         } else {
             write_json(
@@ -149,7 +149,7 @@ impl Services {
             if config.environment.default.as_deref() == Some(name) {
                 config.environment.default = None;
             }
-            let transaction = self.begin_commit(&c, &config, &lock, None)?;
+            let transaction = self.begin_commit(&c, &config, &lock)?;
             fs::remove_file(c.root.join(rel))?;
             let local = c.local.join("profile.json");
             if local.exists() && read_json::<Value>(&local)?["profile"] == name {
@@ -183,7 +183,7 @@ impl Services {
             .profiles
             .get(profile)
             .ok_or_else(|| service_error("PINSET_PROFILE_MISSING", profile))?;
-        let transaction = self.begin_commit(&c, &config, &lock, None)?;
+        let transaction = self.begin_commit(&c, &config, &lock)?;
         let values = BTreeMap::from([(name.into(), value.clone())]);
         let result = pinset_env::set_encrypted_profile_values(
             &c.root,
@@ -202,7 +202,7 @@ impl Services {
         if !config.environment.profiles.contains_key(profile) {
             return Err(service_error("PINSET_PROFILE_MISSING", profile));
         }
-        let transaction = self.begin_commit(&c, &config, &lock, None)?;
+        let transaction = self.begin_commit(&c, &config, &lock)?;
         let removed =
             pinset_env::unset_encrypted_profile_value(&c.root, &relative(profile)?, name)?;
         self.finish_commit(&c, &transaction)?;
@@ -341,7 +341,7 @@ impl Services {
         p.recipients.sort();
         p.recipients.dedup();
         let recipients = p.recipients.clone();
-        let transaction = self.begin_commit(&c, &config, &lock, None)?;
+        let transaction = self.begin_commit(&c, &config, &lock)?;
         pinset_env::write_encrypted_profile(&c.root, &relative(profile)?, &document, &recipients)?;
         self.finish_commit(&c, &transaction)?;
         self.refresh_trust(&c)?;
@@ -364,7 +364,7 @@ impl Services {
         let document =
             pinset_env::read_encrypted_profile(&c.root, &relative(profile)?, &identities)?;
         let recipients = p.recipients.clone();
-        let transaction = self.begin_commit(&c, &config, &lock, None)?;
+        let transaction = self.begin_commit(&c, &config, &lock)?;
         pinset_env::write_encrypted_profile(&c.root, &relative(profile)?, &document, &recipients)?;
         self.finish_commit(&c, &transaction)?;
         self.refresh_trust(&c)?;

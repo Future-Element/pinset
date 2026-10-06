@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="3.0.0"
+DEFAULT_VERSION="3.0.1"
 MINIMUM_VERSION="3.0.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
@@ -23,7 +23,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 3.0.0.
+  --version VERSION       Install an exact release, for example 3.0.1.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $PINSET_HOME/v3/bin or $HOME/.pinset/v3/bin.
   -h, --help              Show this help.

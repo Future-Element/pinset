@@ -155,36 +155,6 @@ fn dispatch(cli: &Cli) -> Result<Output> {
                 environment.no_env,
             )?))
         }
-        Commands::Upgrade { command } => match command {
-            Upgrade::Prepare { tools, plan } => report(service.upgrade_prepare(tools, *plan)?),
-            Upgrade::Test {
-                id,
-                compare,
-                environment,
-                command,
-            } => {
-                native_output(cli)?;
-                Ok(Output::Native(service.upgrade_test(
-                    id,
-                    *compare,
-                    command,
-                    environment.profile.as_deref(),
-                    environment.no_env,
-                )?))
-            }
-            Upgrade::Status { id, history } => {
-                report(service.upgrade_status(id.as_deref(), *history)?)
-            }
-            Upgrade::Apply {
-                id,
-                allow_limited,
-                plan,
-            } => report(service.upgrade_apply(id, *allow_limited, *plan)?),
-            Upgrade::Restore { history_id, plan } => {
-                report(service.upgrade_restore(history_id, *plan)?)
-            }
-            Upgrade::Recover { plan } => report(service.upgrade_recover(*plan)?),
-        },
         Commands::Env { command } => match command {
             Environment::Init { profile } => report(service.profile_init(profile)?),
             Environment::Use {
@@ -256,18 +226,12 @@ fn dispatch(cli: &Cli) -> Result<Output> {
             },
         },
         Commands::Clean { command } => report(match command {
-            Clean::Cache { plan } => service.clean("cache", &[], None, *plan)?,
-            Clean::Installs { tools, plan } => service.clean("installs", tools, None, *plan)?,
-            Clean::History { older_than, plan } => {
-                service.clean("history", &[], Some(older_than), *plan)?
-            }
+            Clean::Cache { plan } => service.clean("cache", &[], *plan)?,
+            Clean::Installs { tools, plan } => service.clean("installs", tools, *plan)?,
         }),
         Commands::SelfCommand { command } => match command {
             SelfCommand::Info => report(service.self_info()),
-            SelfCommand::Repair => {
-                service.self_repair()?;
-                report(serde_json::json!({"protocol":pinset_core::PROTOCOL,"repaired":true}))
-            }
+            SelfCommand::Repair { plan } => report(service.self_repair(*plan)?),
             SelfCommand::Shell { shell } => output_text(cli, service.shell(shell_name(*shell))),
             SelfCommand::Completions { shell } => {
                 let mut command = Cli::command();
@@ -310,7 +274,7 @@ fn native_output(cli: &Cli) -> Result<()> {
     if cli.json {
         Err(service_error(
             "PINSET_NATIVE_OUTPUT",
-            "exec and upgrade test preserve native output and reject --json",
+            "exec preserves native output and reject --json",
         ))
     } else {
         Ok(())

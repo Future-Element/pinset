@@ -2,7 +2,7 @@
 
 八个 Provider：Node、pnpm、Bun、Go、Python、完整 Temurin OpenJDK、Rust、Flutter/Dart。配置 .pinset/config.toml，精确锁 .pinset/lock.toml。
 
-通用参数：-C/--cwd、--lang auto|en|zh-CN、--json、--help、--version。预览仅使用 --plan。十二个顶层：init use remove install list which check exec upgrade env clean self。
+通用参数：-C/--cwd、--lang auto|en|zh-CN、--json、--help、--version。预览仅使用 --plan。十一个顶层：init use remove install list which check exec env clean self。
 
 ### `init`
 
@@ -15,7 +15,7 @@ pinset init
 
 ### `use`
 
-明确选择并解析官方制品，事务更新配置和精确锁；禁止重复工具。--no-install 只提交选择和锁。
+选择、升级或切换工具版本，解析官方制品并事务更新配置和精确锁；切回旧版本同样使用明确的版本选择。禁止重复工具。--no-install 只提交选择和锁。
 
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
@@ -64,7 +64,7 @@ pinset which javac --explain
 
 ### `check`
 
-默认只读，不解密、运行工具、联网或写盘。--deep 检查安装；--probe 明确运行有超时的探针并记录实际路径、版本、宿主和时间。Java 检查独立工作；target 要求项目上下文。配置、安装、绑定、实际探针与用户验证结果分别报告。
+默认只读，不解密、运行工具、联网或写盘。--deep 检查安装；--probe 明确运行有超时的探针并记录实际路径、版本、宿主和时间。Java 检查独立工作；target 要求项目上下文。分别报告配置、安装、绑定与实际探针结果；项目构建由原始命令完成。
 
 ```text
 pinset check [--global] [--deep] [--probe]
@@ -80,62 +80,6 @@ pinset check [--global] [--deep] [--probe]
 pinset exec [--profile <profile>|--no-env] -- <command...>
 pinset exec -- ./mvnw verify
 pinset exec -- ./gradlew build
-```
-
-
-### `upgrade prepare`
-
-准备单项目候选。省略工具处理全部选择；仅工具名沿用 selector，精确选择不自动跨版本，无变化不建立候选。快照上限 20,000 文件、单文件 16 MiB、总计 256 MiB、深度 64、附加路径 64；排除 Git、local、venv、应用依赖和明文环境文件，拒绝越界与不安全链接。
-
-```text
-pinset upgrade prepare [tool|tool@selector...] [--plan]
-```
-
-
-### `upgrade test`
-
-在独立基线与候选副本中执行原始命令，由命令准备应用依赖，不引入 task。默认超时 300 秒，在 verification.timeout 调整。最近一次结果为准；秘密和外部状态标为有限证据。保留原生输出，不接受 --json。
-
-```text
-pinset upgrade test <id> [--compare]
-                     [--profile <profile>|--no-env] -- <command...>
-```
-
-
-### `upgrade status`
-
-查看候选；--history 查看已完成的升级历史。
-
-```text
-pinset upgrade status [id]
-pinset upgrade status --history
-```
-
-
-### `upgrade apply`
-
-只应用指纹新鲜且最近验证成功的候选。--allow-limited 仅接受证据边界，不能覆盖失败、超时或过期。配置、锁、本地绑定和历史均纳入事务完成条件。
-
-```text
-pinset upgrade apply <id> [--allow-limited] [--plan]
-```
-
-
-### `upgrade restore`
-
-恢复已完成升级的工具链状态，不回滚源码、应用包、数据库或 IDE 进程；不复制候选 venv。
-
-```text
-pinset upgrade restore <history-id> [--plan]
-```
-
-
-### `upgrade recover`
-
-处理中断日志。在事务未完成时，读取和执行被阻止，恢复原配置、锁和本地绑定后解除标记。
-
-```text
-pinset upgrade recover [--plan]
 ```
 
 
@@ -260,7 +204,7 @@ pinset env trust revoke
 
 ### `clean cache`
 
-保守清理不再引用的缓存；保护登记项目、全局、venv、候选、历史和恢复日志，不确定对象保留。
+保守清理不再引用的缓存；保护登记项目、全局、venv 和恢复日志，不确定对象保留。
 
 ```text
 pinset clean cache [--plan]
@@ -273,15 +217,6 @@ pinset clean cache [--plan]
 
 ```text
 pinset clean installs [tool@exact...] [--plan]
-```
-
-
-### `clean history`
-
-只清理满足时间与保留策略的历史，duration 使用 s/m/h/d，如 30d。
-
-```text
-pinset clean history --older-than <duration> [--plan]
 ```
 
 
@@ -314,10 +249,10 @@ pinset self completions <bash|zsh|fish|powershell>
 
 ### `self repair`
 
-修复受管入口与相邻同版本 shim，不接管外部命令。
+恢复当前项目和全局选择的中断事务，处理 CLI/shim 更新中断，并修复受管入口。未完成事务恢复原配置、锁、加密 profile 和本地绑定；已完成事务只清除残留标记。此命令不撤销已完成的版本切换，--plan 只读预览恢复内容。
 
 ```text
-pinset self repair
+pinset self repair [--plan]
 ```
 
 

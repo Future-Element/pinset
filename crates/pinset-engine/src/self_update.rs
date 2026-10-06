@@ -94,11 +94,27 @@ pub(crate) fn replace_binary_pair(
     Ok(backup)
 }
 impl Services {
-    pub fn self_repair(&self) -> Result<()> {
-        let _guard = self.guard("self-update")?;
-        self.ensure_home()?;
+    pub fn self_repair(&self, plan: bool) -> Result<serde_json::Value> {
+        if !plan {
+            self.ensure_home()?;
+        }
+        let transactions = self.recover_transactions(plan)?;
+        // Release project guards before acquiring the binary-update guard: a
+        // valid project identity may have the same name as this internal lock.
+        let _guard = if plan {
+            None
+        } else {
+            Some(self.guard("self-update")?)
+        };
         let path = self.home.join("state/self-update/transaction.json");
+        let mut binary_update = None;
         if path.exists() {
+            if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(service_error(
+                    "PINSET_UPDATE_RECOVERY",
+                    "binary journal is a symlink",
+                ));
+            }
             let journal: BinaryJournal = read_json(&path)?;
             let parent = std::env::current_exe()?.parent().unwrap().canonicalize()?;
             if journal.protocol != PROTOCOL
@@ -116,20 +132,26 @@ impl Services {
                     "invalid binary update journal",
                 ));
             }
-            if journal.phase == "prepared" {
-                rollback(&journal)?;
-            } else if journal.phase != "committed" {
+            if !matches!(journal.phase.as_str(), "prepared" | "committed") {
                 return Err(service_error(
                     "PINSET_UPDATE_RECOVERY",
                     "unknown binary update phase",
                 ));
             }
-            self.install_shims()?;
-            fs::remove_file(path)?;
-        } else {
+            binary_update = Some(journal.phase.clone());
+            if !plan {
+                if journal.phase == "prepared" {
+                    rollback(&journal)?;
+                }
+                self.install_shims()?;
+                fs::remove_file(path)?;
+            }
+        } else if !plan {
             self.install_shims()?;
         }
-        Ok(())
+        Ok(
+            serde_json::json!({"protocol":PROTOCOL,"plan":plan,"repaired":!plan,"transactions":transactions,"binary_update":binary_update}),
+        )
     }
     pub(crate) fn validate_new_cli(&self, path: &Path, version: &str) -> Result<()> {
         let output = Command::new(path)

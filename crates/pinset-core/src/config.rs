@@ -25,8 +25,6 @@ pub struct ProjectConfig {
     pub policy: ProjectPolicy,
     #[serde(default)]
     pub environment: ProjectEnvironment,
-    #[serde(default)]
-    pub verification: ProjectVerification,
 }
 impl ProjectConfig {
     pub fn new(id: String) -> Self {
@@ -39,7 +37,6 @@ impl ProjectConfig {
             rust_options: ToolOptions::default(),
             policy: ProjectPolicy::default(),
             environment: ProjectEnvironment::default(),
-            verification: ProjectVerification::default(),
         }
     }
     pub fn validate(&self) -> Result<()> {
@@ -74,25 +71,6 @@ impl ProjectConfig {
                 "PINSET_PLATFORM_INVALID",
                 "unsupported project platform",
             ));
-        }
-        if self.verification.timeout == 0 || self.verification.inputs.len() > 64 {
-            return Err(failure(
-                "PINSET_VERIFICATION_INVALID",
-                "invalid timeout or too many verification inputs",
-            ));
-        }
-        for input in &self.verification.inputs {
-            let p = Path::new(input);
-            if p.as_os_str().is_empty()
-                || p.is_absolute()
-                || p.components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
-            {
-                return Err(failure(
-                    "PINSET_VERIFICATION_INVALID",
-                    "verification inputs must be paths inside this project",
-                ));
-            }
         }
         for name in self.environment.profiles.keys() {
             validate_id(name)?;
@@ -183,28 +161,6 @@ pub struct ProfileConfig {
     #[serde(default)]
     pub grants: BTreeMap<String, String>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectVerification {
-    #[serde(default = "default_timeout")]
-    pub timeout: u64,
-    #[serde(default)]
-    pub inputs: Vec<String>,
-    #[serde(default)]
-    pub external_state: Vec<String>,
-}
-fn default_timeout() -> u64 {
-    300
-}
-impl Default for ProjectVerification {
-    fn default() -> Self {
-        Self {
-            timeout: 300,
-            inputs: vec![],
-            external_state: vec![],
-        }
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectContext {
@@ -250,7 +206,7 @@ impl ProjectContext {
         if self.local.join("transaction.json").exists() {
             return Err(failure(
                 "PINSET_TRANSACTION_PENDING",
-                "an interrupted transaction requires pinset upgrade recover",
+                "an interrupted transaction requires pinset self repair",
             ));
         }
         let c: ProjectConfig = toml::from_str(&fs::read_to_string(&self.config_path)?)?;

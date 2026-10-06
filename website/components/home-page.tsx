@@ -23,13 +23,13 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
   const websiteId = siteUrl + "/#website";
   const softwareId = siteUrl + "/#software";
   const faq = zh ? [
-    ["Pinset 是什么？", "Pinset 管理项目工具链、记录实际执行证据，并在独立副本中验证候选升级。它用 .pinset/config.toml 声明项目需要的工具与策略，用 .pinset/lock.toml 保存精确版本、平台制品和完整性信息。"],
+    ["Pinset 是什么？", "Pinset 管理项目工具链、锁定精确版本并记录实际执行证据。它用 .pinset/config.toml 声明项目需要的工具与策略，用 .pinset/lock.toml 保存精确版本、平台制品和完整性信息。"],
     ["安装 Pinset 后，还需要配置 Shell 吗？", "需要。Pinset 不会自动修改 Shell 配置文件。按照 self shell 命令文档，为 Bash、Zsh、Fish 或 PowerShell 配置初始化，让项目命令路由到 Pinset 管理的版本。"],
     ["能和团队、CI 使用相同的版本吗？", "将 .pinset/config.toml 和 .pinset/lock.toml 提交到仓库，团队成员和 CI 使用 pinset install 安装锁定的工具。项目所需平台必须有对应的可用制品。"],
     ["支持哪些操作系统？", "支持 Windows、macOS 和 Linux，具体架构取决于工具的上游发行包。例如 Flutter 上游没有可用于当前安装模型的 Linux ARM64 SDK，Pinset 会明确提示不支持。"],
     ["Pinset 会自动使用系统里的运行时吗？", "默认不会。项目默认不继承全局版本，也不静默回退到系统 PATH。which --explain 可以解释最终选择。"],
   ] : [
-    ["What is Pinset?", "Pinset manages project toolchains, records actual execution evidence, and validates candidate upgrades in independent copies. It uses .pinset/config.toml to declare project tools and policy, and .pinset/lock.toml to record exact versions, platform artifacts, and integrity metadata."],
+    ["What is Pinset?", "Pinset manages project toolchains, locks exact versions, and records actual execution evidence. It uses .pinset/config.toml to declare project tools and policy, and .pinset/lock.toml to record exact versions, platform artifacts, and integrity metadata."],
     ["Do I need to set up my shell after installation?", "Yes. Pinset does not edit shell profiles automatically. Follow the self shell command reference for Bash, Zsh, Fish, or PowerShell so project commands route to Pinset-managed versions."],
     ["Can my team and CI use the same versions?", "Commit .pinset/config.toml and .pinset/lock.toml, then run pinset install on another machine or in CI. Each required platform must have a supported runtime artifact."],
     ["Which operating systems are supported?", "Pinset supports Windows, macOS, and Linux. Architecture support depends on each tool's upstream releases. For example, Flutter does not provide a Linux ARM64 SDK compatible with the current installation model, so Pinset reports an unsupported target."],
@@ -69,11 +69,11 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
   const features = zh ? [
     ["01", "锁定整个工具链", "Node.js、Python、Rust 和更多工具共享一份项目配置。版本选择与精确制品分别记录，团队直接按锁文件安装。", "pinset install", "install"],
     ["02", "每一次选择，都能解释", "配置独立生效，工具使用精确安装。遇到版本不一致，可以查看来源、路由与诊断结果。", "pinset which --explain", "which"],
-    ["03", "先验证升级，再明确应用", "基线与候选在独立副本中运行你的原始验证命令。失败或过期结果阻止应用，完成后的工具链变更可以恢复。", "pinset upgrade prepare", "upgrade-prepare"],
+    ["03", "用选定环境运行项目命令", "通过 use 明确升级或切换版本，再用项目自己的命令构建和测试。exec 与 shim 使用同一套锁定环境。", "pinset exec -- ./mvnw verify", "exec"],
   ] : [
     ["01", "Lock the whole toolchain", "Node.js, Python, Rust, and more share one project configuration. Keep version intent separate from exact artifacts, then install from the lockfile.", "pinset install", "install"],
     ["02", "Know why a version runs", "Each project has independent selections and exact installations. Inspect the source, routing, and diagnostics behind every selection.", "pinset which --explain", "which"],
-    ["03", "Validate an upgrade before applying it", "Run your original verification command against separate baseline and candidate copies. Failed or stale results block application; completed toolchain changes can be restored.", "pinset upgrade prepare", "upgrade-prepare"],
+    ["03", "Run project commands with the selected environment", "Upgrade or switch versions with use, then build and test with your project commands. exec and shims use the same locked environment.", "pinset exec -- ./mvnw verify", "exec"],
   ];
 
   return (
@@ -84,7 +84,7 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
           <div className="heroCopy">
             <a className="releaseLink" href={siteConfig.repository + "/releases/latest"}><span>PINSET <LatestReleaseVersion fallback={zh ? "3.0 开发版" : "3.0 DEVELOPMENT"} /></span>{zh ? "查看版本更新" : "Explore the release"} <span aria-hidden="true">↗</span></a>
             <h1>{zh ? <>多语言开发，<br /><em>一处锁定。</em></> : <>Every runtime.<br /><em>Right in place.</em></>}</h1>
-            <p className="heroDescription">{zh ? "锁定项目工具链，确认实际执行环境，在项目副本中验证升级，再明确应用或恢复。" : "Pinset manages project toolchains, records actual execution evidence, and validates candidate upgrades in independent copies. Lock the toolchain, inspect actual execution evidence, validate an upgrade in project copies, then explicitly apply or restore it."}</p>
+            <p className="heroDescription">{zh ? "锁定项目工具链，确认实际执行环境，用选定版本运行项目命令。" : "Pinset manages project toolchains, locks exact versions, and records actual execution evidence. Lock the toolchain, inspect execution evidence, and run project commands with the selected versions."}</p>
             <InstallPanel locale={locale} />
             <a className="textCta" href="#getting-started">{zh ? "从你的下一个项目开始" : "Start with your next project"} <span>→</span></a>
           </div>

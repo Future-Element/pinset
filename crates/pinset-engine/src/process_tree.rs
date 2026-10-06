@@ -144,7 +144,7 @@ pub fn run(
         {
             let bytes = bytes?;
             if bytes.len() as u64 > output_limit.unwrap_or(0) {
-                return Err("candidate input listing exceeded its output limit".into());
+                return Err("probe output exceeded its limit".into());
             }
             output.extend(bytes);
             received += 1;

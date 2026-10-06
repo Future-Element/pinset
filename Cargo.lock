@@ -2694,7 +2694,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinset-cli"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2708,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-core"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "base64",
  "hex",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-engine"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-env"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "age",
  "atomic-write-file",
@@ -2779,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "pinset-shim"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "pinset-core",
  "tempfile",

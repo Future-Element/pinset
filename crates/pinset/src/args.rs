@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 #[derive(Parser, Debug)]
-#[command(name="pinset",version=pinset_core::pinset_version(),disable_help_subcommand=true,about="Lock project toolchains, inspect execution, and verify upgrades")]
+#[command(name="pinset",version=pinset_core::pinset_version(),disable_help_subcommand=true,about="Lock project toolchains and inspect execution")]
 pub struct Cli {
     #[arg(short = 'C', long = "cwd", global = true, default_value = ".")]
     pub cwd: PathBuf,
@@ -82,11 +82,6 @@ pub enum Commands {
         #[arg(last=true,required=true,num_args=1..)]
         command: Vec<String>,
     },
-    /// Prepare, test, apply or recover a single-project upgrade.
-    Upgrade {
-        #[command(subcommand)]
-        command: Upgrade,
-    },
     /// Manage encrypted profiles, access and project trust.
     Env {
         #[command(subcommand)]
@@ -119,45 +114,6 @@ pub struct EnvironmentArgs {
     pub profile: Option<String>,
     #[arg(long)]
     pub no_env: bool,
-}
-#[derive(Subcommand, Debug)]
-pub enum Upgrade {
-    Prepare {
-        tools: Vec<String>,
-        #[arg(long)]
-        plan: bool,
-    },
-    Test {
-        id: String,
-        #[arg(long)]
-        compare: bool,
-        #[command(flatten)]
-        environment: EnvironmentArgs,
-        #[arg(last=true,required=true,num_args=1..)]
-        command: Vec<String>,
-    },
-    Status {
-        #[arg(conflicts_with = "history")]
-        id: Option<String>,
-        #[arg(long)]
-        history: bool,
-    },
-    Apply {
-        id: String,
-        #[arg(long)]
-        allow_limited: bool,
-        #[arg(long)]
-        plan: bool,
-    },
-    Restore {
-        history_id: String,
-        #[arg(long)]
-        plan: bool,
-    },
-    Recover {
-        #[arg(long)]
-        plan: bool,
-    },
 }
 #[derive(Subcommand, Debug)]
 pub enum Environment {
@@ -242,12 +198,6 @@ pub enum Clean {
         #[arg(long)]
         plan: bool,
     },
-    History {
-        #[arg(long)]
-        older_than: String,
-        #[arg(long)]
-        plan: bool,
-    },
 }
 #[derive(ValueEnum, Debug, Clone, Copy)]
 pub enum Shell {
@@ -267,7 +217,10 @@ pub enum SelfCommand {
         #[arg(value_enum)]
         shell: Shell,
     },
-    Repair,
+    Repair {
+        #[arg(long)]
+        plan: bool,
+    },
     Update {
         version: Option<String>,
         #[arg(long)]

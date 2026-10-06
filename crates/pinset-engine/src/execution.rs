@@ -43,21 +43,6 @@ impl Services {
         }
         Ok(command.status()?.code().unwrap_or(1))
     }
-    pub fn verification_command(
-        &self,
-        c: &ProjectContext,
-        args: &[String],
-        values: BTreeMap<String, String>,
-        timeout: u64,
-    ) -> Result<i32> {
-        let plan = plan_command(&c.root, &self.home, c, &args[0])?;
-        let command = prepare_command(&plan, &args[1..], &c.root, values);
-        Ok(
-            crate::process_tree::run(command, Duration::from_secs(timeout), None)
-                .map_err(|e| service_error("PINSET_EXECUTION_FAILED", e.to_string()))?
-                .code,
-        )
-    }
     pub fn check(
         &self,
         global: bool,
@@ -183,7 +168,7 @@ impl Services {
         } else {
             None
         };
-        let value = json!({"protocol":PROTOCOL,"report":report,"java":java,"android":android,"target":target,"build_target":target.map(|requested|json!({"target":requested,"host":current_target(),"build_observed":false,"scope":"selected toolchain and prerequisites; no application build performed"})),"user_command_verified":false});
+        let value = json!({"protocol":PROTOCOL,"report":report,"java":java,"android":android,"target":target,"build_target":target.map(|requested|json!({"target":requested,"host":current_target(),"build_observed":false,"scope":"selected toolchain and prerequisites; no application build performed"}))});
         if probe {
             write_json(
                 &self.home.join("state/evidence").join(format!(

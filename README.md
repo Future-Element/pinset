@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Command reference](docs/commands.md)
 
-Pinset locks project toolchains, explains their execution paths, and verifies upgrades in separate project copies before applying them. The 3.0 source tree introduces a breaking protocol; a source version does not imply a published release.
+Pinset locks project toolchains and explains their execution paths. Select, upgrade or switch versions with `use`, then build and test using your project commands. The 3.0 source tree introduces a breaking protocol; a source version does not imply a published release.
 
 Eight built-in Providers cover Node.js, pnpm, Bun, Go, Python, complete Temurin OpenJDK, Rust, and Flutter/Dart. npm comes with Node; pip comes with a project-root standard-library `.venv`; Dart comes with Flutter. Pinset does not run tasks or orchestrate workspaces.
 
@@ -13,10 +13,8 @@ pinset which javac --explain
 pinset check
 pinset check --probe
 pinset exec -- ./mvnw verify
-pinset upgrade prepare java@25
-pinset upgrade test <candidate-id> --compare -- ./mvnw verify
-pinset upgrade apply <candidate-id> --plan
-pinset upgrade apply <candidate-id>
+pinset use java@25
+pinset exec -- ./mvnw verify
 ```
 
 ## Project files
@@ -49,7 +47,7 @@ Shell integration is explicit: `pinset self shell bash` (also zsh, fish, powersh
 
 Profiles use per-value age encryption. Private identities are held in the OS credential store or explicit `PINSET_IDENTITY`; no private-key file is created. Trust binds the project, directory identity and configuration/profile fingerprint. External changes invalidate trust. Variable collisions and overrides of managed toolchain/control variables are refused. See [environment security](docs/environment.md).
 
-Candidate validation uses separate baseline and candidate copies and original commands. The latest failure, changed source/configuration or expired evidence blocks application. Secrets and declared external state produce limited evidence; `--allow-limited` does not override failure. Restore recovers completed toolchain changes; recover handles interrupted journals. Source, application packages, databases and IDE processes are outside toolchain rollback.
+Upgrade and switch versions directly with `use`; select an earlier exact version to switch back. `self repair` recovers interrupted project/global transactions and CLI/router updates. Completed version changes, source, application packages, databases and IDE processes are outside interrupted transaction recovery.
 
 ## Development and release
 

@@ -451,32 +451,6 @@ pub struct EnvironmentCheck {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateRecord {
-    pub protocol: String,
-    pub id: String,
-    pub project_id: String,
-    pub root: PathBuf,
-    pub source_fingerprint: String,
-    pub state_fingerprint: String,
-    pub baseline: Lockfile,
-    pub candidate: Lockfile,
-    pub config: crate::ProjectConfig,
-    pub created_at: u64,
-    pub last_test: Option<CandidateTest>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateTest {
-    pub command: Vec<String>,
-    pub baseline_exit: Option<i32>,
-    pub candidate_exit: i32,
-    pub fingerprint: String,
-    pub timestamp: u64,
-    pub limited: Vec<String>,
-    pub timed_out: bool,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TransactionJournal {
     pub protocol: String,
     pub id: String,
@@ -487,7 +461,5 @@ pub struct TransactionJournal {
     pub old_lock: Option<String>,
     pub new_config: String,
     pub new_lock: String,
-    pub history_id: Option<String>,
-    pub history_before: Option<String>,
     pub profile_before: BTreeMap<String, Option<String>>,
 }

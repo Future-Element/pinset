@@ -18,6 +18,4 @@ Profile precedence is explicit command argument, `PINSET_PROFILE`, local default
 
 Trust binds project ID, host/directory identity and the canonical configuration plus encrypted profile bytes. Comments alone do not change canonical configuration; public policy or ciphertext changes do. External changes invalidate trust, and ordinary profile mutations cannot silently renew invalid trust. `env trust add` is the explicit authorization to trust the current contents.
 
-Case-insensitive variable collisions fail. PATH, JAVA_HOME, Python/Go/Rust/Flutter control variables and all Pinset controls cannot be encrypted overrides. Native children do not inherit the private identity. Reports, candidate history and journals do not contain decrypted values. Explicitly executed user commands can read the supplied variables and affect external systems; Pinset does not sandbox them.
-
-Candidate tests using secrets or declared external state carry limited evidence. `--allow-limited` accepts that scope only; it cannot make a failed or stale candidate applicable.
+Case-insensitive variable collisions fail. PATH, JAVA_HOME, Python/Go/Rust/Flutter control variables and all Pinset controls cannot be encrypted overrides. Native children do not inherit the private identity. Reports and journals do not contain decrypted values. Explicitly executed user commands can read the supplied variables and affect external systems; Pinset does not sandbox them.

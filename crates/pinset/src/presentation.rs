@@ -204,49 +204,10 @@ pub fn report(value: &Value, zh: bool) -> String {
         tools(&mut output, &value["lock"]);
         return output;
     }
-    let candidate = if value["candidate"]["id"].is_string() {
-        &value["candidate"]
-    } else {
-        value
-    };
-    if candidate["candidate"]["tool"].is_array() {
-        let _ = writeln!(
-            output,
-            "{}: {}",
-            if zh { "候选" } else { "Candidate" },
-            string(&candidate["id"])
-        );
-        tools(&mut output, &candidate["candidate"]);
-        if let Some(test) = candidate["last_test"].as_object() {
-            let _ = writeln!(
-                output,
-                "{}: baseline={}, candidate={}, limited={}",
-                if zh {
-                    "最近验证退出码"
-                } else {
-                    "Latest validation exits"
-                },
-                test.get("baseline_exit").unwrap_or(&Value::Null),
-                test.get("candidate_exit").unwrap_or(&Value::Null),
-                test.get("limited")
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len)
-            );
-        }
-        return output;
-    }
     // Small profile/maintenance reports keep their public names and paths, never values.
     if let Some(object) = value.as_object() {
         for (key, item) in object {
-            if [
-                "protocol",
-                "transaction",
-                "fingerprint",
-                "source_fingerprint",
-                "state_fingerprint",
-            ]
-            .contains(&key.as_str())
-            {
+            if ["protocol", "transaction", "fingerprint"].contains(&key.as_str()) {
                 continue;
             }
             match item {

@@ -2,7 +2,7 @@
 
 Pinset manages and locks project toolchains. Configuration is `.pinset/config.toml`; the exact artifact lock is `.pinset/lock.toml`. Eight built-in Providers: Node, pnpm, Bun, Go, Python, complete Temurin OpenJDK, Rust, Flutter/Dart. npm comes with Node, pip with the standard-library venv, and Dart with Flutter. There is no task runner or workspace orchestration.
 
-Global options: `-C/--cwd`, `--lang auto|en|zh-CN`, `--json`, `--help`, `--version`. Preview uses `--plan`. `exec` and `upgrade test` reject `--json` and preserve native output and exit codes.
+Global options: `-C/--cwd`, `--lang auto|en|zh-CN`, `--json`, `--help`, `--version`. Preview uses `--plan`. `exec` rejects `--json` and preserves native output and exit codes.
 
 ## Toolchains
 
@@ -16,7 +16,7 @@ pinset init
 
 ### `use`
 
-Explicitly select and resolve official artifacts. Duplicate tools are rejected. Config and lock update together through a journaled transaction; `--no-install` commits only their selection and lock.
+Select, upgrade or switch tool versions by resolving official artifacts. Use an earlier exact version to switch back. Duplicate tools are rejected. Config and lock update together through a journaled transaction; `--no-install` commits only their selection and lock.
 
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
@@ -60,7 +60,7 @@ pinset which javac --explain
 
 ### `check`
 
-Default inspection is read-only: it does not decrypt profiles, start tools, use the network or write reports. `--deep` inspects installation payloads. `--probe` explicitly starts bounded entry probes and records host, path, version and observation time. Binding, successful probes and successful user verification commands are different evidence states. Java checks work without Flutter; build targets require project context.
+Default inspection is read-only: it does not decrypt profiles, start tools, use the network or write reports. `--deep` inspects installation payloads. `--probe` explicitly starts bounded entry probes and records host, path, version and observation time. Configured bindings and observed probe results are reported separately; project builds remain your own commands. Java checks work without Flutter; build targets require project context.
 
 ```text
 pinset check [--global] [--deep] [--probe]
@@ -75,58 +75,6 @@ Run an original command in the exact selected environment. It does not install o
 pinset exec [--profile <profile>|--no-env] -- <command...>
 pinset exec -- ./mvnw verify
 pinset exec -- ./gradlew build
-```
-
-## Verified upgrades
-
-### `upgrade prepare`
-
-Prepare a single-project candidate with an explicit ID. Omitted tools means all selections; a tool name keeps its current selector. Exact selectors stay exact. No change creates no candidate. Snapshot limits: 20,000 files, 16 MiB per file, 256 MiB total, depth 64 and 64 declared extra inputs. Git internals, local state, venvs, dependencies and plaintext environment files are excluded; unsafe links and paths are rejected.
-
-```text
-pinset upgrade prepare [tool|tool@selector...] [--plan]
-```
-
-### `upgrade test`
-
-Use a raw command or a project script. Each baseline and candidate run uses an independent copy. The command prepares application dependencies itself. Default timeout is 300 seconds, configurable in `verification.timeout`. Secrets and declared external state produce limited evidence. The most recent result is authoritative.
-
-```text
-pinset upgrade test <id> [--compare]
-                     [--profile <profile>|--no-env] -- <command...>
-```
-
-### `upgrade status`
-
-Inspect candidates or completed upgrade history.
-
-```text
-pinset upgrade status [id]
-pinset upgrade status --history
-```
-
-### `upgrade apply`
-
-Apply only a fresh candidate whose most recent validation passed. `--allow-limited` acknowledges the declared limits; it cannot override failure or staleness.
-
-```text
-pinset upgrade apply <id> [--allow-limited] [--plan]
-```
-
-### `upgrade restore`
-
-Restore the toolchain state of a completed upgrade. Source, application packages, databases and running IDE processes are not rolled back. Candidate venvs are never copied back.
-
-```text
-pinset upgrade restore <history-id> [--plan]
-```
-
-### `upgrade recover`
-
-Recover interrupted project transactions from their journal.
-
-```text
-pinset upgrade recover [--plan]
 ```
 
 ## Encrypted environment
@@ -233,7 +181,7 @@ pinset env trust revoke
 
 ### `clean cache`
 
-Cleanup protects registered projects, global selections, venvs, candidates, retained history and recovery journals. Unknown or uncertain objects are retained.
+Cleanup protects registered projects, global selections, venvs and recovery journals. Unknown or uncertain objects are retained.
 
 ```text
 pinset clean cache [--plan]
@@ -243,12 +191,6 @@ pinset clean cache [--plan]
 
 ```text
 pinset clean installs [tool@exact...] [--plan]
-```
-
-### `clean history`
-
-```text
-pinset clean history --older-than <duration> [--plan]
 ```
 
 ### `self info`
@@ -273,10 +215,10 @@ pinset self completions <bash|zsh|fish|powershell>
 
 ### `self repair`
 
-Repair only Pinset-owned command entries and the matching adjacent router.
+Recover interrupted transactions for the current project and global selections, restore an interrupted CLI/router update, and repair Pinset-owned command entries. Prepared transactions restore prior configuration, lock, encrypted profiles and local bindings; completed transactions only clear their pending marker. This does not undo a completed version switch. `--plan` previews recovery without writing state.
 
 ```text
-pinset self repair
+pinset self repair [--plan]
 ```
 
 ### `self update`

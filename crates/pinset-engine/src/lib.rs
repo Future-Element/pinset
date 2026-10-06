@@ -68,7 +68,5 @@ mod java_checks;
 mod process_tree;
 mod self_update;
 pub use execution::*;
-mod upgrades;
-pub use upgrades::*;
 mod maintenance;
-pub use maintenance::*;
+mod transactions;

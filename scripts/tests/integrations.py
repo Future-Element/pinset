@@ -37,7 +37,10 @@ def credentials():
     os.environ['PINSET_HOME']=original_home
     (root/'.pinset/config.toml').write_text((root/'.pinset/config.toml').read_text()+'\n# external change\n')
     # Canonical config content is fingerprinted; change public policy, not comments.
-    config=root/'.pinset/config.toml';config.write_text(config.read_text().replace('timeout = 300','timeout = 301'))
+    config=root/'.pinset/config.toml';before=config.read_text()
+    changed=before.replace('[policy]', '[policy]\nminimum_release_age = "1d"')
+    assert changed!=before, 'trust invalidation fixture did not change configuration'
+    config.write_text(changed)
     assert data(root,'env','trust','status')['trusted'] is False
     cli(root,'env','set','OTHER','--profile','development','--stdin',stdin='blocked',expected=1)
     data(root,'env','trust','add')
