@@ -1,6 +1,7 @@
 /target/
 /.pnpm-store/
-/.pinset/
+/.pinset/local/
+/.venv/
 /plan/
 *.tmp
 *.part

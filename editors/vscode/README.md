@@ -1,34 +1,13 @@
-# Pinset for VS Code
+# Pinset 3 for VS Code
 
-The extension reads the versioned, secret-free `pinset editor context --json` protocol. The VS Code status bar shows the Pinset CLI version, resolved toolchain versions, and selected project environment. It also publishes diagnostics, switches environment profiles, and runs declared tasks in single-folder or multi-root workspaces.
+The extension uses the same `pinset/3` reports as the CLI. It starts no process until VS Code Workspace Trust is granted. Set `pinset.executable` when the CLI is outside PATH.
 
-Configuration findings are attached to `pinset.toml`, and lock or provenance findings are attached to `pinset.lock`. Runtime installation, cache, receipt, and Python environment health remain available through **Pinset: Check Diagnostics** without appearing as misleading line-1 file errors.
+Its five commands refresh status, install strictly from the project lock, check configuration and bindings, run explicit probes, and bind selected SDKs. Python points to the project's owned `.venv`; Flutter uses `.pinset/local/flutter-sdk`; Rust points to the locked compiler; Java updates the matching entry in `java.configuration.runtimes` while retaining other explicit entries.
 
-When an open folder does not contain a Pinset project, the status bar shows **Pinset: Init**. Select it to run `pinset init`, create `pinset.toml`, and refresh the project status immediately.
+The project Java runtime and Java language-server runtime have different requirements. Binding a Java 8 project never sets `java.jdt.ls.java.home` or substitutes that JDK for the language server. IDE binding is configuration evidence; an IDE process is not marked observed without a probe.
 
-When the Pinset CLI is not installed in the current extension host, the status bar shows **Pinset: Install CLI**. Select it to review and start the official checksum-verifying installer in a dedicated terminal, or open the installation guide. The extension records the installed executable path so **Pinset: Refresh Status** works after installation completes.
+Binding edits the folder's `.vscode/settings.json` with a JSONC parser, preserving comments and unrelated values even before language extensions register their settings. Invalid JSON or unsaved settings block the edit.
 
-Workspace Trust is required before the extension starts Pinset or a project task. Cancelling a Pinset task terminates its process group on macOS/Linux and its process tree on Windows.
+There are no task providers, environment panels, workspace orchestration, old commands or CLI installation wizard. Install the paired CLI/shim through the official installer before using the extension. The extension's install command allows 30 minutes for upstream SDK downloads.
 
-Configure `pinset.executablePath` when `pinset` is not available on the extension host's `PATH`.
-
-## Install
-
-Install Pinset from the Visual Studio Marketplace:
-
-```sh
-code --install-extension FutureElement.pinset-vscode
-```
-
-The extension and Pinset CLI must be installed in the same local or remote extension host. Each folder in a multi-root workspace is discovered and refreshed independently.
-
-## Commands
-
-- **Pinset: Refresh Status** refreshes every open workspace folder.
-- **Pinset: Install CLI** installs Pinset in the current local or remote extension host after confirmation.
-- **Pinset: Initialize Project** creates a minimal `pinset.toml` in the active folder.
-- **Pinset: Select Environment** saves or resets the machine-local profile for the active folder.
-- **Pinset: Run Project Task** runs a declared task in a cancellable VS Code task terminal.
-- **Pinset: Check Diagnostics** publishes current findings and opens the Pinset output channel.
-
-The status bar uses separate, clickable items for the Pinset version and diagnostics, toolchain versions, and selected environment. Task command arrays and environment values are never included in the editor protocol.
+All checks and the real VS Code extension-host acceptance run through the repository's local Docker integration suite. `npm run package` compiles and packages only.

@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 const latestReleaseApi = "/api/latest-release";
-const cacheKey = "pinset.latest-release.v1";
+const cacheKey = "pinset.latest-release.v3";
 const cacheLifetime = 5 * 60 * 1000;
 
 type CachedRelease = {
@@ -16,14 +16,14 @@ const LatestReleaseContext = createContext<string | null>(null);
 function releaseVersion(value: unknown) {
   if (!value || typeof value !== "object" || !("version" in value)) return null;
   const version = (value as { version?: unknown }).version;
-  return typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version) ? version : null;
+  return typeof version === "string" && /^3\.\d+\.\d+(?:-rc\.\d+)?$/.test(version) ? version : null;
 }
 
 function readCachedRelease() {
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null") as CachedRelease | null;
     if (!cached || Date.now() - cached.fetchedAt >= cacheLifetime) return null;
-    return /^\d+\.\d+\.\d+$/.test(cached.version) ? cached.version : null;
+    return /^3\.\d+\.\d+(?:-rc\.\d+)?$/.test(cached.version) ? cached.version : null;
   } catch {
     return null;
   }

@@ -1,356 +1,91 @@
-//! Runtime-independent command router used by every Provider command.
-//!
-//! INVARIANT: resolution excludes this executable and the managed shim directory, while an
-//! invocation chain rejects actual command cycles without blocking legitimate cross-Provider
-//! calls. A routed runtime must never resolve back to a Pinset shim.
-
+use pinset_core::*;
 use std::{
-    collections::BTreeSet,
     env,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    io::Read,
+    path::Path,
+    process::{Command, Stdio},
 };
 use zeroize::Zeroize;
-
-type EncryptedEnvironment = Option<(
-    EnvironmentCollision,
-    std::collections::BTreeMap<String, String>,
-)>;
-
-use pinset_core::{
-    CommandResolution, EnvironmentCollision, decode_environment, find_optional_project_config,
-    managed_runtime_arguments, pinset_home_from_env, resolve_command_with_path,
-    validate_managed_runtime_invocation, validate_windows_batch_arguments,
-};
-
-const SHIM_CHAIN_ENV: &str = "PINSET_SHIM_CHAIN";
-const SHIM_OWNER_ENV: &str = "PINSET_SHIM_OWNER";
-const MAX_SHIM_CHAIN_LENGTH: usize = 32;
-const SELECTED_TOOL_ENV: &str = "PINSET_SELECTED_TOOL";
-const SELECTED_VERSION_ENV: &str = "PINSET_SELECTED_VERSION";
-const SELECTION_SOURCE_ENV: &str = "PINSET_SELECTION_SOURCE";
-const CONFIG_PATH_ENV: &str = "PINSET_CONFIG_PATH";
-const IDENTITY_ENV: &str = "PINSET_IDENTITY";
-const ENV_PROFILE_ENV: &str = "PINSET_ENV_PROFILE";
-const ENV_DISABLE_ENV: &str = "PINSET_ENV_DISABLE";
-const IDENTITY_FILE_ENV: &str = "PINSET_IDENTITY_FILE";
-
+fn run() -> Result<i32> {
+    let argv = env::args_os().collect::<Vec<_>>();
+    let current = env::current_exe()?;
+    let name = Path::new(&argv[0])
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| failure("PINSET_COMMAND_INVALID", "invalid shim name"))?;
+    if name == "pinset-shim" {
+        return Err(failure(
+            "PINSET_COMMAND_INVALID",
+            "invoke a managed command entry",
+        ));
+    }
+    let cwd = env::current_dir()?;
+    let home = pinset_home()?;
+    let c = selected_context(&cwd, false)?;
+    let plan = plan_command(&cwd, &home, &c, name)?;
+    if plan.executable.canonicalize()? == current.canonicalize()? {
+        return Err(failure("PINSET_ROUTE_RECURSION", "shim resolves to itself"));
+    }
+    let cli = current
+        .parent()
+        .ok_or_else(|| failure("PINSET_BROKER_MISSING", "missing adjacent CLI"))?
+        .join(if cfg!(windows) {
+            "pinset.exe"
+        } else {
+            "pinset"
+        });
+    let mut child = Command::new(cli)
+        .arg("__env-resolve")
+        .arg("--protocol")
+        .arg(PROTOCOL)
+        .arg("--version")
+        .arg(pinset_version())
+        .arg("-C")
+        .arg(&cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|_| failure("PINSET_BROKER_MISSING", "matching adjacent CLI is required"))?;
+    let mut payload = vec![];
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .take(8 * 1024 * 1024)
+        .read_to_end(&mut payload)?;
+    if !child.wait()?.success() {
+        payload.zeroize();
+        return Err(failure("PINSET_ENV_DENIED", "broker refused execution"));
+    }
+    let values = decode_environment(&payload).map_err(|e| failure("PINSET_BROKER_PROTOCOL", e))?;
+    payload.zeroize();
+    let mut cmd = Command::new(&plan.executable);
+    cmd.args(&plan.prefix)
+        .args(&argv[1..])
+        .envs(&plan.environment);
+    for key in &plan.remove_environment {
+        cmd.env_remove(key);
+    }
+    for (key, mut value) in values {
+        cmd.env(key, &value);
+        value.zeroize();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(cmd.exec().into())
+    }
+    #[cfg(windows)]
+    {
+        Ok(cmd.status()?.code().unwrap_or(1))
+    }
+}
 fn main() {
     match run() {
-        Ok(code) => process::exit(code),
+        Ok(code) => std::process::exit(code),
         Err(error) => {
-            eprintln!("pinset shim error: {error}");
-            process::exit(8);
+            eprintln!("{error}");
+            std::process::exit(1);
         }
-    }
-}
-
-fn run() -> Result<i32, Box<dyn std::error::Error>> {
-    let invocation = Invocation::parse()?;
-    let home = pinset_home_from_env()?;
-    let current_executable = env::current_exe()?;
-    let shim_owner = shim_owner(&current_executable);
-    let shim_chain = extend_shim_chain(&invocation.command, &shim_owner)?;
-    let path = env::var_os("PATH");
-    let resolution = resolve_command_with_path(
-        &invocation.command,
-        &invocation.cwd,
-        &home,
-        path.as_deref(),
-        std::slice::from_ref(&current_executable),
-    )?;
-    reject_shim_directory_target(&resolution, &home)?;
-    if resolution.source != pinset_core::SelectionSource::System {
-        validate_managed_runtime_invocation(
-            &resolution.tool,
-            &invocation.command,
-            &invocation.arguments,
-        )?;
-    }
-    let runtime_arguments = if resolution.source == pinset_core::SelectionSource::System {
-        invocation.arguments.clone()
-    } else {
-        managed_runtime_arguments(&resolution.tool, &invocation.command, &invocation.arguments)
-    };
-    validate_windows_batch_arguments(&resolution.executable, &runtime_arguments)?;
-
-    let execution = pinset_core::execution_context(
-        &resolution.tool,
-        &resolution.executable,
-        &invocation.cwd,
-        &home,
-    )?;
-    let mut child = command_for_runtime(&resolution.executable, &runtime_arguments);
-    child
-        .env("PATH", execution.path)
-        .env(SHIM_CHAIN_ENV, shim_chain)
-        .env(SHIM_OWNER_ENV, shim_owner)
-        .env(SELECTED_TOOL_ENV, &resolution.tool)
-        .env(SELECTED_VERSION_ENV, &resolution.version)
-        .env(SELECTION_SOURCE_ENV, resolution.source.as_str());
-    for name in execution.remove_environment {
-        child.env_remove(name);
-    }
-    let runtime_environment = execution.environment;
-    let mut occupied = env::vars_os()
-        .filter_map(|(name, _)| name.into_string().ok())
-        .map(|name| name.to_ascii_uppercase())
-        .collect::<BTreeSet<_>>();
-    occupied.extend(
-        runtime_environment
-            .iter()
-            .map(|variable| variable.name.to_ascii_uppercase()),
-    );
-    for variable in runtime_environment {
-        child.env(variable.name, variable.value);
-    }
-    if let Some((collision, encrypted)) =
-        encrypted_environment(&invocation.cwd, &current_executable)?
-    {
-        for (name, mut value) in encrypted {
-            let exists = occupied.contains(&name.to_ascii_uppercase());
-            match (collision, exists) {
-                (EnvironmentCollision::Error, true) => {
-                    value.zeroize();
-                    return Err(format!("encrypted environment variable {name} collides with the process environment").into());
-                }
-                (EnvironmentCollision::ProcessWins, true) => {
-                    value.zeroize();
-                    continue;
-                }
-                _ => {
-                    child.env(&name, &value);
-                    value.zeroize();
-                    occupied.insert(name.to_ascii_uppercase());
-                }
-            }
-        }
-    }
-    child.env_remove(IDENTITY_ENV);
-    child.env_remove(ENV_PROFILE_ENV);
-    child.env_remove(ENV_DISABLE_ENV);
-    child.env_remove(IDENTITY_FILE_ENV);
-    if resolution.tool == "python" {
-        child.env_remove("PYTHONHOME");
-        if resolution.source != pinset_core::SelectionSource::Project {
-            child.env_remove("VIRTUAL_ENV");
-        }
-    }
-    if let Some(path) = &resolution.selection_path {
-        child.env(CONFIG_PATH_ENV, path);
-    } else {
-        child.env_remove(CONFIG_PATH_ENV);
-    }
-
-    let status = child.status()?;
-    Ok(status.code().unwrap_or(1))
-}
-
-fn encrypted_environment(
-    cwd: &Path,
-    shim_executable: &Path,
-) -> Result<EncryptedEnvironment, Box<dyn std::error::Error>> {
-    if env::var_os(ENV_DISABLE_ENV).is_some_and(|value| value == "1") {
-        return Ok(None);
-    }
-    let Some(config_path) = find_optional_project_config(cwd)? else {
-        return Ok(None);
-    };
-    let config = pinset_core::load_effective_project_config(&config_path)?;
-    let Some(environment) = &config.environment else {
-        return Ok(None);
-    };
-    let selection =
-        pinset_core::environment_selection(&pinset_home_from_env()?, &config_path, &config, None)?;
-    if selection.profile.is_none() {
-        return Ok(None);
-    }
-    let directory = shim_executable
-        .parent()
-        .ok_or("pinset shim executable has no parent directory")?;
-    let cli = directory.join(if cfg!(windows) {
-        "pinset.exe"
-    } else {
-        "pinset"
-    });
-    if !cli.is_file() {
-        return Err(format!(
-            "matching Pinset CLI is missing next to the shim: {}",
-            cli.display()
-        )
-        .into());
-    }
-    let mut broker = Command::new(&cli);
-    broker
-        .arg("__env-resolve")
-        .arg("--cwd")
-        .arg(cwd)
-        .arg("--shim-version")
-        .arg(pinset_core::pinset_version())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    if let Some(profile) = selection.profile.as_deref() {
-        broker.arg("--profile").arg(profile);
-    }
-    let mut output = broker.output()?;
-    if !output.status.success() {
-        output.stdout.zeroize();
-        return Err(format!(
-            "Pinset environment broker failed with status {}",
-            output.status
-        )
-        .into());
-    }
-    let variables = decode_environment(&output.stdout);
-    output.stdout.zeroize();
-    let variables = variables?;
-    Ok(Some((environment.collision, variables)))
-}
-
-#[derive(Debug)]
-struct Invocation {
-    command: String,
-    cwd: PathBuf,
-    arguments: Vec<OsString>,
-}
-
-impl Invocation {
-    fn parse() -> Result<Self, String> {
-        let mut arguments = env::args_os();
-        let invoked_as = arguments.next().ok_or("missing argv[0]")?;
-        let invoked_name = command_name(Path::new(&invoked_as)).ok_or_else(|| {
-            format!(
-                "cannot derive command name from {}",
-                Path::new(&invoked_as).display()
-            )
-        })?;
-
-        if invoked_name == "pinset-shim" {
-            return Self::parse_debug_mode(arguments.collect());
-        }
-
-        Ok(Self {
-            command: invoked_name,
-            cwd: env::current_dir().map_err(|error| error.to_string())?,
-            arguments: arguments.collect(),
-        })
-    }
-
-    fn parse_debug_mode(arguments: Vec<OsString>) -> Result<Self, String> {
-        let mut command = None;
-        let mut cwd = None;
-        let mut runtime_arguments = Vec::new();
-        let mut index = 0;
-
-        while index < arguments.len() {
-            match arguments[index].to_str() {
-                Some("--as") => {
-                    index += 1;
-                    command = arguments
-                        .get(index)
-                        .and_then(|value| value.to_str())
-                        .map(str::to_owned);
-                }
-                Some("--cwd") => {
-                    index += 1;
-                    cwd = arguments.get(index).map(PathBuf::from);
-                }
-                Some("--") => {
-                    runtime_arguments.extend(arguments.into_iter().skip(index + 1));
-                    break;
-                }
-                Some(flag) => return Err(format!("unknown pinset-shim debug option: {flag}")),
-                None => return Err("pinset-shim debug options must be valid UTF-8".to_owned()),
-            }
-            index += 1;
-        }
-
-        Ok(Self {
-            command: command.ok_or("pinset-shim requires --as <command> in debug mode")?,
-            cwd: cwd
-                .map(Ok)
-                .unwrap_or_else(env::current_dir)
-                .map_err(|error| error.to_string())?,
-            arguments: runtime_arguments,
-        })
-    }
-}
-
-fn command_name(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_string_lossy();
-    Some(stem.to_ascii_lowercase())
-}
-
-fn extend_shim_chain(command: &str, owner: &str) -> Result<String, String> {
-    let inherited = if env::var(SHIM_OWNER_ENV).is_ok_and(|value| value == owner) {
-        env::var(SHIM_CHAIN_ENV).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let mut chain = inherited
-        .split(',')
-        .filter(|entry| !entry.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    if chain.iter().any(|entry| entry == command) {
-        chain.push(command.to_owned());
-        return Err(format!(
-            "recursive shim invocation detected: {}",
-            chain.join(" -> ")
-        ));
-    }
-    if chain.len() >= MAX_SHIM_CHAIN_LENGTH {
-        return Err(format!(
-            "shim invocation chain exceeds {MAX_SHIM_CHAIN_LENGTH} entries via {SHIM_CHAIN_ENV}"
-        ));
-    }
-    chain.push(command.to_owned());
-    Ok(chain.join(","))
-}
-
-fn shim_owner(executable: &Path) -> String {
-    let path = executable
-        .canonicalize()
-        .unwrap_or_else(|_| executable.to_path_buf());
-    if cfg!(windows) {
-        path.to_string_lossy().to_ascii_lowercase()
-    } else {
-        path.to_string_lossy().into_owned()
-    }
-}
-
-fn reject_shim_directory_target(resolution: &CommandResolution, home: &Path) -> Result<(), String> {
-    let shims = home.join("shims");
-    if resolution.executable.starts_with(&shims) {
-        return Err(format!(
-            "resolved runtime points back into the Pinset shim directory: {}",
-            resolution.executable.display()
-        ));
-    }
-    Ok(())
-}
-
-fn command_for_runtime(executable: &Path, arguments: &[OsString]) -> Command {
-    let mut command = Command::new(executable);
-    command.args(arguments);
-    command
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_executable_extension_from_command_name() {
-        assert_eq!(
-            command_name(Path::new("C:/tools/node.exe")).as_deref(),
-            Some("node")
-        );
-        assert_eq!(
-            command_name(Path::new("/tools/npm")).as_deref(),
-            Some("npm")
-        );
     }
 }

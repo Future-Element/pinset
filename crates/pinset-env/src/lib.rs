@@ -19,11 +19,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROFILE_SCHEMA: u32 = 1;
+pub const PROFILE_SCHEMA: u32 = 3;
 pub const PROFILE_MAX_BYTES: usize = 1024 * 1024;
-pub const DOTENV_PROFILE_HEADER: &str = "# pinset-encrypted-env v1";
-const DOTENV_VALUE_PREFIX: &str = "encrypted:pinset:v1:";
-const IDENTITY_SERVICE: &str = "dev.pinset.identity";
+pub const DOTENV_PROFILE_HEADER: &str = "# pinset-encrypted-env v3";
+const DOTENV_VALUE_PREFIX: &str = "encrypted:pinset:v3:";
+const IDENTITY_SERVICE: &str = "dev.pinset.identity.v3";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -127,7 +127,24 @@ pub fn validate_variable_name(name: &str) -> Result<()> {
         return Err(invalid_variable(name, "name is not portable"));
     }
     let upper = name.to_ascii_uppercase();
-    if upper == "PATH" || upper.starts_with("PINSET_") {
+    if upper.starts_with("PINSET_")
+        || [
+            "PATH",
+            "JAVA_HOME",
+            "GOROOT",
+            "GOTOOLCHAIN",
+            "RUSTUP_TOOLCHAIN",
+            "RUSTUP_HOME",
+            "FLUTTER_ROOT",
+            "VIRTUAL_ENV",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "PYTHONNOUSERSITE",
+            "NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS",
+            "NPM_CONFIG_USE_NODE_VERSION",
+        ]
+        .contains(&upper.as_str())
+    {
         return Err(invalid_variable(name, "name is reserved by Pinset"));
     }
     Ok(())
@@ -361,10 +378,11 @@ pub fn set_encrypted_profile_values(
     values: BTreeMap<String, String>,
 ) -> Result<()> {
     let path = safe_profile_path(project_root, relative, false)?;
-    let lock = lock_profile(&path)?;
+    let lock = lock_profile(project_root, &path)?;
     let bytes = read_regular_file(&path)?;
     let mut encrypted = parse_encrypted_dotenv(&bytes)?;
     for (name, value) in values {
+        let value = zeroize::Zeroizing::new(value);
         validate_variable_name(&name)?;
         remove_case_insensitive(&mut encrypted.variables, &name);
         encrypted
@@ -382,7 +400,7 @@ pub fn unset_encrypted_profile_value(
     name: &str,
 ) -> Result<bool> {
     let path = safe_profile_path(project_root, relative, false)?;
-    let lock = lock_profile(&path)?;
+    let lock = lock_profile(project_root, &path)?;
     let bytes = read_regular_file(&path)?;
     let mut encrypted = parse_encrypted_dotenv(&bytes)?;
     let removed = remove_case_insensitive(&mut encrypted.variables, name);
@@ -419,7 +437,7 @@ pub fn mutate_encrypted_profile<T>(
     mutation: impl FnOnce(&mut EnvironmentDocument) -> Result<T>,
 ) -> Result<T> {
     let path = safe_profile_path(project_root, relative, false)?;
-    let lock = lock_profile(&path)?;
+    let lock = lock_profile(project_root, &path)?;
     let metadata = fs::symlink_metadata(&path).map_err(|source| Error::Io {
         path: path.clone(),
         source,
@@ -447,19 +465,19 @@ pub fn write_encrypted_profile(
 ) -> Result<PathBuf> {
     let path = safe_profile_path(project_root, relative, true)?;
     let encrypted = render_encrypted_dotenv(&encrypt_dotenv_document(document, recipients)?)?;
-    let lock = lock_profile(&path)?;
+    let lock = lock_profile(project_root, &path)?;
     atomic_write(&path, &encrypted)?;
     let _ = FileExt::unlock(&lock);
     Ok(path)
 }
 
-fn lock_profile(path: &Path) -> Result<fs::File> {
-    let lock_path = path.with_file_name(format!(
-        "{}.lock",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| Error::UnsafePath(path.to_path_buf()))?
-    ));
+fn lock_profile(project_root: &Path, path: &Path) -> Result<fs::File> {
+    let directory = project_root.join(".pinset/local/locks/profiles");
+    fs::create_dir_all(&directory).map_err(|source| Error::Io {
+        path: directory.clone(),
+        source,
+    })?;
+    let lock_path = directory.join(format!("{}.lock", fingerprint(&path.to_string_lossy())));
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -506,7 +524,7 @@ pub fn restore_encrypted_profile(
     ciphertext: &[u8],
 ) -> Result<()> {
     let path = safe_profile_path(project_root, relative, true)?;
-    let lock = lock_profile(&path)?;
+    let lock = lock_profile(project_root, &path)?;
     atomic_write(&path, ciphertext)?;
     let _ = FileExt::unlock(&lock);
     Ok(())
@@ -523,6 +541,34 @@ pub fn generate_identity() -> IdentityMaterial {
         },
         secret: identity.to_string(),
     }
+}
+
+pub fn validate_recipient(value: &str) -> Result<()> {
+    value
+        .parse::<x25519::Recipient>()
+        .map_err(|_| Error::InvalidRecipient)?;
+    Ok(())
+}
+
+pub fn public_recipient(home: &Path) -> Result<String> {
+    if let Ok(value) = env::var("PINSET_IDENTITY") {
+        let identity = value
+            .trim()
+            .parse::<x25519::Identity>()
+            .map_err(|_| Error::InvalidIdentityMetadata)?;
+        return Ok(identity.to_public().to_string());
+    }
+    Ok(request_identity(home, false)?.recipient)
+}
+
+pub fn request_identity(home: &Path, new: bool) -> Result<IdentityRecord> {
+    if !new && let Some(record) = list_identities(home)?.into_iter().next() {
+        load_identity_secret(home, &record.id)?;
+        return Ok(record);
+    }
+    let material = generate_identity();
+    store_identity(home, &material)?;
+    Ok(material.record)
 }
 
 pub fn store_identity(home: &Path, material: &IdentityMaterial) -> Result<()> {
@@ -596,7 +642,7 @@ pub fn trust_project(
     environment_toml: &str,
 ) -> Result<()> {
     let record = TrustRecord {
-        schema: 2,
+        schema: 3,
         project_id: project_id.to_owned(),
         root: canonical_root(root)?.to_string_lossy().into_owned(),
         environment_fingerprint: fingerprint(environment_toml),
@@ -640,7 +686,7 @@ pub fn verify_project_trust(
     })?;
     let record: TrustRecord = toml::from_str(&content).map_err(|_| Error::TrustChanged)?;
     let canonical = canonical_root(root)?.to_string_lossy().into_owned();
-    if record.schema != 2
+    if record.schema != 3
         || record.project_id != project_id
         || record.root != canonical
         || record.directory.as_ref() != Some(&directory_identity(root)?)
@@ -716,13 +762,13 @@ fn load_identity_metadata(home: &Path) -> Result<IdentityMetadata> {
         Ok(content) => {
             let metadata: IdentityMetadata =
                 toml::from_str(&content).map_err(|_| Error::InvalidIdentityMetadata)?;
-            if metadata.schema != 1 {
+            if metadata.schema != 3 {
                 return Err(Error::InvalidIdentityMetadata);
             }
             Ok(metadata)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(IdentityMetadata {
-            schema: 1,
+            schema: 3,
             identities: Vec::new(),
         }),
         Err(source) => Err(Error::Io { path, source }),
@@ -737,7 +783,7 @@ fn save_identity_metadata(home: &Path, metadata: &IdentityMetadata) -> Result<()
 
 fn trust_path(home: &Path, root: &Path) -> Result<PathBuf> {
     Ok(home
-        .join("state/trust/v2")
+        .join("state/trust")
         .join(format!("{}.toml", directory_identity(root)?.namespace)))
 }
 
@@ -808,8 +854,8 @@ mod tests {
 
         let ciphertext = fs::read_to_string(root.path().join(".env.development")).unwrap();
         assert!(ciphertext.starts_with(DOTENV_PROFILE_HEADER));
-        assert!(ciphertext.contains("DATABASE_URL=\"encrypted:pinset:v1:"));
-        assert!(ciphertext.contains("TOKEN=\"encrypted:pinset:v1:"));
+        assert!(ciphertext.contains("DATABASE_URL=\"encrypted:pinset:v3:"));
+        assert!(ciphertext.contains("TOKEN=\"encrypted:pinset:v3:"));
         assert!(!ciphertext.contains("postgres://secret"));
         assert!(!ciphertext.contains("hidden"));
         assert_eq!(
@@ -900,7 +946,7 @@ mod tests {
         assert!(validate_variable_name("PATH").is_err());
         assert!(validate_variable_name("PINSET_IDENTITY").is_err());
         let document = EnvironmentDocument {
-            schema: 1,
+            schema: 3,
             variables: BTreeMap::from([
                 ("Token".to_owned(), "a".to_owned()),
                 ("TOKEN".to_owned(), "b".to_owned()),

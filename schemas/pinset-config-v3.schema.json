@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pinset-config-v3",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "pinset/3"
+    },
+    "schema": {
+      "const": 3
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "pnpm": {
+          "type": "string"
+        },
+        "bun": {
+          "type": "string"
+        },
+        "go": {
+          "type": "string"
+        },
+        "python": {
+          "type": "string"
+        },
+        "java": {
+          "type": "string"
+        },
+        "rust": {
+          "type": "string"
+        },
+        "flutter": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "platforms": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "windows-x86_64",
+          "macos-aarch64",
+          "macos-x86_64",
+          "linux-x86_64",
+          "linux-aarch64"
+        ]
+      }
+    },
+    "rust": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "enum": [
+            "minimal",
+            "default",
+            "complete",
+            null
+          ]
+        },
+        "date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "minimum_release_age": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[1-9][0-9]*[dhms]$"
+        },
+        "minimum_verification": {
+          "enum": [
+            "checksum",
+            "signed-checksum",
+            null
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "recipients": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "grants": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "recipients"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 300
+        },
+        "inputs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string"
+          }
+        },
+        "external_state": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "project_id"
+  ],
+  "additionalProperties": false
+}

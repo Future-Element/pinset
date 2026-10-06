@@ -7,14 +7,20 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       build-essential ca-certificates cmake curl git pkg-config libssl-dev liblzma-dev \
-       python3 xz-utils unzip xvfb xauth dbus-x11 gnome-keyring \
+       build-essential ca-certificates cmake curl git pkg-config libssl-dev \
+       python3 clang qemu-user-static xz-utils unzip xvfb xauth dbus-x11 gnome-keyring gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64 \
        libgtk-3-0 libnss3 libgbm1 libasound2 libx11-xcb1 libsecret-1-0 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup component add rustfmt clippy \
-    && npm install --global pnpm@10.15.0
+    && npm install --global pnpm@10.15.0 \
+    && cargo install cargo-audit --version 0.22.1 --locked
+
+RUN dpkg --add-architecture arm64 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libc6-dev-arm64-cross libstdc++6:arm64 zlib1g:arm64 ripgrep libxtst6 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-ENV CARGO_TARGET_DIR=/workspace/target
+ENV CARGO_TARGET_DIR=/build/target
 ENV CARGO_BUILD_JOBS=6
 CMD ["sleep", "infinity"]

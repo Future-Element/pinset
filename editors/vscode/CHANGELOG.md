@@ -1,5 +1,12 @@
 # Change Log
 
+## 3.0.0 (unreleased)
+
+- Require the Pinset 3 protocol and a trusted local project.
+- Retain five commands: refresh, install, check, probe and SDK binding.
+- Bind the project Temurin JDK separately from the Java language server JDK.
+- Remove compatibility protocols, environment panels, task providers and CLI installation flows.
+
 ## 1.2.0
 
 - Add per-folder environment preparation, readiness and execution evidence.

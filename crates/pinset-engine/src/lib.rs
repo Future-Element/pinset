@@ -1,0 +1,74 @@
+//! Mutating application services and the eight built-in official Providers.
+pub use pinset_core::*;
+mod error;
+pub use error::{Error, Result};
+mod official_sources;
+pub use official_sources::*;
+mod download_cache;
+#[cfg(test)]
+pub(crate) use download_cache::download_cache_path;
+pub(crate) use download_cache::import_download_cache_with_integrity;
+#[cfg(test)]
+fn save_lockfile(path: &std::path::Path, lock: &Lockfile) -> Result<()> {
+    services::write_atomic(path, toml::to_string(lock)?.as_bytes())
+}
+mod http_client;
+pub use http_client::*;
+mod installer;
+pub use installer::*;
+mod provenance;
+pub use provenance::*;
+mod node_provider;
+mod node_trust;
+pub use node_provider::*;
+mod node_metadata;
+pub use node_metadata::*;
+mod node_runtime;
+pub use node_runtime::*;
+mod go_provider;
+pub use go_provider::*;
+mod go_metadata;
+pub use go_metadata::*;
+mod go_runtime;
+pub use go_runtime::*;
+mod python_provider;
+pub use python_provider::*;
+mod python_metadata;
+pub use python_metadata::*;
+mod python_runtime;
+pub use python_runtime::*;
+mod java_provider;
+pub use java_provider::*;
+mod java_metadata;
+pub use java_metadata::*;
+mod java_runtime;
+pub use java_runtime::*;
+mod rust_provider;
+pub use rust_provider::*;
+mod rust_metadata;
+pub use rust_metadata::*;
+mod rust_runtime;
+pub use rust_runtime::*;
+mod flutter_provider;
+pub use flutter_provider::*;
+mod flutter_metadata;
+pub use flutter_metadata::*;
+mod flutter_runtime;
+pub use flutter_runtime::*;
+mod npm_metadata;
+pub use npm_metadata::*;
+mod npm_runtime;
+pub use npm_runtime::*;
+mod services;
+pub use services::*;
+mod profiles;
+pub use profiles::*;
+mod execution;
+mod java_checks;
+mod process_tree;
+mod self_update;
+pub use execution::*;
+mod upgrades;
+pub use upgrades::*;
+mod maintenance;
+pub use maintenance::*;

@@ -5,11 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 publish = false
-
 [dependencies]
-pinset-core = { path = "../pinset-core", features = ["lockfile", "environment-selection", "provider-registry"] }
+pinset-core = { path = "../pinset-core" }
 zeroize.workspace = true
-
 [dev-dependencies]
-pinset-core = { path = "../pinset-core", features = ["project-write"] }
 tempfile.workspace = true

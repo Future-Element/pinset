@@ -4,15 +4,15 @@ import { useState } from "react";
 import type { Locale } from "@/lib/site";
 import { useLatestReleaseVersion } from "./latest-release";
 
-const config = '[policy]\nboundary = "git"\n\n[tools]\nnode = "24"\npnpm = "11"\npython = "3.14"';
-const commands = "pinset init\npinset use node@24 pnpm@11 python@3.14 --no-install\npinset install --locked\n\nnode --version\npython --version\npinset current --explain";
+const config = 'protocol = "pinset/3"\nschema = 3\nproject_id = "example-project"\n\n[tools]\nnode = "24"\npnpm = "11"\npython = "3.14"';
+const commands = "pinset init\npinset use node@24 pnpm@11 python@3.14 --no-install\npinset install\n\nnode --version\npython --version\npinset which --explain";
 export function ProjectPreview({ locale }: { locale: Locale }) {
   const zh = locale === "zh-CN";
   const [active, setActive] = useState(0);
   const version = useLatestReleaseVersion();
   const ci = `- uses: actions/checkout@v4\n- uses: Future-Element/pinset@${version ? `v${version}` : "main"}\n  with:\n    version: ${version ?? "latest"}\n- run: node --version`;
   const examples = [
-    { title: "pinset.toml", code: config, note: zh ? "配置片段 · 精确制品记录在 pinset.lock。" : "Configuration excerpt · Exact artifacts live in pinset.lock." },
+    { title: ".pinset/config.toml", code: config, note: zh ? "配置片段 · 精确制品记录在 .pinset/lock.toml。" : "Configuration excerpt · Exact artifacts live in .pinset/lock.toml." },
     { title: zh ? "终端" : "Terminal", code: commands, note: zh ? "在已初始化 Shell 的项目中运行这些命令。" : "Run these commands in a project after setting up your shell." },
     { title: "CI", code: ci, note: zh ? "GitHub Actions 示例片段，复用项目已提交的锁文件。" : "GitHub Actions snippet using the lockfile committed to your project." },
   ];

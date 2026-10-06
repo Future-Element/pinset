@@ -1,0 +1,448 @@
+use crate::*;
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::PathBuf,
+};
+pub fn duration_seconds(value: &str) -> Result<u64> {
+    let i = value
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(i);
+    let n = number
+        .parse::<u64>()
+        .map_err(|_| service_error("PINSET_DURATION_INVALID", "expected a duration such as 30d"))?;
+    n.checked_mul(match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        _ => {
+            return Err(service_error(
+                "PINSET_DURATION_INVALID",
+                "expected s, m, h or d",
+            ));
+        }
+    })
+    .filter(|n| *n > 0)
+    .ok_or_else(|| service_error("PINSET_DURATION_INVALID", "duration is zero or too large"))
+}
+impl Services {
+    fn references(&self) -> Result<(BTreeSet<String>, BTreeSet<String>, bool)> {
+        let mut installs = BTreeSet::new();
+        let mut cache = BTreeSet::new();
+        let mut uncertain = false;
+        let mut locks = vec![];
+        let global = self.home.join("global/lock.toml");
+        if global.exists() {
+            match load_lockfile(&global) {
+                Ok(l) => locks.push(l),
+                Err(_) => uncertain = true,
+            }
+        }
+        let registry = self.home.join("state/projects.json");
+        if registry.exists() {
+            let roots: BTreeMap<String, PathBuf> = read_json(&registry)?;
+            for (_, path) in roots {
+                if let Some(state) = path.parent() {
+                    let lock = state.join("lock.toml");
+                    if lock.exists() {
+                        match load_lockfile(&lock) {
+                            Ok(l) => locks.push(l),
+                            Err(_) => uncertain = true,
+                        }
+                    } else {
+                        uncertain = true;
+                    }
+                    let root = state.parent().unwrap_or(state);
+                    let mut markers = vec![root.join(".venv").join(VENV_MARKER)];
+                    let backups = state.join("local/venv-backups");
+                    if backups.is_dir() {
+                        for entry in fs::read_dir(backups)? {
+                            markers.push(entry?.path().join(VENV_MARKER));
+                        }
+                    }
+                    for marker in markers {
+                        if marker.exists() {
+                            match fs::read_to_string(marker)
+                                .ok()
+                                .and_then(|s| toml::from_str::<VenvOwner>(&s).ok())
+                            {
+                                Some(o) if o.protocol == PROTOCOL => {
+                                    installs.insert(o.interpreter_identity);
+                                }
+                                _ => uncertain = true,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (directory, candidate) in [("state/candidates", true), ("state/history", false)] {
+            let dir = self.home.join(directory);
+            if dir.exists() {
+                for e in fs::read_dir(dir)? {
+                    let e = e?;
+                    let p = if candidate {
+                        e.path().join("record.json")
+                    } else {
+                        e.path()
+                    };
+                    if !p.is_file() {
+                        continue;
+                    }
+                    let value: Value = match read_json(&p) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            uncertain = true;
+                            continue;
+                        }
+                    };
+                    for key in if candidate {
+                        ["baseline", "candidate"]
+                    } else {
+                        ["old_lock", "new_lock"]
+                    } {
+                        if let Some(l) = value.get(key) {
+                            match serde_json::from_value::<Lockfile>(l.clone()) {
+                                Ok(l) => locks.push(l),
+                                Err(_) => uncertain = true,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let journal = self.home.join("state/transactions");
+        if journal.exists() {
+            for e in fs::read_dir(journal)? {
+                let j: TransactionJournal = match read_json(&e?.path()) {
+                    Ok(j) => j,
+                    Err(_) => {
+                        uncertain = true;
+                        continue;
+                    }
+                };
+                if j.phase == "prepared" {
+                    for text in [j.old_lock.as_deref(), Some(j.new_lock.as_str())]
+                        .into_iter()
+                        .flatten()
+                    {
+                        match toml::from_str::<Lockfile>(text) {
+                            Ok(l) => locks.push(l),
+                            Err(_) => uncertain = true,
+                        }
+                    }
+                }
+            }
+        }
+        for lock in locks {
+            for tool in lock.tools {
+                for a in &tool.artifacts {
+                    installs.insert(tool.installation_version(&a.target));
+                    cache.insert(a.artifact_integrity()?.cache_key());
+                    for o in &a.overlays {
+                        cache.insert(o.artifact_integrity()?.cache_key());
+                    }
+                }
+            }
+        }
+        Ok((installs, cache, uncertain))
+    }
+    pub fn clean(
+        &self,
+        kind: &str,
+        specs: &[String],
+        older: Option<&str>,
+        plan: bool,
+    ) -> Result<Value> {
+        let _guard = if plan {
+            None
+        } else {
+            Some(self.guard("maintenance")?)
+        };
+        let (protected, cache, uncertain) = self.references()?;
+        let mut removals = Vec::new();
+        let mut retained = Vec::new();
+        if kind == "cache" {
+            let dir = self.home.join("cache/downloads");
+            if dir.exists() {
+                for algorithm in fs::read_dir(&dir)? {
+                    let algorithm = algorithm?;
+                    if !algorithm.file_type()?.is_dir() {
+                        continue;
+                    }
+                    for entry in fs::read_dir(algorithm.path())? {
+                        let entry = entry?;
+                        let filename = entry.file_name().to_string_lossy().into_owned();
+                        let hash = filename.trim_end_matches(".archive");
+                        if entry.file_type()?.is_file()
+                            && filename.ends_with(".archive")
+                            && !cache.contains(hash)
+                            && !uncertain
+                        {
+                            removals.push(entry.path());
+                        } else {
+                            retained.push(entry.path());
+                        }
+                    }
+                }
+            }
+        } else if kind == "installs" {
+            let mut filters = BTreeSet::new();
+            for spec in specs {
+                let (name, version) = spec.split_once('@').ok_or_else(|| {
+                    service_error("PINSET_EXACT_REQUIRED", "clean installs accepts tool@exact")
+                })?;
+                validate_tool(name)?;
+                if version.is_empty()
+                    || ["latest", "lts", "stable", "current", "nightly"].contains(&version)
+                {
+                    return Err(service_error(
+                        "PINSET_EXACT_REQUIRED",
+                        "clean requires an exact version",
+                    ));
+                }
+                filters.insert((name.to_string(), version.to_string()));
+            }
+            let dir = self.home.join("installs");
+            if dir.exists() {
+                for tool in fs::read_dir(dir)? {
+                    let tool = tool?;
+                    if !tool.file_type()?.is_dir() {
+                        retained.push(tool.path());
+                        continue;
+                    }
+                    for identity in fs::read_dir(tool.path())? {
+                        let identity = identity?;
+                        if !identity.file_type()?.is_dir() {
+                            retained.push(identity.path());
+                            continue;
+                        }
+                        for platform in fs::read_dir(identity.path())? {
+                            let platform = platform?;
+                            let receipt =
+                                fs::read_to_string(platform.path().join(".pinset-install.toml"))
+                                    .ok()
+                                    .and_then(|s| toml::from_str::<InstallReceipt>(&s).ok());
+                            if let Some(r) = receipt {
+                                let matches = filters.is_empty()
+                                    || filters.contains(&(r.tool.clone(), r.version.clone()));
+                                if r.schema == 3
+                                    && r.complete
+                                    && platform.file_type()?.is_dir()
+                                    && matches
+                                    && !protected.contains(&r.install_identity)
+                                    && !uncertain
+                                {
+                                    removals.push(platform.path());
+                                } else {
+                                    retained.push(platform.path());
+                                }
+                            } else {
+                                retained.push(platform.path());
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            let age = duration_seconds(older.ok_or_else(|| {
+                service_error(
+                    "PINSET_DURATION_REQUIRED",
+                    "history cleanup requires --older-than",
+                )
+            })?)?;
+            let dir = self.home.join("state/history");
+            if dir.exists() {
+                for entry in fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let h: UpgradeHistory = match read_json(&entry.path()) {
+                        Ok(h) => h,
+                        Err(_) => {
+                            retained.push(entry.path());
+                            continue;
+                        }
+                    };
+                    if h.protocol == PROTOCOL
+                        && h.restored
+                        && now().saturating_sub(h.applied_at) > age
+                        && !uncertain
+                    {
+                        removals.push(entry.path());
+                    } else {
+                        retained.push(entry.path());
+                    }
+                }
+            }
+        }
+        if !plan {
+            for path in &removals {
+                let canonical = path.canonicalize()?;
+                if !canonical.starts_with(self.home.canonicalize()?)
+                    || fs::symlink_metadata(path)?.file_type().is_symlink()
+                {
+                    return Err(service_error(
+                        "PINSET_CLEAN_UNSAFE",
+                        "cleanup object escaped Pinset v3 home",
+                    ));
+                }
+                if canonical.is_dir() {
+                    fs::remove_dir_all(&canonical)?;
+                } else {
+                    fs::remove_file(&canonical)?;
+                }
+            }
+        }
+        Ok(
+            json!({"protocol":PROTOCOL,"plan":plan,"removed":removals,"retained":retained,"uncertain_references":uncertain}),
+        )
+    }
+    pub fn self_info(&self) -> Value {
+        json!({"protocol":PROTOCOL,"version":pinset_version(),"platform":current_target(),"home":self.home,"cli":std::env::current_exe().ok(),"providers":TOOLS})
+    }
+    pub fn shell(&self, shell: &str) -> String {
+        let bin = self.home.join("bin").display().to_string();
+        match shell {
+            "powershell" => format!(
+                "$env:PATH = '{}' + [IO.Path]::PathSeparator + $env:PATH\n",
+                bin.replace('\'', "''")
+            ),
+            "fish" => format!("fish_add_path --prepend '{}'\n", bin.replace('\'', "\\'")),
+            _ => format!("export PATH='{}':\"$PATH\"\n", bin.replace('\'', "'\\''")),
+        }
+    }
+    pub fn self_update(&self, version: Option<&str>, plan: bool) -> Result<Value> {
+        let _guard = if plan {
+            None
+        } else {
+            Some(self.guard("maintenance")?)
+        };
+        let client = http_client_builder()?
+            .build()
+            .map_err(|source| Error::HttpClient { source })?;
+        let version = if let Some(version) = version {
+            version.trim_start_matches('v').to_owned()
+        } else {
+            let response = client
+                .get("https://api.github.com/repos/Future-Element/Pinset/releases/latest")
+                .header("User-Agent", "pinset/3")
+                .send()
+                .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?;
+            let doc: Value = serde_json::from_slice(
+                &response
+                    .error_for_status()
+                    .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
+                    .bytes()
+                    .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?,
+            )?;
+            doc["tag_name"]
+                .as_str()
+                .ok_or_else(|| service_error("PINSET_UPDATE_METADATA", "release has no tag"))?
+                .trim_start_matches('v')
+                .to_owned()
+        };
+        let parsed = semver::Version::parse(&version)
+            .map_err(|_| service_error("PINSET_UPDATE_VERSION", "invalid release version"))?;
+        if parsed.major != 3 {
+            return Err(service_error(
+                "PINSET_UPDATE_VERSION",
+                "self update accepts only the Pinset 3 release line",
+            ));
+        }
+        let filename = format!("pinset-v{version}-{}.zip", current_target());
+        let base =
+            format!("https://github.com/Future-Element/Pinset/releases/download/v{version}/");
+        let sums = client
+            .get(format!("{base}SHA256SUMS"))
+            .send()
+            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
+            .error_for_status()
+            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
+            .text()
+            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?;
+        let hash = sums
+            .lines()
+            .find_map(|l| {
+                let mut fields = l.split_whitespace();
+                let h = fields.next()?;
+                let file = fields.next()?.trim_start_matches('*');
+                (file == filename).then(|| h.to_owned())
+            })
+            .ok_or_else(|| {
+                service_error(
+                    "PINSET_UPDATE_CHECKSUM",
+                    "release is missing this platform checksum",
+                )
+            })?;
+        ArtifactIntegrity::parse(&hash)?;
+        if plan {
+            return Ok(
+                json!({"protocol":PROTOCOL,"plan":true,"version":version,"artifact":filename,"checksum":hash}),
+            );
+        }
+        let url = format!("{base}{filename}");
+        let updatehome = self.home.join("state/self-update");
+        let installer = Installer::new(InstallLimits::default())?
+            .with_install_identity(format!("{version}--{}", &hash[..24]));
+        let result = installer.install(&InstallRequest {
+            pinset_home: updatehome,
+            tool: "pinset".into(),
+            version: version.clone(),
+            target: current_target(),
+            artifact: ArtifactSpec {
+                canonical_url: url.clone(),
+                sources: vec![ArtifactSource {
+                    id: "github-official".into(),
+                    url,
+                    kind: ArtifactSourceKind::Official,
+                }],
+                integrity: hash,
+                format: ArtifactFormat::Zip,
+            },
+            strip_components: 0,
+            include_prefixes: vec![],
+            required_paths: vec![
+                PathBuf::from(executable_name("pinset", &current_target())),
+                PathBuf::from(executable_name("pinset-shim", &current_target())),
+            ],
+            base_artifacts: vec![],
+            executable_paths: vec![
+                PathBuf::from(executable_name("pinset", &current_target())),
+                PathBuf::from(executable_name("pinset-shim", &current_target())),
+            ],
+            aliases: vec![],
+        })?;
+        let current = std::env::current_exe()?;
+        let destination = current.parent().unwrap();
+        self.validate_new_cli(
+            &result
+                .install_dir
+                .join(executable_name("pinset", &current_target())),
+            &version,
+        )?;
+        let names = vec![
+            executable_name("pinset", &current_target()),
+            executable_name("pinset-shim", &current_target()),
+        ];
+        let backup = crate::self_update::replace_binary_pair(
+            &result.install_dir,
+            destination,
+            &self.home,
+            &names,
+        )?;
+        drop(_guard);
+        let repaired = std::process::Command::new(destination.join(&names[0]))
+            .args(["self", "repair"])
+            .env_remove("PINSET_IDENTITY")
+            .status()?;
+        if !repaired.success() {
+            return Err(service_error(
+                "PINSET_UPDATE_REPAIR",
+                "paired binaries were installed; run self repair to finish shim recovery",
+            ));
+        }
+        Ok(json!({"protocol":PROTOCOL,"updated":version,"backup":backup,"restart_required":true}))
+    }
+}

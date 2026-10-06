@@ -1,455 +1,119 @@
-name: Release
-
+name: Publish Pinset 3
 on:
-  push:
-    tags:
-      - "v*"
-
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v3 tag matching the clean local all report
+        required: true
+      local-report:
+        description: Exact compact JSON from local Docker verify.ps1 -Suite all
+        required: true
+      report-sha256:
+        description: SHA-256 of the exact local report JSON
+        required: true
 permissions:
-  actions: read
   contents: read
-
 concurrency:
-  group: release-${{ github.ref }}
+  group: publish-${{ inputs.tag }}
   cancel-in-progress: false
-
 jobs:
-  metadata:
-    name: Prepare release metadata
+  inputs:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
-
-      - name: Validate tag and workspace version
-        shell: bash
+      - name: Validate release inputs and local report metadata
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          workspace_version="$(
-            python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])'
-          )"
-          release_version="${GITHUB_REF_NAME#v}"
-          python3 scripts/validate_release_version.py "${workspace_version}" "${GITHUB_REF_NAME}"
-          if [[ "${release_version}" == "2.0.0" ]] && ! gh release view v2.0.0-rc.1 >/dev/null 2>&1; then
-            echo "v2.0.0 requires the published v2.0.0-rc.1 acceptance release" >&2
-            exit 1
-          fi
-          installer_version="$(sed -n 's/^DEFAULT_VERSION="\([^"]*\)"$/\1/p' install.sh)"
-          if [[ "${installer_version}" != "${workspace_version}" ]]; then
-            echo "install.sh default ${installer_version} does not match workspace version ${workspace_version}" >&2
-            exit 1
-          fi
-          windows_installer_version="$(python3 -c 'import pathlib; lines=pathlib.Path("install.ps1").read_text().splitlines(); line=next((line for line in lines if "[string] $Version = " in line), ""); print(line.split(chr(39))[1] if line.count(chr(39)) >= 2 else "")')"
-          if [[ "${windows_installer_version}" != "${workspace_version}" ]]; then
-            echo "install.ps1 default ${windows_installer_version} does not match workspace version ${workspace_version}" >&2
-            exit 1
-          fi
-          action_version="$(awk '/^  version:/{seen=1} seen && /^    default:/{print $2; exit}' action.yml)"
-          if [[ "${action_version}" != "${workspace_version}" ]]; then
-            echo "action.yml default ${action_version} does not match workspace version ${workspace_version}" >&2
-            exit 1
-          fi
-          website_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("website/package.json").read_text())["version"])')"
-          if [[ "${website_version}" != "${workspace_version}" ]]; then
-            echo "website/package.json version ${website_version} does not match workspace version ${workspace_version}" >&2
-            exit 1
-          fi
-          extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
-          if [[ ! "${extension_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "VS Code extension version ${extension_version} is not a stable semantic version" >&2
-            exit 1
-          fi
-
-      - name: Require a recent successful release preflight
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          release_commit="$(git rev-parse HEAD)"
-          preflight_json="$(
-            gh api \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/release-preflight.yml/runs?event=workflow_dispatch&status=success&head_sha=${release_commit}&per_page=10"
-          )"
-          preflight_created="$(
-            jq -r \
-              --arg commit "${release_commit}" \
-              '[.workflow_runs[] | select(.head_sha == $commit and .head_branch == "main")] | .[0].created_at // empty' \
-              <<< "${preflight_json}"
-          )"
-          if [[ -z "${preflight_created}" ]]; then
-            echo "No successful Release preflight exists for main commit ${release_commit}" >&2
-            exit 1
-          fi
-
-          PREFLIGHT_CREATED="${preflight_created}" python3 - <<'PY'
-          import datetime
-          import os
-
-          created = datetime.datetime.fromisoformat(
-              os.environ["PREFLIGHT_CREATED"].replace("Z", "+00:00")
-          )
-          age = datetime.datetime.now(datetime.timezone.utc) - created
-          if age < datetime.timedelta(0) or age > datetime.timedelta(hours=24):
-              raise SystemExit(
-                  f"Release preflight is {age} old; run it again on main before tagging"
-              )
-          print(f"Using Release preflight from {created.isoformat()}")
-          PY
-
-      - name: Prepare pinned Rust toolchain
-        if: runner.os != 'Linux'
-        run: rustup show active-toolchain
-
-      - name: Restore Cargo registry cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
-
-      - name: Restore pinned CycloneDX tool
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-cyclonedx
-          key: ${{ runner.os }}-cargo-cyclonedx-0.5.9
-
-      - name: Generate CycloneDX SBOMs
-        shell: bash
-        run: |
-          command -v cargo-cyclonedx >/dev/null || cargo install cargo-cyclonedx --version 0.5.9 --locked
-          cargo cyclonedx --format json --all --all-features --target all
-          mkdir sbom
-          cp crates/pinset/pinset-cli.cdx.json sbom/pinset-cli.cdx.json
-          cp crates/pinset-core/pinset-core.cdx.json sbom/pinset-core.cdx.json
-          cp crates/pinset-env/pinset-env.cdx.json sbom/pinset-env.cdx.json
-          cp crates/pinset-shim/pinset-shim.cdx.json sbom/pinset-shim.cdx.json
-          for document in sbom/*.cdx.json; do
-            jq -e '.bomFormat == "CycloneDX" and (.specVersion | length > 0)' "$document" >/dev/null
-          done
-
-      - name: Upload release SBOMs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pinset-sboms
-          path: sbom/*.cdx.json
-          if-no-files-found: error
-          retention-days: 7
-
-  build:
-    name: Build ${{ matrix.artifact }}
-    needs: metadata
-    env:
-      PINSET_RELEASE_VERSION: ${{ github.ref_name }}
+          PINSET_RELEASE_TAG: ${{ inputs.tag }}
+          PINSET_LOCAL_REPORT: ${{ inputs.local-report }}
+          PINSET_LOCAL_REPORT_SHA256: ${{ inputs.report-sha256 }}
+        run: python3 scripts/release_gate.py
+  binaries:
+    needs: inputs
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
-            artifact: pinset-linux-x86_64
-            archive: pinset-linux-x86_64.tar.gz
+            target: linux-x86_64
           - os: ubuntu-24.04-arm
-            artifact: pinset-linux-aarch64
-            archive: pinset-linux-aarch64.tar.gz
+            target: linux-aarch64
           - os: windows-2025
-            artifact: pinset-windows-x86_64
-            archive: pinset-windows-x86_64.zip
+            target: windows-x86_64
           - os: macos-15
-            artifact: pinset-macos-aarch64
-            archive: pinset-macos-aarch64.tar.gz
+            target: macos-aarch64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+    env:
+      PINSET_RELEASE_VERSION: ${{ inputs.tag }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Prepare pinned Rust toolchain
-        run: rustup show active-toolchain
-
-      - name: Restore Cargo registry cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
-
-      - name: Build Linux release binaries on Debian 12
+          ref: ${{ inputs.tag }}
+      - name: Compile Linux release binaries on the pinned Debian baseline
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            --env CARGO_HOME=/cargo \
-            --env HOME=/tmp \
-            --env PINSET_RELEASE_VERSION \
-            --volume "${HOME}/.cargo:/cargo" \
-            --volume "${PWD}:/workspace" \
-            --workdir /workspace \
-            docker.io/library/rust@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 \
-            cargo build --release --locked -p pinset-cli -p pinset-shim
-
-      - name: Build native release binaries
+          docker build --file scripts/docker/Dockerfile.release --tag pinset-release .
+          docker run --rm --env PINSET_RELEASE_VERSION --volume "${PWD}:/workspace" pinset-release
+      - name: Compile native Windows and macOS release binaries
         if: runner.os != 'Linux'
-        run: cargo build --release --locked -p pinset-cli -p pinset-shim
-
-      - name: Verify release version handshake
-        shell: bash
         run: |
-          binary="target/release/pinset"
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            binary="${binary}.exe"
-          fi
-          expected="pinset ${GITHUB_REF_NAME#v}"
-          reported="$("${binary}" --version)"
-          if [[ "${reported}" != "${expected}" ]]; then
-            echo "release binary reported '${reported}', expected '${expected}'" >&2
-            exit 1
-          fi
-
-      - name: Verify Linux release compatibility baseline
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          docker run --rm \
-            --volume "${PWD}:/workspace:ro" \
-            --workdir /workspace \
-            docker.io/library/debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 \
-            sh -c 'test "$(target/release/pinset --version)" = "pinset '"${GITHUB_REF_NAME#v}"'"'
-
-      - name: Verify macOS release dependencies
-        if: runner.os == 'macOS'
-        shell: bash
-        run: >-
-          sh scripts/tests/macos_release_dependencies.sh
-          target/release/pinset
-          target/release/pinset-shim
-
-      - name: Package Unix binaries
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir package
-          cp target/release/pinset package/pinset
-          cp target/release/pinset-shim package/pinset-shim
-          tar -czf "${{ matrix.archive }}" -C package pinset pinset-shim
-
-      - name: Package Windows binaries
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path package
-          Copy-Item target/release/pinset.exe package/pinset.exe
-          Copy-Item target/release/pinset-shim.exe package/pinset-shim.exe
-          Compress-Archive `
-            -Path package/pinset.exe,package/pinset-shim.exe `
-            -DestinationPath "${{ matrix.archive }}"
-
-      - name: Attest release archive provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+          rustup toolchain install 1.97.1 --profile minimal
+          cargo +1.97.1 build --release --locked -p pinset-cli -p pinset-shim
+      - name: Package compiled artifacts and dependency inventory
+        env:
+          PINSET_RELEASE_TARGET: ${{ matrix.target }}
+        run: python scripts/package_release.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          subject-path: ${{ matrix.archive }}
-
-      - name: Upload release archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.archive }}
-          if-no-files-found: error
-          retention-days: 7
-
+          name: pinset-${{ matrix.target }}
+          path: dist/*
   extension:
-    name: Build VS Code extension
-    needs: metadata
+    needs: inputs
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
     defaults:
       run:
         working-directory: editors/vscode
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install locked extension dependencies
-        run: npm ci
-
-      - name: Type-check, test, and package extension
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Compile and package extension
         run: npm run package
-
-      - name: Attest VSIX provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          subject-path: editors/vscode/dist/pinset-vscode.vsix
-
-      - name: Upload VSIX
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pinset-vscode
+          name: pinset-extension
           path: editors/vscode/dist/pinset-vscode.vsix
-          if-no-files-found: error
-          retention-days: 7
-
   publish:
-    name: Publish GitHub Release
-    needs:
-      - metadata
-      - build
-      - extension
+    needs: [inputs, binaries, extension]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: write
       id-token: write
       attestations: write
-      artifact-metadata: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download release archives
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist
           merge-multiple: true
-
-      - name: Generate checksums
-        shell: bash
+      - name: Generate release checksums and preserve local verification evidence
+        env:
+          PINSET_LOCAL_REPORT: ${{ inputs.local-report }}
         run: |
-          extension_version="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("editors/vscode/package.json").read_text())["version"])')"
-          extension_asset="pinset-vscode-${extension_version}.vsix"
-          mv dist/pinset-vscode.vsix "dist/${extension_asset}"
-          echo "PINSET_EXTENSION_ASSET=${extension_asset}" >> "${GITHUB_ENV}"
-          cp install.sh dist/install.sh
-          cp install.ps1 dist/install.ps1
-          release_version="${GITHUB_REF_NAME#v}"
-          if [[ "${release_version}" == *-* ]]; then
-            sed -i "s/^DEFAULT_VERSION=\"[^\"]*\"$/DEFAULT_VERSION=\"${release_version}\"/" dist/install.sh
-            RELEASE_VERSION="${release_version}" python3 - <<'PY'
-          import os
-          import pathlib
-          import re
-
-          path = pathlib.Path("dist/install.ps1")
-          content = path.read_text(encoding="utf-8")
-          updated, count = re.subn(
-              r"^    \[string\] \$Version = '[^']*'",
-              f"    [string] $Version = '{os.environ['RELEASE_VERSION']}'",
-              content,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit("install.ps1 version declaration was not found exactly once")
-          path.write_text(updated, encoding="utf-8")
-          PY
-          fi
-          cp uninstall.sh dist/uninstall.sh
-          cp uninstall.ps1 dist/uninstall.ps1
-          chmod 755 dist/install.sh dist/uninstall.sh
-          (
-            cd dist
-            sha256sum \
-              install.sh \
-              install.ps1 \
-              uninstall.sh \
-              uninstall.ps1 \
-              pinset-linux-x86_64.tar.gz \
-              pinset-linux-aarch64.tar.gz \
-              pinset-macos-aarch64.tar.gz \
-              pinset-windows-x86_64.zip \
-              pinset-cli.cdx.json \
-              pinset-core.cdx.json \
-              pinset-env.cdx.json \
-              pinset-shim.cdx.json \
-              "${extension_asset}" \
-              > SHA256SUMS
-          )
-
-      - name: Generate package-manager manifests
-        shell: bash
-        run: |
-          release_version="${GITHUB_REF_NAME#v}"
-          python3 scripts/generate_package_manifests.py \
-            --version "${release_version}" \
-            --checksums dist/SHA256SUMS \
-            --output dist
-          (
-            cd dist
-            sha256sum pinset-winget.yaml pinset-scoop.json pinset.rb >> SHA256SUMS
-          )
-
-      - name: Attest release metadata provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+          printf '%s' "$PINSET_LOCAL_REPORT" > dist/local-verification.json
+          cd dist
+          sha256sum *.zip *.vsix *.sbom.json local-verification.json > SHA256SUMS
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
-          subject-path: |
-            dist/install.sh
-            dist/install.ps1
-            dist/uninstall.sh
-            dist/uninstall.ps1
-            dist/SHA256SUMS
-            dist/pinset-cli.cdx.json
-            dist/pinset-core.cdx.json
-            dist/pinset-env.cdx.json
-            dist/pinset-shim.cdx.json
-            dist/pinset-vscode-*.vsix
-            dist/pinset-winget.yaml
-            dist/pinset-scoop.json
-            dist/pinset.rb
-
-      - name: Create or update GitHub Release
-        shell: bash
+          subject-path: dist/*
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          assets=(
-            dist/install.sh
-            dist/install.ps1
-            dist/uninstall.sh
-            dist/uninstall.ps1
-            dist/pinset-linux-x86_64.tar.gz
-            dist/pinset-linux-aarch64.tar.gz
-            dist/pinset-macos-aarch64.tar.gz
-            dist/pinset-windows-x86_64.zip
-            dist/pinset-cli.cdx.json
-            dist/pinset-core.cdx.json
-            dist/pinset-env.cdx.json
-            dist/pinset-shim.cdx.json
-            "dist/${PINSET_EXTENSION_ASSET}"
-            dist/pinset-winget.yaml
-            dist/pinset-scoop.json
-            dist/pinset.rb
-            dist/SHA256SUMS
-          )
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; stable release assets are immutable and will not be replaced" >&2
-            exit 1
-          fi
-
-          release_flags=()
-          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
-            release_flags+=(--prerelease)
-          fi
-          gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
-            --verify-tag \
-            --generate-notes \
-            --title "Pinset ${GITHUB_REF_NAME#v}" \
-            "${release_flags[@]}"
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

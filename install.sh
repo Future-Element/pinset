@@ -3,8 +3,8 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="2.16.2"
-MINIMUM_VERSION="2.16.1"
+DEFAULT_VERSION="3.0.0"
+MINIMUM_VERSION="3.0.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
 TEMP_ROOT=""
@@ -23,9 +23,9 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 2.16.2.
+  --version VERSION       Install an exact release, for example 3.0.0.
                           Default: the recommended release embedded in this script.
-  --install-dir DIRECTORY Install binaries here. Default: $HOME/.local/bin.
+  --install-dir DIRECTORY Install binaries here. Default: $PINSET_HOME/v3/bin or $HOME/.pinset/v3/bin.
   -h, --help              Show this help.
 
 Environment equivalents:
@@ -96,7 +96,7 @@ done
 
 if [ -z "$INSTALL_DIR" ]; then
     [ -n "${HOME:-}" ] || fail "HOME is not set; pass --install-dir"
-    INSTALL_DIR="$HOME/.local/bin"
+    INSTALL_DIR="${PINSET_HOME:-$HOME/.pinset}/v3/bin"
 fi
 
 case "$INSTALL_DIR" in
@@ -105,6 +105,7 @@ case "$INSTALL_DIR" in
 esac
 
 VERSION=${VERSION#v}
+case "$VERSION" in 3.*) ;; *) fail "only the Pinset 3 release line is supported" ;; esac
 RELEASE_BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 RELEASE_LABEL="v$VERSION"
 
@@ -123,42 +124,29 @@ if [ "${PINSET_INSTALL_TEST_MODE:-}" = "1" ]; then
 fi
 case "$OS:$ARCH" in
     Linux:x86_64|Linux:amd64)
-        ARCHIVE="pinset-linux-x86_64.tar.gz"
+        ARCHIVE="pinset-v$VERSION-linux-x86_64.zip"
         ;;
     Darwin:arm64|Darwin:aarch64)
-        ARCHIVE="pinset-macos-aarch64.tar.gz"
+        ARCHIVE="pinset-v$VERSION-macos-aarch64.zip"
         ;;
     Darwin:x86_64|Darwin:amd64)
         fail "macOS Intel is not published yet; use an Apple Silicon shell or build from source"
         ;;
     Linux:aarch64|Linux:arm64)
-        ARCHIVE="pinset-linux-aarch64.tar.gz"
+        ARCHIVE="pinset-v$VERSION-linux-aarch64.zip"
         ;;
     *)
         fail "unsupported platform: $OS $ARCH"
         ;;
 esac
 
-for command in curl tar awk mktemp chmod mv cp mkdir rm; do
+for command in curl unzip awk mktemp chmod mv cp mkdir rm; do
     command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
 printf '%s\n' "$VERSION" | awk '
-    /^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/ { valid = 1 }
+    /^3\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/ { valid = 1 }
     END { exit !valid }
 ' || fail "version must be an exact stable or rc release: $VERSION"
-printf '%s\n' "$VERSION" | awk -v minimum="$MINIMUM_VERSION" '
-    {
-        split($0, version_parts, "-")
-        split(version_parts[1], version, ".")
-        split(minimum, supported, ".")
-        for (part = 1; part <= 3; part++) {
-            if ((version[part] + 0) > (supported[part] + 0)) exit 0
-            if ((version[part] + 0) < (supported[part] + 0)) exit 1
-        }
-        exit length(version_parts[2]) > 0
-    }
-' || fail "versions before $MINIMUM_VERSION are no longer available for download"
-
 download() {
     url=$1
     destination=$2
@@ -168,6 +156,10 @@ download() {
                 --output "$destination" "$url"
             ;;
         file://*)
+            [ "${PINSET_INSTALL_TEST_MODE:-}" = "1" ] || fail "non-HTTPS download URL rejected"
+            curl --fail --location --silent --show-error --output "$destination" "$url"
+            ;;
+        http://127.0.0.1:*)
             [ "${PINSET_INSTALL_TEST_MODE:-}" = "1" ] || fail "non-HTTPS download URL rejected"
             curl --fail --location --silent --show-error --output "$destination" "$url"
             ;;
@@ -216,7 +208,7 @@ ACTUAL_HASH=$(printf '%s' "$ACTUAL_HASH" | awk '{ print tolower($0) }')
 [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || fail "SHA-256 mismatch for $ARCHIVE"
 
 ENTRY_LIST="$TEMP_ROOT/archive-entries"
-tar -tzf "$ARCHIVE_PATH" > "$ENTRY_LIST" || fail "cannot list $ARCHIVE"
+unzip -Z1 "$ARCHIVE_PATH" > "$ENTRY_LIST" || fail "cannot list $ARCHIVE"
 awk '
     $0 == "pinset" { pinset += 1; next }
     $0 == "pinset-shim" { shim += 1; next }
@@ -224,12 +216,18 @@ awk '
     END { if (NR != 2 || pinset != 1 || shim != 1) exit 1 }
 ' "$ENTRY_LIST" || fail "release archive must contain exactly pinset and pinset-shim"
 
-tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
+unzip -q "$ARCHIVE_PATH" -d "$EXTRACT_DIR"
 for binary in pinset pinset-shim; do
     [ -f "$EXTRACT_DIR/$binary" ] || fail "release archive is missing $binary"
     [ ! -L "$EXTRACT_DIR/$binary" ] || fail "release archive contains a symbolic-link binary: $binary"
 done
 
+managed_root="${PINSET_HOME:-$HOME/.pinset}/v3"
+if [ "$INSTALL_DIR" = "$managed_root/bin" ] && [ ! -f "$managed_root/.pinset-home.json" ]; then
+    [ ! -e "$managed_root" ] || [ -z "$(ls -A "$managed_root")" ] || fail "unmarked v3 data cannot be adopted"
+    mkdir -p "$managed_root"
+    printf '{"protocol": "pinset/3", "home_id": "installer-%s-%s"}\n' "$$" "$(date +%s)" > "$managed_root/.pinset-home.json"
+fi
 mkdir -p "$INSTALL_DIR"
 [ -d "$INSTALL_DIR" ] || fail "install destination is not a directory: $INSTALL_DIR"
 [ -w "$INSTALL_DIR" ] || fail "install destination is not writable: $INSTALL_DIR"
@@ -267,9 +265,7 @@ printf 'Installed %s\n' "$INSTALL_DIR/pinset"
 printf 'Installed %s\n' "$INSTALL_DIR/pinset-shim"
 "$INSTALL_DIR/pinset" --version
 
-if [ "${PINSET_INSTALL_TEST_MODE:-0}" != "1" ]; then
-    "$INSTALL_DIR/pinset" shim install --all --binary "$INSTALL_DIR/pinset-shim" --dir "$INSTALL_DIR"
-fi
+"$INSTALL_DIR/pinset" self repair
 
 if [ -n "$PINSET_BACKUP" ]; then rm -f -- "$PINSET_BACKUP"; fi
 if [ -n "$SHIM_BACKUP" ]; then rm -f -- "$SHIM_BACKUP"; fi
@@ -295,6 +291,6 @@ case "${PATH:-}" in
 esac
 
 printf '\nInstalled the Pinset CLI, its runtime-agnostic router, and lightweight Provider command shims.\n'
-printf 'Language runtimes remain isolated under PINSET_HOME/installs and are downloaded only by explicit install commands.\n'
+printf 'Language runtimes remain isolated under PINSET_HOME/v3/installs and are downloaded only by explicit install commands.\n'
 printf 'All built-in Provider command names are registered now; their SDK payloads remain separate.\n'
 printf 'Pinset does not modify shell profiles or install language runtimes automatically.\n'

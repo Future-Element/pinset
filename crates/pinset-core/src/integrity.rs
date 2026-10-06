@@ -2,7 +2,6 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::{Error, Result};
 
-#[cfg(feature = "installer")]
 use sha2::{Digest, Sha256, Sha512};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,15 +89,14 @@ impl ArtifactIntegrity {
         self.canonical_digest(&self.bytes)
     }
 
-    pub(crate) fn canonical_digest(&self, bytes: &[u8]) -> String {
+    pub fn canonical_digest(&self, bytes: &[u8]) -> String {
         match self.algorithm {
             IntegrityAlgorithm::Sha256 => format!("sha256:{}", hex::encode(bytes)),
             IntegrityAlgorithm::Sha512 => format!("sha512-{}", STANDARD.encode(bytes)),
         }
     }
 
-    #[cfg(feature = "installer")]
-    pub(crate) fn hasher(&self) -> IntegrityHasher {
+    pub fn hasher(&self) -> IntegrityHasher {
         match self.algorithm {
             IntegrityAlgorithm::Sha256 => IntegrityHasher::Sha256(Sha256::new()),
             IntegrityAlgorithm::Sha512 => IntegrityHasher::Sha512(Sha512::new()),
@@ -110,14 +108,12 @@ fn is_hex(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-#[cfg(feature = "installer")]
 #[derive(Clone)]
-pub(crate) enum IntegrityHasher {
+pub enum IntegrityHasher {
     Sha256(Sha256),
     Sha512(Sha512),
 }
 
-#[cfg(feature = "installer")]
 impl IntegrityHasher {
     pub fn update(&mut self, bytes: &[u8]) {
         match self {

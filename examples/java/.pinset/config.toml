@@ -1,0 +1,6 @@
+protocol = "pinset/3"
+schema = 3
+project_id = "java-example"
+
+[tools]
+java = "21"

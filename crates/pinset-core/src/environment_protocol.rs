@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-const MAGIC: &[u8] = b"PINSET_ENV_V1\0";
+const MAGIC: &[u8] = b"PINSET_ENV_V3\0";
 const MAX_ITEMS: usize = 4096;
 const MAX_FIELD: usize = 1024 * 1024;
 

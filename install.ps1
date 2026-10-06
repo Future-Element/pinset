@@ -1,23 +1,16 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '2.16.2',
-    [string] $InstallDir = (Join-Path $env:LOCALAPPDATA 'Pinset\bin')
+    [string] $Version = '3.0.0',
+    [string] $InstallDir = (Join-Path $(if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }) 'v3\bin')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') {
+if ($Version -notmatch '^3\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') {
     throw 'Version must be an exact stable or rc release without a leading v.'
 }
-$minimumVersion = [version]'2.16.1'
-$versionCore = [version]($Version -replace '-.*$', '')
-if ($versionCore -lt $minimumVersion -or
-    ($versionCore -eq $minimumVersion -and $Version.Contains('-'))) {
-    throw "Versions before $minimumVersion are no longer available for download."
-}
-
-$archive = 'pinset-windows-x86_64.zip'
+$archive = "pinset-v$Version-windows-x86_64.zip"
 $release = "https://github.com/Future-Element/pinset/releases/download/v$Version"
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("pinset-install-" + [guid]::NewGuid().ToString('N'))
 $archivePath = Join-Path $temporaryRoot $archive
@@ -63,6 +56,23 @@ try {
     if (-not $resolvedInstall.StartsWith($resolvedParent, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Install directory did not resolve under its expected parent.'
     }
+    $managedRoot = [IO.Path]::GetFullPath((Join-Path $(if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }) 'v3'))
+    if ($resolvedInstall -eq (Join-Path $managedRoot 'bin')) {
+        $ownership = Join-Path $managedRoot '.pinset-home.json'
+        if (Test-Path -LiteralPath $managedRoot) {
+            $rootItem = Get-Item -LiteralPath $managedRoot -Force
+            if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Pinset home cannot be a reparse point.' }
+            if (-not (Test-Path -LiteralPath $ownership -PathType Leaf) -and @(Get-ChildItem -LiteralPath $managedRoot -Force).Count) {
+                throw 'Refusing to adopt a populated, unmarked Pinset v3 home.'
+            }
+        }
+        if (Test-Path -LiteralPath $ownership) {
+            if ((Get-Content -LiteralPath $ownership -Raw | ConvertFrom-Json).protocol -ne 'pinset/3') { throw 'Invalid Pinset home ownership.' }
+        } else {
+            New-Item -ItemType Directory -Force -Path $managedRoot | Out-Null
+            [IO.File]::WriteAllText($ownership, '{"protocol":"pinset/3","owner":"pinset"}', [Text.UTF8Encoding]::new($false))
+        }
+    }
     New-Item -ItemType Directory -Force -Path $resolvedInstall | Out-Null
     $newCli = Join-Path $resolvedInstall '.pinset.new.exe'
     $newShim = Join-Path $resolvedInstall '.pinset-shim.new.exe'
@@ -93,7 +103,7 @@ try {
         if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $expectedVersion) {
             throw "Installed Pinset CLI failed its version handshake."
         }
-        & $cli shim install --all --binary $shim --dir $resolvedInstall
+        & $cli self repair
         if ($LASTEXITCODE -ne 0) {
             throw 'Pinset failed to register Provider command shims.'
         }
@@ -109,7 +119,7 @@ try {
     }
 
     Write-Output "Installed Pinset CLI and Provider command shims in $resolvedInstall"
-    Write-Output "Runtime payloads remain isolated under PINSET_HOME\installs and are not downloaded by this installer."
+    Write-Output "Runtime payloads remain isolated under PINSET_HOME\v3\installs and are downloaded by explicit install commands."
     Write-Output "For this PowerShell session: `$env:PATH = '$resolvedInstall' + [IO.Path]::PathSeparator + `$env:PATH"
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {

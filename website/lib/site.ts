@@ -9,12 +9,12 @@ export const siteConfig = {
     url: "https://future-element.com",
     sameAs: "https://github.com/Future-Element",
   },
-  titleZh: "Pinset — 多语言运行时版本管理器",
-  titleEn: "Pinset — Polyglot Runtime Version Manager",
-  descriptionZh: "Pinset 是免费开源的多语言运行时版本管理器。一份配置与精确锁文件管理 Node.js、Python、Rust、Go、Bun 等工具，统一团队与 CI 的开发环境，支持 Windows、macOS 和 Linux。",
-  descriptionEn: "Pinset is a free, open-source runtime version manager. Lock Node.js, Python, Rust, Go, Bun, and more in one project. Reproducible toolchains for your team and CI.",
-  contentUpdatedAt: "2026-09-14T00:00:00.000Z",
-  homepageUpdatedAt: "2026-09-08T00:00:00.000Z",
+  titleZh: "Pinset — 项目工具链与升级验证",
+  titleEn: "Pinset — Project Toolchains and Verified Upgrades",
+  descriptionZh: "Pinset 锁定八种项目工具链，包括完整 OpenJDK、Python venv、Rust 和 Flutter，解释执行入口并在独立副本中验证升级。",
+  descriptionEn: "Lock eight project toolchains, including complete OpenJDK, Python venv, Rust and Flutter. Explain execution paths and validate upgrades in isolated project copies.",
+  contentUpdatedAt: "2026-10-05T00:00:00.000Z",
+  homepageUpdatedAt: "2026-10-05T00:00:00.000Z",
 };
 
 export type Locale = "zh-CN" | "en";

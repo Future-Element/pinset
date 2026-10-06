@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0 - 2026-10-06
+
+- Breaking five-crate architecture and strict `.pinset/` project protocol with twelve public command families and eight built-in Providers.
+- Complete Temurin OpenJDK as an independent Java toolchain; stdlib-owned project Python `.venv`, without uv.
+- Execution evidence, independent candidate verification, explicit apply/restore and journal recovery.
+- age profiles, system credential storage and fingerprint-bound project trust.
+- Local Docker verification only; CI compiles, packages and publishes from a matching clean local report.
+- Remove legacy compatibility, .NET, task/workspace orchestration, plugins, mirrors, bundles and redundant command surfaces.
+
 ## 2.16.2 - 2026-09-22
 
 - Resolve every managed runtime from the nearest project configuration when commands run inside nested directories of a non-Git workspace, while retaining the user-home discovery boundary.

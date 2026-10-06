@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pinset-lock-v3",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "pinset/3"
+    },
+    "schema": {
+      "const": 3
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "generated_by": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "enum": [
+              "node",
+              "pnpm",
+              "bun",
+              "go",
+              "python",
+              "java",
+              "rust",
+              "flutter"
+            ]
+          },
+          "requested": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "released-at": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "artifact": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "canonical_url": {
+                  "type": "string"
+                },
+                "artifact_path": {
+                  "type": "string"
+                },
+                "integrity": {
+                  "type": "string"
+                },
+                "archive_root": {
+                  "type": "string"
+                },
+                "verification": {
+                  "type": "string"
+                },
+                "format": {
+                  "enum": [
+                    "binary",
+                    "zip",
+                    "tar.xz",
+                    "tar.gz"
+                  ]
+                },
+                "target": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^(?:[a-fA-F0-9]{64})?$"
+                },
+                "overlay": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "canonical_url": {
+                        "type": "string"
+                      },
+                      "artifact_path": {
+                        "type": "string"
+                      },
+                      "integrity": {
+                        "type": "string"
+                      },
+                      "archive_root": {
+                        "type": "string"
+                      },
+                      "verification": {
+                        "type": "string"
+                      },
+                      "format": {
+                        "enum": [
+                          "binary",
+                          "zip",
+                          "tar.xz",
+                          "tar.gz"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "canonical_url",
+                      "artifact_path",
+                      "integrity",
+                      "archive_root",
+                      "verification",
+                      "format"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "target",
+                "canonical_url",
+                "artifact_path",
+                "format",
+                "archive_root",
+                "verification"
+              ],
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "sha256"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-fA-F0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "integrity"
+                  ],
+                  "properties": {
+                    "integrity": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "requested",
+          "version",
+          "provider",
+          "artifact"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "project_id",
+    "generated_by"
+  ],
+  "additionalProperties": false
+}

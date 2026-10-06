@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vscode=require('vscode');
+const {parse}=require('jsonc-parser');
+exports.run=async function(){
+  const root=process.env.PINSET_EDITOR_PROJECT;
+  assert(vscode.workspace.isTrusted,'test host must have explicit Workspace Trust');
+  await vscode.workspace.getConfiguration('pinset',vscode.Uri.file(root)).update('executable',process.env.PINSET_EDITOR_CLI,vscode.ConfigurationTarget.Workspace);
+  const extension=vscode.extensions.getExtension('FutureElement.pinset-vscode');
+  assert(extension);await extension.activate();
+  const commands=await vscode.commands.getCommands(true);
+  for(const command of ['pinset.refresh','pinset.install','pinset.check','pinset.probe','pinset.bind'])assert(commands.includes(command));
+  assert.equal((await vscode.commands.executeCommand('pinset.install')).protocol,'pinset/3');
+  const checked=await vscode.commands.executeCommand('pinset.check');
+  assert(checked.report.checks.every(c=>c.installed&&c.bound&&!c.actually_verified));
+  const probed=await vscode.commands.executeCommand('pinset.probe');
+  assert(probed.report.checks.every(c=>c.actually_verified));
+  await vscode.commands.executeCommand('pinset.bind');
+  const settingsText=fs.readFileSync(path.join(root,'.vscode/settings.json'),'utf8');
+  assert(settingsText.includes('// Preserve the separate language-server JDK'));
+  const settings=parse(settingsText);
+  assert.equal(settings['java.jdt.ls.java.home'],'/external/language-server-jdk');
+  assert(settings['java.configuration.runtimes'].some(r=>r.path===process.env.PINSET_EDITOR_JDK&&r.default===true));
+  fs.writeFileSync(process.env.PINSET_EDITOR_RESULT,JSON.stringify({protocol:'pinset-editor-acceptance/3',host:'real-vscode-extension-host',commands:'install/check/probe/bind',projectJdk:process.env.PINSET_EDITOR_JDK,languageServerJdk:'preserved separately'}));
+};
