@@ -1,33 +1,27 @@
 //! A CLI/shim pair is one update unit. Backups are on the destination volume
 //! so rollback remains possible for custom installation directories.
 use crate::*;
+use reqwest::{Method, StatusCode, blocking::Client};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
-#[derive(Clone, Deserialize)]
-pub(crate) struct ReleaseAsset {
-    pub name: String,
-    pub browser_download_url: String,
-    state: String,
-    size: u64,
-}
-
-#[derive(Deserialize)]
-struct ReleaseDocument {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<ReleaseAsset>,
-}
+const LATEST_RELEASE: &str = "https://github.com/Future-Element/pinset/releases/latest";
+const MAX_CHECKSUM_BYTES: u64 = 1024 * 1024;
+const REQUEST_ATTEMPTS: u32 = 3;
+const MAX_REDIRECTS: usize = 5;
+const MAX_RETRY_WAIT: u64 = 5;
 
 pub(crate) struct UpdateRelease {
     pub version: String,
-    pub archive: ReleaseAsset,
-    pub checksums: ReleaseAsset,
+    pub archive_name: String,
+    pub archive_url: String,
+    pub checksum: String,
 }
 
 fn release_version(version: &str) -> Result<semver::Version> {
@@ -42,106 +36,299 @@ fn release_version(version: &str) -> Result<semver::Version> {
     Ok(parsed)
 }
 
-impl ReleaseDocument {
-    fn asset(&self, name: &str) -> Result<Option<ReleaseAsset>> {
-        let mut matches = self.assets.iter().filter(|asset| asset.name == name);
-        let Some(asset) = matches.next() else {
-            return Ok(None);
-        };
-        if matches.next().is_some() || asset.state != "uploaded" || asset.size == 0 {
-            return Err(service_error(
-                "PINSET_UPDATE_ASSET",
-                format!("release must contain exactly one complete asset named {name}"),
-            ));
-        }
-        let url = url::Url::parse(&asset.browser_download_url)
-            .map_err(|_| service_error("PINSET_UPDATE_ASSET", "invalid release asset URL"))?;
-        let parts: Vec<_> = url.path().split('/').collect();
-        if url.scheme() != "https"
-            || url.host_str() != Some("github.com")
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.port().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || parts.len() != 7
-            || !parts[1].eq_ignore_ascii_case("Future-Element")
-            || !parts[2].eq_ignore_ascii_case("pinset")
-            || parts[3] != "releases"
-            || parts[4] != "download"
-            || parts[5] != self.tag_name
-            || parts[6] != name
-        {
-            return Err(service_error(
-                "PINSET_UPDATE_ASSET",
-                "asset URL does not belong to the selected official release",
-            ));
-        }
-        Ok(Some(asset.clone()))
+fn latest_version(location: &str) -> Result<semver::Version> {
+    let invalid = || {
+        service_error(
+            "PINSET_UPDATE_REDIRECT",
+            "latest release must redirect to an official stable Pinset 3 tag",
+        )
+    };
+    let url = url::Url::parse(LATEST_RELEASE)
+        .expect("constant official release URL")
+        .join(location)
+        .map_err(|_| invalid())?;
+    let parts: Vec<_> = url.path().split('/').collect();
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || parts.len() != 6
+        || !parts[1].eq_ignore_ascii_case("Future-Element")
+        || !parts[2].eq_ignore_ascii_case("pinset")
+        || parts[3] != "releases"
+        || parts[4] != "tag"
+    {
+        return Err(invalid());
     }
-
-    fn resolve(self, requested: Option<&semver::Version>, target: &str) -> Result<UpdateRelease> {
-        let version = release_version(&self.tag_name)?;
-        if self.draft
-            || self.tag_name != format!("v{version}")
-            || requested.is_some_and(|requested| *requested != version)
-            || (requested.is_none() && (self.prerelease || !version.pre.is_empty()))
-        {
-            return Err(service_error(
-                "PINSET_UPDATE_METADATA",
-                "release does not match the requested published version",
-            ));
-        }
-        // The release directory binds the version. Select an asset actually
-        // listed there, accepting stable and versioned platform ZIP names.
-        let mut archive = None;
-        for name in [
-            format!("pinset-{target}.zip"),
-            format!("pinset-v{version}-{target}.zip"),
-        ] {
-            if let Some(asset) = self.asset(&name)? {
-                archive = Some(asset);
-                break;
-            }
-        }
-        let archive = archive.ok_or_else(|| {
-            service_error(
-                "PINSET_UPDATE_ASSET",
-                "release has no ZIP for this platform",
-            )
-        })?;
-        let checksums = self.asset("SHA256SUMS")?.ok_or_else(|| {
-            service_error("PINSET_UPDATE_CHECKSUM", "release has no SHA256SUMS asset")
-        })?;
-        Ok(UpdateRelease {
-            version: version.to_string(),
-            archive,
-            checksums,
-        })
+    let version = release_version(parts[5]).map_err(|_| invalid())?;
+    if parts[5] != format!("v{version}") || !version.pre.is_empty() {
+        return Err(invalid());
     }
+    Ok(version)
 }
 
-pub(crate) fn resolve_release(
-    client: &reqwest::blocking::Client,
-    requested: Option<&str>,
-    target: &str,
-) -> Result<UpdateRelease> {
+fn retry_delay(retry_after: Option<&str>, attempt: u32) -> Option<Duration> {
+    // A long delay or HTTP-date is reported to the caller instead of retrying
+    // early or holding an interactive command open for an unbounded wait.
+    let seconds = match retry_after {
+        Some(value) => value.parse::<u64>().ok()?,
+        None => 1 << attempt,
+    };
+    (seconds <= MAX_RETRY_WAIT).then(|| Duration::from_secs(seconds))
+}
+
+fn request(
+    client: &Client,
+    method: Method,
+    url: &url::Url,
+    resource: &str,
+) -> Result<reqwest::blocking::Response> {
+    for attempt in 0..REQUEST_ATTEMPTS {
+        let response = match client.request(method.clone(), url.clone()).send() {
+            Ok(response) => response,
+            Err(error) => {
+                if attempt + 1 < REQUEST_ATTEMPTS && (error.is_timeout() || error.is_connect()) {
+                    std::thread::sleep(Duration::from_secs(1 << attempt));
+                    continue;
+                }
+                return Err(service_error(
+                    "PINSET_UPDATE_FETCH",
+                    format!("{resource}: {}", error.without_url()),
+                ));
+            }
+        };
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok());
+        let exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value == "0");
+        let limited = status == StatusCode::TOO_MANY_REQUESTS
+            || (status == StatusCode::FORBIDDEN && (retry_after.is_some() || exhausted));
+        if limited || status.is_server_error() {
+            // Do not blindly retry a rate limit with no advertised delay.
+            let delay = if limited && retry_after.is_none() {
+                None
+            } else {
+                retry_delay(retry_after, attempt)
+            };
+            if attempt + 1 < REQUEST_ATTEMPTS
+                && let Some(delay) = delay
+            {
+                drop(response);
+                std::thread::sleep(delay);
+                continue;
+            }
+            let advice = retry_after
+                .map(|value| format!("; retry after {value} (seconds or HTTP-date)"))
+                .or_else(|| {
+                    response
+                        .headers()
+                        .get("x-ratelimit-reset")
+                        .and_then(|value| value.to_str().ok())
+                        .map(|value| format!("; retry after UTC epoch {value}"))
+                })
+                .unwrap_or_default();
+            return Err(service_error(
+                if limited {
+                    "PINSET_UPDATE_RATE_LIMIT"
+                } else {
+                    "PINSET_UPDATE_FETCH"
+                },
+                format!("{resource}: HTTP {}{advice}", status.as_u16()),
+            ));
+        }
+        if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
+            return Err(service_error(
+                "PINSET_UPDATE_ACCESS",
+                format!("{resource}: access denied (HTTP {})", status.as_u16()),
+            ));
+        }
+        if status == StatusCode::NOT_FOUND {
+            return Err(service_error(
+                "PINSET_UPDATE_NOT_FOUND",
+                format!("{resource}: published release resource not found (HTTP 404)"),
+            ));
+        }
+        if !status.is_success() && !status.is_redirection() {
+            return Err(service_error(
+                "PINSET_UPDATE_FETCH",
+                format!("{resource}: HTTP {}", status.as_u16()),
+            ));
+        }
+        return Ok(response);
+    }
+    unreachable!("bounded update request attempts always return")
+}
+
+fn fetch_checksums(client: &Client, base: &str) -> Result<String> {
+    let initial = url::Url::parse(&format!("{base}SHA256SUMS"))
+        .map_err(|_| service_error("PINSET_UPDATE_METADATA", "invalid official release URL"))?;
+    let mut url = initial.clone();
+    for redirects in 0..=MAX_REDIRECTS {
+        let response = request(client, Method::GET, &url, "release checksum file")?;
+        if response.status().is_redirection() {
+            let invalid = || {
+                service_error(
+                    "PINSET_UPDATE_REDIRECT",
+                    "invalid official checksum download redirect",
+                )
+            };
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(invalid)?;
+            let next = url.join(location).map_err(|_| invalid())?;
+            let allowed = match next.host_str() {
+                Some("github.com") => next == initial,
+                Some("release-assets.githubusercontent.com" | "objects.githubusercontent.com") => {
+                    true
+                }
+                _ => false,
+            };
+            if redirects == MAX_REDIRECTS
+                || !allowed
+                || next.scheme() != "https"
+                || !next.username().is_empty()
+                || next.password().is_some()
+                || next.port().is_some()
+                || next.fragment().is_some()
+            {
+                return Err(invalid());
+            }
+            url = next;
+            continue;
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_CHECKSUM_BYTES)
+        {
+            return Err(service_error(
+                "PINSET_UPDATE_CHECKSUM",
+                "release checksum file exceeds 1 MiB",
+            ));
+        }
+        let mut bytes = Vec::new();
+        response
+            .take(MAX_CHECKSUM_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| {
+                service_error(
+                    "PINSET_UPDATE_FETCH",
+                    format!("read release checksum file: {error}"),
+                )
+            })?;
+        if bytes.len() as u64 > MAX_CHECKSUM_BYTES {
+            return Err(service_error(
+                "PINSET_UPDATE_CHECKSUM",
+                "release checksum file exceeds 1 MiB",
+            ));
+        }
+        return String::from_utf8(bytes).map_err(|_| {
+            service_error(
+                "PINSET_UPDATE_CHECKSUM",
+                "release checksum file is not UTF-8",
+            )
+        });
+    }
+    unreachable!("bounded download redirects always return")
+}
+
+fn select_archive(version: &semver::Version, target: &str, sums: &str) -> Result<UpdateRelease> {
+    let mut selected = None;
+    // Validate both recognized names, preferring the versioned package. A
+    // malformed fallback must not hide behind a valid preferred entry.
+    for name in [
+        format!("pinset-v{version}-{target}.zip"),
+        format!("pinset-{target}.zip"),
+    ] {
+        if sums.lines().any(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .is_some_and(|entry| entry.strip_prefix('*').unwrap_or(entry) == name)
+        }) {
+            let checksum = release_checksum(sums, &name)?;
+            if selected.is_none() {
+                selected = Some((name, checksum));
+            }
+        }
+    }
+    let (archive_name, checksum) = selected.ok_or_else(|| {
+        service_error(
+            "PINSET_UPDATE_ASSET",
+            "published checksum file has no archive for this platform",
+        )
+    })?;
+    Ok(UpdateRelease {
+        archive_url: format!(
+            "https://github.com/Future-Element/pinset/releases/download/v{version}/{archive_name}"
+        ),
+        version: version.to_string(),
+        archive_name,
+        checksum,
+    })
+}
+
+pub(crate) fn resolve_release(requested: Option<&str>, target: &str) -> Result<UpdateRelease> {
+    if ![
+        "linux-x86_64",
+        "linux-aarch64",
+        "windows-x86_64",
+        "macos-aarch64",
+    ]
+    .contains(&target)
+    {
+        return Err(service_error(
+            "PINSET_UPDATE_ASSET",
+            "no published Pinset archive for this platform",
+        ));
+    }
     let requested = requested.map(release_version).transpose()?;
-    let endpoint = requested
-        .as_ref()
-        .map_or_else(|| "latest".to_owned(), |version| format!("tags/v{version}"));
-    let response = client
-        .get(format!(
-            "https://api.github.com/repos/Future-Element/pinset/releases/{endpoint}"
-        ))
-        .header("User-Agent", "pinset/3")
-        .send()
-        .and_then(|response| response.error_for_status())
-        .and_then(|response| response.bytes())
-        .map_err(|error| service_error("PINSET_UPDATE_FETCH", error.to_string()))?;
-    let document: ReleaseDocument = serde_json::from_slice(&response)
-        .map_err(|error| service_error("PINSET_UPDATE_METADATA", error.to_string()))?;
-    document.resolve(requested.as_ref(), target)
+    let client = http_client_builder()?
+        .user_agent("pinset/3")
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|source| Error::HttpClient { source })?;
+    let version = match requested {
+        Some(version) => version,
+        None => {
+            let response = request(
+                &client,
+                Method::HEAD,
+                &url::Url::parse(LATEST_RELEASE).expect("constant official release URL"),
+                "latest release",
+            )?;
+            if !response.status().is_redirection() {
+                return Err(service_error(
+                    "PINSET_UPDATE_REDIRECT",
+                    "latest release did not redirect to a published tag",
+                ));
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| {
+                    service_error(
+                        "PINSET_UPDATE_REDIRECT",
+                        "latest release redirect has no valid Location",
+                    )
+                })?;
+            latest_version(location)?
+        }
+    };
+    let base = format!("https://github.com/Future-Element/pinset/releases/download/v{version}/");
+    let sums = fetch_checksums(&client, &base)?;
+    select_archive(&version, target, &sums)
 }
 
 pub(crate) fn release_checksum(sums: &str, filename: &str) -> Result<String> {
@@ -337,25 +524,17 @@ impl Services {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn release(version: &str, target: &str, versioned: bool) -> ReleaseDocument {
+    fn release(version: &str, target: &str, versioned: bool) -> UpdateRelease {
+        let version = release_version(version).unwrap();
         let name = if versioned {
             format!("pinset-v{version}-{target}.zip")
         } else {
             format!("pinset-{target}.zip")
         };
-        let base =
-            format!("https://github.com/Future-Element/pinset/releases/download/v{version}/");
-        serde_json::from_value(serde_json::json!({
-            "tag_name":format!("v{version}"),"draft":false,"prerelease":false,
-            "assets":[
-                {"name":name,"browser_download_url":format!("{base}{name}"),"state":"uploaded","size":100},
-                {"name":"SHA256SUMS","browser_download_url":format!("{base}SHA256SUMS"),"state":"uploaded","size":100}
-            ]
-        }))
-        .unwrap()
+        select_archive(&version, target, &format!("{}  {name}\n", "ab".repeat(32))).unwrap()
     }
     #[test]
-    fn future_versions_resolve_the_target_release_on_all_published_platforms() {
+    fn future_versions_resolve_all_published_platforms_from_checksums() {
         for version in ["3.0.2", "3.1.0", "3.12.7"] {
             for target in [
                 "linux-x86_64",
@@ -364,79 +543,78 @@ mod tests {
                 "macos-aarch64",
             ] {
                 for versioned in [true, false] {
-                    let resolved = release(version, target, versioned)
-                        .resolve(None, target)
-                        .unwrap();
+                    let resolved = release(version, target, versioned);
                     assert_eq!(resolved.version, version);
-                    assert!(
-                        resolved
-                            .archive
-                            .browser_download_url
-                            .contains(&format!("/v{version}/"))
-                    );
-                    assert!(resolved.archive.name.ends_with(&format!("{target}.zip")));
+                    assert!(resolved.archive_url.contains(&format!("/v{version}/")));
+                    assert!(resolved.archive_name.ends_with(&format!("{target}.zip")));
                 }
             }
         }
     }
     #[test]
-    fn explicit_versions_must_match_metadata_and_may_select_prereleases() {
-        let expected = release_version("3.1.0").unwrap();
-        assert!(
-            release("3.0.2", "linux-x86_64", true)
-                .resolve(Some(&expected), "linux-x86_64")
-                .is_err()
-        );
-        let mut rc = release("3.1.0-rc.1", "linux-x86_64", true);
-        rc.prerelease = true;
-        let expected = release_version("v3.1.0-rc.1").unwrap();
-        assert!(rc.resolve(Some(&expected), "linux-x86_64").is_ok());
-        assert!(
-            release("3.1.0-rc.1", "linux-x86_64", true)
-                .resolve(None, "linux-x86_64")
-                .is_err()
-        );
-        assert!(release_version("2.16.2").is_err());
-        assert!(release_version("4.0.0").is_err());
-        assert!(release_version("3.0.2+local").is_err());
+    fn latest_redirect_requires_the_exact_official_stable_tag() {
+        for location in [
+            "https://github.com/Future-Element/pinset/releases/tag/v3.1.0",
+            "/Future-Element/pinset/releases/tag/v3.1.0",
+        ] {
+            assert_eq!(latest_version(location).unwrap().to_string(), "3.1.0");
+        }
+        for location in [
+            "https://example.com/Future-Element/pinset/releases/tag/v3.1.0",
+            "http://github.com/Future-Element/pinset/releases/tag/v3.1.0",
+            "https://github.com/other/pinset/releases/tag/v3.1.0",
+            "https://user@github.com/Future-Element/pinset/releases/tag/v3.1.0",
+            "https://github.com:444/Future-Element/pinset/releases/tag/v3.1.0",
+            "/Future-Element/pinset/releases/tag/v3.1.0?source=other",
+            "/Future-Element/pinset/releases/tag/v3.1.0#fragment",
+            "/Future-Element/pinset/releases/tag/v3.1.0/extra",
+            "/Future-Element/pinset/releases/tag/3.1.0",
+            "/Future-Element/pinset/releases/tag/v3.1.0-rc.1",
+            "/Future-Element/pinset/releases/tag/v3.1.0+local",
+            "/Future-Element/pinset/releases/tag/v2.16.2",
+            "/Future-Element/pinset/releases/tag/v4.0.0",
+        ] {
+            assert!(latest_version(location).is_err(), "{location}");
+        }
+        assert!(release_version("3.1.0-rc.1").is_ok());
+        for version in ["2.16.2", "4.0.0", "3.0.2+local", "latest", "3.1"] {
+            assert!(release_version(version).is_err());
+        }
     }
     #[test]
-    fn missing_platform_or_checksums_and_draft_releases_fail_closed() {
-        assert!(
-            release("3.0.2", "linux-x86_64", true)
-                .resolve(None, "windows-x86_64")
-                .is_err()
+    fn versioned_package_is_preferred_and_both_entries_are_validated() {
+        let version = release_version("3.1.0").unwrap();
+        let preferred = "pinset-v3.1.0-windows-x86_64.zip";
+        let stable = "pinset-windows-x86_64.zip";
+        let sums = format!(
+            "{} {preferred}\n{} {stable}\n",
+            "ab".repeat(32),
+            "cd".repeat(32)
         );
-        let mut doc = release("3.0.2", "linux-x86_64", true);
-        doc.assets.retain(|asset| asset.name != "SHA256SUMS");
-        assert!(doc.resolve(None, "linux-x86_64").is_err());
-        let mut doc = release("3.0.2", "linux-x86_64", true);
-        doc.draft = true;
-        assert!(doc.resolve(None, "linux-x86_64").is_err());
+        assert_eq!(
+            select_archive(&version, "windows-x86_64", &sums)
+                .unwrap()
+                .archive_name,
+            preferred
+        );
+        for invalid in [
+            format!("{sums}{} {stable}\n", "cd".repeat(32)),
+            format!("{} {preferred}\ninvalid {stable}\n", "ab".repeat(32)),
+        ] {
+            assert!(select_archive(&version, "windows-x86_64", &invalid).is_err());
+        }
+        assert!(select_archive(&version, "macos-aarch64", &sums).is_err());
+        assert!(select_archive(&version, "windows-x86_64", "").is_err());
+        assert!(resolve_release(Some("3.1.0"), "linux-s390x").is_err());
     }
     #[test]
-    fn duplicate_incomplete_and_foreign_assets_are_rejected() {
-        let mut doc = release("3.0.2", "windows-x86_64", true);
-        doc.assets.push(doc.assets[0].clone());
-        assert!(doc.resolve(None, "windows-x86_64").is_err());
-        for index in [0, 1] {
-            let mut doc = release("3.0.2", "windows-x86_64", true);
-            doc.assets[index].state = "new".into();
-            assert!(doc.resolve(None, "windows-x86_64").is_err());
-            let mut doc = release("3.0.2", "windows-x86_64", true);
-            doc.assets[index].size = 0;
-            assert!(doc.resolve(None, "windows-x86_64").is_err());
-            for (from, to) in [
-                ("https://github.com/", "http://github.com/"),
-                ("github.com", "example.com"),
-                ("Future-Element/pinset", "other/project"),
-                ("/v3.0.2/", "/v3.0.1/"),
-            ] {
-                let mut doc = release("3.0.2", "windows-x86_64", true);
-                doc.assets[index].browser_download_url =
-                    doc.assets[index].browser_download_url.replace(from, to);
-                assert!(doc.resolve(None, "windows-x86_64").is_err());
-            }
+    fn retries_are_bounded_and_never_retry_before_an_advertised_delay() {
+        assert_eq!(retry_delay(None, 0), Some(Duration::from_secs(1)));
+        assert_eq!(retry_delay(None, 1), Some(Duration::from_secs(2)));
+        assert_eq!(retry_delay(Some("0"), 0), Some(Duration::ZERO));
+        assert_eq!(retry_delay(Some("5"), 0), Some(Duration::from_secs(5)));
+        for value in ["6", "3600", "Wed, 07 Oct 2026 12:00:00 GMT", "invalid"] {
+            assert_eq!(retry_delay(Some(value), 0), None);
         }
     }
     #[test]

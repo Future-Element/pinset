@@ -21,7 +21,7 @@ use lzma_rust2::XzReader;
 use reqwest::{
     StatusCode, Url,
     blocking::Client,
-    header::{CONTENT_RANGE, RANGE},
+    header::{ACCEPT_ENCODING, CONTENT_RANGE, RANGE},
 };
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
@@ -32,7 +32,8 @@ use crate::download_cache::{
 };
 use crate::{ArtifactIntegrity, Error, Result};
 
-const DOWNLOAD_ATTEMPTS_PER_SOURCE: usize = 3;
+const DOWNLOAD_ATTEMPTS_PER_SOURCE: usize = 8;
+const DOWNLOAD_STALLED_ATTEMPTS: usize = 3;
 const DOWNLOAD_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +152,12 @@ pub enum DownloadProgressEvent {
     Finished {
         downloaded_bytes: u64,
     },
+    Retrying {
+        attempt: usize,
+        max_attempts: usize,
+        downloaded_bytes: u64,
+        delay: Duration,
+    },
     Failed,
 }
 
@@ -210,6 +217,10 @@ impl Drop for InstallLock {
 impl Installer {
     pub fn new(limits: InstallLimits) -> Result<Self> {
         let client = crate::http_client_builder()?
+            // Range offsets and checksums refer to the archive's original bytes.
+            .no_gzip()
+            .no_brotli()
+            .connect_timeout(Duration::from_secs(15).min(limits.request_timeout))
             .timeout(limits.request_timeout)
             .build()
             .map_err(|source| Error::HttpClient { source })?;
@@ -647,16 +658,40 @@ impl Installer {
         expected_integrity: &ArtifactIntegrity,
         destination: &Path,
     ) -> Result<(u64, String)> {
+        let mut stalled = 0;
         for attempt in 1..=DOWNLOAD_ATTEMPTS_PER_SOURCE {
+            let before = fs::metadata(destination).map(|m| m.len()).unwrap_or(0);
             match self.download_verified_inner(url, expected_integrity, destination) {
                 Ok(result) => return Ok(result),
-                Err(error)
-                    if attempt < DOWNLOAD_ATTEMPTS_PER_SOURCE
-                        && is_retryable_source_error(&error) =>
-                {
-                    std::thread::sleep(DOWNLOAD_RETRY_BASE_DELAY.saturating_mul(attempt as u32));
-                }
                 Err(error) => {
+                    let downloaded_bytes = fs::metadata(destination).map(|m| m.len()).unwrap_or(0);
+                    stalled = if downloaded_bytes > before {
+                        0
+                    } else {
+                        stalled + 1
+                    };
+                    if is_retryable_source_error(&error) {
+                        if attempt < DOWNLOAD_ATTEMPTS_PER_SOURCE
+                            && stalled < DOWNLOAD_STALLED_ATTEMPTS
+                        {
+                            let delay =
+                                DOWNLOAD_RETRY_BASE_DELAY.saturating_mul(1 << (attempt - 1).min(4));
+                            self.report_progress(DownloadProgressEvent::Retrying {
+                                attempt: attempt + 1,
+                                max_attempts: DOWNLOAD_ATTEMPTS_PER_SOURCE,
+                                downloaded_bytes,
+                                delay,
+                            });
+                            std::thread::sleep(delay);
+                            continue;
+                        }
+                        self.report_progress(DownloadProgressEvent::Failed);
+                        return Err(Error::DownloadRetriesExhausted {
+                            attempts: attempt,
+                            downloaded_bytes,
+                            source: Box::new(error),
+                        });
+                    }
                     self.report_progress(DownloadProgressEvent::Failed);
                     return Err(error);
                 }
@@ -743,7 +778,7 @@ impl Installer {
         }
 
         self.report_phase(InstallPhase::Connecting);
-        let mut request = self.client.get(url);
+        let mut request = self.client.get(url).header(ACCEPT_ENCODING, "identity");
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
         }
@@ -764,18 +799,23 @@ impl Installer {
             response = self
                 .client
                 .get(url)
+                .header(ACCEPT_ENCODING, "identity")
                 .send()
                 .map_err(|source| Error::DownloadRequest {
                     url: display_url.clone(),
                     source,
                 })?;
         } else if resume_from > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
-            let expected_prefix = format!("bytes {resume_from}-");
             let valid_content_range = response
                 .headers()
                 .get(CONTENT_RANGE)
                 .and_then(|value| value.to_str().ok())
-                .is_some_and(|value| value.starts_with(&expected_prefix));
+                .and_then(|value| parse_content_range(value, resume_from))
+                .is_some_and(|range| {
+                    response
+                        .content_length()
+                        .is_none_or(|length| length == range.0)
+                });
             if !valid_content_range {
                 fs::remove_file(destination).map_err(|source| Error::WriteDownload {
                     path: destination.to_path_buf(),
@@ -783,17 +823,42 @@ impl Installer {
                 })?;
                 resume_from = 0;
                 hasher = expected_integrity.hasher();
-                response =
-                    self.client
-                        .get(url)
-                        .send()
-                        .map_err(|source| Error::DownloadRequest {
-                            url: display_url.clone(),
-                            source,
-                        })?;
+                response = self
+                    .client
+                    .get(url)
+                    .header(ACCEPT_ENCODING, "identity")
+                    .send()
+                    .map_err(|source| Error::DownloadRequest {
+                        url: display_url.clone(),
+                        source,
+                    })?;
             }
         }
         let resumed = resume_from > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+        // A fresh GET must be a full response. Never accept an unsolicited partial body.
+        let range = if response.status() == StatusCode::PARTIAL_CONTENT {
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| parse_content_range(v, resume_from))
+                .filter(|range| {
+                    resumed
+                        && response
+                            .content_length()
+                            .is_none_or(|length| length == range.0)
+                })
+                .ok_or_else(|| Error::DownloadRead {
+                    url: display_url.clone(),
+                    source: io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid Content-Range for artifact resume",
+                    ),
+                })?
+                .into()
+        } else {
+            None
+        };
         let mut response =
             response
                 .error_for_status()
@@ -801,9 +866,11 @@ impl Installer {
                     url: display_url.clone(),
                     source,
                 })?;
-        let total_bytes = response
-            .content_length()
-            .and_then(|length| length.checked_add(resume_from));
+        let total_bytes = range.map(|(_, total)| total).or_else(|| {
+            response
+                .content_length()
+                .and_then(|length| length.checked_add(resume_from))
+        });
         if total_bytes.is_some_and(|length| length > self.limits.max_download_bytes) {
             return Err(Error::DownloadTooLarge {
                 url: display_url.clone(),
@@ -865,6 +932,18 @@ impl Installer {
             path: destination.to_path_buf(),
             source,
         })?;
+
+        // Some origins return a shorter valid range, even without a read error.
+        // Keep that prefix and request the remaining bytes rather than hash a prefix.
+        if total_bytes.is_some_and(|expected| total < expected) {
+            return Err(Error::DownloadRead {
+                url: display_url,
+                source: io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "artifact response ended before the complete archive",
+                ),
+            });
+        }
 
         self.report_phase(InstallPhase::Verifying);
         let actual = hasher.finalize();
@@ -1534,10 +1613,26 @@ fn create_archive_symlink(_target: &Path, _link: &Path) -> io::Result<()> {
 }
 
 fn is_retryable_source_error(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::DownloadRequest { .. } | Error::DownloadRead { .. }
-    )
+    match error {
+        Error::DownloadRead { .. } | Error::DownloadRetriesExhausted { .. } => true,
+        Error::DownloadRequest { source, .. } => source.status().is_none_or(|status| {
+            status.is_server_error()
+                || matches!(
+                    status,
+                    StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
+                )
+        }),
+        _ => false,
+    }
+}
+
+fn parse_content_range(value: &str, expected_start: u64) -> Option<(u64, u64)> {
+    let (interval, total) = value.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = interval.split_once('-')?;
+    let start: u64 = start.parse().ok()?;
+    let end: u64 = end.parse().ok()?;
+    let total: u64 = total.parse().ok()?;
+    (start == expected_start && end >= start && end < total).then(|| (end - start + 1, total))
 }
 
 fn validate_segment(field: &'static str, value: &str) -> Result<()> {
@@ -2200,6 +2295,128 @@ mod tests {
                 .expect("partial path")
                 .exists()
         );
+    }
+
+    #[test]
+    fn recovers_a_go_archive_after_three_consecutive_body_interruptions() {
+        let root = tempdir().expect("temp root");
+        let archive = zip_bytes(&[
+            ("go/bin/go.exe", b"fixture go"),
+            ("go/bin/gofmt.exe", b"fixture gofmt"),
+        ]);
+        let length = archive.len();
+        let (url, server) = serve_interrupted_sequence(
+            archive.clone(),
+            vec![length / 4, length / 2, length * 3 / 4, length],
+        );
+        let mut request = request(root.path(), url, sha256_hex(&archive));
+        request.tool = "go".into();
+        request.version = "1.27.1".into();
+        request.strip_components = 1;
+        request.required_paths = vec![PathBuf::from("bin/go.exe"), PathBuf::from("bin/gofmt.exe")];
+
+        let outcome = test_installer()
+            .install(&request)
+            .expect("recover interrupted Go archive");
+        let offsets = server.join().expect("interrupt server");
+        assert_eq!(offsets, vec![0, length / 4, length / 2, length * 3 / 4]);
+        assert_eq!(outcome.bytes_downloaded, length as u64);
+        assert_eq!(
+            fs::read(outcome.install_dir.join("bin/go.exe")).unwrap(),
+            b"fixture go"
+        );
+    }
+
+    #[test]
+    fn handles_short_ranges_ignored_ranges_and_invalid_resume_headers() {
+        for mode in [
+            "short",
+            "ignored",
+            "unsatisfiable",
+            "wrong-offset",
+            "wrong-length",
+        ] {
+            let root = tempdir().unwrap();
+            let archive = zip_bytes(&[("bin/node.exe", b"fixture runtime for range responses")]);
+            let length = archive.len();
+            let start = length / 4;
+            let hash = sha256_hex(&archive);
+            let partial = download_partial_path(root.path(), &hash).unwrap();
+            fs::create_dir_all(partial.parent().unwrap()).unwrap();
+            fs::write(&partial, &archive[..start]).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/artifact.zip", listener.local_addr().unwrap());
+            let bytes = archive.clone();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let count = stream.read(&mut request).unwrap();
+                assert!(
+                    String::from_utf8_lossy(&request[..count])
+                        .to_ascii_lowercase()
+                        .contains(&format!("range: bytes={start}-"))
+                );
+                match mode {
+                    "ignored" => {
+                        write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n").unwrap();
+                        stream.write_all(&bytes).unwrap();
+                        return;
+                    }
+                    "unsatisfiable" => write!(stream, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap(),
+                    _ => {
+                        let end = if mode == "short" { start * 2 - 1 } else { length - 1 };
+                        let reported_start = if mode == "wrong-offset" { start + 1 } else { start };
+                        let declared = if mode == "wrong-length" { length } else { end - start + 1 };
+                        write!(stream, "HTTP/1.1 206 Partial Content\r\nContent-Length: {declared}\r\nContent-Range: bytes {reported_start}-{end}/{length}\r\nConnection: close\r\n\r\n").unwrap();
+                        stream.write_all(&bytes[start..=end]).unwrap();
+                    }
+                }
+                drop(stream);
+                let (mut stream, _) = listener.accept().unwrap();
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+                if mode == "short" {
+                    let next = start * 2;
+                    assert!(request.contains(&format!("range: bytes={next}-")));
+                    write!(stream, "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {next}-{}/{length}\r\nConnection: close\r\n\r\n", length - next, length - 1).unwrap();
+                    stream.write_all(&bytes[next..]).unwrap();
+                } else {
+                    assert!(!request.contains("range:"));
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    stream.write_all(&bytes).unwrap();
+                }
+            });
+            let outcome = test_installer()
+                .install(&request(root.path(), url, hash))
+                .unwrap_or_else(|e| panic!("{mode}: {e}"));
+            server.join().unwrap();
+            assert_eq!(outcome.bytes_downloaded, length as u64);
+            assert!(!partial.exists());
+        }
+    }
+
+    #[test]
+    fn stops_after_three_attempts_without_download_progress() {
+        let root = tempdir().unwrap();
+        let archive = zip_bytes(&[("bin/node.exe", b"fixture runtime")]);
+        let hash = sha256_hex(&archive);
+        let (url, server) = serve_interrupted_sequence(archive, vec![0, 0, 0]);
+        let error = test_installer()
+            .install(&request(root.path(), url, hash))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("after 3 attempts; 0 partial bytes"),
+            "{error}"
+        );
+        assert_eq!(server.join().unwrap(), vec![0, 0, 0]);
+        assert!(!final_dir(root.path()).exists());
+        assert_transaction_root_is_empty(root.path());
     }
 
     #[test]
@@ -2976,6 +3193,65 @@ mod tests {
             stream.flush().expect("flush range response");
         });
         (format!("http://{address}/artifact.zip"), handle)
+    }
+
+    fn serve_interrupted_sequence(
+        body: Vec<u8>,
+        ends: Vec<usize>,
+    ) -> (String, thread::JoinHandle<Vec<usize>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind sequence server");
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let mut offsets = Vec::new();
+            let mut start = 0;
+            for end in ends {
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            if std::time::Instant::now() >= deadline {
+                                return offsets;
+                            }
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+                if start > 0 {
+                    assert!(
+                        request.contains(&format!("range: bytes={start}-")),
+                        "{request}"
+                    );
+                }
+                offsets.push(start);
+                if start == 0 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                } else {
+                    write!(stream, "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{}\r\nConnection: close\r\n\r\n", body.len() - start, body.len() - 1, body.len()).unwrap();
+                }
+                stream.write_all(&body[start..end]).unwrap();
+                stream.flush().unwrap();
+                start = end;
+            }
+            offsets
+        });
+        (
+            format!("http://{address}/go1.27.1.windows-amd64.zip"),
+            handle,
+        )
     }
 
     fn serve_interrupted_then_range(

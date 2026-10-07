@@ -63,6 +63,7 @@ assert 'workflow_dispatch:' in workflow
 for forbidden in ['cargo test','cargo clippy','cargo audit','npm test','npm audit','typecheck','verify.sh','release-preflight']:
     assert forbidden not in workflow,forbidden
 assert list((root/'.github/workflows').glob('*.yml'))==[root/'.github/workflows/release.yml']
+assert workflow.index('--draft --latest=false') < workflow.index('python3 scripts/check_release_assets.py') < workflow.index('--draft=false --latest=')
 action=(root/'action.yml').read_text()
 assert 'pinset -C "$PINSET_PROJECT_DIRECTORY" install' in action
 assert all(old not in action for old in ['upgrade prepare','env trust','cache:','task','workspace:'])
@@ -72,6 +73,7 @@ import re
 assert re.findall(r'^### `([^`]+)`',english,re.M)==re.findall(r'^### `([^`]+)`',chinese,re.M)
 sysroot=str(root/'scripts');import sys;sys.path.insert(0,sysroot)
 from release_gate import validate, source_fingerprint
+from check_release_assets import validate_assets
 from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
 try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,tag)
 except ValueError:pass
@@ -92,6 +94,32 @@ for field,value in [('source_clean',False),('commit','0'*40),('source_fingerprin
     try:validate(invalid,source,tag)
     except ValueError:pass
     else:raise AssertionError('release gate accepted invalid '+field)
+# Publication only checks already-built artifacts and server metadata. Exercise
+# incomplete/damaged uploads locally; these cases never invoke GitHub or CI.
+draft_dir=fixture/'draft-assets';draft_dir.mkdir()
+names=['pinset-vscode.vsix','local-verification.json']
+for platform in ['linux-x86_64','linux-aarch64','windows-x86_64','macos-aarch64']:
+    names.extend([f'pinset-{tag}-{platform}.zip',f'pinset-{platform}.sbom.json'])
+for name in names:(draft_dir/name).write_bytes(('fixture-'+name).encode())
+(draft_dir/'SHA256SUMS').write_text(''.join(hashlib.sha256((draft_dir/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in names))
+draft={'tag_name':tag,'draft':True,'prerelease':'-' in tag,'assets':[
+    {'name':path.name,'state':'uploaded','size':path.stat().st_size,'digest':'sha256:'+hashlib.sha256(path.read_bytes()).hexdigest()}
+    for path in draft_dir.iterdir()]}
+assert validate_assets(draft,draft_dir,tag)['complete_assets']==11
+import copy
+for failure in ['missing','duplicate','incomplete','size','digest','published','wrong-tag','stability']:
+    damaged=copy.deepcopy(draft)
+    if failure=='missing':damaged['assets'].pop()
+    elif failure=='duplicate':damaged['assets'][-1]=damaged['assets'][0]
+    elif failure=='incomplete':damaged['assets'][0]['state']='new'
+    elif failure=='size':damaged['assets'][0]['size']+=1
+    elif failure=='digest':damaged['assets'][0]['digest']='sha256:'+'0'*64
+    elif failure=='published':damaged['draft']=False
+    elif failure=='wrong-tag':damaged['tag_name']='v3.99.0'
+    elif failure=='stability':damaged['prerelease']=not damaged['prerelease']
+    try:validate_assets(damaged,draft_dir,tag)
+    except ValueError:pass
+    else:raise AssertionError('publication accepted '+failure+' release metadata')
 from self_update import verify_self_update
 from progress import verify_progress
 progress = verify_progress(fixture)

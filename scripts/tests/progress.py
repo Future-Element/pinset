@@ -13,7 +13,7 @@ def verify_progress(fixture):
     body=archive.getvalue();digest=hashlib.sha256(body).hexdigest()
     filename='go1.27.0.linux-amd64.tar.gz'
     metadata=json.dumps([{'version':'go1.27.0','stable':True,'files':[{'filename':filename,'os':'linux','arch':'amd64','version':'go1.27.0','sha256':digest,'size':len(body),'kind':'archive'}]}]).encode()
-    state={'known':True,'corrupt':False,'downloads':0}
+    state={'known':True,'corrupt':False,'downloads':0,'cuts':0,'cut_bytes':len(body)//4,'ranges':[],'identity':[],'status':200}
     class Origin(http.server.BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def log_message(self,*_): pass
@@ -24,11 +24,26 @@ def verify_progress(fixture):
                 payload=b'bad archive' if state['corrupt'] else body;download=True;state['downloads']+=1
             else:
                 self.send_error(404);return
-            self.send_response(200)
+            if download:
+                state['identity'].append(self.headers.get('Accept-Encoding'))
+                if state['status']!=200:
+                    self.send_response(state['status']);self.send_header('Content-Length','0');self.send_header('Connection','close');self.end_headers();return
+                header=self.headers.get('Range')
+                start=int(header[6:-1]) if header else 0
+                if start:
+                    state['ranges'].append(start)
+                    self.send_response(206)
+                    self.send_header('Content-Range',f'bytes {start}-{len(body)-1}/{len(body)}')
+                    payload=payload[start:]
+                else:self.send_response(200)
+            else:self.send_response(200)
             chunked=download and not state['known']
             if chunked: self.send_header('Transfer-Encoding','chunked')
             else: self.send_header('Content-Length',str(len(payload)))
             self.send_header('Connection','close');self.end_headers()
+            if download and state['cuts']:
+                state['cuts']-=1
+                self.wfile.write(payload[:state['cut_bytes']]);self.wfile.flush();return
             for offset in range(0,len(payload),32768):
                 block=payload[offset:offset+32768]
                 if chunked: self.wfile.write(f'{len(block):x}\r\n'.encode())
@@ -93,6 +108,35 @@ def verify_progress(fixture):
         env['PINSET_HOME']=str(fixture/'json-home');state['known']=True
         stdout,stderr=command('--json','install')
         assert json.loads(stdout)['installed'] and stderr==''
+        # Three body interruptions reproduce the reported Go failure. A fourth
+        # response succeeds, and the terminal explains each retained prefix.
+        env['PINSET_HOME']=str(fixture/'retry-home');state['cuts']=3;state['ranges']=[]
+        _,retried=command('use','--global','go@latest')
+        assert 'retrying 4/8' in retried and 'resume at' in retried,retried
+        assert state['ranges']==[len(body)//4,len(body)//4*2,len(body)//4*3],state
+        assert all(value=='identity' for value in state['identity']),state
+        assert len(list((fixture/'retry-home/v3/installs').rglob('.pinset-install.toml')))==1
+        (REPORTS/'progress-terminal-retried.log').write_text(retried)
+        # Exhausted transfers retain a safe partial, commit no new selection,
+        # and resume across invocations. JSON progress must remain silent.
+        env['PINSET_HOME']=str(fixture/'exhausted-home');state['cuts']=8;state['cut_bytes']=len(body)//16;state['ranges']=[]
+        stdout,stderr=command('--json','use','--global','go@latest',expected=1)
+        failure=json.loads(stdout);assert 'after 8 attempts' in str(failure) and stderr=='',failure
+        assert not (fixture/'exhausted-home/v3/global/config.toml').exists()
+        assert not list((fixture/'exhausted-home/v3/installs').rglob('.pinset-install.toml'))
+        partial=list((fixture/'exhausted-home/v3/cache').rglob('*.part'))
+        assert len(partial)==1 and partial[0].stat().st_size>0,partial
+        state['cuts']=0;state['ranges']=[]
+        stdout,stderr=command('--json','use','--global','go@latest')
+        assert json.loads(stdout) and stderr=='' and state['ranges'],(stdout,stderr,state)
+        assert not partial[0].exists()
+        before={path:path.read_bytes() for path in (fixture/'exhausted-home/v3/global').glob('*.toml')}
+        shutil.rmtree(fixture/'exhausted-home/v3/installs');shutil.rmtree(fixture/'exhausted-home/v3/cache')
+        state['status']=404;downloads=state['downloads']
+        command('use','--global','go@latest',expected=1,terminal=False)
+        assert state['downloads']==downloads+1
+        assert all(path.read_bytes()==content for path,content in before.items())
+        state['status']=200
         env['PINSET_HOME']=str(fixture/'failure-home');state['corrupt']=True
         _,failed=command('install',expected=1)
         (REPORTS/'progress-terminal-failed.log').write_text(failed)
@@ -100,6 +144,8 @@ def verify_progress(fixture):
         assert not list((fixture/'failure-home/v3/installs').rglob('.pinset-install.toml'))
         return {'terminal':'known-size bar with bytes/speed/ETA; unknown-size spinner without percentage',
                 'cache':'verified cache and existing install explicitly distinguished','json':'silent stderr even on TTY',
-                'redirected':'no terminal control sequences','integrity_failure':'no completed installation'}
+                'redirected':'no terminal control sequences','integrity_failure':'no completed installation',
+                'download_recovery':'three interruptions resume successfully; eight attempts bounded; next invocation resumes retained partial',
+                'failed_global_use':'no new selection on failure; previous config/lock unchanged; HTTP 404 is not retried'}
     finally:
         server.shutdown();server.server_close()

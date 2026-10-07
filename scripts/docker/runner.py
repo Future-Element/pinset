@@ -4,9 +4,27 @@ sys.path.insert(0,'/source/scripts')
 from release_gate import source_fingerprint
 from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
 
-source=Path('/source');workspace=Path('/workspace');reports=Path('/reports')/('verify-v3-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
+source=Path('/source');workspace=Path('/workspace');reports=Path('/reports')/('verify-v3-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
 suite=sys.argv[1]
 if suite not in ['fast','acceptance','platform','integrations','all']:raise SystemExit('unknown suite')
+# A reused container keeps caches, but each run gets fresh local state and credentials.
+if workspace.is_symlink() or workspace.is_mount():raise SystemExit('workspace must be a private container directory')
+local=Path('/run/pinset-verification')
+if local.is_symlink() or local.is_mount():raise SystemExit('unsafe verification state directory')
+if local.exists():shutil.rmtree(local)
+local.mkdir()
+for directory in ['home','tmp','xdg-data','xdg-config']:(local/directory).mkdir(mode=0o700)
+home=Path('/run/pinset')
+if home.is_symlink():raise SystemExit('unsafe test Pinset home')
+if home.exists():
+    for entry in home.iterdir():
+        if entry.name=='v3' and entry.is_dir() and not entry.is_symlink():
+            for child in entry.iterdir():
+                if child.name=='cache':continue
+                if child.is_dir() and not child.is_symlink():shutil.rmtree(child)
+                else:child.unlink()
+        elif entry.is_dir() and not entry.is_symlink():shutil.rmtree(entry)
+        else:entry.unlink()
 reports.mkdir(parents=True,exist_ok=False)
 start_commit=subprocess.check_output(['git','-c','safe.directory=/source','rev-parse','HEAD'],cwd=source,text=True).strip()
 start_fingerprint=source_fingerprint(source)
@@ -22,7 +40,7 @@ def ignore(directory,names):
 if workspace.exists():shutil.rmtree(workspace)
 shutil.copytree(source,workspace,ignore=ignore)
 os.chdir(workspace)
-os.environ.update({'PINSET_HOME':'/run/pinset','XDG_DATA_HOME':'/run/xdg-data','XDG_CONFIG_HOME':'/run/xdg-config','DONT_PROMPT_WSL_INSTALL':'1','CARGO_TARGET_DIR':'/build/target','PINSET_ACCEPTANCE_REPORTS':str(reports),'PINSET_ACCEPTANCE_CACHE':'/sdk-cache'})
+os.environ.update({'PINSET_HOME':str(home),'HOME':str(local/'home'),'TMPDIR':str(local/'tmp'),'XDG_DATA_HOME':str(local/'xdg-data'),'XDG_CONFIG_HOME':str(local/'xdg-config'),'DONT_PROMPT_WSL_INSTALL':'1','CARGO_TARGET_DIR':'/build/target','PINSET_ACCEPTANCE_REPORTS':str(reports),'PINSET_ACCEPTANCE_CACHE':'/sdk-cache'})
 for name in ['PINSET_IDENTITY','PINSET_PROFILE','PINSET_NO_ENV','PINSET_ENV_RESOLVED']:os.environ.pop(name,None)
 commands=[];results={}
 def snapshot_binaries():
@@ -83,7 +101,7 @@ finally:
     changes=subprocess.check_output(['git','-c','safe.directory=/source','status','--porcelain','--untracked-files=all'],cwd=source,text=True)
     changes=[line for line in changes.splitlines() if not line[3:].startswith(('output/','.pinset/'))]
     image=os.environ.get('PINSET_VERIFY_IMAGE_DIGEST','')
-    report={'protocol':'pinset-verification/3','execution':'local-docker','suite':suite,'commit':commit,'source_clean':not changes,'source_fingerprint':start_fingerprint,'lock_sha256':start_lock,'image_digests':{'verify':image,'rust':'sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3','node':'sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553'},'commands':commands,'suites':results,'unverified':['Windows x86_64 native runtime; only target compilation and path/credential contracts','macOS aarch64 native runtime; only target compilation and path/credential contracts'],'arm64_execution':'QEMU emulation; no native ARM64 host'}
+    report={'protocol':'pinset-verification/3','execution':'local-docker','container_id':os.environ.get('PINSET_VERIFY_CONTAINER_ID',''),'container_reused':True,'suite':suite,'commit':commit,'source_clean':not changes,'source_fingerprint':start_fingerprint,'lock_sha256':start_lock,'image_digests':{'verify':image,'rust':'sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3','node':'sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553'},'commands':commands,'suites':results,'unverified':['Windows x86_64 native runtime; only target compilation and path/credential contracts','macOS aarch64 native runtime; only target compilation and path/credential contracts'],'arm64_execution':'QEMU emulation; no native ARM64 host'}
     required={'fast':['contracts.json','distribution.json','cargo-security.json'],
       'acceptance':['real-sdks.json','frozen-selectors.json'],
       'platform':['platform.json','frozen-selectors.json'],

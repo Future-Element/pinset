@@ -134,6 +134,25 @@ impl DisplayState {
                     bar.set_position(downloaded_bytes);
                 }
             }
+            ProgressEvent::Download(DownloadProgressEvent::Retrying {
+                attempt,
+                max_attempts,
+                downloaded_bytes,
+                delay,
+            }) => {
+                self.note(format!(
+                    "{} {attempt}/{max_attempts}; {} {:.2} MiB; {} {:.2}s",
+                    self.text("Download interrupted; retrying", "下载中断，重试"),
+                    self.text("resume at", "从已下载位置继续"),
+                    downloaded_bytes as f64 / 1_048_576.0,
+                    self.text("wait", "等待"),
+                    delay.as_secs_f64()
+                ));
+                self.spinner(
+                    self.text("Waiting to retry official download", "等待重试官方下载")
+                        .into(),
+                );
+            }
             ProgressEvent::Download(
                 DownloadProgressEvent::Finished { .. } | DownloadProgressEvent::Failed,
             ) => self.clear(),

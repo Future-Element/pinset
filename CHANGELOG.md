@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.3 - 2026-10-07
+
+- Recover interrupted artifact bodies with bounded retries, verified byte-range resumes and visible retry offsets. Allow up to eight attempts while progress continues; stop after three attempts without progress, retain partial downloads for the next invocation, and keep full-archive integrity failures fatal. Validate complete range headers and use original archive bytes without transparent HTTP decompression.
+- Reuse the same local Docker verification container and image, preserve dependency/SDK caches, reset per-run state and credentials, reject concurrent runs, and record the actual container/image IDs in reports.
+- Remove GitHub REST API calls from self-update: discover stable releases through the official latest redirect and use exact-version checksum/download URLs. Preserve fixed and versioned archive names, strict integrity checks, read-only plans and paired binary recovery; report network failures distinctly and bound retries.
+- Upload release artifacts to a draft, check their complete inventory and integrity metadata, then publish. Keep prereleases out of latest and leave failed uploads unpublished. Verify blocked-REST updates and draft publication contracts in local Docker only.
+
 ## 3.0.2 - 2026-10-07
 
 - Update the website's sharp override to 0.35.5 for the upstream librsvg security fix (GHSA-wq5f-xc86-pv6w).

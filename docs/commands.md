@@ -231,7 +231,11 @@ pinset self repair [--plan]
 
 Update from an official Pinset 3 release after checking its platform checksum.
 
-The target release metadata selects the actual platform ZIP and `SHA256SUMS`; asset names may be stable or contain that release's version. The checksum must name the selected ZIP exactly once. Missing or incomplete assets, mismatched release versions and invalid checksums abort the update. `--plan` checks release metadata and checksums without downloading binaries or writing local state.
+Without a version, Pinset reads the official `/releases/latest` redirect and accepts only a stable Pinset 3 tag. An explicit version skips latest discovery and may select a prerelease. Neither path uses the GitHub REST API or requires a token. All subsequent downloads use the resolved exact version directory, even if a newer release appears during the update.
+
+The release's `SHA256SUMS` selects the platform ZIP, preferring `pinset-v<version>-<platform>.zip` and accepting the existing fixed platform name. Each recognized entry must contain one valid SHA-256 checksum; missing, duplicated or malformed entries abort the update. The downloaded CLI must report the exact selected version before the CLI/shim pair is replaced. `--plan` reads the redirect and checksum file without downloading binaries or writing local state. An already installed version does not download binaries, and automatic updates reject an older latest release; an explicit version can select a downgrade.
+
+Metadata requests have timeouts and bounded retries. Access denial, rate limiting, unpublished resources and missing platform assets have distinct errors. Long or HTTP-date `Retry-After` values are reported without retrying early. GitHub download traffic remains subject to ordinary network and service limits.
 
 ```text
 pinset self update [version] [--plan]

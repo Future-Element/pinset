@@ -388,6 +388,16 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error(
+        "artifact download failed after {attempts} attempts; {downloaded_bytes} partial bytes retained for the next run: {source}"
+    )]
+    DownloadRetriesExhausted {
+        attempts: usize,
+        downloaded_bytes: u64,
+        #[source]
+        source: Box<Error>,
+    },
+
     #[error("artifact from {url} exceeds download limit {limit} bytes")]
     DownloadTooLarge { url: String, limit: u64 },
 

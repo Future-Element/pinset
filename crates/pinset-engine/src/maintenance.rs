@@ -227,32 +227,33 @@ impl Services {
         }
     }
     pub fn self_update(&self, version: Option<&str>, plan: bool) -> Result<Value> {
-        let _guard = if plan {
-            None
-        } else {
-            Some(self.guard("maintenance")?)
+        let release = crate::self_update::resolve_release(version, &current_target())?;
+        let parse_version = |value: &str| {
+            semver::Version::parse(value)
+                .map_err(|_| service_error("PINSET_UPDATE_VERSION", "invalid CLI release version"))
         };
-        let client = http_client_builder()?
-            .build()
-            .map_err(|source| Error::HttpClient { source })?;
-        let release = crate::self_update::resolve_release(&client, version, &current_target())?;
+        if version.is_none() && parse_version(&release.version)? < parse_version(pinset_version())?
+        {
+            return Err(service_error(
+                "PINSET_UPDATE_METADATA",
+                "latest release is older than the installed CLI; select an exact version to downgrade",
+            ));
+        }
         let version = release.version;
-        let filename = release.archive.name;
-        let url = release.archive.browser_download_url;
-        let sums = client
-            .get(release.checksums.browser_download_url)
-            .send()
-            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
-            .error_for_status()
-            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
-            .text()
-            .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?;
-        let hash = crate::self_update::release_checksum(&sums, &filename)?;
+        let filename = release.archive_name;
+        let url = release.archive_url;
+        let hash = release.checksum;
         if plan {
             return Ok(
                 json!({"protocol":PROTOCOL,"plan":true,"version":version,"artifact":filename,"checksum":hash}),
             );
         }
+        if version == pinset_version() {
+            return Ok(
+                json!({"protocol":PROTOCOL,"version":version,"already_current":true,"restart_required":false}),
+            );
+        }
+        let _guard = self.guard("maintenance")?;
         let updatehome = self.home.join("state/self-update");
         let installer = Installer::new(InstallLimits::default())?
             .with_install_identity(format!("{version}--{}", &hash[..24]));

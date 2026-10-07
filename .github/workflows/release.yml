@@ -98,6 +98,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist
@@ -108,12 +111,30 @@ jobs:
         run: |
           printf '%s' "$PINSET_LOCAL_REPORT" > dist/local-verification.json
           cd dist
-          sha256sum *.zip *.vsix *.sbom.json local-verification.json > SHA256SUMS
+          sha256sum -- *.zip *.vsix *.sbom.json local-verification.json > SHA256SUMS
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: dist/*
-      - name: Publish release assets
+      - name: Upload complete release assets to a draft
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        shell: bash
+        run: |
+          prerelease=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --draft --latest=false "${prerelease[@]}"
+      - name: Check uploaded draft asset completeness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 scripts/check_release_assets.py
+      - name: Publish the complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          latest=true
+          if [[ "$RELEASE_TAG" == *-* ]]; then latest=false; fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
