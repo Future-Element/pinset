@@ -12,10 +12,21 @@ def source_fingerprint(root):
         if name.startswith(('output/','target/','plan/','.pinset/','website/.next/','website/out/','website/node_modules/','editors/vscode/dist/','editors/vscode/node_modules/')):continue
         path=Path(root)/name
         if path.is_file():files.append((name,path))
+    files=sorted(set(files))
+    paths=b''.join(name.encode()+b'\0' for name,_ in files)
+    raw=subprocess.check_output(['git','-c',f'safe.directory={root}','check-attr','-z','--stdin','text'],input=paths,cwd=root)
+    fields=raw.split(b'\0')
+    attributes={fields[i].decode():fields[i+2] for i in range(0,len(fields)-1,3)}
     digest=hashlib.sha256()
-    for name,path in sorted(set(files)):
-        encoded=name.encode();data=path.read_bytes()
-        if b'\0' not in data and (path.suffix in {'.rs','.toml','.json','.md','.ts','.tsx','.mjs','.cjs','.js','.py','.ps1','.sh','.yml','.yaml','.svg','.txt','.css'} or path.name in {'.gitignore','.gitattributes','.npmrc'}):data=data.replace(b'\r\n',b'\n')
+    for name,path in files:
+        encoded=name.encode();data=path.read_bytes();text=attributes.get(name,b'unspecified')
+        # Honor Git's explicit binary boundary. Auto text is normalized only
+        # for UTF-8 without NUL; binary bytes always remain part of the digest.
+        if text==b'set':data=data.replace(b'\r\n',b'\n')
+        elif text==b'auto' and b'\0' not in data:
+            try:data.decode('utf-8')
+            except UnicodeDecodeError:pass
+            else:data=data.replace(b'\r\n',b'\n')
         digest.update(len(encoded).to_bytes(8,'little'));digest.update(encoded);digest.update(len(data).to_bytes(8,'little'));digest.update(data)
     return digest.hexdigest()
 

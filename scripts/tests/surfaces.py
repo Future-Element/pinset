@@ -73,7 +73,7 @@ import re
 assert re.findall(r'^### `([^`]+)`',english,re.M)==re.findall(r'^### `([^`]+)`',chinese,re.M)
 sysroot=str(root/'scripts');import sys;sys.path.insert(0,sysroot)
 from release_gate import validate, source_fingerprint
-from check_release_assets import validate_assets
+from check_release_assets import fetch_draft_release, validate_assets
 from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
 try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,tag)
 except ValueError:pass
@@ -89,6 +89,26 @@ metadata={'protocol':'pinset-verification/3','suite':'all','execution':'local-do
   'arm64_execution':'QEMU emulation','unverified':['Windows native runtime','macOS native runtime',LARGE_ARTIFACT_BOUNDARY],
   'runtime_exemptions':RUNTIME_EXEMPTIONS}
 assert validate(metadata,source,tag)==commit
+# Git-declared text must have the same fingerprint on Windows and Linux,
+# including files outside the usual source-extension list. Binary changes matter.
+fingerprint_root=fixture/'fingerprint-source';fingerprint_root.mkdir()
+run(['git','init','--quiet',fingerprint_root])
+(fingerprint_root/'.gitattributes').write_text('* text=auto eol=lf\n*.bin -text\n')
+text_names=['LICENSE','keys.asc','.vscodeignore','.env.example','website/public/_headers','source.rs']
+for name in text_names:
+    path=fingerprint_root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'source content\n')
+binary_samples={'explicit.bin':b'content\r\n','nul.data':b'\0content\r\n','invalid.data':b'\xffcontent\r\n'}
+for name,value in binary_samples.items():(fingerprint_root/name).write_bytes(value)
+run(['git','add','--all'],cwd=fingerprint_root)
+canonical_fingerprint=source_fingerprint(fingerprint_root)
+for name in text_names:(fingerprint_root/name).write_bytes(b'source content\r\n')
+assert source_fingerprint(fingerprint_root)==canonical_fingerprint,'text line endings changed the source identity'
+for name,value in binary_samples.items():
+    (fingerprint_root/name).write_bytes(value.replace(b'\r\n',b'\n'))
+    assert source_fingerprint(fingerprint_root)!=canonical_fingerprint,'binary bytes were normalized: '+name
+    (fingerprint_root/name).write_bytes(value)
+(fingerprint_root/'LICENSE').write_bytes(b'changed source content\r\n')
+assert source_fingerprint(fingerprint_root)!=canonical_fingerprint,'actual text source changes were ignored'
 for field,value in [('source_clean',False),('commit','0'*40),('source_fingerprint','0'*64),('runtime_exemptions',[]),('unverified',['Windows native runtime','macOS native runtime'])]:
     invalid={**metadata,field:value}
     try:validate(invalid,source,tag)
@@ -107,6 +127,28 @@ draft={'tag_name':tag,'draft':True,'prerelease':'-' in tag,'assets':[
     for path in draft_dir.iterdir()]}
 assert validate_assets(draft,draft_dir,tag)['complete_assets']==11
 import copy
+# Model GitHub's draft visibility: tag queries fail, the authenticated inventory
+# is paginated, and the selected draft must still match when read by its ID.
+selected_draft={**draft,'id':73}
+inventory=[[{'id':1,'tag_name':'v0.0.0','draft':False}],[selected_draft]]
+def draft_query(arguments,pages=inventory,document=selected_draft):
+    if arguments==['--paginate','--slurp','repos/example/project/releases?per_page=100']:return pages
+    if arguments==['repos/example/project/releases/73']:return document
+    raise AssertionError('unsupported draft endpoint: '+str(arguments))
+assert fetch_draft_release('example/project',tag,draft_query)==selected_draft
+invalid_lookups=[
+    ([],selected_draft),([{}],selected_draft),
+    ([[{**selected_draft,'draft':False}]],selected_draft),
+    ([[selected_draft],[selected_draft]],selected_draft),
+    ([[{**selected_draft,'id':True}]],selected_draft),
+    (inventory,{**selected_draft,'draft':False}),
+    (inventory,{**selected_draft,'id':74}),
+    (inventory,{**selected_draft,'tag_name':'v3.99.0'}),
+]
+for pages,document in invalid_lookups:
+    try:fetch_draft_release('example/project',tag,lambda arguments: draft_query(arguments,pages,document))
+    except ValueError:pass
+    else:raise AssertionError('draft selection accepted an ambiguous, missing or changed draft')
 for failure in ['missing','duplicate','incomplete','size','digest','published','wrong-tag','stability']:
     damaged=copy.deepcopy(draft)
     if failure=='missing':damaged['assets'].pop()

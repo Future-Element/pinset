@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Find unpublished release drafts through the authenticated, paginated inventory and verify them by release ID; reject missing, duplicate or changed drafts.
+- Honor Git text attributes when computing verification source fingerprints, including extensionless files and signature armor. Preserve binary bytes and reject actual source drift.
+
 ## 3.0.3 - 2026-10-07
 
 - Recover interrupted artifact bodies with bounded retries, verified byte-range resumes and visible retry offsets. Allow up to eight attempts while progress continues; stop after three attempts without progress, retain partial downloads for the next invocation, and keep full-archive integrity failures fatal. Validate complete range headers and use original archive bytes without transparent HTTP decompression.

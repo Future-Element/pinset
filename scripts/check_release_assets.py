@@ -6,6 +6,28 @@ import subprocess
 from pathlib import Path
 
 
+def fetch_draft_release(repository, tag, query=None):
+    if query is None:
+        def query(arguments):
+            return json.loads(subprocess.check_output(['gh', 'api', *arguments], text=True))
+    # The tag endpoint does not return drafts. Find the selected draft in the
+    # authenticated inventory, including older pages, then read its exact ID.
+    pages = query(['--paginate', '--slurp', f'repos/{repository}/releases?per_page=100'])
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError('invalid release inventory')
+    matches = [release for page in pages for release in page
+               if release.get('tag_name') == tag and release.get('draft') is True]
+    if len(matches) != 1:
+        raise ValueError('exactly one selected draft release is required')
+    release_id = matches[0].get('id')
+    if type(release_id) is not int or release_id <= 0:
+        raise ValueError('invalid draft release ID')
+    document = query([f'repos/{repository}/releases/{release_id}'])
+    if document.get('id') != release_id or document.get('tag_name') != tag or document.get('draft') is not True:
+        raise ValueError('selected draft changed during inventory lookup')
+    return document
+
+
 def validate_assets(document, directory, tag):
     if document.get('tag_name') != tag or document.get('draft') is not True:
         raise ValueError('asset completion requires the selected draft release')
@@ -51,6 +73,5 @@ def validate_assets(document, directory, tag):
 if __name__ == '__main__':
     tag = os.environ['RELEASE_TAG']
     repository = os.environ['GITHUB_REPOSITORY']
-    document = json.loads(subprocess.check_output(
-        ['gh', 'api', f'repos/{repository}/releases/tags/{tag}'], text=True))
+    document = fetch_draft_release(repository, tag)
     print(json.dumps(validate_assets(document, Path('dist'), tag)))
