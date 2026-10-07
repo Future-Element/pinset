@@ -41,6 +41,24 @@ config.write_text((root/'.pinset/config.toml').read_text()+'\n[verification]\nti
 assert 'error' in data(legacy,'check',expected=1)
 assert data(root,'use','java@21','--verify',expected=2)['error']['code']=='PINSET_ARGUMENT_INVALID'
 assert data(root,'clean','history','--older-than','1d',expected=2)['error']['code']=='PINSET_ARGUMENT_INVALID'
+# Selection edits can repair missing locks but never adopt another project lock.
+editable=project('editable-selection')
+editable_config=editable/'.pinset/config.toml'
+import tomllib
+selected=editable_config.read_text().replace('[tools]','[tools]\njava = "21"')
+assert selected!=editable_config.read_text()
+editable_config.write_text(selected)
+assert data(editable,'install','--plan',expected=1)['error']['code']=='PINSET_LOCK_MISSING'
+before=editable_config.read_bytes()
+assert data(editable,'remove','java','--plan')['selected']=={}
+assert editable_config.read_bytes()==before and not (editable/'.pinset/lock.toml').exists()
+foreign_lock=editable/'.pinset/lock.toml'
+foreign_lock.write_text('protocol = "pinset/3"\nschema = 3\nproject_id = "foreign-project"\ngenerated_by = "3.0.2"\ntool = []\n')
+assert data(editable,'remove','java','--plan',expected=1)['error']['code']=='PINSET_LOCK_MISMATCH'
+assert data(editable,'use','java@21','--no-install','--plan',expected=1)['error']['code']=='PINSET_LOCK_MISMATCH'
+foreign_lock.unlink()
+data(editable,'remove','java')
+assert tomllib.loads(editable_config.read_text())['tools']=={}
 outside = Path('/opt') / ('pinset-contract-'+str(os.getpid()));outside.mkdir()
 try:
     assert data(outside,'check',expected=1)['error']['code'] == 'PINSET_SELECTION_MISSING'

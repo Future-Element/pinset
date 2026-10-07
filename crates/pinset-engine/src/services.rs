@@ -146,18 +146,31 @@ impl Services {
         })
     }
     pub fn load(&self, context: &ProjectContext) -> Result<(ProjectConfig, Lockfile)> {
-        let config = context.load()?;
-        let lock = if context.lock_path.exists() {
-            load_lockfile(&context.lock_path)?
-        } else if config.tools.is_empty() {
-            Lockfile::empty(config.project_id.clone())
-        } else {
+        let (config, lock) = self.load_for_edit(context)?;
+        if !context.lock_path.exists() && !config.tools.is_empty() {
             return Err(service_error(
                 "PINSET_LOCK_MISSING",
                 "selected tools require an exact lock; run pinset use",
             ));
-        };
+        }
         config.validate_lock(&lock)?;
+        Ok((config, lock))
+    }
+    fn load_for_edit(&self, context: &ProjectContext) -> Result<(ProjectConfig, Lockfile)> {
+        let config = context.load()?;
+        let lock = if context.lock_path.exists() {
+            load_lockfile(&context.lock_path)?
+        } else {
+            Lockfile::empty(config.project_id.clone())
+        };
+        // Explicit selection edits reconcile config and lock together. Reads and
+        // installation still require a matching pair through load().
+        if lock.project_id != config.project_id {
+            return Err(service_error(
+                "PINSET_LOCK_MISMATCH",
+                "configuration and lock have different project identities",
+            ));
+        }
         Ok((config, lock))
     }
     pub fn guard(&self, id: &str) -> Result<StateGuard> {
@@ -214,7 +227,7 @@ impl Services {
     ) -> Result<(ProjectContext, ProjectConfig, Lockfile)> {
         if !global {
             let c = self.project()?;
-            let (config, lock) = self.load(&c)?;
+            let (config, lock) = self.load_for_edit(&c)?;
             return Ok((c, config, lock));
         }
         if !plan {
@@ -241,7 +254,7 @@ impl Services {
             return Ok((c, config, lock));
         }
         let c = ProjectContext::at(&root, true)?;
-        let (config, lock) = self.load(&c)?;
+        let (config, lock) = self.load_for_edit(&c)?;
         Ok((c, config, lock))
     }
     pub fn use_tools(
@@ -258,7 +271,7 @@ impl Services {
             Some(self.guard(&config.project_id)?)
         };
         if !plan && context.config_path.exists() {
-            (config, lock) = self.load(&context)?;
+            (config, lock) = self.load_for_edit(&context)?;
         }
         let mut names = std::collections::BTreeSet::new();
         for spec in specs {
@@ -386,7 +399,7 @@ impl Services {
             Some(self.guard(&config.project_id)?)
         };
         if !plan && context.config_path.exists() {
-            (config, lock) = self.load(&context)?;
+            (config, lock) = self.load_for_edit(&context)?;
         }
         let mut seen = std::collections::BTreeSet::new();
         for name in names {

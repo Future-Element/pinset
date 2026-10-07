@@ -19,6 +19,8 @@ pinset init
 
 pnpm 必须同时选择 Node。支持 pnpm 10 的 CJS、11 的 ESM 和 12 的原生发布包；原生包及共享运行文件都在安装时落锁、校验。项目声明的 pnpm 或运行时版本不匹配时明确报错，不自动下载或切换到其他工具链。
 
+编辑配置中的工具选择或 Rust 选项后，使用明确的 selector 执行 `use`，重新生成对应锁记录。安装和执行始终要求锁匹配；其他项目的锁不能接管。
+
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
 pinset use node@24 pnpm@10 python@3.14 java@21

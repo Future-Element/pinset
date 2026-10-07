@@ -2,6 +2,7 @@
 
 ## 3.0.2 - 2026-10-07
 
+- Allow explicit `use`/`remove` to reconcile edited selections or Rust options with the exact lock, while rejecting foreign/invalid locks and keeping installation and execution strict. A missing lock can now be repaired by the command named in its diagnostic.
 - Resolve pnpm's actual official command entry: keep the Node-based pnpm 10/11 payloads, and lock/install both the platform-native pnpm 12 binary and its shared runtime. Route native commands directly with the selected Node available to child processes, without running npm lifecycle scripts or downloading missing tools during execution. Apply pnpm 11/12's current package-manager/runtime policies so project configuration cannot silently select another managed toolchain.
 - Restore interactive `use`/`install` progress: version resolution, real download bytes/percentage/speed/ETA, verification, extraction, installation checks and local binding. Report verified cache hits and reused installations; keep progress on terminal stderr and disable it for JSON or redirected stderr.
 - Report the managed `PINSET_HOME/v3/bin` PATH from both installers even when the CLI is installed in a custom directory, so obsolete launchers cannot shadow the v3 command entries. Preserve quoting through the CLI's shell integration output.

@@ -141,7 +141,7 @@ def runtimes():
     (root/'main.go').write_text('package main; import("fmt";"os"); func main(){fmt.Println("PINSET_GO_OK",os.Getenv("GOTOOLCHAIN"))}')
     assert 'PINSET_GO_OK local' in native(root,'go','run','main.go')
     native(root,'bun','-e','console.log("PINSET_BUN_OK")')
-    rust=project('rust-default-metadata')
+    rust=project('rust')
     # Resolve the real default profile, including official documentation aliases,
     # before the execution profile. Metadata-only: do not download documentation.
     data(rust,'use',frozen_selector('rust@stable'),'--no-install',timeout=1200)
@@ -155,13 +155,17 @@ def runtimes():
     manifest.append({'requested':'rust@stable','profile':'default','metadata_only':True,'project':str(rust),'lock':default_lock})
     (REPORTS/'sdk-manifest.json').write_text(json.dumps(manifest,indent=2))
     freeze_selector('rust@stable',default_tool['version'])
-    # Configure components before a selection exists, preserving lock matching.
-    rust=project('rust')
     config=rust/'.pinset/config.toml'
     text=config.read_text()
     if 'profile =' not in text:text=text.replace('[rust]','[rust]\nprofile = "minimal"')
     text=text.replace('profile = "default"','profile = "minimal"').replace('components = []','components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]').replace('targets = []','targets = ["wasm32-unknown-unknown"]')
     config.write_text(text)
+    # Only an explicit use may reconcile edited Rust options with the lock.
+    before=(rust/'.pinset/lock.toml').read_bytes()
+    assert data(rust,'install','--plan',expected=1)['error']['code']=='PINSET_LOCK_MISMATCH'
+    preview=data(rust,'use',frozen_selector('rust@stable'),'--no-install','--plan',timeout=1200)
+    assert preview['lock']['tool'][0]['options']['profile']=='minimal'
+    assert (rust/'.pinset/lock.toml').read_bytes()==before
     select_tool(rust,'rust@stable')
     (rust/'main.rs').write_text('fn main(){println!("PINSET_RUST_OK");}')
     native(rust,'rustc','main.rs','-o','main');assert 'PINSET_RUST_OK' in native(rust,'./main')

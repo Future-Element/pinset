@@ -20,6 +20,8 @@ Select, upgrade or switch tool versions by resolving official artifacts. Use an 
 
 pnpm requires an explicit Node selection. Pinset supports the pnpm 10 CJS, 11 ESM and 12 native packages; native binaries and shared runtime files are locked and verified during installation. Conflicting project package-manager or runtime versions fail explicitly rather than downloading or switching toolchains automatically.
 
+After editing tool selections or Rust options in the configuration, run `use` with explicit selectors to rebuild the affected lock records. Installation and execution require a matching lock; locks belonging to another project are always rejected.
+
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
 pinset use node@24 pnpm@10 python@3.14 java@21
