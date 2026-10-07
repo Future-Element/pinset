@@ -301,6 +301,7 @@ mod tests {
         let service = Services {
             cwd: root.clone(),
             home: dir.path().join("home/v3"),
+            progress: ProgressReporter::default(),
         };
         service.init().unwrap();
         let context = ProjectContext::at(&root, false).unwrap();
@@ -510,6 +511,7 @@ mod tests {
         let service = Services {
             cwd: dir.path().to_path_buf(),
             home: dir.path().join("home/v3"),
+            progress: ProgressReporter::default(),
         };
         assert_eq!(service.self_repair(true).unwrap()["plan"], true);
         assert!(!service.home.exists());

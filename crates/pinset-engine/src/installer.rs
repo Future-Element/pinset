@@ -9,14 +9,13 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
 #[cfg(windows)]
 use std::process::Command;
 
-use crate::InstallReceipt;
+use crate::{InstallPhase, InstallReceipt, ProgressEvent, ProgressReporter};
 use flate2::read::GzDecoder;
 use lzma_rust2::XzReader;
 use reqwest::{
@@ -183,7 +182,7 @@ impl InstallLimits {
 pub struct Installer {
     client: Client,
     limits: InstallLimits,
-    progress_reporter: Option<Arc<dyn Fn(DownloadProgressEvent) + Send + Sync>>,
+    progress_reporter: ProgressReporter,
     offline: bool,
     install_identity: Option<String>,
 }
@@ -217,7 +216,7 @@ impl Installer {
         Ok(Self {
             client,
             limits,
-            progress_reporter: None,
+            progress_reporter: ProgressReporter::default(),
             offline: false,
             install_identity: None,
         })
@@ -225,9 +224,9 @@ impl Installer {
 
     pub fn with_progress_reporter(
         mut self,
-        reporter: impl Fn(DownloadProgressEvent) + Send + Sync + 'static,
+        reporter: impl Fn(ProgressEvent) + Send + Sync + 'static,
     ) -> Self {
-        self.progress_reporter = Some(Arc::new(reporter));
+        self.progress_reporter = ProgressReporter::new(reporter);
         self
     }
 
@@ -257,7 +256,9 @@ impl Installer {
         validate_request(request)?;
         let install_identity = self.install_identity.as_deref().unwrap_or(&request.version);
         validate_segment("install identity", install_identity)?;
+        self.report_phase(InstallPhase::Waiting);
         let _install_lock = acquire_install_lock(request, install_identity)?;
+        self.report_phase(InstallPhase::CheckingInstallation);
         let final_dir = request
             .pinset_home
             .join("installs")
@@ -314,6 +315,7 @@ impl Installer {
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
         create_install_aliases(&staging_dir, &request.aliases)?;
+        self.report_phase(InstallPhase::CheckingInstallation);
         write_receipt(
             &staging_dir,
             request,
@@ -361,6 +363,9 @@ impl Installer {
         let expected_integrity = ArtifactIntegrity::parse(&artifact.integrity)?;
         let cache_path = download_cache_path_for_integrity(pinset_home, &expected_integrity)?;
         if self.cached_artifact_is_valid(&cache_path, &expected_integrity)? {
+            self.progress_reporter.report(ProgressEvent::Cached {
+                url: artifact.canonical_url.clone(),
+            });
             return Ok(SelectedArtifact {
                 source_id: "cache".to_owned(),
                 source_kind: "cache".to_owned(),
@@ -424,6 +429,7 @@ impl Installer {
         strip_components: usize,
         include_prefixes: &[PathBuf],
     ) -> Result<()> {
+        self.report_phase(InstallPhase::Extracting);
         match artifact.format {
             ArtifactFormat::Binary => {
                 debug_assert_eq!(strip_components, 0);
@@ -552,6 +558,7 @@ impl Installer {
             path: path.to_path_buf(),
             source,
         })?;
+        self.report_phase(InstallPhase::Verifying);
         let mut hasher = expected_integrity.hasher();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
@@ -702,6 +709,7 @@ impl Installer {
 
         let mut hasher = expected_integrity.hasher();
         if resume_from > 0 {
+            self.report_phase(InstallPhase::Verifying);
             let mut existing =
                 File::open(destination).map_err(|source| Error::ReadDownloadCache {
                     path: destination.to_path_buf(),
@@ -734,6 +742,7 @@ impl Installer {
             }
         }
 
+        self.report_phase(InstallPhase::Connecting);
         let mut request = self.client.get(url);
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
@@ -857,6 +866,7 @@ impl Installer {
             source,
         })?;
 
+        self.report_phase(InstallPhase::Verifying);
         let actual = hasher.finalize();
         let actual_integrity = format!(
             "{}:{}",
@@ -882,9 +892,11 @@ impl Installer {
     }
 
     fn report_progress(&self, event: DownloadProgressEvent) {
-        if let Some(reporter) = &self.progress_reporter {
-            reporter(event);
-        }
+        self.progress_reporter
+            .report(ProgressEvent::Download(event));
+    }
+    fn report_phase(&self, phase: InstallPhase) {
+        self.progress_reporter.report(ProgressEvent::Phase(phase));
     }
 
     fn extract_zip(
@@ -1931,7 +1943,9 @@ mod tests {
 
         let outcome = test_installer()
             .with_progress_reporter(move |event| {
-                reported.lock().expect("progress lock").push(event);
+                if let ProgressEvent::Download(event) = event {
+                    reported.lock().expect("progress lock").push(event);
+                }
             })
             .install(&request)
             .expect("install");
@@ -2582,7 +2596,9 @@ mod tests {
 
         let error = test_installer()
             .with_progress_reporter(move |event| {
-                reported.lock().expect("progress lock").push(event);
+                if let ProgressEvent::Download(event) = event {
+                    reported.lock().expect("progress lock").push(event);
+                }
             })
             .install(&request)
             .expect_err("bad hash");

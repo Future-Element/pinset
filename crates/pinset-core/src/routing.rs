@@ -191,6 +191,14 @@ pub fn executable_name(name: &str, target: &str) -> String {
         name.to_owned()
     }
 }
+pub fn pnpm_entry_path(tool: &LockedTool, target: &str) -> Result<PathBuf> {
+    match tool.metadata.get("pnpm-entry").map(String::as_str) {
+        None | Some("bin/pnpm.cjs") => Ok(PathBuf::from("bin/pnpm.cjs")),
+        Some("bin/pnpm.mjs") => Ok(PathBuf::from("bin/pnpm.mjs")),
+        Some("pnpm") => Ok(PathBuf::from(executable_name("pnpm", target))),
+        _ => Err(failure("PINSET_LOCK_INVALID", "unsupported pnpm entry")),
+    }
+}
 pub fn command_directory(install: &Path, tool: &str, target: &str) -> PathBuf {
     if target.starts_with("windows-") && matches!(tool, "node" | "python") {
         install.to_path_buf()
@@ -257,14 +265,19 @@ pub fn plan_command(
                 variables.insert("FLUTTER_ROOT".into(), sdk.display().to_string());
             }
             "pnpm" => {
-                variables.insert(
-                    "npm_config_manage_package_manager_versions".into(),
-                    "false".into(),
-                );
-                variables.insert(
-                    "npm_config_package_manager_strict_version".into(),
-                    "true".into(),
-                );
+                if pnpm_entry_path(tool, &target)? == Path::new("bin/pnpm.cjs") {
+                    variables.insert(
+                        "npm_config_manage_package_manager_versions".into(),
+                        "false".into(),
+                    );
+                    variables.insert(
+                        "npm_config_package_manager_strict_version".into(),
+                        "true".into(),
+                    );
+                } else {
+                    variables.insert("pnpm_config_pm_on_fail".into(), "error".into());
+                    variables.insert("pnpm_config_runtime_on_fail".into(), "error".into());
+                }
             }
             "python" => {
                 variables.insert("PYTHONNOUSERSITE".into(), "1".into());
@@ -371,13 +384,25 @@ pub fn plan_command(
                 let (_, nt, ni, _, _) = selected
                     .get("node")
                     .ok_or_else(|| failure("PINSET_DEPENDENCY_REQUIRED", "pnpm requires Node"))?;
-                plan.executable =
-                    command_directory(ni, "node", nt).join(executable_name("node", nt));
-                plan.prefix
-                    .push(install.join("bin/pnpm.cjs").display().to_string());
-                // pnpm ignores an empty environment setting, but an explicit empty CLI value
-                // overrides project use-node-version without choosing another runtime.
-                plan.prefix.push("--use-node-version=".into());
+                let entry = pnpm_entry_path(tool, target)?;
+                let legacy = entry == Path::new("bin/pnpm.cjs");
+                if entry.starts_with("bin") {
+                    plan.executable =
+                        command_directory(ni, "node", nt).join(executable_name("node", nt));
+                    plan.prefix.push(install.join(entry).display().to_string());
+                } else {
+                    plan.executable = install.join(entry);
+                }
+                if legacy {
+                    // An explicit empty CLI value overrides legacy use-node-version.
+                    plan.prefix.push("--use-node-version=".into());
+                } else {
+                    // Modern pnpm renamed both policies and removed use-node-version.
+                    plan.prefix.extend([
+                        "--pm-on-fail=error".into(),
+                        "--config.runtime-on-fail=error".into(),
+                    ]);
+                }
                 if cmd == "pnpx" {
                     plan.prefix.push("dlx".into());
                 }

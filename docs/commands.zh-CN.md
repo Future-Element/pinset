@@ -17,6 +17,8 @@ pinset init
 
 选择、升级或切换工具版本，解析官方制品并事务更新配置和精确锁；切回旧版本同样使用明确的版本选择。禁止重复工具。--no-install 只提交选择和锁。
 
+pnpm 必须同时选择 Node。支持 pnpm 10 的 CJS、11 的 ESM 和 12 的原生发布包；原生包及共享运行文件都在安装时落锁、校验。项目声明的 pnpm 或运行时版本不匹配时明确报错，不自动下载或切换到其他工具链。
+
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
 pinset use node@24 pnpm@10 python@3.14 java@21
@@ -35,6 +37,8 @@ pinset remove <tool>... [--global] [--plan]
 ### `install`
 
 严格按现有锁安装，不解析新版本。离线缓存仍校验摘要；repair 不接管外部安装。只有有效 Pinset 环境可明确重建。
+
+交互终端中的 `use` 和 `install` 在 stderr 展示解析与安装阶段。下载大小已知时显示百分比、字节数、速度与预计剩余时间；大小未知时显示字节数与速度。已校验缓存和现有安装复用会明确提示。JSON 和 stderr 重定向时不显示进度界面。
 
 ```text
 pinset install [tool...] [--global] [--offline] [--repair]
@@ -259,6 +263,8 @@ pinset self repair [--plan]
 ### `self update`
 
 从官方 Pinset 3 发布安装对应平台制品，校验 checksum；--plan 只预览。
+
+从目标 Release 的资产列表选择实际的平台 ZIP 和 SHA256SUMS，支持稳定文件名和包含目标版本的文件名。校验项必须唯一且准确匹配所选 ZIP。缺失或不完整制品、版本不符及无效校验项均终止更新。--plan 检查发布元数据和校验和，不下载二进制，也不写入本地状态。
 
 ```text
 pinset self update [version] [--plan]

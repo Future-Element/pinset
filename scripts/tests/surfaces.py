@@ -33,6 +33,23 @@ try:
     external=fixture/'external/v3';external.mkdir(parents=True);(external/'preserve').write_text('outside')
     run(['bash','uninstall.sh','--yes','--pinset-home',external.parent],env=env,expected=1)
     assert (external/'preserve').exists()
+    # A custom CLI directory can contain obsolete launchers. The install hint
+    # must prepend the actual v3 entry directory, preserving unrelated files.
+    (fixture/'SHA256SUMS').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
+    custom=fixture/'custom binaries';custom.mkdir()
+    obsolete=custom/'bun';obsolete.write_text('#!/bin/sh\nprintf obsolete-launcher\nexit 97\n');obsolete.chmod(0o755)
+    custom_home=fixture/"custom data's home"
+    custom_env={**env,'PINSET_HOME':str(custom_home),'PATH':str(custom)+':'+env['PATH']}
+    installed=run(['bash','install.sh','--install-dir',custom],env=custom_env)
+    assert obsolete.read_text()=='#!/bin/sh\nprintf obsolete-launcher\nexit 97\n'
+    integration=run([custom/'pinset','self','shell','bash'],env=custom_env).strip()
+    assert integration in installed
+    managed=custom_home/'v3/bin'
+    assert 'Provider command entries are in '+str(managed) in installed
+    discovered=run(['bash','-c',integration+'\ncommand -v pinset\ncommand -v bun'],env=custom_env)
+    assert discovered.splitlines()==[str(managed/'pinset'),str(managed/'bun')],discovered
+    routed=run(['bash','-c',integration+'\nbun -v'],env=custom_env,expected=1)
+    assert 'PINSET_SELECTION_MISSING' in routed and 'PINSET_COMMAND_INVALID' not in routed,routed
 finally:server.shutdown()
 
 # Package hooks must never call independent validation or use lifecycle hooks to hide it.
@@ -75,4 +92,8 @@ for field,value in [('source_clean',False),('commit','0'*40),('source_fingerprin
     try:validate(invalid,source,tag)
     except ValueError:pass
     else:raise AssertionError('release gate accepted invalid '+field)
-report('distribution',installer='real fixture binaries with checksum verification',old_data='retained')
+from self_update import verify_self_update
+from progress import verify_progress
+progress = verify_progress(fixture)
+updates = verify_self_update(root, fixture, version)
+report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates)

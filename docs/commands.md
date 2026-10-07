@@ -18,6 +18,8 @@ pinset init
 
 Select, upgrade or switch tool versions by resolving official artifacts. Use an earlier exact version to switch back. Duplicate tools are rejected. Config and lock update together through a journaled transaction; `--no-install` commits only their selection and lock.
 
+pnpm requires an explicit Node selection. Pinset supports the pnpm 10 CJS, 11 ESM and 12 native packages; native binaries and shared runtime files are locked and verified during installation. Conflicting project package-manager or runtime versions fail explicitly rather than downloading or switching toolchains automatically.
+
 ```text
 pinset use <tool@selector>... [--global] [--no-install] [--plan]
 pinset use node@24 pnpm@10 python@3.14 java@21
@@ -34,6 +36,8 @@ pinset remove <tool>... [--global] [--plan]
 ### `install`
 
 Install strictly from the existing exact lock. This command never resolves newer versions. Offline cache hits still undergo digest verification. Repair cannot adopt external installations. Recreating `.venv` requires valid Pinset 3 ownership in this project directory.
+
+Interactive `use` and `install` show resolution and installation stages on stderr. Downloads with a known size show percentage, bytes, speed and estimated time remaining; unknown sizes show bytes and speed. Verified cache hits and existing installations are reported explicitly. JSON and redirected stderr omit the progress UI.
 
 ```text
 pinset install [tool...] [--global] [--offline] [--repair]
@@ -224,6 +228,8 @@ pinset self repair [--plan]
 ### `self update`
 
 Update from an official Pinset 3 release after checking its platform checksum.
+
+The target release metadata selects the actual platform ZIP and `SHA256SUMS`; asset names may be stable or contain that release's version. The checksum must name the selected ZIP exactly once. Missing or incomplete assets, mismatched release versions and invalid checksums abort the update. `--plan` checks release metadata and checksums without downloading binaries or writing local state.
 
 ```text
 pinset self update [version] [--plan]

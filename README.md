@@ -41,6 +41,8 @@ Python projects use one owned `.venv` created with the locked interpreter's stan
 
 Shell integration is explicit: `pinset self shell bash` (also zsh, fish, powershell) prints the PATH fragment and never edits a profile. The installer verifies a platform ZIP and places the matching CLI and router together. Pinset 3 source builds can be installed locally with `pinset self repair` after compiling both binaries.
 
+Provider command entries are always in `PINSET_HOME/v3/bin`, including when the CLI uses a custom install directory. Put this managed directory first on PATH using `pinset self shell`; earlier 2.x launchers in other directories can otherwise shadow the new entries. In PowerShell, apply the current-session fragment with `pinset self shell powershell | Out-String | Invoke-Expression`.
+
 ## Evidence and encrypted profiles
 
 `check` is read-only by default. `--deep` inspects installed payloads; `--probe` explicitly runs bounded probes and records the host, executable, exact version and time. A configured binding is not an observation of an IDE, daemon, compiler override or user build.

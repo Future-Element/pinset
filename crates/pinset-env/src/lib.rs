@@ -141,7 +141,10 @@ pub fn validate_variable_name(name: &str) -> Result<()> {
             "PYTHONPATH",
             "PYTHONNOUSERSITE",
             "NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS",
+            "NPM_CONFIG_PACKAGE_MANAGER_STRICT_VERSION",
             "NPM_CONFIG_USE_NODE_VERSION",
+            "PNPM_CONFIG_PM_ON_FAIL",
+            "PNPM_CONFIG_RUNTIME_ON_FAIL",
         ]
         .contains(&upper.as_str())
     {
@@ -945,6 +948,13 @@ mod tests {
         assert!(validate_variable_name("9BAD").is_err());
         assert!(validate_variable_name("PATH").is_err());
         assert!(validate_variable_name("PINSET_IDENTITY").is_err());
+        for name in [
+            "pnpm_config_pm_on_fail",
+            "PNPM_CONFIG_RUNTIME_ON_FAIL",
+            "npm_config_package_manager_strict_version",
+        ] {
+            assert!(validate_variable_name(name).is_err());
+        }
         let document = EnvironmentDocument {
             schema: 3,
             variables: BTreeMap::from([

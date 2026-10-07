@@ -44,7 +44,7 @@ pub fn start() -> ExitCode {
             && ["LANG", "LC_ALL"]
                 .iter()
                 .any(|key| std::env::var(key).is_ok_and(|v| v.starts_with("zh"))));
-    match dispatch(&cli) {
+    match dispatch(&cli, chinese) {
         Ok(Output::Native(code)) => ExitCode::from(code.clamp(0, 255) as u8),
         Ok(Output::Text(s)) => {
             print!("{s}");
@@ -83,8 +83,10 @@ enum Output {
 fn report(value: Value) -> Result<Output> {
     Ok(Output::Report(value))
 }
-fn dispatch(cli: &Cli) -> Result<Output> {
-    let service = Services::new(&cli.cwd)?;
+fn dispatch(cli: &Cli, chinese: bool) -> Result<Output> {
+    let progress =
+        crate::progress::ProgressDisplay::new(!cli.json && io::stderr().is_terminal(), chinese);
+    let service = Services::new(&cli.cwd)?.with_progress_reporter(progress.reporter());
     match &cli.command {
         Commands::Init => report(service.init()?),
         Commands::Use {

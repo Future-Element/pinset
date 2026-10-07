@@ -2,7 +2,7 @@
   "name": "pinset-vscode",
   "displayName": "Pinset",
   "description": "Pinset 3 toolchain status, installation, SDK and JDK bindings, and explicit execution probes.",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "publisher": "FutureElement",
   "icon": "icon.png",
   "license": "MIT",

@@ -133,24 +133,28 @@ def python():
 
 def runtimes():
     root=project('runtimes')
-    for spec in ['node@lts','pnpm@10','bun@latest','go@latest']:select_tool(root,spec)
+    for spec in ['node@lts','bun@latest','go@latest']:select_tool(root,spec)
     assert 'PINSET_NODE_OK' in native(root,'node','-e','console.log("PINSET_NODE_OK",process.execPath)')
-    native(root,'npm','--version');native(root,'pnpm','--version');native(root,'bun','--version')
-    # Project package-manager/runtime requests cannot replace the selected Node or pnpm.
-    import tomllib
-    selected=tomllib.loads((root/'.pinset/lock.toml').read_text())['tool']
-    pnpm=next(t for t in selected if t['name']=='pnpm')['version']
-    (root/'.npmrc').write_text('use-node-version=0.0.0\nmanage-package-manager-versions=true\n')
-    package=root/'package.json';package.write_text(json.dumps({'name':'pinset-pnpm-guard','version':'1.0.0','packageManager':'pnpm@9.0.0'}))
-    assert '9.0.0' in native(root,'pnpm','--version',expected=1)
-    package.write_text(json.dumps({'name':'pinset-pnpm-guard','version':'1.0.0','packageManager':'pnpm@'+pnpm}))
-    node=str(data(root,'which','node')['executable'])
-    assert node in native(root,'pnpm','exec','node','-e','console.log(process.execPath)')
-    package.unlink();(root/'.npmrc').unlink()
+    native(root,'npm','--version');native(root,'bun','--version')
+    from pnpm import verify_pnpm_generations
+    verify_pnpm_generations(root,select_tool)
     (root/'main.go').write_text('package main; import("fmt";"os"); func main(){fmt.Println("PINSET_GO_OK",os.Getenv("GOTOOLCHAIN"))}')
     assert 'PINSET_GO_OK local' in native(root,'go','run','main.go')
     native(root,'bun','-e','console.log("PINSET_BUN_OK")')
     rust=project('rust')
+    # Resolve the real default profile, including official documentation aliases,
+    # before the execution profile. Metadata-only: do not download documentation.
+    data(rust,'use',frozen_selector('rust@stable'),'--no-install',timeout=1200)
+    import tomllib
+    default_lock=tomllib.loads((rust/'.pinset/lock.toml').read_text())
+    default_tool=default_lock['tool'][0]
+    assert default_tool['metadata']['profile']=='default'
+    for artifact in default_tool['artifact']:
+        docs=next(o for o in artifact['overlay'] if o['archive_root'].startswith('rust-docs-'))
+        assert docs['canonical_url'].endswith('/'+docs['archive_root']+'.tar.xz')
+    manifest.append({'requested':'rust@stable','profile':'default','metadata_only':True,'project':str(rust),'lock':default_lock})
+    (REPORTS/'sdk-manifest.json').write_text(json.dumps(manifest,indent=2))
+    freeze_selector('rust@stable',default_tool['version'])
     config=rust/'.pinset/config.toml'
     text=config.read_text()
     if 'profile =' not in text:text=text.replace('[rust]','[rust]\nprofile = "minimal"')

@@ -14,6 +14,7 @@ pinset-core = { path = "../pinset-core" }
 pinset-engine = { path = "../pinset-engine" }
 clap.workspace = true
 clap_complete = "4.5"
+indicatif = { version = "0.18.6", default-features = false }
 rpassword = "7.4.0"
 serde_json.workspace = true
 zeroize.workspace = true

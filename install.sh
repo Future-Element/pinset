@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY="Future-Element/pinset"
-DEFAULT_VERSION="3.0.1"
+DEFAULT_VERSION="3.0.2"
 MINIMUM_VERSION="3.0.0"
 VERSION="${PINSET_VERSION:-$DEFAULT_VERSION}"
 INSTALL_DIR="${PINSET_INSTALL_DIR:-}"
@@ -23,7 +23,7 @@ Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Options:
-  --version VERSION       Install an exact release, for example 3.0.1.
+  --version VERSION       Install an exact release, for example 3.0.2.
                           Default: the recommended release embedded in this script.
   --install-dir DIRECTORY Install binaries here. Default: $PINSET_HOME/v3/bin or $HOME/.pinset/v3/bin.
   -h, --help              Show this help.
@@ -266,6 +266,7 @@ printf 'Installed %s\n' "$INSTALL_DIR/pinset-shim"
 "$INSTALL_DIR/pinset" --version
 
 "$INSTALL_DIR/pinset" self repair
+SHELL_INTEGRATION=$("$INSTALL_DIR/pinset" self shell bash)
 
 if [ -n "$PINSET_BACKUP" ]; then rm -f -- "$PINSET_BACKUP"; fi
 if [ -n "$SHIM_BACKUP" ]; then rm -f -- "$SHIM_BACKUP"; fi
@@ -274,11 +275,13 @@ SHIM_BACKUP=""
 PINSET_PUBLISHED=0
 SHIM_PUBLISHED=0
 
+MANAGED_BIN="$managed_root/bin"
+printf 'Provider command entries are in %s\n' "$MANAGED_BIN"
 case "${PATH:-}" in
-    "$INSTALL_DIR"|"$INSTALL_DIR:"*) ;;
+    "$MANAGED_BIN"|"$MANAGED_BIN:"*) ;;
     *)
         case ":${PATH:-}:" in
-            *":$INSTALL_DIR:"*)
+            *":$MANAGED_BIN:"*)
                 printf '\nPinset is on PATH but may be shadowed by earlier system commands.\n'
                 printf 'Move Pinset to the front for the current shell:\n'
                 ;;
@@ -286,7 +289,7 @@ case "${PATH:-}" in
                 printf '\nAdd Pinset to the current shell:\n'
                 ;;
         esac
-        printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
+        printf '  %s\n' "$SHELL_INTEGRATION"
         ;;
 esac
 

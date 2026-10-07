@@ -32,6 +32,8 @@ Python 使用锁定解释器的标准库创建根目录 `.venv`，提供 pip，�
 
 Rust 支持 channel、日期、profile、components 和 targets；Flutter/Dart 共用安装身份，稳定 SDK 路径是 `.pinset/local/flutter-sdk`。Android 检查实际 JDK、Gradle、AGP 和 Android SDK，不修改全局 Flutter JDK 设置。
 
+工具命令入口始终位于 `PINSET_HOME/v3/bin`，默认 `~/.pinset/v3/bin`；自定义 CLI 安装目录也遵循这一规则。使用 `pinset self shell` 输出的片段将该目录放在 PATH 最前面，避免其他目录里的 2.x 启动脚本遮蔽新入口。PowerShell 当前会话可执行 `pinset self shell powershell | Out-String | Invoke-Expression`，该命令不会修改用户 profile。
+
 ## 检查、秘密与恢复
 
 `check` 默认只读，不解密、运行工具、联网或写盘。`--deep` 检查安装内容；`--probe` 明确运行探针，记录路径、版本、宿主和时间。分别报告配置有效、安装有效、入口绑定与实际探针结果；项目构建由原始命令完成。

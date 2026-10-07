@@ -58,13 +58,22 @@ impl Drop for StateGuard {
 pub struct Services {
     pub cwd: PathBuf,
     pub home: PathBuf,
+    pub(crate) progress: ProgressReporter,
 }
 impl Services {
     pub fn new(cwd: &Path) -> Result<Self> {
         Ok(Self {
             cwd: cwd.canonicalize()?,
             home: pinset_home()?,
+            progress: ProgressReporter::default(),
         })
+    }
+    pub fn with_progress_reporter(
+        mut self,
+        reporter: impl Fn(ProgressEvent) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = ProgressReporter::new(reporter);
+        self
     }
     pub fn ensure_home(&self) -> Result<()> {
         if fs::symlink_metadata(&self.home).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -266,9 +275,20 @@ impl Services {
             config.tools.insert(tool.into(), selector.into());
         }
         config.validate()?;
-        for name in names {
+        let total = names.len();
+        for (index, name) in names.into_iter().enumerate() {
             let selector = &config.tools[name];
+            self.progress.report(ProgressEvent::Resolving {
+                tool: name.to_owned(),
+                selector: selector.clone(),
+                index: index + 1,
+                total,
+            });
             let mut tool = self.resolve(name, selector, &config)?;
+            self.progress.report(ProgressEvent::Resolved {
+                tool: name.to_owned(),
+                version: tool.version.clone(),
+            });
             if let Some(old) = lock.tool(name) {
                 validate_verification_transition(old, &tool)?;
             }
@@ -284,10 +304,14 @@ impl Services {
         if !no_install {
             self.install_sdk(&lock, None, false, false)?;
         }
+        self.progress
+            .report(ProgressEvent::Phase(InstallPhase::Committing));
         let id = self.begin_commit(&context, &config, &lock)?;
         let notes = if no_install {
             vec![]
         } else {
+            self.progress
+                .report(ProgressEvent::Phase(InstallPhase::Binding));
             self.bind_local(&context, &config, &lock, false, true)?
         };
         self.finish_commit(&context, &id)?;
@@ -414,6 +438,8 @@ impl Services {
         let _guard = self.guard(&config.project_id)?;
         let (current, locked) = self.load(&c)?;
         self.install_sdk(&locked, Some(names), offline, repair)?;
+        self.progress
+            .report(ProgressEvent::Phase(InstallPhase::Binding));
         let notes = self.bind_local(&c, &current, &locked, recreate, false)?;
         self.register(&c)?;
         Ok(json!({"protocol":PROTOCOL,"installed":true,"notes":notes}))
@@ -426,10 +452,18 @@ impl Services {
         repair: bool,
     ) -> Result<()> {
         self.ensure_home()?;
-        for tool in &lock.tools {
-            if names.is_some_and(|n| !n.is_empty() && !n.contains(&tool.name)) {
-                continue;
-            }
+        let selected = lock
+            .tools
+            .iter()
+            .filter(|tool| !names.is_some_and(|n| !n.is_empty() && !n.contains(&tool.name)))
+            .collect::<Vec<_>>();
+        for (index, tool) in selected.iter().enumerate() {
+            self.progress.report(ProgressEvent::Installing {
+                tool: tool.name.clone(),
+                version: tool.version.clone(),
+                index: index + 1,
+                total: selected.len(),
+            });
             let target = locked_target(tool);
             let install = install_directory(&self.home, tool, &target);
             let mut quarantine = None;
@@ -463,7 +497,9 @@ impl Services {
                 fs::rename(&install, &q)?;
                 quarantine = Some(q);
             }
+            let progress = self.progress.clone();
             let installer = Installer::new(InstallLimits::for_tool(&tool.name))?
+                .with_progress_reporter(move |event| progress.report(event))
                 .with_offline(offline)
                 .with_install_identity(tool.installation_version(&target));
             let sources = OfficialSources;
@@ -479,21 +515,29 @@ impl Services {
                 "pnpm" | "bun" => install_locked_npm_tool(&installer, &self.home, tool, &target),
                 _ => unreachable!(),
             };
-            if let Err(error) = result {
-                if let Some(q) = quarantine
-                    && !install.exists()
-                {
-                    fs::rename(q, &install)?;
+            let outcome = match result {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    if let Some(q) = quarantine
+                        && !install.exists()
+                    {
+                        fs::rename(q, &install)?;
+                    }
+                    return Err(error);
                 }
-                return Err(error);
-            }
+            };
             if tool.name == "java" {
                 self.inventory_java(tool, &target)?;
             }
             if let Some(quarantine) = quarantine {
                 fs::remove_dir_all(quarantine)?;
             }
+            self.progress.report(ProgressEvent::Installed {
+                reused: outcome.reused_existing,
+            });
         }
+        self.progress
+            .report(ProgressEvent::Phase(InstallPhase::Binding));
         self.install_shims()?;
         Ok(())
     }

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '3.0.1',
+    [string] $Version = '3.0.2',
     [string] $InstallDir = (Join-Path $(if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }) 'v3\bin')
 )
 
@@ -107,6 +107,10 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw 'Pinset failed to register Provider command shims.'
         }
+        $shellIntegration = (& $cli self shell powershell | Out-String).TrimEnd()
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Pinset failed to report its managed command PATH.'
+        }
     } catch {
         Remove-Item -LiteralPath $cli, $shim -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $cliBackup -PathType Leaf) {
@@ -118,9 +122,10 @@ try {
         throw
     }
 
-    Write-Output "Installed Pinset CLI and Provider command shims in $resolvedInstall"
+    Write-Output "Installed Pinset CLI and router in $resolvedInstall"
+    Write-Output "Provider command entries are in $(Join-Path $managedRoot 'bin')"
     Write-Output "Runtime payloads remain isolated under PINSET_HOME\v3\installs and are downloaded by explicit install commands."
-    Write-Output "For this PowerShell session: `$env:PATH = '$resolvedInstall' + [IO.Path]::PathSeparator + `$env:PATH"
+    Write-Output "For this PowerShell session: $shellIntegration"
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force

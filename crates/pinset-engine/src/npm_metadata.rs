@@ -10,7 +10,9 @@ use reqwest::{Url, blocking::Client};
 use semver::Version;
 use serde::Deserialize;
 
-use crate::{Error, LockedArtifact, LockedArtifactFormat, LockedTool, Result};
+use crate::{
+    Error, LockedArtifact, LockedArtifactFormat, LockedArtifactOverlay, LockedTool, Result,
+};
 
 const OFFICIAL_NPM_REGISTRY: &str = "https://registry.npmjs.org/";
 const MAX_METADATA_BYTES: u64 = 32 * 1024 * 1024;
@@ -61,6 +63,34 @@ pub const BUN_TARGETS: &[NpmToolTarget] = &[
     },
 ];
 
+const PNPM_NATIVE_TARGETS: &[NpmToolTarget] = &[
+    NpmToolTarget {
+        target: "windows-x86_64",
+        package: "@pnpm/exe.win32-x64",
+        required_path: "pnpm.exe",
+    },
+    NpmToolTarget {
+        target: "linux-x86_64",
+        package: "@pnpm/exe.linux-x64",
+        required_path: "pnpm",
+    },
+    NpmToolTarget {
+        target: "linux-aarch64",
+        package: "@pnpm/exe.linux-arm64",
+        required_path: "pnpm",
+    },
+    NpmToolTarget {
+        target: "macos-x86_64",
+        package: "@pnpm/exe.darwin-x64",
+        required_path: "pnpm",
+    },
+    NpmToolTarget {
+        target: "macos-aarch64",
+        package: "@pnpm/exe.darwin-arm64",
+        required_path: "pnpm",
+    },
+];
+
 #[derive(Debug)]
 pub struct NpmMetadataClient {
     client: Client,
@@ -79,9 +109,18 @@ struct PackageDocument {
 struct PackageVersion {
     name: String,
     version: String,
+    #[serde(default)]
+    bin: Option<PackageBin>,
     #[serde(rename = "optionalDependencies", default)]
     optional_dependencies: BTreeMap<String, String>,
     dist: PackageDist,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum PackageBin {
+    Commands(BTreeMap<String, String>),
+    Entry(String),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -239,18 +278,59 @@ impl NpmMetadataClient {
         let keys = self.registry_keys()?;
         verify_package_signature(&manifest, &keys)?;
         if tool == "pnpm" {
+            let entry = pnpm_manifest_entry(&manifest)?;
             let (canonical_url, artifact_path) =
                 official_tarball(wrapper, version, &manifest.dist)?;
             crate::ArtifactIntegrity::parse(&manifest.dist.integrity)?;
-            return Ok(LockedTool {
-                name: tool.into(),
-                requested: version.into(),
-                version: version.into(),
-                provider: "pnpm-npm".into(),
-                released_at,
-                metadata: Default::default(),
-                options: Default::default(),
-                artifacts: crate::SUPPORTED_TARGETS
+            let mut metadata = BTreeMap::new();
+            if entry != "bin/pnpm.cjs" {
+                metadata.insert("pnpm-entry".into(), entry.into());
+            }
+            let artifacts = if entry == "pnpm" {
+                let mut artifacts = Vec::new();
+                for target in PNPM_NATIVE_TARGETS {
+                    let Some(dependency) = manifest.optional_dependencies.get(target.package)
+                    else {
+                        continue;
+                    };
+                    let package_version =
+                        exact_dependency_version(dependency).ok_or_else(|| {
+                            Error::InvalidNpmMetadata {
+                                package: wrapper.into(),
+                                reason: format!(
+                                    "{} has non-exact version {dependency:?}",
+                                    target.package
+                                ),
+                            }
+                        })?;
+                    let platform = self.package_version(target.package, package_version)?;
+                    validate_manifest_identity(target.package, package_version, &platform)?;
+                    verify_package_signature(&platform, &keys)?;
+                    let (platform_url, platform_path) =
+                        official_tarball(target.package, package_version, &platform.dist)?;
+                    crate::ArtifactIntegrity::parse(&platform.dist.integrity)?;
+                    artifacts.push(LockedArtifact {
+                        target: target.target.into(),
+                        canonical_url: platform_url,
+                        artifact_path: platform_path,
+                        sha256: String::new(),
+                        integrity: Some(platform.dist.integrity),
+                        format: LockedArtifactFormat::TarGz,
+                        archive_root: "package".into(),
+                        verification: SIGNATURE_VERIFICATION.into(),
+                        overlays: vec![LockedArtifactOverlay {
+                            canonical_url: canonical_url.clone(),
+                            artifact_path: artifact_path.clone(),
+                            integrity: manifest.dist.integrity.clone(),
+                            format: LockedArtifactFormat::TarGz,
+                            archive_root: "package".into(),
+                            verification: SIGNATURE_VERIFICATION.into(),
+                        }],
+                    });
+                }
+                artifacts
+            } else {
+                crate::SUPPORTED_TARGETS
                     .iter()
                     .map(|target| LockedArtifact {
                         target: (*target).into(),
@@ -263,7 +343,17 @@ impl NpmMetadataClient {
                         verification: SIGNATURE_VERIFICATION.into(),
                         overlays: vec![],
                     })
-                    .collect(),
+                    .collect()
+            };
+            return Ok(LockedTool {
+                name: tool.into(),
+                requested: version.into(),
+                version: version.into(),
+                provider: "pnpm-npm".into(),
+                released_at,
+                metadata,
+                options: Default::default(),
+                artifacts,
             });
         }
         let mut artifacts = Vec::new();
@@ -395,6 +485,21 @@ impl NpmMetadataClient {
             package: display_url,
             reason: source.to_string(),
         })
+    }
+}
+
+fn pnpm_manifest_entry(manifest: &PackageVersion) -> Result<&str> {
+    let entry = match manifest.bin.as_ref() {
+        Some(PackageBin::Commands(commands)) => commands.get("pnpm").map(String::as_str),
+        Some(PackageBin::Entry(entry)) => Some(entry.as_str()),
+        None => None,
+    };
+    match entry {
+        Some(entry @ ("bin/pnpm.cjs" | "bin/pnpm.mjs" | "pnpm")) => Ok(entry),
+        _ => Err(Error::InvalidNpmMetadata {
+            package: manifest.name.clone(),
+            reason: "unsupported official pnpm command entry".into(),
+        }),
     }
 }
 
@@ -536,5 +641,43 @@ mod tests {
     }
 
     #[test]
-    fn pnpm_wrapper_overlay_matches_official_package_generations() {}
+    fn pnpm_entries_follow_official_package_metadata() {
+        for entry in ["bin/pnpm.cjs", "bin/pnpm.mjs", "pnpm"] {
+            let manifest: PackageVersion = serde_json::from_value(serde_json::json!({
+                "name":"pnpm", "version":"12.9.1", "bin":{"pnpm":entry},
+                "dist":{"tarball":"", "integrity":""}
+            }))
+            .unwrap();
+            assert_eq!(pnpm_manifest_entry(&manifest).unwrap(), entry);
+        }
+        for entry in ["../pnpm", "/bin/pnpm", "bin/future.js", ""] {
+            let manifest: PackageVersion = serde_json::from_value(serde_json::json!({
+                "name":"pnpm", "version":"12.9.1", "bin":{"pnpm":entry},
+                "dist":{"tarball":"", "integrity":""}
+            }))
+            .unwrap();
+            assert!(pnpm_manifest_entry(&manifest).is_err());
+        }
+        assert!(crate::SUPPORTED_TARGETS.iter().all(|target| {
+            PNPM_NATIVE_TARGETS
+                .iter()
+                .any(|platform| platform.target == *target)
+        }));
+    }
+
+    #[test]
+    fn npm_metadata_accepts_both_official_bin_formats_without_affecting_bun() {
+        for bin in [
+            serde_json::json!("bin/bun"),
+            serde_json::json!({"bun":"bin/bun"}),
+            serde_json::Value::Null,
+        ] {
+            let manifest: PackageVersion = serde_json::from_value(serde_json::json!({
+                "name":"bun", "version":"1.4.2", "bin":bin,
+                "dist":{"tarball":"", "integrity":""}
+            }))
+            .unwrap();
+            assert_eq!(manifest.name, "bun");
+        }
+    }
 }

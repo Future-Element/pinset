@@ -558,15 +558,46 @@ fn rust_component_overlay(
         return Ok(None);
     };
     let name = component.trim_end_matches("-preview");
-    let root = if target == "*" {
+    let mut root = if target == "*" {
         format!("{name}-{channel}")
     } else {
         format!("{name}-{channel}-{triple}")
     };
-    let expected = format!(
+    let mut expected = format!(
         "https://static.rust-lang.org/dist/{}/{}.tar.xz",
         manifest.date, root
     );
+    // Official manifests can reuse another host's documentation archive. Follow
+    // only a matching available entry in the same package, including its checksum.
+    // Executable components must still match their requested target exactly.
+    if artifact.xz_url.as_deref() != Some(expected.as_str())
+        && target != "*"
+        && matches!(component, "rust-docs" | "rustc-docs")
+        && let Some(archive_root) = package.target.iter().find_map(|(host, source)| {
+            if host.is_empty()
+                || !host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                || !source.available
+                || source.xz_url != artifact.xz_url
+                || source.xz_hash != artifact.xz_hash
+            {
+                return None;
+            }
+            let root = format!("{name}-{channel}-{host}");
+            let url = format!(
+                "https://static.rust-lang.org/dist/{}/{}.tar.xz",
+                manifest.date, root
+            );
+            (artifact.xz_url.as_deref() == Some(url.as_str())).then_some(root)
+        })
+    {
+        root = archive_root;
+        expected = format!(
+            "https://static.rust-lang.org/dist/{}/{}.tar.xz",
+            manifest.date, root
+        );
+    }
     if artifact.xz_url.as_deref() != Some(expected.as_str()) {
         return Err(Error::InvalidRustIndex {
             reason: format!("Rust component URL must be {expected}"),
@@ -777,6 +808,153 @@ mod tests {
             tool.metadata.get("components").map(String::as_str),
             Some(RUST_COMPONENTS)
         );
+    }
+
+    #[test]
+    fn official_documentation_aliases_preserve_the_actual_archive_and_lock() {
+        for channel in ["stable", "nightly"] {
+            let mut fixture = fixture_manifest();
+            let artifact_channel = if channel == "nightly" {
+                fixture = fixture
+                    .replace("-1.97.1-", "-nightly-")
+                    .replace("1.97.1 (fixture", "1.97.1-nightly (fixture")
+                    .replace(
+                        "[pkg.rustc]\nversion = \"1.97.1\"",
+                        "[pkg.rustc]\nversion = \"1.97.1-nightly\"",
+                    );
+                "nightly"
+            } else {
+                "1.97.1"
+            };
+            let mut manifest: ChannelManifest = toml::from_str(&fixture).unwrap();
+            let docs = manifest.pkg.get_mut("rust-docs").unwrap();
+            let source = docs.target["aarch64-apple-darwin"].clone();
+            docs.target
+                .insert("x86_64-apple-darwin".into(), source.clone());
+            // Windows also supports shared documentation if the official manifest
+            // references another available host; compiler/standard-library stay local.
+            docs.target.insert(
+                "x86_64-pc-windows-msvc".into(),
+                docs.target["x86_64-unknown-linux-gnu"].clone(),
+            );
+            let tool = resolve_manifest_tool(
+                "1.97.1",
+                "2026-07-16",
+                manifest,
+                &"ab".repeat(32),
+                None,
+                channel,
+            )
+            .unwrap();
+            assert_eq!(tool.artifacts.len(), RUST_TARGETS.len());
+            for (target, archive_host) in [
+                ("macos-x86_64", "aarch64-apple-darwin"),
+                ("windows-x86_64", "x86_64-unknown-linux-gnu"),
+            ] {
+                let artifact = tool.artifact(target).unwrap();
+                let docs = artifact
+                    .overlays
+                    .iter()
+                    .find(|o| o.archive_root.starts_with("rust-docs-"))
+                    .unwrap();
+                let root = format!("rust-docs-{artifact_channel}-{archive_host}");
+                assert_eq!(docs.archive_root, root);
+                assert_eq!(docs.artifact_path, format!("dist/2026-07-16/{root}.tar.xz"));
+                assert_eq!(
+                    docs.canonical_url,
+                    format!("https://static.rust-lang.org/{}", docs.artifact_path)
+                );
+                assert_eq!(docs.integrity, format!("sha256:{}", "cd".repeat(32)));
+                assert!(
+                    artifact
+                        .archive_root
+                        .ends_with(rust_target_triple(target).unwrap())
+                );
+            }
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("lock.toml");
+            crate::save_lockfile(
+                &path,
+                &crate::Lockfile {
+                    protocol: crate::PROTOCOL.into(),
+                    project_id: "docs-alias".into(),
+                    schema: crate::LOCKFILE_SCHEMA,
+                    generated_by: "test".into(),
+                    tools: vec![tool],
+                },
+            )
+            .unwrap();
+            let locked = crate::load_lockfile(&path).unwrap();
+            assert_eq!(locked.tools[0].artifacts.len(), RUST_TARGETS.len());
+        }
+    }
+
+    #[test]
+    fn documentation_aliases_reject_foreign_or_inconsistent_artifacts() {
+        let manifest: ChannelManifest = toml::from_str(&fixture_manifest()).unwrap();
+        let url = "https://static.rust-lang.org/dist/2026-07-16/rust-docs-1.97.1-aarch64-apple-darwin.tar.xz";
+        for invalid in [
+            url.replace("https:", "http:"),
+            url.replace("static.rust-lang.org", "example.com"),
+            url.replace("2026-07-16", "2026-07-15"),
+            url.replace("1.97.1", "1.97.0"),
+            url.replace("rust-docs-", "rustc-"),
+            url.replace("aarch64-apple-darwin", "unlisted-host"),
+            format!("{url}?download=1"),
+            format!("{url}#fragment"),
+        ] {
+            let mut altered = manifest.clone();
+            // Even identical untrusted rows must not relax the official URL boundary.
+            for host in ["x86_64-apple-darwin", "aarch64-apple-darwin"] {
+                altered
+                    .pkg
+                    .get_mut("rust-docs")
+                    .unwrap()
+                    .target
+                    .get_mut(host)
+                    .unwrap()
+                    .xz_url = Some(invalid.clone());
+            }
+            assert!(
+                rust_component_overlay(&altered, "rust-docs", "x86_64-apple-darwin", "1.97.1")
+                    .is_err(),
+                "{invalid}"
+            );
+        }
+        for (available, hash) in [
+            (false, "cd".repeat(32)),
+            (true, "ef".repeat(32)),
+            (true, "invalid".into()),
+        ] {
+            let mut altered = manifest.clone();
+            let docs = altered.pkg.get_mut("rust-docs").unwrap();
+            let source = docs.target["aarch64-apple-darwin"].clone();
+            docs.target.insert("x86_64-apple-darwin".into(), source);
+            let source = docs.target.get_mut("aarch64-apple-darwin").unwrap();
+            source.available = available;
+            source.xz_hash = Some(hash);
+            assert!(
+                rust_component_overlay(&altered, "rust-docs", "x86_64-apple-darwin", "1.97.1")
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn executable_components_cannot_alias_another_host() {
+        let mut manifest: ChannelManifest = toml::from_str(&fixture_manifest()).unwrap();
+        for component in ["rustc", "cargo", "rust-std", "rustfmt", "clippy"] {
+            let package = manifest
+                .pkg
+                .get_mut(component_package_name(component))
+                .unwrap();
+            let source = package.target["aarch64-apple-darwin"].clone();
+            package.target.insert("x86_64-apple-darwin".into(), source);
+            assert!(
+                rust_component_overlay(&manifest, component, "x86_64-apple-darwin", "1.97.1")
+                    .is_err()
+            );
+        }
     }
 
     #[test]

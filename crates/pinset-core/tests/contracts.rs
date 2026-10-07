@@ -92,6 +92,37 @@ fn installation_identity_includes_build_platform_digest_options() {
     );
 }
 #[test]
+fn pnpm_routes_only_supported_locked_entries() {
+    let mut tool = locked();
+    tool.name = "pnpm".into();
+    assert_eq!(
+        pnpm_entry_path(&tool, "linux-x86_64").unwrap(),
+        Path::new("bin/pnpm.cjs")
+    );
+    tool.metadata
+        .insert("pnpm-entry".into(), "bin/pnpm.mjs".into());
+    assert_eq!(
+        pnpm_entry_path(&tool, "windows-x86_64").unwrap(),
+        Path::new("bin/pnpm.mjs")
+    );
+    tool.metadata.insert("pnpm-entry".into(), "pnpm".into());
+    assert_eq!(
+        pnpm_entry_path(&tool, "windows-x86_64").unwrap(),
+        Path::new("pnpm.exe")
+    );
+    assert_eq!(
+        pnpm_entry_path(&tool, "linux-aarch64").unwrap(),
+        Path::new("pnpm")
+    );
+    for entry in ["../pnpm", "C:\\external\\pnpm.exe", "bin/unknown.js"] {
+        tool.metadata.insert("pnpm-entry".into(), entry.into());
+        assert_eq!(
+            pnpm_entry_path(&tool, "linux-x86_64").unwrap_err().code(),
+            "PINSET_LOCK_INVALID"
+        );
+    }
+}
+#[test]
 fn another_platform_does_not_duplicate_the_host_installation() {
     let tool = locked();
     let mut multi = tool.clone();

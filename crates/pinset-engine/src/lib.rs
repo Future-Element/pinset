@@ -16,6 +16,8 @@ mod http_client;
 pub use http_client::*;
 mod installer;
 pub use installer::*;
+mod progress;
+pub use progress::*;
 mod provenance;
 pub use provenance::*;
 mod node_provider;

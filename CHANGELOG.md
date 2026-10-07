@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.2 - 2026-10-07
+
+- Resolve pnpm's actual official command entry: keep the Node-based pnpm 10/11 payloads, and lock/install both the platform-native pnpm 12 binary and its shared runtime. Route native commands directly with the selected Node available to child processes, without running npm lifecycle scripts or downloading missing tools during execution. Apply pnpm 11/12's current package-manager/runtime policies so project configuration cannot silently select another managed toolchain.
+- Restore interactive `use`/`install` progress: version resolution, real download bytes/percentage/speed/ETA, verification, extraction, installation checks and local binding. Report verified cache hits and reused installations; keep progress on terminal stderr and disable it for JSON or redirected stderr.
+- Report the managed `PINSET_HOME/v3/bin` PATH from both installers even when the CLI is installed in a custom directory, so obsolete launchers cannot shadow the v3 command entries. Preserve quoting through the CLI's shell integration output.
+- Accept official Rust documentation archives shared between hosts, preserving the manifest URL, checksum and actual archive root. Keep executable component targets strict so default-profile resolution does not fail on a valid macOS documentation alias while selecting Windows tools.
+- Resolve self-update packages and checksums from the selected official Release assets, accepting stable and versioned platform ZIP names. Reject missing, duplicate, incomplete or foreign assets and require one valid SHA-256 entry matching the selected package.
+- Keep `self update --json` output parseable while the newly installed CLI repairs shims. Add local Docker regression checks for consecutive patch/minor updates, renamed assets, read-only previews and failed integrity checks.
+
 ## 3.0.1 - 2026-10-06
 
 - Breaking: remove `upgrade` and its candidate snapshots, validation, history, apply and restore commands; remove `clean history` and the project `[verification]` configuration section. Version selection, upgrades and switches use `use` exclusively.

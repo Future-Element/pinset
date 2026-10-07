@@ -235,67 +235,24 @@ impl Services {
         let client = http_client_builder()?
             .build()
             .map_err(|source| Error::HttpClient { source })?;
-        let version = if let Some(version) = version {
-            version.trim_start_matches('v').to_owned()
-        } else {
-            let response = client
-                .get("https://api.github.com/repos/Future-Element/Pinset/releases/latest")
-                .header("User-Agent", "pinset/3")
-                .send()
-                .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?;
-            let doc: Value = serde_json::from_slice(
-                &response
-                    .error_for_status()
-                    .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
-                    .bytes()
-                    .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?,
-            )?;
-            doc["tag_name"]
-                .as_str()
-                .ok_or_else(|| service_error("PINSET_UPDATE_METADATA", "release has no tag"))?
-                .trim_start_matches('v')
-                .to_owned()
-        };
-        let parsed = semver::Version::parse(&version)
-            .map_err(|_| service_error("PINSET_UPDATE_VERSION", "invalid release version"))?;
-        if parsed.major != 3 {
-            return Err(service_error(
-                "PINSET_UPDATE_VERSION",
-                "self update accepts only the Pinset 3 release line",
-            ));
-        }
-        let filename = format!("pinset-v{version}-{}.zip", current_target());
-        let base =
-            format!("https://github.com/Future-Element/Pinset/releases/download/v{version}/");
+        let release = crate::self_update::resolve_release(&client, version, &current_target())?;
+        let version = release.version;
+        let filename = release.archive.name;
+        let url = release.archive.browser_download_url;
         let sums = client
-            .get(format!("{base}SHA256SUMS"))
+            .get(release.checksums.browser_download_url)
             .send()
             .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
             .error_for_status()
             .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?
             .text()
             .map_err(|e| service_error("PINSET_UPDATE_FETCH", e.to_string()))?;
-        let hash = sums
-            .lines()
-            .find_map(|l| {
-                let mut fields = l.split_whitespace();
-                let h = fields.next()?;
-                let file = fields.next()?.trim_start_matches('*');
-                (file == filename).then(|| h.to_owned())
-            })
-            .ok_or_else(|| {
-                service_error(
-                    "PINSET_UPDATE_CHECKSUM",
-                    "release is missing this platform checksum",
-                )
-            })?;
-        ArtifactIntegrity::parse(&hash)?;
+        let hash = crate::self_update::release_checksum(&sums, &filename)?;
         if plan {
             return Ok(
                 json!({"protocol":PROTOCOL,"plan":true,"version":version,"artifact":filename,"checksum":hash}),
             );
         }
-        let url = format!("{base}{filename}");
         let updatehome = self.home.join("state/self-update");
         let installer = Installer::new(InstallLimits::default())?
             .with_install_identity(format!("{version}--{}", &hash[..24]));
@@ -349,8 +306,8 @@ impl Services {
         let repaired = std::process::Command::new(destination.join(&names[0]))
             .args(["self", "repair"])
             .env_remove("PINSET_IDENTITY")
-            .status()?;
-        if !repaired.success() {
+            .output()?;
+        if !repaired.status.success() {
             return Err(service_error(
                 "PINSET_UPDATE_REPAIR",
                 "paired binaries were installed; run self repair to finish shim recovery",
