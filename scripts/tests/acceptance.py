@@ -141,7 +141,7 @@ def runtimes():
     (root/'main.go').write_text('package main; import("fmt";"os"); func main(){fmt.Println("PINSET_GO_OK",os.Getenv("GOTOOLCHAIN"))}')
     assert 'PINSET_GO_OK local' in native(root,'go','run','main.go')
     native(root,'bun','-e','console.log("PINSET_BUN_OK")')
-    rust=project('rust')
+    rust=project('rust-default-metadata')
     # Resolve the real default profile, including official documentation aliases,
     # before the execution profile. Metadata-only: do not download documentation.
     data(rust,'use',frozen_selector('rust@stable'),'--no-install',timeout=1200)
@@ -155,6 +155,8 @@ def runtimes():
     manifest.append({'requested':'rust@stable','profile':'default','metadata_only':True,'project':str(rust),'lock':default_lock})
     (REPORTS/'sdk-manifest.json').write_text(json.dumps(manifest,indent=2))
     freeze_selector('rust@stable',default_tool['version'])
+    # Configure components before a selection exists, preserving lock matching.
+    rust=project('rust')
     config=rust/'.pinset/config.toml'
     text=config.read_text()
     if 'profile =' not in text:text=text.replace('[rust]','[rust]\nprofile = "minimal"')
