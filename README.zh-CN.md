@@ -18,7 +18,7 @@ pinset exec -- ./mvnw verify
 
 ## 文件和执行边界
 
-提交 `.pinset/config.toml`、`.pinset/lock.toml` 和 `.pinset/env/<profile>.env`；只忽略 `.pinset/local/` 与根目录 `.venv/`。全局数据位于 `PINSET_HOME/v3/`，默认 `~/.pinset/v3/`。旧数据不会被接管或删除。
+提交 `.pinset/config.toml`、`.pinset/lock.toml` 和 `.pinset/env/<profile>.env`；只忽略 `.pinset/local/` 与根目录 `.venv/`。全局数据位于 `PINSET_HOME/v3/`，默认 `~/.pinset/v3/`。CLI 不自动接管或删除旧数据。2.x 升级可使用[独立升级脚本](docs/migration-v2-to-v3.zh-CN.md)：安装 3.x、迁移精确版本、验证环境、切换命令入口，再清理旧文件并保留恢复备份；该脚本不接入 pinset 命令。
 
 Git 项目最多向上查找到最近仓库根，支持 worktree；非 Git 项目最多查找到主目录，主目录之外只检查指定目录。最近项目配置独立生效，不合并父配置或全局配置。项目缺少受管工具选择时明确拒绝执行；无项目时才使用明确设置的全局默认。
 

@@ -27,7 +27,7 @@ pinset exec -- ./mvnw verify
 .venv/                  ignored project Python packages
 ```
 
-Commit configuration, lock and encrypted profiles. Ignore only `.pinset/local/` and `.venv/`. Global state lives under `PINSET_HOME/v3/` (default `~/.pinset/v3/`). Old files and data are neither imported nor removed.
+Commit configuration, lock and encrypted profiles. Ignore only `.pinset/local/` and `.venv/`. Global state lives under `PINSET_HOME/v3/` (default `~/.pinset/v3/`). The CLI neither imports nor removes old files and data. For a 2.x upgrade, use the [standalone upgrade script](docs/migration-v2-to-v3.md): it installs 3.x, migrates exact versions, verifies environments, switches command entries and cleans up legacy files with recovery backups. It is not a Pinset command.
 
 Project discovery stops at the nearest Git repository, including worktrees. Non-Git discovery stops at the home directory; outside it, only the specified directory is checked. The nearest project is independent and never merges parent or global selections. Missing project tools fail explicitly. Global defaults apply only outside a project or through an explicit global command.
 

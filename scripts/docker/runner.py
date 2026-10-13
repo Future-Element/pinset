@@ -67,6 +67,7 @@ def fast():
     run(['cargo','test','--workspace','--locked'],'rust-contracts')
     run(['python3','scripts/security_audit.py'],'cargo-security')
     run(['python3','scripts/tests/contracts.py'],'application-contracts')
+    run(['python3','scripts/tests/migration.py'],'standalone-migration-contracts')
     run(['python3','scripts/tests/surfaces.py'],'distribution-contracts')
 def acceptance():
     run(['cargo','build','--workspace','--bins','--locked'],'acceptance-binaries')

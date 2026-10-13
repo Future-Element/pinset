@@ -1,6 +1,6 @@
 # Contributing
 
-Pinset 3 has one protocol and one execution chain. Do not add migration paths, command aliases, task orchestration, Provider plugins or mirror settings.
+Pinset 3 has one protocol and one execution chain. Do not add migration paths to the CLI/runtime, command aliases, task orchestration, Provider plugins or mirror settings. The opt-in `scripts/migrate_v2_to_v3.py` is a standalone upgrade utility; keep legacy compatibility there, outside the Pinset commands and crates.
 
 Keep `pinset-core` read-only, with no networking, credential access or decryption. Provider and installation work belongs in `pinset-engine`; cryptography and credentials belong in `pinset-env`. The CLI delegates to services; the shim uses core routing and the private, version-matched CLI broker.
 
