@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.5 - 2026-10-13
+
+- Bind pnpm 10's Node-version override to the selected interpreter's exact version instead of an empty value. Preserve dependency engines validation and avoid a second Node runtime; verify six-project frozen workspace installs through exec and shim.
+
 ## 3.0.4 - 2026-10-13
 
 - Add a standalone, explicit Pinset 2.x to 3.x upgrade utility with verified installation, migration, activation and guarded cleanup; keep it separate from the public CLI.

@@ -381,7 +381,7 @@ pub fn plan_command(
                 plan.prefix.push(npm.join(script).display().to_string());
             }
             ("pnpm", _) => {
-                let (_, nt, ni, _, _) = selected
+                let (node, nt, ni, _, _) = selected
                     .get("node")
                     .ok_or_else(|| failure("PINSET_DEPENDENCY_REQUIRED", "pnpm requires Node"))?;
                 let entry = pnpm_entry_path(tool, target)?;
@@ -394,9 +394,10 @@ pub fn plan_command(
                     plan.executable = install.join(entry);
                 }
                 if legacy {
-                    // This is a configuration key, not an install command option.
-                    // An explicit empty value overrides legacy use-node-version.
-                    plan.prefix.push("--config.use-node-version=".into());
+                    // pnpm also uses this value for engines checks. Request the
+                    // running locked interpreter so it skips Node provisioning.
+                    plan.prefix
+                        .push(format!("--config.use-node-version={}", node.version));
                 } else {
                     // Modern pnpm renamed both policies and removed use-node-version.
                     plan.prefix.extend([

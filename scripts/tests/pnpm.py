@@ -41,10 +41,17 @@ def verify_pnpm_generations(root, select_tool):
             assert native(root,'pnpm','--version',env=offline_env).strip()==selected['version']
             assert node in native(root,'pnpm','exec','node','-e','console.log(process.execPath)',env=offline_env)
             # Version/exec probes do not validate install-specific launch options.
-            # Install one local dependency offline and run its module with the
-            # selected Node, through both exec and the public pnpm shim.
+            # A six-project workspace and an engines-bearing dependency exercise
+            # the nodeVersion check that version probes and plain packages miss.
+            members=root/'members';members.mkdir()
+            for index in range(5):
+                member=members/str(index);member.mkdir()
+                (member/'package.json').write_text(json.dumps({'name':f'pinset-member-{index}','version':'1.0.0'}))
+            workspace.write_text('packages:\n  - members/*\n'+('pmOnFail: download\nruntimeOnFail: download\n' if entry!='bin/pnpm.cjs' else ''))
+            pnpm_home=root/'pnpm-home'
+            offline_env['PNPM_HOME']=str(pnpm_home)
             dependency=root/'local-dependency';dependency.mkdir()
-            (dependency/'package.json').write_text(json.dumps({'name':'pinset-pnpm-proof','version':'1.0.0','main':'index.js'}))
+            (dependency/'package.json').write_text(json.dumps({'name':'pinset-pnpm-proof','version':'1.0.0','main':'index.js','engines':{'node':'>=20'}}))
             (dependency/'index.js').write_text('module.exports = 42\n')
             application={'name':'pinset-pnpm-install','version':'1.0.0','packageManager':'pnpm@'+selected['version'],
                          'dependencies':{'pinset-pnpm-proof':'file:./local-dependency'}}
@@ -55,20 +62,36 @@ def verify_pnpm_generations(root, select_tool):
                              cwd=root,env=offline_env,expected=1)
                 assert 'Unknown option' in rejected and 'use-node-version' in rejected,rejected
             native(root,'pnpm','install','--offline','--ignore-scripts',env=offline_env)
+            if entry=='bin/pnpm.cjs':
+                # 3.0.4 passed an empty override: frozen install still rejects
+                # it when a dependency declares engines.node.
+                rejected=run([node,sdk/entry,'--config.use-node-version=','install','--offline','--ignore-scripts','--frozen-lockfile'],
+                             cwd=root,env=offline_env,expected=1)
+                assert 'ERR_PNPM_INVALID_NODE_VERSION' in rejected and 'setting is ""' in rejected,rejected
+                assert 'resolution step is skipped' in rejected,rejected
+            native(root,'pnpm','install','--offline','--ignore-scripts','--frozen-lockfile',env=offline_env)
             observed=native(root,'pnpm','exec','node','-e','console.log(require("pinset-pnpm-proof"),process.execPath)',env=offline_env)
             assert '42' in observed and node in observed,observed
             shim=Path(os.environ['PINSET_HOME'])/'v3/bin/pnpm'
-            run([shim,'install','--offline','--ignore-scripts'],cwd=root,env={**offline_env,'PINSET_NO_ENV':'1'})
-            shutil.rmtree(root/'node_modules');(root/'pnpm-lock.yaml').unlink();shutil.rmtree(dependency)
+            run([shim,'install','--offline','--ignore-scripts','--frozen-lockfile'],cwd=root,env={**offline_env,'PINSET_NO_ENV':'1'})
+            assert not (pnpm_home/'nodejs').exists(),'pnpm provisioned a second Node runtime'
+            # Keep engine validation active; an incompatible project must fail.
+            application['engines']={'node':'>=99'};package.write_text(json.dumps(application))
+            npmrc.write_text(npmrc.read_text()+'engine-strict=true\n')
+            workspace.write_text(workspace.read_text()+'engineStrict: true\n')
+            rejected=native(root,'pnpm','install','--offline','--ignore-scripts',expected=1,env=offline_env)
+            assert 'ERR_PNPM_UNSUPPORTED_ENGINE' in rejected and '>=99' in rejected,rejected
+            shutil.rmtree(root/'node_modules');(root/'pnpm-lock.yaml').unlink();shutil.rmtree(dependency);shutil.rmtree(members)
             if entry!='bin/pnpm.cjs':
                 package.write_text(json.dumps({'name':'pinset-runtime-guard','version':'1.0.0','packageManager':'pnpm@'+selected['version'],
                                               'devEngines':{'runtime':{'name':'node','version':'0.0.0','onFail':'download'}}}))
                 assert '0.0.0' in native(root,'pnpm','exec','node','--version',expected=1,env=offline_env)
-                workspace.unlink()
+            workspace.unlink()
             package.unlink();npmrc.unlink()
             versions.append({'selector':selector,'version':selected['version'],'entry':entry,'route':route,'pnpx':alias})
         report('pnpm-generations',versions=versions,offline_execution='no implicit binary download',
-               offline_install='local dependency install and selected Node execution via exec and shim',node=node)
+               offline_install='six-project workspace; engines-bearing local dependency; frozen install via exec and shim',
+               engine_validation='incompatible engines rejected; no pnpm-managed Node provisioning',node=node)
         return versions
     finally:
         for path in [package,npmrc,workspace]:
