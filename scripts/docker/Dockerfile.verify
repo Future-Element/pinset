@@ -8,7 +8,7 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential ca-certificates cmake curl git pkg-config libssl-dev \
-       python3 clang qemu-user-static xz-utils unzip xvfb xauth dbus-x11 gnome-keyring gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64 \
+       python3 python3-pyte clang qemu-user-static xz-utils unzip xvfb xauth dbus-x11 gnome-keyring gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64 \
        libgtk-3-0 libnss3 libgbm1 libasound2 libx11-xcb1 libsecret-1-0 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup component add rustfmt clippy \

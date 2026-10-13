@@ -394,8 +394,9 @@ pub fn plan_command(
                     plan.executable = install.join(entry);
                 }
                 if legacy {
-                    // An explicit empty CLI value overrides legacy use-node-version.
-                    plan.prefix.push("--use-node-version=".into());
+                    // This is a configuration key, not an install command option.
+                    // An explicit empty value overrides legacy use-node-version.
+                    plan.prefix.push("--config.use-node-version=".into());
                 } else {
                     // Modern pnpm renamed both policies and removed use-node-version.
                     plan.prefix.extend([

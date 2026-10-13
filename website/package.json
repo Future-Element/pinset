@@ -1,6 +1,6 @@
 {
   "name": "pinset-website",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "pnpm": {
@@ -18,7 +18,7 @@
     "deploy:cloudflare": "next build && wrangler pages deploy out --project-name pinset"
   },
   "dependencies": {
-    "next": "16.3.6",
+    "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",

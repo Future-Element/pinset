@@ -67,7 +67,9 @@ def fast():
     run(['cargo','test','--workspace','--locked'],'rust-contracts')
     run(['python3','scripts/security_audit.py'],'cargo-security')
     run(['python3','scripts/tests/contracts.py'],'application-contracts')
-    run(['python3','scripts/tests/migration.py'],'standalone-migration-contracts')
+    # uuid imports the standard-library platform module; exclude sibling test
+    # scripts from Python's import path so this cannot launch platform.py.
+    run(['python3','-I','scripts/tests/migration.py'],'standalone-migration-contracts')
     run(['python3','scripts/tests/surfaces.py'],'distribution-contracts')
 def acceptance():
     run(['cargo','build','--workspace','--bins','--locked'],'acceptance-binaries')

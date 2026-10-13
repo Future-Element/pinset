@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 3.0.4 - 2026-10-13
 
+- Add a standalone, explicit Pinset 2.x to 3.x upgrade utility with verified installation, migration, activation and guarded cleanup; keep it separate from the public CLI.
+- Restore Unicode display-width handling for installation progress so Chinese frames repaint in place instead of wrapping into the terminal history. Cover wide and narrow terminals with screen-level regression tests.
+- Pass pnpm 10's Node-version override through its configuration namespace so `pnpm install` accepts the managed launch arguments while retaining the selected Node runtime.
+- Update website Next.js to 16.3.8 for the GHSA-cjq9-62q9-8jv4 security patch.
+- Update the locked quinn-proto dependency to 0.11.18 to resolve five advisories found by the local verification scan.
 - Find unpublished release drafts through the authenticated, paginated inventory and verify them by release ID; reject missing, duplicate or changed drafts.
 - Honor Git text attributes when computing verification source fingerprints, including extensionless files and signature armor. Preserve binary bytes and reject actual source drift.
 

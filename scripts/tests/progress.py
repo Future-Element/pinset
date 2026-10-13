@@ -1,5 +1,6 @@
 """Actual terminal progress against a tiny local Go distribution fixture."""
-import errno, fcntl, hashlib, http.server, io, json, os, pty, select, shutil, struct, subprocess, tarfile, termios, time
+import codecs, errno, fcntl, hashlib, http.server, io, json, os, pty, select, shutil, struct, subprocess, tarfile, termios, time
+import pyte
 from pathlib import Path
 from support import BIN, REPORTS
 from https_fixture import create_https_fixture
@@ -56,15 +57,20 @@ def verify_progress(fixture):
     env={**os.environ,**proxy_env,'HOME':str(fixture),'PINSET_HOME':str(fixture/'home'),'TERM':'xterm','LANG':'en_US.UTF-8'}
     for key in ['PINSET_IDENTITY','PINSET_PROFILE','PINSET_NO_ENV','PINSET_ENV_RESOLVED']:env.pop(key,None)
     root=fixture/'project';root.mkdir()
-    def command(*args,expected=0,terminal=True):
-        argv=[str(BIN),'-C',str(root),'--lang','en',*args]
+    def command(*args,expected=0,terminal=True,language='en',width=180,resize_width=None,check_refresh=False):
+        argv=[str(BIN),'-C',str(root),'--lang',language,*args]
         if not terminal:
             process=subprocess.run(argv,env=env,cwd=root,text=True,capture_output=True,timeout=60)
             assert process.returncode==expected,process.stdout+process.stderr
             return process.stdout,process.stderr
-        master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,180,0,0))
+        master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,width,0,0))
+        # HistoryScreen does not model a GUI terminal's live text reflow. Change
+        # geometry before the writer starts so queued frames retain their size.
+        if resize_width:fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,resize_width,0,0))
         process=subprocess.Popen(argv,env=env,cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=slave)
         os.close(slave);chunks=[];deadline=time.monotonic()+60
+        screen=pyte.HistoryScreen(resize_width or width,30,history=1000);stream=pyte.Stream(screen)
+        decoder=codecs.getincrementaldecoder('utf-8')()
         try:
             while True:
                 assert time.monotonic()<deadline,'terminal progress timeout'
@@ -75,9 +81,17 @@ def verify_progress(fixture):
                         raise
                     if not block:break
                     chunks.append(block)
+                    stream.feed(decoder.decode(block))
             stdout=process.communicate(timeout=5)[0].decode()
             stderr=b''.join(chunks).decode()
             assert process.returncode==expected,stdout+stderr
+            if check_refresh:
+                history=[''.join(line[column].data for column in range(screen.columns)) for line in screen.history.top]
+                rendered='\n'.join(history+screen.display)
+                markers=['下载','解析官方版本','准备安装','连接官方来源','校验制品摘要','解压已校验制品','检查安装内容']
+                assert not any(marker in rendered for marker in markers),'completed progress frames remained on screen:\n'+rendered
+                assert '安装完成' in rendered,rendered
+                (REPORTS/f'progress-screen-{language}-{width}-{resize_width or width}.log').write_text(rendered)
             return stdout,stderr
         finally:
             os.close(master)
@@ -88,6 +102,15 @@ def verify_progress(fixture):
         for token in ['Resolving official version','Downloading',filename,'%','ETA','Extracting verified artifact','Installed']:
             assert token in terminal,(token,terminal)
         (REPORTS/'progress-terminal-known.log').write_text(terminal)
+        # Check the terminal's final screen and scrollback, not just raw output
+        # tokens: each repaint must erase the previous Chinese progress frame.
+        original_home=env['PINSET_HOME']
+        for width,resize_width in [(180,None),(80,None),(40,None),(120,60)]:
+            env['PINSET_HOME']=str(fixture/f'chinese-home-{width}-{resize_width or width}')
+            _,chinese=command('install',language='zh-CN',width=width,resize_width=resize_width,check_refresh=True)
+            assert '下载' in chinese and '安装完成' in chinese,chinese
+            (REPORTS/f'progress-terminal-zh-CN-{width}-{resize_width or width}.log').write_text(chinese)
+        env['PINSET_HOME']=original_home
         downloads=state['downloads']
         _,reused=command('install')
         assert 'Already installed; reused' in reused and 'Downloading' not in reused
@@ -143,6 +166,7 @@ def verify_progress(fixture):
         assert 'artifact integrity mismatch' in failed.lower() and 'Installed' not in failed,failed
         assert not list((fixture/'failure-home/v3/installs').rglob('.pinset-install.toml'))
         return {'terminal':'known-size bar with bytes/speed/ETA; unknown-size spinner without percentage',
+                'unicode_refresh':'Chinese PTY screens and scrollback cleared at 180/80/40 columns and after a 120-to-60-column resize before startup',
                 'cache':'verified cache and existing install explicitly distinguished','json':'silent stderr even on TTY',
                 'redirected':'no terminal control sequences','integrity_failure':'no completed installation',
                 'download_recovery':'three interruptions resume successfully; eight attempts bounded; next invocation resumes retained partial',
