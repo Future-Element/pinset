@@ -46,9 +46,9 @@ try:
     assert integration in installed
     managed=custom_home/'v3/bin'
     assert 'Provider command entries are in '+str(managed) in installed
-    discovered=run(['bash','-c',integration+'\ncommand -v pinset\ncommand -v bun'],env=custom_env)
+    discovered=run(['bash','-c',integration+'\ncommand -v pinset\ncommand -v bun'],env=custom_env,cwd=fixture)
     assert discovered.splitlines()==[str(managed/'pinset'),str(managed/'bun')],discovered
-    routed=run(['bash','-c',integration+'\nbun -v'],env=custom_env,expected=1)
+    routed=run(['bash','-c',integration+'\nbun -v'],env=custom_env,cwd=fixture,expected=1)
     assert 'PINSET_SELECTION_MISSING' in routed and 'PINSET_COMMAND_INVALID' not in routed,routed
 finally:server.shutdown()
 

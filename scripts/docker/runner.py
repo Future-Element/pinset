@@ -32,8 +32,7 @@ start_lock=hashlib.sha256((source/'Cargo.lock').read_bytes()).hexdigest()
 def ignore(directory,names):
     relative=Path(directory).relative_to(source)
     excluded={'node_modules','.git','.next','__pycache__'}
-    if not relative.parts:excluded.update({'output','target','plan','.pnpm-store'})
-    if str(relative)=='.pinset':excluded.update({'acceptance','local'})
+    if not relative.parts:excluded.update({'output','target','plan','.pnpm-store','.pinset','.venv'})
     if str(relative)=='editors/vscode':excluded.add('dist')
     if str(relative)=='website':excluded.add('out')
     return names.intersection(excluded) if isinstance(names,set) else set(names)&excluded
