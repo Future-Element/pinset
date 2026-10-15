@@ -1,5 +1,11 @@
 # Change Log
 
+## 3.0.6 - 2026-10-15
+
+- Keep nested folders from overwriting a parent project's SDK settings and bind each root independently in multi-root workspaces.
+- Use the installed global Flutter SDK path when no project-local binding exists.
+- Package alongside Pinset 3.0.6 with local extension-host regression coverage.
+
 ## 3.0.1 - 2026-10-06
 
 - Package the extension alongside Pinset 3.0.1 and its simplified version-switching commands.

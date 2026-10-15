@@ -67,8 +67,8 @@ def fast():
     run(['cargo','test','--workspace','--locked'],'rust-contracts')
     run(['python3','scripts/security_audit.py'],'cargo-security')
     run(['python3','scripts/tests/contracts.py'],'application-contracts')
-    # uuid imports the standard-library platform module; exclude sibling test
-    # scripts from Python's import path so this cannot launch platform.py.
+    # The standalone migration runner explicitly loads its helper modules;
+    # isolate its imports from the repository and host Python configuration.
     run(['python3','-I','scripts/tests/migration.py'],'standalone-migration-contracts')
     run(['python3','scripts/tests/surfaces.py'],'distribution-contracts')
 def acceptance():
@@ -106,9 +106,9 @@ finally:
     image=os.environ.get('PINSET_VERIFY_IMAGE_DIGEST','')
     report={'protocol':'pinset-verification/3','execution':'local-docker','container_id':os.environ.get('PINSET_VERIFY_CONTAINER_ID',''),'container_reused':True,'suite':suite,'commit':commit,'source_clean':not changes,'source_fingerprint':start_fingerprint,'lock_sha256':start_lock,'image_digests':{'verify':image,'rust':'sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3','node':'sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553'},'commands':commands,'suites':results,'unverified':['Windows x86_64 native runtime; only target compilation and path/credential contracts','macOS aarch64 native runtime; only target compilation and path/credential contracts'],'arm64_execution':'QEMU emulation; no native ARM64 host'}
     required={'fast':['contracts.json','distribution.json','cargo-security.json'],
-      'acceptance':['real-sdks.json','frozen-selectors.json'],
+      'acceptance':['real-sdks.json','frozen-selectors.json','python-regressions.json','toolchain-regressions.json','venv-recovery.json'],
       'platform':['platform.json','frozen-selectors.json'],
-      'integrations':['integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json']}
+      'integrations':['integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json','environment-access.json']}
     report['runtime_exemptions']=RUNTIME_EXEMPTIONS
     report['unverified'].append(LARGE_ARTIFACT_BOUNDARY)
     report['evidence_files']={}

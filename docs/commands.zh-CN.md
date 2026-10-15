@@ -40,6 +40,8 @@ pinset remove <tool>... [--global] [--plan]
 
 严格按现有锁安装，不解析新版本。离线缓存仍校验摘要；repair 不接管外部安装。只有有效 Pinset 环境可明确重建。
 
+指定工具时只安装和绑定这些工具及其锁定运行时依赖，例如 pnpm 所需的 Node；不会处理无关的 Python 环境或 Flutter 链接。`--recreate-venv` 要求本次选择包含 Python。安装和执行都会按当前配置重新验证锁的校验策略。
+
 交互终端中的 `use` 和 `install` 在 stderr 展示解析与安装阶段。下载大小已知时显示百分比、字节数、速度与预计剩余时间；大小未知时显示字节数与速度。已校验缓存和现有安装复用会明确提示。JSON 和 stderr 重定向时不显示进度界面。
 
 ```text
@@ -130,6 +132,8 @@ pinset env list [--profile <profile>]
 
 值来自隐藏交互或 stdin；禁止覆盖工具链与 Pinset 控制变量，执行时变量冲突报错。
 
+修改值或授权要求 profile 明确记录 `owner_recipients`。旧 profile 仍可读取；修改前需在配置中确认公开 owner 和 grant，使 recipients 等于二者并集，再执行 `pinset env trust add`。配置中不能保存私钥。
+
 ```text
 pinset env set <name> --profile <profile> [--stdin]
 ```
@@ -158,6 +162,8 @@ pinset env access request --ci
 
 按公开请求重新加密指定 profile 并授权。
 
+重复相同授权不写入；相同请求 ID 改换公钥会报错。有效接收者由已确认的 owner 和当前授权共同组成。
+
 ```text
 pinset env access grant <request-file> --profile <profile>
 ```
@@ -166,6 +172,8 @@ pinset env access grant <request-file> --profile <profile>
 ### `env access revoke`
 
 移除请求对应的接收者并重新加密；不能撤销对方已读取或复制的秘密。
+
+同一公钥仍属于 owner 或其他有效授权时，会保留其访问权限。
 
 ```text
 pinset env access revoke <request-id> --profile <profile>
@@ -256,6 +264,8 @@ pinset self completions <bash|zsh|fish|powershell>
 ### `self repair`
 
 恢复当前项目和全局选择的中断事务，处理 CLI/shim 更新中断，并修复受管入口。未完成事务恢复原配置、锁、加密 profile 和本地绑定；已完成事务只清除残留标记。此命令不撤销已完成的版本切换，--plan 只读预览恢复内容。
+
+同时恢复中断的受管 venv 重建及入口发布。记录的 venv 创建进程仍运行时返回 `PINSET_VENV_BUSY`，等待其退出后重试；不会删除正在写入的目录。Windows 无法原子替换运行中的入口时保留旧文件并报错。外部或缺少所有权证明的入口也会保留，需先检查再修复。
 
 ```text
 pinset self repair [--plan]

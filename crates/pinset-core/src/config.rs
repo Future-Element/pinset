@@ -47,6 +47,7 @@ impl ProjectConfig {
             ));
         }
         validate_id(&self.project_id)?;
+        self.policy.validate()?;
         for (name, selector) in &self.tools {
             validate_tool(name)?;
             if selector.is_empty() {
@@ -72,8 +73,11 @@ impl ProjectConfig {
                 "unsupported project platform",
             ));
         }
-        for name in self.environment.profiles.keys() {
+        for (name, profile) in &self.environment.profiles {
             validate_id(name)?;
+            if profile.owner_recipients.is_some() {
+                profile.validate_authorization()?;
+            }
         }
         if let Some(name) = &self.environment.default
             && !self.environment.profiles.contains_key(name)
@@ -106,6 +110,8 @@ impl ProjectConfig {
                     format!("{name} selection changed; run pinset use"),
                 ));
             }
+            self.policy
+                .validate_tool(tool, std::time::SystemTime::now())?;
         }
         Ok(())
     }
@@ -158,8 +164,194 @@ pub struct ProjectEnvironment {
 #[serde(deny_unknown_fields)]
 pub struct ProfileConfig {
     pub recipients: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_recipients: Option<Vec<String>>,
     #[serde(default)]
     pub grants: BTreeMap<String, String>,
+}
+impl ProfileConfig {
+    fn recipient_union(&self) -> Result<Vec<String>> {
+        let owners = self.owner_recipients.as_ref().ok_or_else(|| {
+            failure(
+                "PINSET_ACCESS_ROLES_REQUIRED",
+                "confirm the profile owners and set owner_recipients = [\"age...\"] in its .pinset/config.toml profile block, then run pinset env trust add; existing recipients cannot establish ownership",
+            )
+        })?;
+        if owners.is_empty() {
+            return Err(failure(
+                "PINSET_ACCESS_OWNER_REQUIRED",
+                "owner_recipients must explicitly retain at least one confirmed owner",
+            ));
+        }
+        let mut recipients = owners
+            .iter()
+            .chain(self.grants.values())
+            .cloned()
+            .collect::<Vec<_>>();
+        recipients.sort();
+        recipients.dedup();
+        Ok(recipients)
+    }
+    pub fn validate_authorization(&self) -> Result<Vec<String>> {
+        let recipients = self.recipient_union()?;
+        let mut configured = self.recipients.clone();
+        configured.sort();
+        configured.dedup();
+        if configured != recipients {
+            return Err(failure(
+                "PINSET_ACCESS_METADATA_INVALID",
+                "recipients must exactly match confirmed owner_recipients and grants; review the public authorization metadata and run pinset env trust add after correcting it",
+            ));
+        }
+        Ok(recipients)
+    }
+    pub fn grant_recipient(&mut self, id: &str, recipient: &str) -> Result<bool> {
+        self.validate_authorization()?;
+        if let Some(existing) = self.grants.get(id) {
+            if existing != recipient {
+                return Err(failure(
+                    "PINSET_ACCESS_REQUEST_CONFLICT",
+                    "request ID is already bound to another recipient; use a new access request",
+                ));
+            }
+            return Ok(false);
+        }
+        self.grants.insert(id.into(), recipient.into());
+        self.recipients = self.recipient_union()?;
+        Ok(true)
+    }
+    pub fn revoke_recipient(&mut self, id: &str) -> Result<()> {
+        self.validate_authorization()?;
+        if self.grants.remove(id).is_none() {
+            return Err(failure("PINSET_ACCESS_MISSING", id.to_owned()));
+        }
+        self.recipients = self.recipient_union()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod profile_authorization_tests {
+    use super::*;
+
+    fn profile() -> ProfileConfig {
+        ProfileConfig {
+            recipients: vec!["owner".into()],
+            owner_recipients: Some(vec!["owner".into()]),
+            grants: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn request_ids_are_immutable_and_same_recipient_is_idempotent() {
+        let mut profile = profile();
+        assert!(profile.grant_recipient("request", "first").unwrap());
+        let before = profile.clone();
+        assert!(!profile.grant_recipient("request", "first").unwrap());
+        assert_eq!(profile, before);
+        assert_eq!(
+            profile
+                .grant_recipient("request", "second")
+                .unwrap_err()
+                .code(),
+            "PINSET_ACCESS_REQUEST_CONFLICT"
+        );
+        assert_eq!(profile, before);
+        profile.revoke_recipient("request").unwrap();
+        assert_eq!(profile.recipients, ["owner"]);
+    }
+
+    #[test]
+    fn revocation_preserves_owner_and_other_grant_sources() {
+        let mut profile = profile();
+        profile.grant_recipient("owner-request", "owner").unwrap();
+        profile.revoke_recipient("owner-request").unwrap();
+        assert_eq!(profile.recipients, ["owner"]);
+        profile.grant_recipient("first", "guest").unwrap();
+        profile.grant_recipient("second", "guest").unwrap();
+        profile.revoke_recipient("first").unwrap();
+        assert_eq!(profile.recipients, ["guest", "owner"]);
+        profile.revoke_recipient("second").unwrap();
+        assert_eq!(profile.recipients, ["owner"]);
+    }
+
+    #[test]
+    fn ambiguous_legacy_metadata_is_never_promoted_to_owner() {
+        let mut profile = profile();
+        profile.owner_recipients = None;
+        let before = profile.clone();
+        assert_eq!(
+            profile
+                .grant_recipient("request", "guest")
+                .unwrap_err()
+                .code(),
+            "PINSET_ACCESS_ROLES_REQUIRED"
+        );
+        assert_eq!(profile, before);
+        assert_eq!(
+            profile.revoke_recipient("request").unwrap_err().code(),
+            "PINSET_ACCESS_ROLES_REQUIRED"
+        );
+        assert_eq!(profile, before);
+    }
+
+    #[test]
+    fn orphaned_recipients_and_empty_owners_fail_before_mutation() {
+        let mut profile = profile();
+        profile.recipients.push("untracked".into());
+        let before = profile.clone();
+        assert_eq!(
+            profile
+                .grant_recipient("request", "guest")
+                .unwrap_err()
+                .code(),
+            "PINSET_ACCESS_METADATA_INVALID"
+        );
+        assert_eq!(profile, before);
+        profile.owner_recipients = Some(vec![]);
+        assert_eq!(
+            profile.validate_authorization().unwrap_err().code(),
+            "PINSET_ACCESS_OWNER_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn project_validation_checks_explicit_roles_and_keeps_legacy_readable() {
+        let mut config = ProjectConfig::new("authorization-validation".into());
+        config
+            .environment
+            .profiles
+            .insert("development".into(), profile());
+        config.validate().unwrap();
+        config
+            .environment
+            .profiles
+            .get_mut("development")
+            .unwrap()
+            .recipients
+            .push("untracked".into());
+        assert_eq!(
+            config.validate().unwrap_err().code(),
+            "PINSET_ACCESS_METADATA_INVALID"
+        );
+        config
+            .environment
+            .profiles
+            .get_mut("development")
+            .unwrap()
+            .owner_recipients = Some(vec![]);
+        assert_eq!(
+            config.validate().unwrap_err().code(),
+            "PINSET_ACCESS_OWNER_REQUIRED"
+        );
+        config
+            .environment
+            .profiles
+            .get_mut("development")
+            .unwrap()
+            .owner_recipients = None;
+        config.validate().unwrap();
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

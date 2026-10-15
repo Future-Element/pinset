@@ -373,6 +373,7 @@ mod tests {
             "development".into(),
             ProfileConfig {
                 recipients: vec![],
+                owner_recipients: None,
                 grants: Default::default(),
             },
         );

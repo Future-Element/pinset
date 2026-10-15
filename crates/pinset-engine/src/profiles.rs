@@ -6,11 +6,32 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
 };
-use zeroize::Zeroize;
 
 fn relative(profile: &str) -> Result<String> {
     validate_id(profile)?;
     Ok(format!(".pinset/env/{profile}.env"))
+}
+fn authorized_recipients(profile: &ProfileConfig) -> Result<Vec<String>> {
+    let recipients = profile.validate_authorization()?;
+    for recipient in &recipients {
+        pinset_env::validate_recipient(recipient)?;
+    }
+    Ok(recipients)
+}
+fn prepare_profile_edit<T>(
+    context: &ProjectContext,
+    profile: &str,
+    edit: impl FnOnce(&Path, &str) -> pinset_env::Result<T>,
+) -> Result<(T, Vec<u8>)> {
+    let relative = relative(profile)?;
+    // Validate and prepare ciphertext before opening a project transaction.
+    // The temporary directory contains ciphertext and public lock state only.
+    pinset_env::list_profile_names(&context.root, &relative)?;
+    let stage = tempfile::tempdir()?;
+    let filename = "profile.env";
+    fs::copy(context.root.join(relative), stage.path().join(filename))?;
+    let result = edit(stage.path(), filename)?;
+    Ok((result, fs::read(stage.path().join(filename))?))
 }
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +42,21 @@ pub struct AccessRequest {
     pub created_at: u64,
 }
 impl Services {
+    fn commit_prepared_profile(
+        &self,
+        context: &ProjectContext,
+        config: &ProjectConfig,
+        lock: &Lockfile,
+        profile: &str,
+        ciphertext: &[u8],
+    ) -> Result<()> {
+        let relative = relative(profile)?;
+        self.require_current_trust(context)?;
+        let transaction = self.begin_commit(context, config, lock)?;
+        pinset_env::restore_encrypted_profile(&context.root, &relative, ciphertext)?;
+        self.finish_commit(context, &transaction)?;
+        self.refresh_trust(context)
+    }
     fn profile_edit(&self) -> Result<(ProjectContext, StateGuard, ProjectConfig, Lockfile)> {
         let c = self.project()?;
         let guard = self.guard(&c.load()?.project_id)?;
@@ -99,6 +135,7 @@ impl Services {
             name.into(),
             ProfileConfig {
                 recipients: vec![recipient.clone()],
+                owner_recipients: Some(vec![recipient.clone()]),
                 grants: BTreeMap::new(),
             },
         );
@@ -175,7 +212,8 @@ impl Services {
             json!({"protocol":PROTOCOL,"profiles":config.environment.profiles.keys().collect::<Vec<_>>(),"shared_default":config.environment.default,"local_default":self.local_profile(&c)?}),
         )
     }
-    pub fn profile_set(&self, profile: &str, name: &str, mut value: String) -> Result<Value> {
+    pub fn profile_set(&self, profile: &str, name: &str, value: String) -> Result<Value> {
+        let value = zeroize::Zeroizing::new(value);
         pinset_env::validate_variable_name(name)?;
         let (c, _guard, config, lock) = self.profile_edit()?;
         let p = config
@@ -183,30 +221,31 @@ impl Services {
             .profiles
             .get(profile)
             .ok_or_else(|| service_error("PINSET_PROFILE_MISSING", profile))?;
-        let transaction = self.begin_commit(&c, &config, &lock)?;
-        let values = BTreeMap::from([(name.into(), value.clone())]);
-        let result = pinset_env::set_encrypted_profile_values(
-            &c.root,
-            &relative(profile)?,
-            &p.recipients,
-            values,
-        );
-        value.zeroize();
-        result?;
-        self.finish_commit(&c, &transaction)?;
-        self.refresh_trust(&c)?;
+        let recipients = authorized_recipients(p)?;
+        let (_, ciphertext) = prepare_profile_edit(&c, profile, |root, path| {
+            pinset_env::set_encrypted_profile_values(
+                root,
+                path,
+                &recipients,
+                BTreeMap::from([(name.into(), value.to_string())]),
+            )
+        })?;
+        self.commit_prepared_profile(&c, &config, &lock, profile, &ciphertext)?;
         Ok(json!({"protocol":PROTOCOL,"profile":profile,"variable":name,"set":true}))
     }
     pub fn profile_unset(&self, profile: &str, name: &str) -> Result<Value> {
+        pinset_env::validate_variable_name(name)?;
         let (c, _guard, config, lock) = self.profile_edit()?;
-        if !config.environment.profiles.contains_key(profile) {
-            return Err(service_error("PINSET_PROFILE_MISSING", profile));
-        }
-        let transaction = self.begin_commit(&c, &config, &lock)?;
-        let removed =
-            pinset_env::unset_encrypted_profile_value(&c.root, &relative(profile)?, name)?;
-        self.finish_commit(&c, &transaction)?;
-        self.refresh_trust(&c)?;
+        let p = config
+            .environment
+            .profiles
+            .get(profile)
+            .ok_or_else(|| service_error("PINSET_PROFILE_MISSING", profile))?;
+        authorized_recipients(p)?;
+        let (removed, ciphertext) = prepare_profile_edit(&c, profile, |root, path| {
+            pinset_env::unset_encrypted_profile_value(root, path, name)
+        })?;
+        self.commit_prepared_profile(&c, &config, &lock, profile, &ciphertext)?;
         Ok(json!({"protocol":PROTOCOL,"removed":removed}))
     }
     fn local_profile(&self, c: &ProjectContext) -> Result<Option<String>> {
@@ -332,20 +371,19 @@ impl Services {
             .profiles
             .get_mut(profile)
             .ok_or_else(|| service_error("PINSET_PROFILE_MISSING", profile))?;
+        authorized_recipients(p)?;
+        if !p.grant_recipient(&request.id, &request.recipient)? {
+            return Ok(json!({"protocol":PROTOCOL,"granted":request.id,"changed":false}));
+        }
+        let recipients = authorized_recipients(p)?;
         let identities = pinset_env::load_identity_secrets(&self.home)?;
         let document =
             pinset_env::read_encrypted_profile(&c.root, &relative(profile)?, &identities)?;
-        p.grants
-            .insert(request.id.clone(), request.recipient.clone());
-        p.recipients.push(request.recipient);
-        p.recipients.sort();
-        p.recipients.dedup();
-        let recipients = p.recipients.clone();
-        let transaction = self.begin_commit(&c, &config, &lock)?;
-        pinset_env::write_encrypted_profile(&c.root, &relative(profile)?, &document, &recipients)?;
-        self.finish_commit(&c, &transaction)?;
-        self.refresh_trust(&c)?;
-        Ok(json!({"protocol":PROTOCOL,"granted":request.id}))
+        let (_, ciphertext) = prepare_profile_edit(&c, profile, |root, path| {
+            pinset_env::write_encrypted_profile(root, path, &document, &recipients)
+        })?;
+        self.commit_prepared_profile(&c, &config, &lock, profile, &ciphertext)?;
+        Ok(json!({"protocol":PROTOCOL,"granted":request.id,"changed":true}))
     }
     pub fn access_revoke(&self, id: &str, profile: &str) -> Result<Value> {
         let (c, _guard, mut config, lock) = self.profile_edit()?;
@@ -354,20 +392,16 @@ impl Services {
             .profiles
             .get_mut(profile)
             .ok_or_else(|| service_error("PINSET_PROFILE_MISSING", profile))?;
-        let recipient = p
-            .grants
-            .remove(id)
-            .ok_or_else(|| service_error("PINSET_ACCESS_MISSING", id))?;
-        p.recipients
-            .retain(|r| r != &recipient || p.grants.values().any(|g| g == r));
+        authorized_recipients(p)?;
+        p.revoke_recipient(id)?;
+        let recipients = authorized_recipients(p)?;
         let identities = pinset_env::load_identity_secrets(&self.home)?;
         let document =
             pinset_env::read_encrypted_profile(&c.root, &relative(profile)?, &identities)?;
-        let recipients = p.recipients.clone();
-        let transaction = self.begin_commit(&c, &config, &lock)?;
-        pinset_env::write_encrypted_profile(&c.root, &relative(profile)?, &document, &recipients)?;
-        self.finish_commit(&c, &transaction)?;
-        self.refresh_trust(&c)?;
+        let (_, ciphertext) = prepare_profile_edit(&c, profile, |root, path| {
+            pinset_env::write_encrypted_profile(root, path, &document, &recipients)
+        })?;
+        self.commit_prepared_profile(&c, &config, &lock, profile, &ciphertext)?;
         Ok(json!({"protocol":PROTOCOL,"revoked":id}))
     }
     pub fn access_list(&self, profile: &str) -> Result<Value> {

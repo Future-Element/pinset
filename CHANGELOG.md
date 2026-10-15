@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.6 - 2026-10-15
+
+- Separate encrypted profile owners from access grants so revoking a device removes only its access and preserves owners and other grants. Require explicit owner recipients before editing legacy profiles, and validate encrypted changes before starting a transaction.
+- Verify Python's actual interpreter, SDK, isolation and versioned command bindings. Recover owned `.venv` replacement after interruption, refuse active writers and preserve foreign environments.
+- Apply locked artifact policies consistently to resolution, installation and execution. Install only requested tools and their required runtimes; allow ready commands to run independently of unrelated missing installations.
+- Serialize shared downloads, repair installations with recoverable backups, and publish CLI/shim command entries as a verified recoverable transaction. Separate project, resource and maintenance locks to prevent nested lock deadlocks.
+- Preserve full Windows process exit codes, normalize managed command casing, and keep nested and multi-root VS Code SDK bindings within the correct project boundary.
+- Repaint download progress on one physical terminal line across narrow windows and mid-frame terminal resizing.
+- Extend local Docker regression coverage for authorization, Python isolation/recovery, installation and update interruption, command routing, editor bindings and terminal resizing. CI remains release-only; Flutter/Android large SDK runtime tests remain excluded.
+
 ## 3.0.5 - 2026-10-13
 
 - Bind pnpm 10's Node-version override to the selected interpreter's exact version instead of an empty value. Preserve dependency engines validation and avoid a second Node runtime; verify six-project frozen workspace installs through exec and shim.

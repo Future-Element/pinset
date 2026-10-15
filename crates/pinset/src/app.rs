@@ -2,22 +2,19 @@ use crate::args::*;
 use clap::{CommandFactory, Parser};
 use pinset_engine::{Result, Services, service_error};
 use serde_json::Value;
-use std::{
-    io::{self, IsTerminal, Read, Write},
-    process::ExitCode,
-};
+use std::io::{self, IsTerminal, Read, Write};
 
-pub fn start() -> ExitCode {
+pub fn start() -> i32 {
     let raw = std::env::args().collect::<Vec<_>>();
     if raw.get(1).map(String::as_str) == Some("__process-worker") {
-        return ExitCode::from(pinset_engine::process_worker() as u8);
+        return pinset_engine::process_worker();
     }
     if raw.get(1).map(String::as_str) == Some("__env-resolve") {
         return match broker(&raw) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(()) => 0,
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::FAILURE
+                1
             }
         };
     }
@@ -36,7 +33,7 @@ pub fn start() -> ExitCode {
             } else {
                 let _ = error.print();
             }
-            return ExitCode::from(if display { 0 } else { 2 });
+            return if display { 0 } else { 2 };
         }
     };
     let chinese = cli.lang == "zh-CN"
@@ -45,10 +42,10 @@ pub fn start() -> ExitCode {
                 .iter()
                 .any(|key| std::env::var(key).is_ok_and(|v| v.starts_with("zh"))));
     match dispatch(&cli, chinese) {
-        Ok(Output::Native(code)) => ExitCode::from(code.clamp(0, 255) as u8),
+        Ok(Output::Native(code)) => code,
         Ok(Output::Text(s)) => {
             print!("{s}");
-            ExitCode::SUCCESS
+            0
         }
         Ok(Output::Report(value)) => {
             if cli.json {
@@ -56,7 +53,7 @@ pub fn start() -> ExitCode {
             } else {
                 print!("{}", crate::presentation::report(&value, chinese));
             }
-            ExitCode::SUCCESS
+            0
         }
         Err(error) => {
             let code = error.code();
@@ -71,7 +68,7 @@ pub fn start() -> ExitCode {
                 }
                 eprintln!("{error}");
             }
-            ExitCode::FAILURE
+            1
         }
     }
 }

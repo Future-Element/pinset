@@ -1,6 +1,6 @@
 use crate::{ArtifactIntegrity, Error, Result};
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
@@ -8,6 +8,68 @@ use tempfile::Builder;
 const CACHE_DIRECTORY: &str = "cache/downloads";
 const PARTIAL_DIRECTORY: &str = "partial";
 const MAX_CACHE_IMPORT_BYTES: u64 = 1_073_741_824;
+
+pub(crate) struct DownloadGuard(File);
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        let _ = fs4::FileExt::unlock(&self.0);
+    }
+}
+
+pub(crate) fn reject_linked_managed_path(home: &Path, path: &Path) -> Result<()> {
+    if !path.starts_with(home) {
+        return Err(crate::service_error(
+            "PINSET_PATH_UNSAFE",
+            "managed path escaped Pinset home",
+        ));
+    }
+    for parent in path.ancestors() {
+        if fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(crate::service_error(
+                "PINSET_PATH_UNSAFE",
+                "managed path contains a linked ancestor",
+            ));
+        }
+        if parent == home {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn acquire_download_lock(
+    home: &Path,
+    integrity: &ArtifactIntegrity,
+) -> Result<DownloadGuard> {
+    let directory = home.join("state/locks/downloads");
+    for path in [
+        directory.clone(),
+        home.join(CACHE_DIRECTORY)
+            .join(integrity.algorithm().as_str()),
+        home.join(CACHE_DIRECTORY)
+            .join(PARTIAL_DIRECTORY)
+            .join(integrity.algorithm().as_str()),
+    ] {
+        reject_linked_managed_path(home, &path)?;
+    }
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(format!(
+        "{}-{}.lock",
+        integrity.algorithm().as_str(),
+        integrity.cache_key()
+    ));
+    if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(Error::UnsafeDownloadCacheEntry { path });
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    fs4::FileExt::lock(&file)?;
+    Ok(DownloadGuard(file))
+}
 
 pub(crate) fn download_cache_path_for_integrity(
     pinset_home: &Path,
@@ -35,6 +97,7 @@ pub fn import_download_cache_with_integrity(
     archive: &Path,
     integrity: &ArtifactIntegrity,
 ) -> Result<PathBuf> {
+    let _guard = acquire_download_lock(pinset_home, integrity)?;
     let destination = download_cache_path_for_integrity(pinset_home, integrity)?;
     let expected = integrity.canonical();
     let metadata = fs::symlink_metadata(archive).map_err(|source| Error::ReadDownloadCache {

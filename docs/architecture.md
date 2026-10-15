@@ -20,11 +20,21 @@ Every operation carries an explicit canonical project root and filesystem direct
 
 Writers hold a project lock and a shared maintenance lock. Cleanup uses the exclusive maintenance lock. Install staging has a per-install lock; registry and shim updates have separate locks. Config and lock writes are individually atomic and protected by a journal plus `.pinset/local/transaction.json`. Readers reject an unfinished pair. Local bindings complete before the journal is committed and the marker is removed.
 
+Artifact locks use the checksum algorithm and digest, independently of the installation identity. SDKs with different Rust profiles or components cannot race over a shared partial download. Managed installation repair quarantines and restores payloads under the same per-install lock.
+
+Project and internal resource locks have separate namespaces. A project ID equal to `shims`, `registry`, `self-update` or `maintenance` cannot collide with an internal lock or turn a project operation into exclusive cleanup.
+
 `self repair` recovers interrupted transactions for the current project and global selections. Prepared journals restore prior config, lock, encrypted profiles and local bindings. Committed or already recovered journals with a surviving marker need marker cleanup only. Recovery validates prior state before writes and runs under the same project and maintenance locks. `--plan` previews recovery without creating state. Completed version changes are switched back using `use`.
+
+Venv journals are registered globally and bound to the project directory, both interpreter identities and an owned creation token. Python creates the environment at its final path; a failed or interrupted replacement restores the previous owned environment. Recovery precedes configuration recovery and refuses to remove directories while the recorded writer process is still alive. Cleanup protects both interpreter identities until recovery completes.
+
+Managed CLI/router and alias publication stages files and preserves backups on the destination volume. A refresh journal covers all entries and the command registry, including CLI/router digests. Replacement never unlinks an old entry first. Interrupted publication can resume or roll back, and unchanged entries are reused. A legacy registry without a CLI digest cannot authorize replacement of a different CLI found in the managed bin directory; confirm and move that unproven entry before running repair. Repair does not execute unknown binaries to establish ownership.
 
 ## Execution and evidence
 
 Shims and `exec` use core's route plan and never install or download. Managed entries missing from a project fail. Absolute or explicit external commands are native executions, not sandboxed processes. Child PATH includes managed shims to enforce subsequent managed entry routing. Java uses one JDK root; Python/pip share one owned environment; pnpm uses selected Node; Go sets `GOTOOLCHAIN=local`; Rust uses its exact SDK.
+
+Every route validates the current configuration policy against the lock. Availability checks cover the requested tool and required runtimes, so an unrelated missing SDK does not block a usable entry. Python routing checks `pyvenv.cfg`, package isolation and the interpreter's actual base SDK; versioned Python/pip aliases and child PATH use that same environment. Explicit Python probes report executable, environment prefix, base prefix and base executable as well as version. Windows bare managed commands are matched without case sensitivity, and native exit codes remain full-width through both the CLI and its private process worker.
 
 Default `check` performs no network, subprocess, decryption or writes. Deep checks inspect payloads; probes are explicit, bounded subprocesses. Reports distinguish configuration, installation, binding and entry observation. Static Maven/Gradle/IDE declarations never imply observed compiler or daemon state.
 

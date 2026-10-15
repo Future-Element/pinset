@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '3.0.5',
+    [string] $Version = '3.0.6',
     [string] $InstallDir = (Join-Path $(if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }) 'v3\bin')
 )
 

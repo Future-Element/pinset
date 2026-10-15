@@ -129,6 +129,8 @@ def python():
     data(external,'use','python@3.13',expected=1,timeout=1200)
     data(external,'self','repair')
     assert (external/'.venv/user-data').read_text()=='preserve'
+    from python_regressions import verify_python_regressions
+    verify_python_regressions(a,b)
     return a,b
 
 def runtimes():
@@ -222,7 +224,12 @@ if __name__=='__main__':
     roots=[]
     try:
         for feature in ['8','11','17','21','25','latest']:roots.append(java(feature))
-        python();runtimes();switch_versions();lifecycle()
+        python_projects=python();runtime_projects=runtimes()
+        from toolchain_regressions import verify_toolchain_regressions
+        verify_toolchain_regressions(runtime_projects[0],python_projects[0])
+        from venv_recovery import verify_venv_recovery
+        report('venv-recovery',status='passed',results=verify_venv_recovery(python_projects[0]))
+        switch_versions();lifecycle()
         report('real-sdks',status='passed',manifest=manifest,java_versions=[lock['version'] for _,lock,_ in roots],
                gui_scope='JDK inventory only here; actual GUI starts belong to integrations')
     except Exception:

@@ -192,7 +192,9 @@ def verify_self_update(source, fixture, current_version):
             assert error['error']['code'] == 'PINSET_UPDATE_CHECKSUM'
             assert snapshot() == before
             state['checksum_error'] = 'corrupt'
-            run(command, env=env, cwd=project, expected=1, timeout=120)
+            corrupt = json.loads(run(command, env=env, cwd=project, expected=1, timeout=120))
+            assert corrupt['error']['code'] == 'PINSET_PROVIDER_FAILED', corrupt
+            assert 'artifact integrity mismatch' in corrupt['error']['message'], corrupt
             assert run([bin_dir/'pinset', '--version'], env=env).strip() == 'pinset '+(current_version if index == 0 else versions[0])
             state['checksum_error'] = None
             result = json.loads(run(command, env=env, cwd=project, timeout=120))
@@ -206,6 +208,35 @@ def verify_self_update(source, fixture, current_version):
             current = json.loads(run(command, env=env, cwd=project))
             assert current['already_current'] and snapshot() == before
             assert not any(path.endswith('.zip') for _, _, path in state['requests'][first_request:]), 'same version downloaded binaries'
+            if index == 0:
+                # Run the newer image with a prepared journal restoring an older
+                # pair. Recovery must hand off to that older CLI before router
+                # version validation and remain safe to repeat.
+                backup = bin_dir/'.pinset-update-recovery-fixture'
+                backup.mkdir()
+                names = ['pinset', 'pinset-shim']
+                for name in names:
+                    shutil.copy2(bin_dir/name, backup/name)
+                with zipfile.ZipFile(artifacts[versions[1]]) as incoming:
+                    for name in names:
+                        staged = bin_dir/('.recovery-'+name)
+                        staged.write_bytes(incoming.read(name));staged.chmod(0o755)
+                        staged.replace(bin_dir/name)
+                journal = home/'v3/state/self-update/transaction.json'
+                journal.write_text(json.dumps({'protocol':'pinset/3', 'destination':str(bin_dir.resolve()),
+                                              'backup':str(backup.resolve()), 'phase':'prepared', 'names':names}))
+                repair_command = [bin_dir/'pinset', '-C', project, '--json', 'self', 'repair']
+                before = snapshot()
+                assert json.loads(run(repair_command+['--plan'], env=env))['binary_update'] == 'prepared'
+                assert snapshot() == before
+                recovered = json.loads(run(repair_command, env=env, timeout=120))
+                assert recovered['binary_update'] == 'prepared'
+                assert run([bin_dir/'pinset', '--version'], env=env).strip() == 'pinset '+version
+                for name in names:
+                    assert (bin_dir/name).read_bytes() == (backup/name).read_bytes()
+                assert not journal.exists()
+                assert json.loads(run(repair_command, env=env, timeout=120))['binary_update'] is None
+                assert json.loads((home/'v3/state/shims.json').read_text())['digest'] == hashlib.sha256((bin_dir/'pinset-shim').read_bytes()).hexdigest()
         state['latest'] = versions[0]
         before = snapshot()
         error = json.loads(run(command+['--plan'], env=env, cwd=project, expected=1))

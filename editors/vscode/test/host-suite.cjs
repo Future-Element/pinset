@@ -22,5 +22,6 @@ exports.run=async function(){
   const settings=parse(settingsText);
   assert.equal(settings['java.jdt.ls.java.home'],'/external/language-server-jdk');
   assert(settings['java.configuration.runtimes'].some(r=>r.path===process.env.PINSET_EDITOR_JDK&&r.default===true));
-  fs.writeFileSync(process.env.PINSET_EDITOR_RESULT,JSON.stringify({protocol:'pinset-editor-acceptance/3',host:'real-vscode-extension-host',commands:'install/check/probe/bind',projectJdk:process.env.PINSET_EDITOR_JDK,languageServerJdk:'preserved separately'}));
+  const bindingContexts=await require('./binding-host-suite.cjs').run(root,process.env.PINSET_EDITOR_CLI,process.env.PINSET_EDITOR_JDK);
+  fs.writeFileSync(process.env.PINSET_EDITOR_RESULT,JSON.stringify({protocol:'pinset-editor-acceptance/3',host:'real-vscode-extension-host',commands:'install/check/probe/bind',projectJdk:process.env.PINSET_EDITOR_JDK,languageServerJdk:'preserved separately',bindingContexts}));
 };

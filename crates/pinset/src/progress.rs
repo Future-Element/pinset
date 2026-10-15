@@ -1,7 +1,9 @@
 //! Transient stderr UI. Engine events never alter machine-readable reports.
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use console::{Term, truncate_str};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle, TermLike};
 use pinset_engine::{DownloadProgressEvent, InstallPhase, ProgressEvent};
 use std::{
+    io,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -12,6 +14,111 @@ struct DisplayState {
     chinese: bool,
     prefix: String,
     bar: Option<ProgressBar>,
+    download_width: u16,
+    download_filename: String,
+}
+
+/// A progress frame owns one physical row, even if the window shrinks between
+/// measuring its width and writing it. indicatif's normal target counts wrapped
+/// rows using the old width; queued output can then wrap at the new width and
+/// leave rows outside that count. Give it a single logical canvas and clip the
+/// complete frame at flush instead. Disable wrapping during that one write so
+/// a concurrent resize cannot create a second row.
+#[derive(Debug)]
+struct SingleLineTerminal {
+    term: Term,
+    frame: Mutex<String>,
+}
+impl SingleLineTerminal {
+    fn target() -> ProgressDrawTarget {
+        let term = Term::buffered_stderr();
+        if !term.is_term() || console::is_dumb() {
+            return ProgressDrawTarget::hidden();
+        }
+        ProgressDrawTarget::term_like_with_hz(
+            Box::new(Self {
+                term,
+                frame: Mutex::new(String::new()),
+            }),
+            10,
+        )
+    }
+}
+impl Drop for SingleLineTerminal {
+    fn drop(&mut self) {
+        // A failed/partial terminal write may not have reached the restoration
+        // bytes. Restore wrapping again without clearing permanent messages.
+        let _ = self.term.write_str("\x1b[?7h");
+        let _ = self.term.flush();
+    }
+}
+impl TermLike for SingleLineTerminal {
+    fn width(&self) -> u16 {
+        u16::MAX
+    }
+    fn height(&self) -> u16 {
+        1
+    }
+    fn move_cursor_up(&self, _: usize) -> io::Result<()> {
+        Ok(())
+    }
+    fn move_cursor_down(&self, _: usize) -> io::Result<()> {
+        Ok(())
+    }
+    fn move_cursor_right(&self, _: usize) -> io::Result<()> {
+        Ok(())
+    }
+    fn move_cursor_left(&self, _: usize) -> io::Result<()> {
+        Ok(())
+    }
+    fn write_line(&self, value: &str) -> io::Result<()> {
+        self.write_str(value)
+    }
+    fn write_str(&self, value: &str) -> io::Result<()> {
+        // indicatif pads the virtual canvas to its width. The line is erased
+        // before drawing, so no padding (or cursor movement) is necessary.
+        if !value.trim().is_empty() {
+            self.frame.lock().unwrap().push_str(value);
+        }
+        Ok(())
+    }
+    fn clear_line(&self) -> io::Result<()> {
+        self.frame.lock().unwrap().clear();
+        Ok(())
+    }
+    fn flush(&self) -> io::Result<()> {
+        let frame = self.frame.lock().unwrap();
+        let width = usize::from(self.term.size().1.saturating_sub(1));
+        let clipped = truncate_str(&frame, width, "");
+        // Keep restoration in the same buffered write on success and failure.
+        self.term
+            .write_str(&format!("\r\x1b[2K\x1b[?7l{clipped}\x1b[?7h\r"))?;
+        self.term.flush()
+    }
+}
+
+fn download_style(known: bool, width: u16) -> ProgressStyle {
+    // Progress remains visible in narrow windows; filenames and estimates are
+    // supplementary. The draw target still clips old, queued wider frames.
+    let template = match (known, width) {
+        (true, 0..=39) => "{percent}% {bytes} {msg}",
+        (true, 40..=59) => "{spinner:.cyan} {percent:>3}% {bytes}/{total_bytes} {msg} {prefix}",
+        (true, 60..=79) => {
+            "{spinner:.cyan} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} {msg} {prefix}"
+        }
+        (true, 80..=119) => {
+            "{spinner:.cyan} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} {prefix} {msg}"
+        }
+        (true, _) => {
+            "{spinner:.cyan} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} ETA {eta} {prefix} {msg} [{bar:24.cyan/blue}]"
+        }
+        (false, 0..=39) => "{spinner:.cyan} {bytes} {msg}",
+        (false, 40..=79) => "{spinner:.cyan} {bytes} {bytes_per_sec} {msg} {prefix}",
+        (false, _) => "{spinner:.cyan} {bytes} {bytes_per_sec} {prefix} {msg} [{elapsed_precise}]",
+    };
+    ProgressStyle::with_template(template)
+        .expect("static download template")
+        .progress_chars("=>-")
 }
 fn clean(value: &str) -> String {
     value.chars().filter(|c| !c.is_control()).collect()
@@ -26,6 +133,8 @@ impl ProgressDisplay {
             chinese,
             prefix: String::new(),
             bar: None,
+            download_width: 0,
+            download_filename: String::new(),
         })))
     }
     pub fn reporter(&self) -> impl Fn(ProgressEvent) + Send + Sync + 'static {
@@ -63,13 +172,21 @@ impl DisplayState {
         );
         bar.set_prefix(self.prefix.clone());
         bar.set_message(message);
-        bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(10));
+        bar.set_draw_target(SingleLineTerminal::target());
         bar.enable_steady_tick(Duration::from_millis(100));
         self.bar = Some(bar);
     }
     fn note(&mut self, message: String) {
         self.clear();
         eprintln!("{} {}", self.prefix, message);
+    }
+    fn download_message(&self) -> String {
+        let label = self.text("Downloading", "下载");
+        if self.download_width < 80 {
+            label.into()
+        } else {
+            format!("{label} {}", self.download_filename)
+        }
     }
     fn report(&mut self, event: ProgressEvent) {
         match event {
@@ -102,24 +219,13 @@ impl DisplayState {
             }
             ProgressEvent::Download(DownloadProgressEvent::Started { url, total_bytes }) => {
                 self.clear();
-                let template = if total_bytes.is_some() {
-                    "{spinner:.cyan} {prefix} {msg} [{bar:24.cyan/blue}] {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} ETA {eta}"
-                } else {
-                    "{spinner:.cyan} {prefix} {msg} {bytes} {bytes_per_sec} [{elapsed_precise}]"
-                };
+                self.download_width = Term::stderr().size().1;
+                self.download_filename = filename(&url);
                 let bar = ProgressBar::with_draw_target(total_bytes, ProgressDrawTarget::hidden())
-                    .with_style(
-                        ProgressStyle::with_template(template)
-                            .expect("static download template")
-                            .progress_chars("=>-"),
-                    );
+                    .with_style(download_style(total_bytes.is_some(), self.download_width));
                 bar.set_prefix(self.prefix.clone());
-                bar.set_message(format!(
-                    "{} {}",
-                    self.text("Downloading", "下载"),
-                    filename(&url)
-                ));
-                bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(10));
+                bar.set_message(self.download_message());
+                bar.set_draw_target(SingleLineTerminal::target());
                 bar.enable_steady_tick(Duration::from_millis(100));
                 self.bar = Some(bar);
             }
@@ -128,6 +234,12 @@ impl DisplayState {
                 total_bytes,
             }) => {
                 if let Some(bar) = &self.bar {
+                    let width = Term::stderr().size().1;
+                    if width != self.download_width {
+                        self.download_width = width;
+                        bar.set_style(download_style(total_bytes.is_some(), width));
+                        bar.set_message(self.download_message());
+                    }
                     if let Some(total) = total_bytes {
                         bar.set_length(total);
                     }

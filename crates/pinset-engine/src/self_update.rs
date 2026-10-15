@@ -368,20 +368,66 @@ struct BinaryJournal {
     phase: String,
     names: Vec<String>,
 }
+fn copy_binary_atomic(source: &Path, destination: &Path) -> Result<()> {
+    if !source.is_file() || fs::symlink_metadata(source)?.file_type().is_symlink() {
+        return Err(service_error(
+            "PINSET_UPDATE_PAIR",
+            "update inputs must be regular binaries",
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| service_error("PINSET_UPDATE_PAIR", "binary has no parent"))?;
+    let temporary = tempfile::Builder::new()
+        .prefix(".pinset-binary-")
+        .tempfile_in(parent)?;
+    fs::copy(source, temporary.path())?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(destination)
+        .map_err(|error| error.error)?;
+    Ok(())
+}
 fn rollback(journal: &BinaryJournal) -> Result<()> {
+    // Validate the complete pair before changing either destination. Backups
+    // remain intact so a second interrupted recovery can repeat the rollback.
     for name in &journal.names {
         let backup = journal.backup.join(name);
-        if backup.is_file() {
-            let dst = journal.destination.join(name);
-            if dst.exists() {
-                if cfg!(windows) {
-                    fs::rename(&dst, journal.backup.join(format!("failed-{name}")))?;
-                } else {
-                    fs::remove_file(&dst)?;
-                }
-            }
-            fs::rename(backup, dst)?;
+        if !backup.is_file() || fs::symlink_metadata(&backup)?.file_type().is_symlink() {
+            return Err(service_error(
+                "PINSET_UPDATE_RECOVERY",
+                "complete regular binary backups are required",
+            ));
         }
+        let destination = journal.destination.join(name);
+        if fs::symlink_metadata(&destination)
+            .is_ok_and(|m| !m.is_file() || m.file_type().is_symlink())
+        {
+            return Err(service_error(
+                "PINSET_UPDATE_RECOVERY",
+                "binary destination is linked or external",
+            ));
+        }
+    }
+    for name in &journal.names {
+        let backup = journal.backup.join(name);
+        let dst = journal.destination.join(name);
+        if dst.is_file() && fs::read(&dst)? == fs::read(&backup)? {
+            continue;
+        }
+        let staged = journal
+            .backup
+            .join(format!("restore-{name}-{}", uuid::Uuid::new_v4()));
+        copy_binary_atomic(&backup, &staged)?;
+        if fs::symlink_metadata(&dst).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(service_error(
+                "PINSET_UPDATE_RECOVERY",
+                "binary destination is linked",
+            ));
+        }
+        // Atomic overwrite keeps the prior entry visible on failure and lets
+        // processes with an open old image continue using that image.
+        fs::rename(staged, dst)?;
     }
     Ok(())
 }
@@ -391,16 +437,23 @@ pub(crate) fn replace_binary_pair(
     home: &Path,
     names: &[String],
 ) -> Result<PathBuf> {
+    let path = home.join("state/self-update/transaction.json");
+    if fs::symlink_metadata(&path).is_ok() {
+        return Err(service_error(
+            "PINSET_UPDATE_RECOVERY",
+            "recover the existing binary update first",
+        ));
+    }
+    let destination = destination.canonicalize()?;
     let backup = destination.join(format!(".pinset-update-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&backup)?;
-    let journal = BinaryJournal {
+    let mut journal = BinaryJournal {
         protocol: PROTOCOL.into(),
-        destination: destination.canonicalize()?,
+        destination: destination.clone(),
         backup: backup.clone(),
-        phase: "prepared".into(),
+        phase: "preparing".into(),
         names: names.to_vec(),
     };
-    let path = home.join("state/self-update/transaction.json");
     write_json(&path, &journal)?;
     let result = (|| -> Result<()> {
         for name in names {
@@ -411,8 +464,10 @@ pub(crate) fn replace_binary_pair(
                     "both owned regular binaries must exist",
                 ));
             }
-            fs::copy(&dst, backup.join(name))?;
+            copy_binary_atomic(&dst, &backup.join(name))?;
         }
+        journal.phase = "prepared".into();
+        write_json(&path, &journal)?;
         for name in names {
             let staged = backup.join(format!("staged-{name}"));
             let input = source.join(name);
@@ -422,19 +477,18 @@ pub(crate) fn replace_binary_pair(
                     "replacement binaries must be regular files",
                 ));
             }
-            fs::copy(input, &staged)?;
-            // Windows permits renaming an in-use executable. Keep its inode
-            // until the old process exits, then atomically publish the stage.
+            copy_binary_atomic(&input, &staged)?;
+            // Publish with one atomic overwrite. Never move away a callable
+            // entry before its replacement is ready; open old images remain.
             let dst = destination.join(name);
-            if cfg!(windows) {
-                fs::rename(&dst, backup.join(format!("running-{name}")))?;
-            }
             fs::rename(staged, &dst)?;
         }
         Ok(())
     })();
     if let Err(error) = result {
-        rollback(&journal)?;
+        if journal.phase == "prepared" {
+            rollback(&journal)?;
+        }
         fs::remove_file(path)?;
         return Err(error);
     }
@@ -450,13 +504,16 @@ impl Services {
         if !plan {
             self.ensure_home()?;
         }
+        // A configuration rollback may validate its prior Python binding. Finish
+        // the independently journaled venv replacement before that validation.
+        let venv_transactions = self.recover_venv_transactions(plan)?;
         let transactions = self.recover_transactions(plan)?;
         // Release project guards before acquiring the binary-update guard: a
         // valid project identity may have the same name as this internal lock.
         let _guard = if plan {
             None
         } else {
-            Some(self.guard("self-update")?)
+            Some(self.resource_guard("self-update")?)
         };
         let path = self.home.join("state/self-update/transaction.json");
         let mut binary_update = None;
@@ -467,12 +524,15 @@ impl Services {
                     "binary journal is a symlink",
                 ));
             }
-            let journal: BinaryJournal = read_json(&path)?;
+            let mut journal: BinaryJournal = read_json(&path)?;
             let parent = std::env::current_exe()?.parent().unwrap().canonicalize()?;
             if journal.protocol != PROTOCOL
                 || journal.destination != parent
                 || !journal.backup.starts_with(&parent)
                 || journal.backup.parent() != Some(parent.as_path())
+                || fs::symlink_metadata(&journal.backup)?
+                    .file_type()
+                    .is_symlink()
                 || journal.names
                     != [
                         executable_name("pinset", &current_target()),
@@ -484,7 +544,10 @@ impl Services {
                     "invalid binary update journal",
                 ));
             }
-            if !matches!(journal.phase.as_str(), "prepared" | "committed") {
+            if !matches!(
+                journal.phase.as_str(),
+                "preparing" | "prepared" | "committed"
+            ) {
                 return Err(service_error(
                     "PINSET_UPDATE_RECOVERY",
                     "unknown binary update phase",
@@ -494,6 +557,37 @@ impl Services {
             if !plan {
                 if journal.phase == "prepared" {
                     rollback(&journal)?;
+                    // `committed` means the pair transition is complete. Keep
+                    // this existing phase so a restored 3.0.5 CLI can finish.
+                    journal.phase = "committed".into();
+                    write_json(&path, &journal)?;
+                    self.install_shims_from(
+                        &parent.join(executable_name("pinset", &current_target())),
+                        &parent.join(executable_name("pinset-shim", &current_target())),
+                    )?;
+                    fs::remove_file(&path)?;
+                    // The running image may be the discarded newer CLI. Only
+                    // the restored CLI can generate router ownership matching
+                    // the restored pair's compiled version.
+                    drop(_guard);
+                    let output =
+                        Command::new(parent.join(executable_name("pinset", &current_target())))
+                            .arg("-C")
+                            .arg(&self.cwd)
+                            .args(["--json", "self", "repair"])
+                            .env_remove("PINSET_IDENTITY")
+                            .output()?;
+                    if !output.status.success() {
+                        return Err(service_error(
+                            "PINSET_UPDATE_RECOVERY",
+                            "binary rollback completed; rerun self repair with the restored CLI",
+                        ));
+                    }
+                    let mut result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                    result["binary_update"] = serde_json::json!("prepared");
+                    result["transactions"] = serde_json::json!(transactions);
+                    result["venv_transactions"] = serde_json::json!(venv_transactions);
+                    return Ok(result);
                 }
                 self.install_shims()?;
                 fs::remove_file(path)?;
@@ -502,7 +596,7 @@ impl Services {
             self.install_shims()?;
         }
         Ok(
-            serde_json::json!({"protocol":PROTOCOL,"plan":plan,"repaired":!plan,"transactions":transactions,"binary_update":binary_update}),
+            serde_json::json!({"protocol":PROTOCOL,"plan":plan,"repaired":!plan,"transactions":transactions,"venv_transactions":venv_transactions,"binary_update":binary_update}),
         )
     }
     pub(crate) fn validate_new_cli(&self, path: &Path, version: &str) -> Result<()> {
@@ -663,10 +757,41 @@ mod tests {
         }
         // A prepared journal can restore the complete pair after an interrupted replacement.
         rollback(&journal).unwrap();
+        rollback(&journal).unwrap();
         for name in &names {
             assert_eq!(
                 fs::read_to_string(dst.join(name)).unwrap(),
                 format!("old-{name}")
+            );
+            assert_eq!(
+                fs::read_to_string(backup.join(name)).unwrap(),
+                format!("old-{name}")
+            );
+        }
+    }
+    #[test]
+    fn rollback_rejects_an_incomplete_backup_before_changing_either_binary() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("bin");
+        let backup = root.path().join("backup");
+        fs::create_dir(&destination).unwrap();
+        fs::create_dir(&backup).unwrap();
+        for name in ["pinset", "pinset-shim"] {
+            fs::write(destination.join(name), format!("new-{name}")).unwrap();
+        }
+        fs::write(backup.join("pinset"), "old-pinset").unwrap();
+        let journal = BinaryJournal {
+            protocol: PROTOCOL.into(),
+            destination: destination.clone(),
+            backup,
+            phase: "prepared".into(),
+            names: vec!["pinset".into(), "pinset-shim".into()],
+        };
+        assert!(rollback(&journal).is_err());
+        for name in &journal.names {
+            assert_eq!(
+                fs::read_to_string(destination.join(name)).unwrap(),
+                format!("new-{name}")
             );
         }
     }

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 
-type Plan = { protocol: string; tool: string; executable: string; sdk: string; version: string; project: string; environment?: Record<string,string> };
+type Plan = { protocol: string; tool: string; executable: string; sdk: string; version: string; project: string | null; environment?: Record<string,string> };
 type Report = { protocol: string; report: { checks: { tool: string; installed: boolean; bound: boolean; actually_verified: boolean; detail: string }[] } };
 let status: vscode.StatusBarItem;
 let output: vscode.OutputChannel;
@@ -64,11 +64,24 @@ async function bind(): Promise<void> {
   if (!directory || !vscode.workspace.isTrusted) throw new Error("Open a trusted local project first.");
   const routes = await invoke<{ protocol: string; commands: Plan[] }>(["which"]);
   const plans = routes.commands;
-  if (!Array.isArray(plans) || plans.some(p => p.protocol !== "pinset/3")) throw new Error("Invalid Pinset 3 routes");
+  if (!Array.isArray(plans) || plans.some(p => !p || p.protocol !== "pinset/3"
+    || [p.tool, p.executable, p.sdk, p.version].some(value => typeof value !== "string" || !value)
+    || (p.project !== null && (typeof p.project !== "string" || !p.project)))) throw new Error("Invalid Pinset 3 routes");
   const resource = vscode.Uri.file(directory);
+  const folder = vscode.workspace.getWorkspaceFolder(resource);
+  if (!folder || folder.uri.scheme !== "file") throw new Error("Open a local project first.");
+  const normalize = (root: string): string => process.platform === "win32"
+    ? path.win32.toNamespacedPath(path.win32.resolve(root)).toLowerCase() : path.resolve(root);
+  // VS Code reads settings at workspace-folder roots, not nested project roots.
+  // Validate every route before writing any setting for this binding operation.
+  for (const plan of plans) {
+    if (plan.project !== null && normalize(plan.project) !== normalize(folder.uri.fsPath)) {
+      throw new Error(`Pinset project ${plan.project} is not the VS Code workspace folder ${folder.uri.fsPath}. Open the project separately or add it as a workspace folder before binding.`);
+    }
+  }
   for (const plan of plans) {
     if (plan.tool === "python") await updateProjectSetting(resource, "python.defaultInterpreterPath", plan.executable);
-    if (plan.tool === "flutter") await updateProjectSetting(resource, "dart.flutterSdkPath", path.join(plan.project, ".pinset", "local", "flutter-sdk"));
+    if (plan.tool === "flutter") await updateProjectSetting(resource, "dart.flutterSdkPath", plan.project === null ? plan.sdk : path.join(plan.project, ".pinset", "local", "flutter-sdk"));
     if (plan.tool === "rust") {
       const rust = vscode.workspace.getConfiguration("rust-analyzer", resource);
       const existing = rust.get<Record<string,string>>("cargo.extraEnv", {});

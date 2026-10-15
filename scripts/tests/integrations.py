@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from support import *
 from acceptance import select_tool
+from environment_access import verify_access_regressions
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from verification_policy import RUNTIME_EXEMPTIONS
@@ -46,6 +47,7 @@ def credentials():
     data(root,'env','trust','add')
     cli(root,'env','set','JAVA_HOME','--profile','development','--stdin',stdin='blocked',expected=1)
     assert 'AGE-SECRET-KEY-' not in '\n'.join(p.read_text(errors='ignore') for p in Path(original_home).rglob('*') if p.is_file() and p.stat().st_size<1024*1024)
+    report('environment-access',status='passed',results=verify_access_regressions())
     return root
 
 def wrappers():

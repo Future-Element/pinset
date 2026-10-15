@@ -6,7 +6,6 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -45,6 +44,18 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 pub struct StateGuard(std::fs::File, Option<std::fs::File>);
+fn installation_selection<'a>(lock: &'a Lockfile, names: Option<&[String]>) -> Vec<&'a LockedTool> {
+    lock.tools
+        .iter()
+        .filter(|tool| {
+            names.is_none_or(|names| {
+                names.is_empty()
+                    || names.contains(&tool.name)
+                    || (tool.name == "node" && names.iter().any(|name| name == "pnpm"))
+            })
+        })
+        .collect()
+}
 impl Drop for StateGuard {
     fn drop(&mut self) {
         let _ = fs4::FileExt::unlock(&self.0);
@@ -174,21 +185,57 @@ impl Services {
         Ok((config, lock))
     }
     pub fn guard(&self, id: &str) -> Result<StateGuard> {
+        self.state_guard("projects", id)
+    }
+    pub(crate) fn resource_guard(&self, id: &str) -> Result<StateGuard> {
+        self.state_guard("resources", id)
+    }
+    pub(crate) fn maintenance_guard(&self) -> Result<StateGuard> {
         self.ensure_home()?;
-        validate_id(id)?;
-        let dir = self.home.join("state/locks/projects");
-        fs::create_dir_all(&dir)?;
+        let directory = self.home.join("state/locks");
+        crate::download_cache::reject_linked_managed_path(&self.home, &directory)?;
+        if fs::symlink_metadata(&directory).is_ok_and(|m| !m.is_dir() || m.file_type().is_symlink())
+        {
+            return Err(service_error(
+                "PINSET_PATH_UNSAFE",
+                "managed lock directory must be a real directory",
+            ));
+        }
+        fs::create_dir_all(&directory)?;
+        crate::download_cache::reject_linked_managed_path(
+            &self.home,
+            &directory.join("maintenance.lock"),
+        )?;
         let global = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .open(self.home.join("state/locks/maintenance.lock"))?;
-        if id == "maintenance" {
-            fs4::FileExt::lock(&global)?;
-        } else {
-            fs4::FileExt::lock_shared(&global)?;
-        }
+        fs4::FileExt::lock(&global)?;
+        Ok(StateGuard(global, None))
+    }
+    fn state_guard(&self, namespace: &str, id: &str) -> Result<StateGuard> {
+        self.ensure_home()?;
+        validate_id(id)?;
+        let dir = self.home.join("state/locks").join(namespace);
+        crate::download_cache::reject_linked_managed_path(&self.home, &dir)?;
+        fs::create_dir_all(&dir)?;
+        crate::download_cache::reject_linked_managed_path(
+            &self.home,
+            &self.home.join("state/locks/maintenance.lock"),
+        )?;
+        crate::download_cache::reject_linked_managed_path(
+            &self.home,
+            &dir.join(format!("{id}.lock")),
+        )?;
+        let global = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.home.join("state/locks/maintenance.lock"))?;
+        fs4::FileExt::lock_shared(&global)?;
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -376,19 +423,7 @@ impl Services {
             }
         }
         tool.artifacts.retain(|a| platforms.contains(&a.target));
-        let strength = config
-            .policy
-            .minimum_verification
-            .as_ref()
-            .map(|s| serde_json::from_value::<VerificationStrength>(json!(s)))
-            .transpose()?;
-        let age = config
-            .policy
-            .minimum_release_age
-            .as_ref()
-            .map(|s| serde_json::from_value::<MinimumReleaseAge>(json!(s)))
-            .transpose()?;
-        validate_tool_policy(&tool, strength, age, SystemTime::now())?;
+        config.policy.validate_tool(&tool, SystemTime::now())?;
         Ok(tool)
     }
     pub fn remove(&self, names: &[String], global: bool, plan: bool) -> Result<Value> {
@@ -437,23 +472,39 @@ impl Services {
                 return Err(service_error("PINSET_TOOL_NOT_SELECTED", name));
             }
         }
-        if recreate && (global || !config.tools.contains_key("python")) {
+        if recreate
+            && (global
+                || !config.tools.contains_key("python")
+                || (!names.is_empty() && !names.iter().any(|name| name == "python")))
+        {
             return Err(service_error(
                 "PINSET_VENV_PROJECT_REQUIRED",
-                "recreate-venv requires a selected project Python",
+                "recreate-venv requires Python in the project installation selection",
             ));
         }
         if plan {
             return Ok(
-                json!({"protocol":PROTOCOL,"plan":true,"tools":if names.is_empty(){config.tools.keys().cloned().collect::<Vec<_>>()}else{names.to_vec()},"offline":offline,"repair":repair,"recreate_venv":recreate}),
+                json!({"protocol":PROTOCOL,"plan":true,"tools":installation_selection(&lock, Some(names)).iter().map(|t|&t.name).collect::<Vec<_>>(),"offline":offline,"repair":repair,"recreate_venv":recreate}),
             );
         }
         let _guard = self.guard(&config.project_id)?;
         let (current, locked) = self.load(&c)?;
+        for name in names {
+            if locked.tool(name).is_none() {
+                return Err(service_error("PINSET_TOOL_NOT_SELECTED", name));
+            }
+        }
+        if recreate && !current.tools.contains_key("python") {
+            return Err(service_error(
+                "PINSET_VENV_PROJECT_REQUIRED",
+                "project Python is no longer selected",
+            ));
+        }
         self.install_sdk(&locked, Some(names), offline, repair)?;
         self.progress
             .report(ProgressEvent::Phase(InstallPhase::Binding));
-        let notes = self.bind_local(&c, &current, &locked, recreate, false)?;
+        let notes =
+            self.bind_selected_local(&c, &current, &locked, recreate, false, Some(names))?;
         self.register(&c)?;
         Ok(json!({"protocol":PROTOCOL,"installed":true,"notes":notes}))
     }
@@ -465,11 +516,7 @@ impl Services {
         repair: bool,
     ) -> Result<()> {
         self.ensure_home()?;
-        let selected = lock
-            .tools
-            .iter()
-            .filter(|tool| !names.is_some_and(|n| !n.is_empty() && !n.contains(&tool.name)))
-            .collect::<Vec<_>>();
+        let selected = installation_selection(lock, names);
         for (index, tool) in selected.iter().enumerate() {
             self.progress.report(ProgressEvent::Installing {
                 tool: tool.name.clone(),
@@ -478,42 +525,11 @@ impl Services {
                 total: selected.len(),
             });
             let target = locked_target(tool);
-            let install = install_directory(&self.home, tool, &target);
-            let mut quarantine = None;
-            let damaged = if repair && install.exists() {
-                match read_receipt(&self.home, tool, &target) {
-                    Ok(receipt) => {
-                        install_payload_fingerprint(&install, &tool.name)? != receipt.payload_digest
-                    }
-                    Err(_) => true,
-                }
-            } else {
-                false
-            };
-            if repair && install.exists() && damaged {
-                let receipt: InstallReceipt =
-                    toml::from_str(&fs::read_to_string(install.join(".pinset-install.toml"))?)?;
-                if receipt.schema != 3
-                    || receipt.install_identity != tool.installation_version(&target)
-                    || receipt.tool != tool.name
-                {
-                    return Err(service_error(
-                        "PINSET_INSTALL_EXTERNAL",
-                        "repair cannot adopt an external installation",
-                    ));
-                }
-                let q = self
-                    .home
-                    .join("state/quarantine")
-                    .join(uuid::Uuid::new_v4().to_string());
-                fs::create_dir_all(q.parent().unwrap())?;
-                fs::rename(&install, &q)?;
-                quarantine = Some(q);
-            }
             let progress = self.progress.clone();
             let installer = Installer::new(InstallLimits::for_tool(&tool.name))?
                 .with_progress_reporter(move |event| progress.report(event))
                 .with_offline(offline)
+                .with_repair(repair)
                 .with_install_identity(tool.installation_version(&target));
             let sources = OfficialSources;
             let result = match tool.name.as_str() {
@@ -528,22 +544,9 @@ impl Services {
                 "pnpm" | "bun" => install_locked_npm_tool(&installer, &self.home, tool, &target),
                 _ => unreachable!(),
             };
-            let outcome = match result {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    if let Some(q) = quarantine
-                        && !install.exists()
-                    {
-                        fs::rename(q, &install)?;
-                    }
-                    return Err(error);
-                }
-            };
+            let outcome = result?;
             if tool.name == "java" {
                 self.inventory_java(tool, &target)?;
-            }
-            if let Some(quarantine) = quarantine {
-                fs::remove_dir_all(quarantine)?;
             }
             self.progress.report(ProgressEvent::Installed {
                 reused: outcome.reused_existing,
@@ -649,13 +652,31 @@ impl Services {
         recreate: bool,
         preserve_mismatch: bool,
     ) -> Result<Vec<String>> {
+        self.bind_selected_local(c, config, lock, recreate, preserve_mismatch, None)
+    }
+    fn bind_selected_local(
+        &self,
+        c: &ProjectContext,
+        config: &ProjectConfig,
+        lock: &Lockfile,
+        recreate: bool,
+        preserve_mismatch: bool,
+        names: Option<&[String]>,
+    ) -> Result<Vec<String>> {
         let mut notes = Vec::new();
         if !c.global {
-            if let Some(tool) = lock.tool("python") {
+            let selected = |name: &str| {
+                names.is_none_or(|names| names.is_empty() || names.iter().any(|n| n == name))
+            };
+            if let Some(tool) = lock.tool("python").filter(|_| selected("python")) {
                 if c.root.join(".venv").exists() && !recreate {
-                    if let Err(error) =
-                        validate_venv(c, config, tool, &current_target_for_tool("python"))
-                    {
+                    if let Err(error) = validate_venv(
+                        c,
+                        config,
+                        tool,
+                        &current_target_for_tool("python"),
+                        &self.home,
+                    ) {
                         if preserve_mismatch && error.code() == "PINSET_VENV_MISMATCH" {
                             notes.push(error.to_string());
                         } else {
@@ -666,7 +687,7 @@ impl Services {
                     self.create_venv(c, config, tool, recreate)?;
                 }
             }
-            if let Some(tool) = lock.tool("flutter") {
+            if let Some(tool) = lock.tool("flutter").filter(|_| selected("flutter")) {
                 let target = current_target_for_tool("flutter");
                 read_receipt(&self.home, tool, &target)?;
                 let link = c.local.join("flutter-sdk");
@@ -692,76 +713,11 @@ impl Services {
         }
         Ok(notes)
     }
-    pub fn create_venv(
-        &self,
-        c: &ProjectContext,
-        config: &ProjectConfig,
-        tool: &LockedTool,
-        recreate: bool,
-    ) -> Result<()> {
-        let target = current_target_for_tool("python");
-        let path = c.root.join(".venv");
-        let mut old = None;
-        if fs::symlink_metadata(&path).is_ok() {
-            let owner: VenvOwner =
-                toml::from_str(&fs::read_to_string(path.join(VENV_MARKER)).map_err(|_| {
-                    service_error("PINSET_VENV_EXTERNAL", "external venv cannot be replaced")
-                })?)?;
-            if !recreate
-                || fs::symlink_metadata(&path)?.file_type().is_symlink()
-                || owner.protocol != PROTOCOL
-                || owner.project_id != config.project_id
-                || owner.directory != c.directory
-            {
-                return Err(service_error(
-                    "PINSET_VENV_EXTERNAL",
-                    "only a valid Pinset 3 venv in this directory can be recreated",
-                ));
-            }
-            let backup = c
-                .local
-                .join("venv-backups")
-                .join(uuid::Uuid::new_v4().to_string());
-            fs::create_dir_all(backup.parent().unwrap())?;
-            fs::rename(&path, &backup)?;
-            old = Some(backup);
-        }
-        let interpreter = interpreter_path(&install_directory(&self.home, tool, &target), &target);
-        let status = Command::new(&interpreter)
-            .args(["-I", "-m", "venv"])
-            .arg(&path)
-            .env_remove("PINSET_IDENTITY")
-            .env_remove("PYTHONHOME")
-            .env_remove("PYTHONPATH")
-            .status();
-        if !status.as_ref().is_ok_and(|s| s.success()) {
-            if path.exists() {
-                fs::remove_dir_all(&path)?;
-            }
-            if let Some(backup) = old {
-                fs::rename(backup, &path)?;
-            }
-            return Err(service_error(
-                "PINSET_VENV_CREATE",
-                "standard library venv creation failed",
-            ));
-        }
-        let owner = VenvOwner {
-            protocol: PROTOCOL.into(),
-            project_id: config.project_id.clone(),
-            directory: c.directory.clone(),
-            interpreter_identity: tool.installation_version(&target),
-            platform: target.clone(),
-        };
-        write_atomic(&path.join(VENV_MARKER), toml::to_string(&owner)?.as_bytes())?;
-        validate_venv(c, config, tool, &target)?;
-        Ok(())
-    }
     pub fn register(&self, c: &ProjectContext) -> Result<()> {
         if c.global {
             return Ok(());
         }
-        let _guard = self.guard("registry")?;
+        let _guard = self.resource_guard("registry")?;
         let file = self.home.join("state/projects.json");
         let mut roots: BTreeMap<String, PathBuf> = if file.exists() {
             read_json(&file)?
@@ -787,122 +743,6 @@ impl Services {
             }
         }
         write_atomic(&p, s.as_bytes())
-    }
-    pub fn install_shims(&self) -> Result<()> {
-        let _guard = self.guard("shims")?;
-        let current = std::env::current_exe()?;
-        let adjacent = current.parent().unwrap();
-        let shim = adjacent.join(if cfg!(windows) {
-            "pinset-shim.exe"
-        } else {
-            "pinset-shim"
-        });
-        if !shim.is_file() {
-            return Err(service_error(
-                "PINSET_SHIM_MISSING",
-                "pinset-shim must be distributed beside pinset",
-            ));
-        }
-        let bin = self.home.join("bin");
-        fs::create_dir_all(&bin)?;
-        let state = self.home.join("state/shims.json");
-        let prior: Value = if state.exists() {
-            read_json(&state)?
-        } else {
-            json!({})
-        };
-        let previous = prior["digest"].as_str();
-        let current_digest = digest(&fs::read(&shim)?);
-        for (src, dst) in [
-            (
-                &current,
-                bin.join(if cfg!(windows) {
-                    "pinset.exe"
-                } else {
-                    "pinset"
-                }),
-            ),
-            (
-                &shim,
-                bin.join(if cfg!(windows) {
-                    "pinset-shim.exe"
-                } else {
-                    "pinset-shim"
-                }),
-            ),
-        ] {
-            if src.canonicalize()? != dst.canonicalize().unwrap_or_default() {
-                let staged = bin.join(format!(".binary-{}", uuid::Uuid::new_v4()));
-                fs::copy(src, &staged)?;
-                fs::rename(&staged, &dst)?;
-            }
-        }
-        let mut commands = public_commands();
-        // Keep ownership of previously generated JDK entries after an SDK is cleaned.
-        // Missing capabilities must fail against the selected JDK, never search PATH.
-        if let Some(entries) = prior["commands"].as_object() {
-            commands.extend(
-                entries
-                    .keys()
-                    .filter(|name| {
-                        validate_id(name).is_ok()
-                            && !matches!(name.as_str(), "pinset" | "pinset-shim")
-                    })
-                    .cloned(),
-            );
-        }
-        let java = self.home.join("installs/java");
-        if java.is_dir() {
-            for identity in fs::read_dir(java)? {
-                for target in fs::read_dir(identity?.path())? {
-                    let file = target?.path().join(".pinset-install.toml");
-                    if let Ok(r) = fs::read_to_string(file).and_then(|s| {
-                        toml::from_str::<InstallReceipt>(&s).map_err(std::io::Error::other)
-                    }) && r.schema == 3
-                        && r.tool == "java"
-                    {
-                        commands.extend(
-                            r.commands
-                                .keys()
-                                .filter(|name| validate_id(name).is_ok())
-                                .cloned(),
-                        );
-                    }
-                }
-            }
-        }
-        commands.sort();
-        commands.dedup();
-        let owners = commands
-            .iter()
-            .map(|command| (command.clone(), command_tool(command).unwrap_or("java")))
-            .collect::<BTreeMap<_, _>>();
-        for command in commands {
-            let dst = bin.join(executable_name(&command, &current_target()));
-            if dst.exists() {
-                let found = digest(&fs::read(&dst)?);
-                if found != current_digest && Some(found.as_str()) != previous {
-                    return Err(service_error(
-                        "PINSET_SHIM_EXTERNAL",
-                        format!("refusing to replace external command {command}"),
-                    ));
-                }
-                fs::remove_file(&dst)?;
-            }
-            fs::hard_link(
-                bin.join(if cfg!(windows) {
-                    "pinset-shim.exe"
-                } else {
-                    "pinset-shim"
-                }),
-                dst,
-            )?;
-        }
-        write_json(
-            &state,
-            &json!({"protocol":PROTOCOL,"digest":current_digest,"commands":owners}),
-        )?;
-        Ok(())
     }
     pub fn remote(&self, name: &str) -> Result<Value> {
         validate_tool(name)?;
@@ -975,5 +815,48 @@ impl Services {
             plans.push(plan_command(&self.cwd, &self.home, &c, cmd)?);
         }
         Ok(json!({"protocol":PROTOCOL,"commands":plans}))
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn maintenance_initializes_a_fresh_home_without_a_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = Services {
+            cwd: directory.path().into(),
+            home: directory.path().join("home/v3"),
+            progress: ProgressReporter::default(),
+        };
+        let guard = service.maintenance_guard().unwrap();
+        assert!(service.home.join("state/locks/maintenance.lock").is_file());
+        drop(guard);
+        service.maintenance_guard().unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn linked_lock_paths_never_write_to_an_external_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = Services {
+            cwd: directory.path().into(),
+            home: directory.path().join("home/v3"),
+            progress: ProgressReporter::default(),
+        };
+        service.ensure_home().unwrap();
+        let external = directory.path().join("external");
+        fs::create_dir(&external).unwrap();
+        fs::create_dir(service.home.join("state")).unwrap();
+        std::os::unix::fs::symlink(&external, service.home.join("state/locks")).unwrap();
+        for result in [
+            service.maintenance_guard(),
+            service.guard("project"),
+            service.resource_guard("shims"),
+        ] {
+            assert!(matches!(result, Err(error) if error.code() == "PINSET_PATH_UNSAFE"));
+        }
+        assert_eq!(fs::read_dir(external).unwrap().count(), 0);
     }
 }

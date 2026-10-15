@@ -2,14 +2,14 @@
 
 The only public validation entry is `verify.ps1 -Suite fast|acceptance|platform|integrations|all`, or `./verify.sh <suite>`. No suite invokes CI. The image pins the current Rust and Node baselines by digest.
 
-The original checkout is mounted read-only at `/source`, copied to `/workspace`, and built there. Cargo and official SDK archives use separate Docker volumes. Each container creates fresh Pinset state, projects, venvs, profiles, identities and trust. SDK cache hits are reverified. Host credentials, PATH and shell profiles are never mounted or edited.
+The original checkout is mounted read-only at `/source`, copied to `/workspace`, and built there. Cargo and official SDK archives use separate Docker volumes. The same container is reused, with fresh Pinset state, projects, venvs, profiles, identities and trust for every verification run. SDK cache hits are reverified. Host credentials, PATH and shell profiles are never mounted or edited.
 
 | Suite | Required checks |
 | --- | --- |
 | fast | Format, clippy, Rust contracts, command/project/failure contracts, standalone 2.x upgrade/migration/cleanup contracts, dependency audit, distribution contracts |
-| acceptance | Official SDK installs and execution; Java 8/11/17/21/25/latest GA, Python package isolation, Node/pnpm/Bun/Go, Rust components and direct version switching |
+| acceptance | Official SDK installs and execution; Java 8/11/17/21/25/latest GA, Python interpreter drift/versioned entries/package isolation, partial installation/runtime dependencies, current-policy rejection, venv interruption recovery, Node/pnpm/Bun/Go, Rust components and direct version switching |
 | platform | Linux ARM64 cross build and QEMU execution, official ARM64 SDK combinations, Windows/macOS target compilation and path/credential contracts |
-| integrations | Independent extension/website typechecks, package audits, packaging and SEO, real Linux Secret Service, VS Code under Xvfb, Java wrapper builds and GUI startup, Flutter metadata, locks, routing and Android evidence contracts |
+| integrations | Independent extension/website typechecks, package audits, packaging and SEO, real Linux Secret Service and grant/owner revocation, nested and multi-root VS Code bindings under Xvfb, Java wrapper builds and GUI startup, Flutter metadata, locks, routing and Android evidence contracts |
 | all | Every suite above; missing/failed checks prevent success |
 
 Flutter SDK execution and Android SDK/APK builds are exempt from download tests by explicit user request. They remain unverified, including when an archive happens to be cached. Required metadata, lock, route and deterministic evidence contracts still run. Reports carry this fixed exemption and the publication metadata gate requires it; suite success does not imply Flutter runtime or APK acceptance.

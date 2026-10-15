@@ -33,7 +33,7 @@ PLATFORMS = {"windows-x86_64", "linux-x86_64", "linux-aarch64",
              "macos-x86_64", "macos-aarch64"}
 OLD_SERVICE = "dev.pinset.identity"
 NEW_SERVICE = "dev.pinset.identity.v3"
-DEFAULT_VERSION = "3.0.5"
+DEFAULT_VERSION = "3.0.6"
 RESERVED = {"PATH", "JAVA_HOME", "GOROOT", "GOTOOLCHAIN", "RUSTUP_TOOLCHAIN",
             "RUSTUP_HOME", "FLUTTER_ROOT", "VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH",
             "PYTHONNOUSERSITE", "NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS",

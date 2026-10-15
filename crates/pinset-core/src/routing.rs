@@ -28,6 +28,24 @@ pub fn validate_venv(
     config: &ProjectConfig,
     python: &LockedTool,
     platform: &str,
+    home: &Path,
+) -> Result<PathBuf> {
+    if context.local.join("venv-transaction.json").exists() {
+        return Err(failure(
+            "PINSET_VENV_TRANSACTION_PENDING",
+            "venv recovery requires pinset self repair",
+        ));
+    }
+    validate_venv_contents(context, config, python, platform, home)
+}
+
+/// Inspect a newly created environment before its lifecycle transaction commits.
+pub fn validate_venv_contents(
+    context: &ProjectContext,
+    config: &ProjectConfig,
+    python: &LockedTool,
+    platform: &str,
+    home: &Path,
 ) -> Result<PathBuf> {
     let root = context.root.join(".venv");
     if fs::symlink_metadata(&root).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -35,6 +53,14 @@ pub fn validate_venv(
             "PINSET_VENV_EXTERNAL",
             "a linked .venv cannot be adopted",
         ));
+    }
+    for name in [VENV_MARKER, "pyvenv.cfg"] {
+        if fs::symlink_metadata(root.join(name)).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(failure(
+                "PINSET_VENV_DAMAGED",
+                "venv metadata cannot be linked",
+            ));
+        }
     }
     let owner: VenvOwner =
         toml::from_str(&fs::read_to_string(root.join(VENV_MARKER)).map_err(|_| {
@@ -61,22 +87,103 @@ pub fn validate_venv(
         ));
     }
     let py = venv_python(&context.root, platform);
-    let cfg = fs::read_to_string(root.join("pyvenv.cfg"))?;
-    if !py.exists()
-        || !cfg.lines().any(|l| {
-            l.trim()
-                .eq_ignore_ascii_case("include-system-site-packages = false")
-        })
+    let text = fs::read_to_string(root.join("pyvenv.cfg"))?;
+    let mut cfg = BTreeMap::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| failure("PINSET_VENV_DAMAGED", "invalid pyvenv.cfg entry"))?;
+        if cfg
+            .insert(key.trim().to_ascii_lowercase(), value.trim())
+            .is_some()
+        {
+            return Err(failure("PINSET_VENV_DAMAGED", "duplicate pyvenv.cfg entry"));
+        }
+    }
+    let expected = interpreter_path(&install_directory(home, python, platform), platform);
+    let same = |actual: &Path, expected: &Path| {
+        actual
+            .canonicalize()
+            .ok()
+            .zip(expected.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b)
+    };
+    let isolated = cfg
+        .get("include-system-site-packages")
+        .is_some_and(|v| v.eq_ignore_ascii_case("false"));
+    let base_matches = cfg
+        .get("home")
+        .is_some_and(|value| same(Path::new(value), expected.parent().unwrap()));
+    let executable_matches = cfg
+        .get("executable")
+        .is_none_or(|value| same(Path::new(value), &expected));
+    let version_matches = cfg
+        .get("version")
+        .is_some_and(|value| python.version.split('+').next() == Some(*value));
+    let local_bin = py
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .zip(root.canonicalize().ok())
+        .is_some_and(|(bin, root)| bin.starts_with(root));
+    let interpreter_matches = platform.starts_with("windows-") || same(&py, &expected);
+    if !py.is_file()
+        || !isolated
+        || !base_matches
+        || !executable_matches
+        || !version_matches
+        || !local_bin
+        || !interpreter_matches
     {
         return Err(failure(
             "PINSET_VENV_DAMAGED",
-            "venv interpreter or package isolation is invalid",
+            "venv interpreter, base SDK or package isolation differs from the lock; use install --recreate-venv",
         ));
     }
     Ok(py)
 }
+pub fn normalized_command_name(command: &str, target: &str) -> String {
+    let command = if target.starts_with("windows-") {
+        command.to_ascii_lowercase()
+    } else {
+        command.to_owned()
+    };
+    command.strip_suffix(".exe").unwrap_or(&command).to_owned()
+}
+fn versioned_python_command(command: &str) -> bool {
+    ["python3.", "pip3."].iter().any(|prefix| {
+        command
+            .strip_prefix(prefix)
+            .is_some_and(|minor| !minor.is_empty() && minor.bytes().all(|c| c.is_ascii_digit()))
+    })
+}
+pub fn validate_managed_command_name(command: &str) -> Result<()> {
+    let normalized = normalized_command_name(command, &current_target());
+    let command = normalized.as_str();
+    if matches!(command, "pinset" | "pinset-shim") {
+        return Err(failure("PINSET_COMMAND_INVALID", "reserved command entry"));
+    }
+    if versioned_python_command(command) {
+        return Ok(());
+    }
+    validate_id(command)
+}
+pub fn python_version_commands(version: &str) -> Vec<String> {
+    let mut parts = version.split(['.', '+']);
+    match (parts.next(), parts.next()) {
+        (Some("3"), Some(minor))
+            if !minor.is_empty() && minor.bytes().all(|c| c.is_ascii_digit()) =>
+        {
+            vec![format!("python3.{minor}"), format!("pip3.{minor}")]
+        }
+        _ => vec![],
+    }
+}
 pub fn command_tool(command: &str) -> Option<&'static str> {
-    let command = command.strip_suffix(".exe").unwrap_or(command);
+    let normalized = normalized_command_name(command, &current_target());
+    let command = normalized.as_str();
+    if versioned_python_command(command) {
+        return Some("python");
+    }
     if JAVA_COMMANDS.contains(&command) {
         return Some("java");
     }
@@ -97,6 +204,8 @@ pub fn command_tool(command: &str) -> Option<&'static str> {
 struct ShimRegistry {
     protocol: String,
     digest: String,
+    #[serde(default)]
+    cli_digest: Option<String>,
     commands: BTreeMap<String, String>,
 }
 fn registered_command_tool(home: &Path, command: &str) -> Result<Option<&'static str>> {
@@ -113,8 +222,12 @@ fn registered_command_tool(home: &Path, command: &str) -> Result<Option<&'static
     if registry.protocol != PROTOCOL
         || registry.digest.len() != 64
         || !registry.digest.bytes().all(|b| b.is_ascii_hexdigit())
+        || registry
+            .cli_digest
+            .as_ref()
+            .is_some_and(|hash| hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()))
         || registry.commands.iter().any(|(name, tool)| {
-            validate_id(name).is_err()
+            validate_managed_command_name(name).is_err()
                 || matches!(name.as_str(), "pinset" | "pinset-shim")
                 || !TOOLS.contains(&tool.as_str())
         })
@@ -239,14 +352,75 @@ pub fn plan_command(
     command: &str,
 ) -> Result<CommandPlan> {
     let (config, lock) = context.load_locked()?;
+    let shim_pending = home.join("state/shim-refresh/transaction.json");
+    if shim_pending.exists() {
+        let status: serde_json::Value = serde_json::from_slice(&fs::read(shim_pending)?)?;
+        if status["protocol"] != PROTOCOL
+            || !matches!(
+                status["phase"].as_str(),
+                Some("prepared" | "rolling-back" | "committed")
+            )
+        {
+            return Err(failure("PINSET_SHIM_STATE", "invalid shim refresh journal"));
+        }
+        if status["phase"] != "committed" {
+            return Err(failure(
+                "PINSET_SHIM_PENDING",
+                "interrupted shim refresh requires pinset self repair",
+            ));
+        }
+    }
+    let base = Path::new(command)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(command);
+    let normalized = normalized_command_name(base, &current_target());
+    let managed = if Path::new(command).components().count() == 1 {
+        registered_command_tool(home, &normalized)?.or_else(|| {
+            lock.tool("java")
+                .and_then(|tool| read_receipt(home, tool, &locked_target(tool)).ok())
+                .filter(|receipt| receipt.commands.contains_key(&normalized))
+                .map(|_| "java")
+        })
+    } else {
+        None
+    };
+    let mut required = std::collections::BTreeSet::new();
+    if let Some(name) = managed {
+        if lock.tool(name).is_none() {
+            return Err(failure(
+                "PINSET_TOOL_NOT_SELECTED",
+                format!(
+                    "{name} is not selected in this {}",
+                    if context.global { "global" } else { "project" }
+                ),
+            ));
+        }
+        required.insert(name);
+        if name == "pnpm" {
+            required.insert("node");
+        }
+    }
     let mut variables = BTreeMap::new();
-    let mut paths = Vec::new();
-    // Shim directory prevents child processes falling through to another managed tool.
-    paths.push(home.join("bin"));
+    let mut paths = vec![home.join("bin")];
+    let mut venv_paths = Vec::new();
     let mut selected = BTreeMap::new();
     for tool in &lock.tools {
         let target = locked_target(tool);
-        let receipt = read_receipt(home, tool, &target)?;
+        let ready = (|| {
+            let receipt = read_receipt(home, tool, &target)?;
+            let venv = if tool.name == "python" && !context.global {
+                Some(validate_venv(context, &config, tool, &target, home)?)
+            } else {
+                None
+            };
+            Ok::<_, crate::Error>((receipt, venv))
+        })();
+        let (receipt, venv) = match ready {
+            Ok(ready) => ready,
+            Err(error) if required.contains(tool.name.as_str()) => return Err(error),
+            Err(_) => continue,
+        };
         let install = install_directory(home, tool, &target);
         let sdk = sdk_root(&install, &tool.name, &target);
         paths.push(command_directory(&install, &tool.name, &target));
@@ -281,9 +455,8 @@ pub fn plan_command(
             }
             "python" => {
                 variables.insert("PYTHONNOUSERSITE".into(), "1".into());
-                if !context.global {
-                    let py = validate_venv(context, &config, tool, &target)?;
-                    paths.push(py.parent().unwrap().to_path_buf());
+                if let Some(py) = venv {
+                    venv_paths.push(py.parent().unwrap().to_path_buf());
                     variables.insert(
                         "VIRTUAL_ENV".into(),
                         context.root.join(".venv").display().to_string(),
@@ -294,6 +467,7 @@ pub fn plan_command(
         }
         selected.insert(tool.name.as_str(), (tool, target, install, sdk, receipt));
     }
+    paths.splice(1..1, venv_paths);
     if let Some(path) = env::var_os("PATH") {
         paths.extend(
             env::split_paths(&path)
@@ -303,20 +477,6 @@ pub fn plan_command(
     }
     let path = env::join_paths(paths).map_err(|e| failure("PINSET_PATH_INVALID", e.to_string()))?;
     variables.insert("PATH".into(), path.to_string_lossy().into_owned());
-    let base = Path::new(command)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(command);
-    let managed = if Path::new(command).components().count() == 1 {
-        registered_command_tool(home, base)?.or_else(|| {
-            selected
-                .get("java")
-                .filter(|(_, _, _, _, r)| r.commands.contains_key(base.trim_end_matches(".exe")))
-                .map(|_| "java")
-        })
-    } else {
-        None
-    };
     let mut plan = CommandPlan {
         protocol: PROTOCOL.into(),
         project: (!context.global).then(|| context.root.clone()),
@@ -353,13 +513,23 @@ pub fn plan_command(
         plan.version = Some(tool.version.clone());
         plan.install_identity = Some(tool.installation_version(target));
         plan.sdk = Some(sdk.clone());
-        let cmd = base.trim_end_matches(".exe");
+        let cmd = normalized.as_str();
         match (name, cmd) {
             ("python", _) => {
+                if versioned_python_command(cmd)
+                    && !python_version_commands(&tool.version)
+                        .iter()
+                        .any(|name| name == cmd)
+                {
+                    return Err(failure(
+                        "PINSET_COMMAND_UNAVAILABLE",
+                        format!("selected Python {} does not provide {cmd}", tool.version),
+                    ));
+                }
                 plan.executable = if context.global {
                     interpreter_path(install, target)
                 } else {
-                    validate_venv(context, &config, tool, target)?
+                    validate_venv(context, &config, tool, target, home)?
                 };
                 if cmd.starts_with("pip") {
                     plan.prefix = vec!["-m".into(), "pip".into()];

@@ -39,6 +39,8 @@ Java installs the complete Temurin **JDK**, including version-specific public to
 
 Python projects use one owned `.venv` created with the locked interpreter's standard library, with pip and no system/user package inheritance. Changing Python retains the old environment until `pinset install --recreate-venv`; external environments cannot be adopted. Pinset does not integrate uv or lock application packages.
 
+Partial installs bind only the requested tools; installing pnpm also installs its locked Node dependency. An unavailable unrelated Python or Flutter selection does not prevent an installed Node entry from running. Python's versioned `python3.<minor>` and `pip3.<minor>` entries use the same project environment and reject a different selected minor. Routing rechecks the current verification policy as well as the exact lock.
+
 Shell integration is explicit: `pinset self shell bash` (also zsh, fish, powershell) prints the PATH fragment and never edits a profile. The installer verifies a platform ZIP and places the matching CLI and router together. Pinset 3 source builds can be installed locally with `pinset self repair` after compiling both binaries.
 
 Provider command entries are always in `PINSET_HOME/v3/bin`, including when the CLI uses a custom install directory. Put this managed directory first on PATH using `pinset self shell`; earlier 2.x launchers in other directories can otherwise shadow the new entries. In PowerShell, apply the current-session fragment with `pinset self shell powershell | Out-String | Invoke-Expression`.
@@ -50,6 +52,8 @@ Provider command entries are always in `PINSET_HOME/v3/bin`, including when the 
 Profiles use per-value age encryption. Private identities are held in the OS credential store or explicit `PINSET_IDENTITY`; no private-key file is created. Trust binds the project, directory identity and configuration/profile fingerprint. External changes invalidate trust. Variable collisions and overrides of managed toolchain/control variables are refused. See [environment security](docs/environment.md).
 
 Upgrade and switch versions directly with `use`; select an earlier exact version to switch back. `self repair` recovers interrupted project/global transactions and CLI/router updates. Completed version changes, source, application packages, databases and IDE processes are outside interrupted transaction recovery.
+
+Interrupted venv replacement and managed command publication are also recoverable. Repair retains a live venv writer's files and asks you to retry after it exits. Managed binaries are atomically replaced; unknown external entries are never adopted. VS Code bindings require the actual project root to be an opened folder, including independent folders in a multi-root workspace.
 
 ## Development and release
 

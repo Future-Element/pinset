@@ -28,7 +28,8 @@ use tempfile::Builder;
 use zip::ZipArchive;
 
 use crate::download_cache::{
-    download_cache_path_for_integrity, download_partial_path_for_integrity,
+    acquire_download_lock, download_cache_path_for_integrity, download_partial_path_for_integrity,
+    reject_linked_managed_path,
 };
 use crate::{ArtifactIntegrity, Error, Result};
 
@@ -192,6 +193,7 @@ pub struct Installer {
     progress_reporter: ProgressReporter,
     offline: bool,
     install_identity: Option<String>,
+    repair: bool,
 }
 
 #[derive(Debug)]
@@ -230,6 +232,7 @@ impl Installer {
             progress_reporter: ProgressReporter::default(),
             offline: false,
             install_identity: None,
+            repair: false,
         })
     }
 
@@ -248,6 +251,11 @@ impl Installer {
 
     pub fn with_install_identity(mut self, identity: String) -> Self {
         self.install_identity = Some(identity);
+        self
+    }
+
+    pub fn with_repair(mut self, repair: bool) -> Self {
+        self.repair = repair;
         self
     }
 
@@ -276,12 +284,79 @@ impl Installer {
             .join(&request.tool)
             .join(install_identity)
             .join(&request.target);
+        reject_linked_managed_path(&request.pinset_home, &final_dir)?;
+        let quarantine = if self.repair && final_dir.exists() {
+            if fs::symlink_metadata(&final_dir)?.file_type().is_symlink() {
+                return Err(crate::service_error(
+                    "PINSET_INSTALL_EXTERNAL",
+                    "repair cannot replace a linked installation",
+                ));
+            }
+            let receipt: InstallReceipt =
+                toml::from_str(&fs::read_to_string(final_dir.join(".pinset-install.toml"))?)?;
+            if receipt.schema != 3
+                || !receipt.complete
+                || receipt.install_identity != install_identity
+                || receipt.tool != request.tool
+                || receipt.version != request.version
+                || receipt.target != request.target
+            {
+                return Err(crate::service_error(
+                    "PINSET_INSTALL_EXTERNAL",
+                    "repair cannot adopt an external installation",
+                ));
+            }
+            let damaged = existing_install_outcome(&final_dir, request, install_identity).is_none()
+                || install_payload_fingerprint(&final_dir, &request.tool)?
+                    != receipt.payload_digest;
+            if damaged {
+                let directory = request.pinset_home.join("state/quarantine");
+                reject_linked_managed_path(&request.pinset_home, &directory)?;
+                fs::create_dir_all(&directory)?;
+                let path = directory.join(uuid::Uuid::new_v4().to_string());
+                fs::rename(&final_dir, &path)?;
+                Some(path)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let result = self.install_locked(request, install_identity, &final_dir);
+        match result {
+            Ok(outcome) => {
+                if let Some(path) = quarantine {
+                    fs::remove_dir_all(path)?;
+                }
+                Ok(outcome)
+            }
+            Err(error) => {
+                if let Some(path) = quarantine
+                    && !final_dir.exists()
+                {
+                    fs::rename(path, &final_dir)?;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn install_locked(
+        &self,
+        request: &InstallRequest,
+        install_identity: &str,
+        final_dir: &Path,
+    ) -> Result<InstallOutcome> {
         if final_dir.exists() {
-            return existing_install_outcome(&final_dir, request, install_identity)
-                .ok_or(Error::InstallAlreadyExists { path: final_dir });
+            return existing_install_outcome(final_dir, request, install_identity).ok_or(
+                Error::InstallAlreadyExists {
+                    path: final_dir.to_path_buf(),
+                },
+            );
         }
 
         let temporary_root = request.pinset_home.join("state").join("tmp");
+        reject_linked_managed_path(&request.pinset_home, &temporary_root)?;
         fs::create_dir_all(&temporary_root).map_err(|source| Error::CreateInstallStaging {
             path: temporary_root.clone(),
             source,
@@ -343,18 +418,20 @@ impl Installer {
             source,
         })?;
         if final_dir.exists() {
-            return Err(Error::InstallAlreadyExists { path: final_dir });
+            return Err(Error::InstallAlreadyExists {
+                path: final_dir.to_path_buf(),
+            });
         }
         // SAFETY: final_dir was checked absent while holding the per-install lock. The same-volume
         // rename is the transaction boundary that makes the completed receipt visible atomically.
-        fs::rename(&staging_dir, &final_dir).map_err(|source| Error::CommitInstall {
+        fs::rename(&staging_dir, final_dir).map_err(|source| Error::CommitInstall {
             staging: staging_dir,
-            destination: final_dir.clone(),
+            destination: final_dir.to_path_buf(),
             source,
         })?;
 
         Ok(InstallOutcome {
-            install_dir: final_dir,
+            install_dir: final_dir.to_path_buf(),
             bytes_downloaded: selected.bytes_downloaded
                 + selected_bases
                     .iter()
@@ -372,6 +449,9 @@ impl Installer {
         artifact: &ArtifactSpec,
     ) -> Result<SelectedArtifact> {
         let expected_integrity = ArtifactIntegrity::parse(&artifact.integrity)?;
+        // Different SDK identities may share component archives. Own the
+        // digest's partial file through validation, resume and cache commit.
+        let _guard = acquire_download_lock(pinset_home, &expected_integrity)?;
         let cache_path = download_cache_path_for_integrity(pinset_home, &expected_integrity)?;
         if self.cached_artifact_is_valid(&cache_path, &expected_integrity)? {
             self.progress_reporter.report(ProgressEvent::Cached {
@@ -1380,6 +1460,7 @@ fn acquire_install_lock(request: &InstallRequest, install_identity: &str) -> Res
         .join("state")
         .join("locks")
         .join("installs");
+    reject_linked_managed_path(&request.pinset_home, &directory)?;
     fs::create_dir_all(&directory).map_err(|source| Error::OpenInstallLock {
         path: directory.clone(),
         source,
@@ -2246,6 +2327,148 @@ mod tests {
         );
         assert!(final_dir(root.path()).join("bin/node.exe").is_file());
         assert_transaction_root_is_empty(root.path());
+    }
+
+    #[test]
+    fn different_install_identities_share_one_locked_download() {
+        let root = tempdir().unwrap();
+        let archive = zip_bytes(&[("bin/node.exe", b"shared component")]);
+        let (url, server) = serve_interrupted_then_range(archive.clone(), archive.len() / 2);
+        let request = request(root.path(), url, sha256_hex(&archive));
+        let barrier = Arc::new(Barrier::new(2));
+        let mut workers = Vec::new();
+        for identity in ["minimal", "default"] {
+            let request = request.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                test_installer()
+                    .with_install_identity(identity.into())
+                    .install(&request)
+            }));
+        }
+        let outcomes: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap().unwrap())
+            .collect();
+        server.join().unwrap();
+        assert_ne!(outcomes[0].install_dir, outcomes[1].install_dir);
+        assert_eq!(
+            outcomes.iter().filter(|o| o.bytes_downloaded > 0).count(),
+            1
+        );
+        for outcome in outcomes {
+            assert_eq!(
+                fs::read(outcome.install_dir.join("bin/node.exe")).unwrap(),
+                b"shared component"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_repairs_replace_the_owned_sdk_only_once() {
+        let root = tempdir().unwrap();
+        let archive = zip_bytes(&[("bin/node.exe", b"original runtime")]);
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let request = request(root.path(), url, sha256_hex(&archive));
+        let initial = test_installer().install(&request).unwrap();
+        server.join().unwrap();
+        fs::write(
+            initial.install_dir.join("bin/node.exe"),
+            b"damaged runtime!",
+        )
+        .unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let request = request.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                test_installer()
+                    .with_offline(true)
+                    .with_repair(true)
+                    .install(&request)
+            }));
+        }
+        let outcomes: Vec<_> = workers
+            .into_iter()
+            .map(|w| w.join().unwrap().unwrap())
+            .collect();
+        assert_eq!(outcomes.iter().filter(|o| !o.reused_existing).count(), 1);
+        assert_eq!(
+            fs::read(initial.install_dir.join("bin/node.exe")).unwrap(),
+            b"original runtime"
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("state/quarantine"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn failed_repair_restores_the_previous_owned_payload() {
+        let root = tempdir().unwrap();
+        let archive = zip_bytes(&[("bin/node.exe", b"original runtime")]);
+        let hash = sha256_hex(&archive);
+        let (url, server) = serve_once(archive.clone(), archive.len());
+        let request = request(root.path(), url, hash.clone());
+        let initial = test_installer().install(&request).unwrap();
+        server.join().unwrap();
+        fs::write(
+            initial.install_dir.join("bin/node.exe"),
+            b"damaged runtime!",
+        )
+        .unwrap();
+        fs::remove_file(download_cache_path(root.path(), &hash).unwrap()).unwrap();
+        assert!(
+            test_installer()
+                .with_offline(true)
+                .with_repair(true)
+                .install(&request)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read(initial.install_dir.join("bin/node.exe")).unwrap(),
+            b"damaged runtime!"
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("state/quarantine"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_install_or_partial_ancestors_are_rejected_without_external_writes() {
+        let root = tempdir().unwrap();
+        let external = tempdir().unwrap();
+        let request = request(
+            root.path(),
+            "http://127.0.0.1:1/unused".into(),
+            "ab".repeat(32),
+        );
+        fs::create_dir_all(root.path().join("installs/node")).unwrap();
+        std::os::unix::fs::symlink(external.path(), root.path().join("installs/node/20.0.0"))
+            .unwrap();
+        assert_eq!(
+            test_installer().install(&request).unwrap_err().code(),
+            "PINSET_PATH_UNSAFE"
+        );
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 0);
+        fs::remove_file(root.path().join("installs/node/20.0.0")).unwrap();
+        fs::create_dir_all(root.path().join("cache/downloads")).unwrap();
+        std::os::unix::fs::symlink(external.path(), root.path().join("cache/downloads/partial"))
+            .unwrap();
+        assert_eq!(
+            test_installer().install(&request).unwrap_err().code(),
+            "PINSET_PATH_UNSAFE"
+        );
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 0);
     }
 
     #[test]

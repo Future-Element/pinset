@@ -84,7 +84,8 @@ impl Services {
             } else {
                 &tool.name
             };
-            if let Ok(plan) = plan_command(&self.cwd, &self.home, &c, command) {
+            let plan_result = plan_command(&self.cwd, &self.home, &c, command);
+            if let Ok(plan) = plan_result {
                 check.bound = true;
                 if deep {
                     let root = install_directory(&self.home, tool, &platform);
@@ -108,14 +109,18 @@ impl Services {
                     }
                 }
                 if probe && check.installed {
-                    let args=match tool.name.as_str(){"python"=>vec!["-I".into(),"-c".into(),"import sys; print(sys.version.split()[0]); print(sys.executable); print(sys.prefix)".into()],"java"=>vec!["-version".into()],"go"=>vec!["version".into()],_=>vec!["--version".into()]};
+                    let args=match tool.name.as_str(){"python"=>vec!["-I".into(),"-c".into(),"import sys,site,json; print(json.dumps(dict(version=sys.version.split()[0], executable=sys.executable, prefix=sys.prefix, base_prefix=sys.base_prefix, base_executable=sys._base_executable, user_site=site.ENABLE_USER_SITE)))".into()],"java"=>vec!["-version".into()],"go"=>vec!["version".into()],_=>vec!["--version".into()]};
                     let mut cmd = prepare_command(&plan, &args, &self.cwd, BTreeMap::new());
                     cmd.env("PINSET_NO_ENV", "1");
                     let output =
                         crate::process_tree::run(cmd, Duration::from_secs(30), Some(1024 * 1024))
                             .map_err(|e| service_error("PINSET_PROBE_FAILED", e.to_string()))?;
                     let observed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                    let version = if tool.name == "java" {
+                    let version = if tool.name == "python" {
+                        serde_json::from_str::<Value>(&observed)
+                            .ok()
+                            .and_then(|v| v["version"].as_str().map(str::to_owned))
+                    } else if tool.name == "java" {
                         java_probe_version(&observed)
                     } else {
                         observed
@@ -131,6 +136,7 @@ impl Services {
                             rust_probe_matches(tool, &observed)
                         } else if tool.name == "python" {
                             tool.version.split('+').next() == Some(v)
+                                && python_probe_matches(tool, &plan, &c, &observed)
                         } else if tool.name == "java" {
                             v == tool.version
                         } else {
@@ -154,7 +160,7 @@ impl Services {
                     }
                 }
             } else {
-                check.detail = "selected command binding is unavailable".into();
+                check.detail = plan_result.unwrap_err().to_string();
             }
             report.checks.push(check);
         }
@@ -181,6 +187,46 @@ impl Services {
         }
         Ok(value)
     }
+}
+
+fn same_path(observed: &str, expected: &Path) -> bool {
+    Path::new(observed)
+        .canonicalize()
+        .ok()
+        .zip(expected.canonicalize().ok())
+        .is_some_and(|(a, b)| a == b)
+}
+fn python_probe_matches(
+    tool: &LockedTool,
+    plan: &CommandPlan,
+    context: &ProjectContext,
+    observed: &str,
+) -> bool {
+    let Ok(info) = serde_json::from_str::<Value>(observed) else {
+        return false;
+    };
+    let Some(sdk) = &plan.sdk else {
+        return false;
+    };
+    let prefix = if context.global {
+        sdk.clone()
+    } else {
+        context.root.join(".venv")
+    };
+    let expected_base = interpreter_path(sdk, &locked_target(tool));
+    info["user_site"] == false
+        && info["executable"]
+            .as_str()
+            .is_some_and(|p| same_path(p, &plan.executable))
+        && info["prefix"]
+            .as_str()
+            .is_some_and(|p| same_path(p, &prefix))
+        && info["base_prefix"]
+            .as_str()
+            .is_some_and(|p| same_path(p, sdk))
+        && info["base_executable"]
+            .as_str()
+            .is_some_and(|p| same_path(p, &expected_base))
 }
 
 fn rust_probe_matches(tool: &LockedTool, observed: &str) -> bool {

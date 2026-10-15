@@ -8,6 +8,7 @@ use std::{
 impl Services {
     fn references(&self) -> Result<(BTreeSet<String>, BTreeSet<String>, bool)> {
         let mut installs = BTreeSet::new();
+        installs.extend(self.protected_venv_interpreters()?);
         let mut cache = BTreeSet::new();
         let mut uncertain = false;
         let mut locks = vec![];
@@ -102,7 +103,7 @@ impl Services {
         let _guard = if plan {
             None
         } else {
-            Some(self.guard("maintenance")?)
+            Some(self.maintenance_guard()?)
         };
         let (protected, cache, uncertain) = self.references()?;
         let mut removals = Vec::new();
@@ -253,7 +254,7 @@ impl Services {
                 json!({"protocol":PROTOCOL,"version":version,"already_current":true,"restart_required":false}),
             );
         }
-        let _guard = self.guard("maintenance")?;
+        let _guard = self.maintenance_guard()?;
         let updatehome = self.home.join("state/self-update");
         let installer = Installer::new(InstallLimits::default())?
             .with_install_identity(format!("{version}--{}", &hash[..24]));

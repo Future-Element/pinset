@@ -165,13 +165,13 @@ pub fn run(
     }
 }
 
-struct Tree {
-    child: Child,
+pub(crate) struct Tree {
+    pub(crate) child: Child,
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
 impl Tree {
-    fn new(mut child: Child) -> io::Result<Self> {
+    pub(crate) fn new(mut child: Child) -> io::Result<Self> {
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;

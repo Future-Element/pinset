@@ -39,6 +39,8 @@ pinset remove <tool>... [--global] [--plan]
 
 Install strictly from the existing exact lock. This command never resolves newer versions. Offline cache hits still undergo digest verification. Repair cannot adopt external installations. Recreating `.venv` requires valid Pinset 3 ownership in this project directory.
 
+An explicit tool list installs and binds only those tools, plus locked runtime dependencies such as Node for pnpm. Unrelated Python or Flutter selections are left alone. `--recreate-venv` requires Python in that effective selection. Both installation and execution enforce the current verification policy.
+
 Interactive `use` and `install` show resolution and installation stages on stderr. Downloads with a known size show percentage, bytes, speed and estimated time remaining; unknown sizes show bytes and speed. Verified cache hits and existing installations are reported explicitly. JSON and redirected stderr omit the progress UI.
 
 ```text
@@ -122,6 +124,8 @@ pinset env list [--profile <profile>]
 
 Input uses a hidden prompt or stdin. Conflicts with process variables fail; toolchain and Pinset control variables cannot be encrypted overrides.
 
+Editing or changing access requires explicit profile `owner_recipients`. Older profiles remain readable; confirm the public owner/grant metadata in `.pinset/config.toml`, keep `recipients` equal to their union, then run `pinset env trust add` before editing. Configuration must never contain private keys.
+
 ```text
 pinset env set <name> --profile <profile> [--stdin]
 ```
@@ -143,7 +147,7 @@ pinset env access request --ci
 
 ### `env access grant`
 
-Re-encrypt the profile to grant access to the request recipient.
+Re-encrypt the profile to grant access to the request recipient. Repeating an identical grant is a no-op; the same request ID cannot change keys. Effective recipients are confirmed owners plus active grants.
 
 ```text
 pinset env access grant <request-file> --profile <profile>
@@ -151,7 +155,7 @@ pinset env access grant <request-file> --profile <profile>
 
 ### `env access revoke`
 
-Re-encrypt the profile after revoking the recipient.
+Re-encrypt the profile after revoking the request. An owner or a key with another active grant remains a recipient.
 
 ```text
 pinset env access revoke <request-id> --profile <profile>
@@ -222,6 +226,8 @@ pinset self completions <bash|zsh|fish|powershell>
 ### `self repair`
 
 Recover interrupted transactions for the current project and global selections, restore an interrupted CLI/router update, and repair Pinset-owned command entries. Prepared transactions restore prior configuration, lock, encrypted profiles and local bindings; completed transactions only clear their pending marker. This does not undo a completed version switch. `--plan` previews recovery without writing state.
+
+Repair also restores interrupted owned venv replacements and completes or rolls back managed entry publication. A live venv writer produces `PINSET_VENV_BUSY`; retry after it exits. Atomic binary replacement retains the old entry if Windows prevents replacement. External or unproven command entries are left intact and reported for review.
 
 ```text
 pinset self repair [--plan]

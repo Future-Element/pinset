@@ -1,5 +1,5 @@
 """Actual terminal progress against a tiny local Go distribution fixture."""
-import codecs, errno, fcntl, hashlib, http.server, io, json, os, pty, select, shutil, struct, subprocess, tarfile, termios, time
+import codecs, errno, fcntl, hashlib, http.server, io, json, os, pty, re, select, shutil, struct, subprocess, tarfile, termios, time
 import pyte
 from pathlib import Path
 from support import BIN, REPORTS
@@ -14,7 +14,7 @@ def verify_progress(fixture):
     body=archive.getvalue();digest=hashlib.sha256(body).hexdigest()
     filename='go1.27.0.linux-amd64.tar.gz'
     metadata=json.dumps([{'version':'go1.27.0','stable':True,'files':[{'filename':filename,'os':'linux','arch':'amd64','version':'go1.27.0','sha256':digest,'size':len(body),'kind':'archive'}]}]).encode()
-    state={'known':True,'corrupt':False,'downloads':0,'cuts':0,'cut_bytes':len(body)//4,'ranges':[],'identity':[],'status':200}
+    state={'known':True,'corrupt':False,'downloads':0,'cuts':0,'cut_bytes':len(body)//4,'ranges':[],'identity':[],'status':200,'active_download':False}
     class Origin(http.server.BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def log_message(self,*_): pass
@@ -45,14 +45,18 @@ def verify_progress(fixture):
             if download and state['cuts']:
                 state['cuts']-=1
                 self.wfile.write(payload[:state['cut_bytes']]);self.wfile.flush();return
-            for offset in range(0,len(payload),32768):
-                block=payload[offset:offset+32768]
-                if chunked: self.wfile.write(f'{len(block):x}\r\n'.encode())
-                self.wfile.write(block)
-                if chunked: self.wfile.write(b'\r\n')
-                self.wfile.flush()
-                if download: time.sleep(0.01)
-            if chunked: self.wfile.write(b'0\r\n\r\n');self.wfile.flush()
+            if download:state['active_download']=True
+            try:
+                for offset in range(0,len(payload),32768):
+                    block=payload[offset:offset+32768]
+                    if chunked: self.wfile.write(f'{len(block):x}\r\n'.encode())
+                    self.wfile.write(block)
+                    if chunked: self.wfile.write(b'\r\n')
+                    self.wfile.flush()
+                    if download: time.sleep(0.01)
+                if chunked: self.wfile.write(b'0\r\n\r\n');self.wfile.flush()
+            finally:
+                if download:state['active_download']=False
     server,proxy_env=create_https_fixture(fixture,['go.dev'],Origin)
     env={**os.environ,**proxy_env,'HOME':str(fixture),'PINSET_HOME':str(fixture/'home'),'TERM':'xterm','LANG':'en_US.UTF-8'}
     for key in ['PINSET_IDENTITY','PINSET_PROFILE','PINSET_NO_ENV','PINSET_ENV_RESOLVED']:env.pop(key,None)
@@ -64,13 +68,12 @@ def verify_progress(fixture):
             assert process.returncode==expected,process.stdout+process.stderr
             return process.stdout,process.stderr
         master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,width,0,0))
-        # HistoryScreen does not model a GUI terminal's live text reflow. Change
-        # geometry before the writer starts so queued frames retain their size.
-        if resize_width:fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',30,resize_width,0,0))
         process=subprocess.Popen(argv,env=env,cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=slave)
         os.close(slave);chunks=[];deadline=time.monotonic()+60
-        screen=pyte.HistoryScreen(resize_width or width,30,history=1000);stream=pyte.Stream(screen)
+        screen=pyte.HistoryScreen(width,30,history=1000);stream=pyte.Stream(screen)
         decoder=codecs.getincrementaldecoder('utf-8')()
+        resized=False
+        resize_offset=None
         try:
             while True:
                 assert time.monotonic()<deadline,'terminal progress timeout'
@@ -81,17 +84,43 @@ def verify_progress(fixture):
                         raise
                     if not block:break
                     chunks.append(block)
-                    stream.feed(decoder.decode(block))
+                    decoded=decoder.decode(block)
+                    if resize_width and not resized and '下载' in decoded:
+                        assert process.poll() is None and state['active_download'],'resize must occur during the actual download'
+                        # Resize inside a frame, including bytes already queued
+                        # by the writer using the old width. This deterministically
+                        # exercises a user resizing during a repaint instead of
+                        # relying on the scheduler to expose that race.
+                        split=decoded.index('下载')+len('下载')
+                        stream.feed(decoded[:split])
+                        fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',30,resize_width,0,0))
+                        # The real PTY geometry changes while the writer is live.
+                        # pyte follows that geometry; GUI soft-wrap reflow is not modeled.
+                        screen.resize(lines=30,columns=resize_width)
+                        # pyte clips columns but leaves an out-of-range cursor;
+                        # real terminals clamp it to the new last column.
+                        screen.cursor.x=min(screen.cursor.x,resize_width-1)
+                        resized=True
+                        resize_offset=b''.join(chunks).index('下载'.encode())+len('下载'.encode())
+                        stream.feed(decoded[split:])
+                    else:stream.feed(decoded)
             stdout=process.communicate(timeout=5)[0].decode()
             stderr=b''.join(chunks).decode()
+            (REPORTS/f'progress-terminal-{language}-{width}-{resize_width or width}.log').write_text(stderr)
+            if resize_width:
+                (REPORTS/f'progress-resize-{language}-{width}-{resize_width}.json').write_text(json.dumps({
+                    'initial_columns':width,'final_columns':resize_width,'raw_byte_offset':resize_offset,
+                    'during_active_download':resized,'gui_soft_wrap_reflow':'unmodeled'}))
             assert process.returncode==expected,stdout+stderr
+            assert pyte.modes.DECAWM in screen.mode,'terminal auto-wrap was not restored'
+            if resize_width:assert resized,'no live download frame was available to resize'
             if check_refresh:
                 history=[''.join(line[column].data for column in range(screen.columns)) for line in screen.history.top]
                 rendered='\n'.join(history+screen.display)
+                (REPORTS/f'progress-screen-{language}-{width}-{resize_width or width}.log').write_text(rendered)
                 markers=['下载','解析官方版本','准备安装','连接官方来源','校验制品摘要','解压已校验制品','检查安装内容']
                 assert not any(marker in rendered for marker in markers),'completed progress frames remained on screen:\n'+rendered
                 assert '安装完成' in rendered,rendered
-                (REPORTS/f'progress-screen-{language}-{width}-{resize_width or width}.log').write_text(rendered)
             return stdout,stderr
         finally:
             os.close(master)
@@ -109,6 +138,8 @@ def verify_progress(fixture):
             env['PINSET_HOME']=str(fixture/f'chinese-home-{width}-{resize_width or width}')
             _,chinese=command('install',language='zh-CN',width=width,resize_width=resize_width,check_refresh=True)
             assert '下载' in chinese and '安装完成' in chinese,chinese
+            assert re.search(r'\b(?:[1-9]\d?|100)%',chinese),'narrow progress lost its advancing percentage:\n'+chinese
+            assert re.search(r'\b[1-9][\d.]* (?:KiB|MiB)',chinese),'narrow progress lost its advancing byte count:\n'+chinese
             (REPORTS/f'progress-terminal-zh-CN-{width}-{resize_width or width}.log').write_text(chinese)
         env['PINSET_HOME']=original_home
         downloads=state['downloads']
@@ -166,7 +197,7 @@ def verify_progress(fixture):
         assert 'artifact integrity mismatch' in failed.lower() and 'Installed' not in failed,failed
         assert not list((fixture/'failure-home/v3/installs').rglob('.pinset-install.toml'))
         return {'terminal':'known-size bar with bytes/speed/ETA; unknown-size spinner without percentage',
-                'unicode_refresh':'Chinese PTY screens and scrollback cleared at 180/80/40 columns and after a 120-to-60-column resize before startup',
+                'unicode_refresh':'Chinese PTY screens and scrollback cleared at 180/80/40 columns; actual PTY shrinks 120-to-60 during download; GUI soft-wrap reflow unmodeled',
                 'cache':'verified cache and existing install explicitly distinguished','json':'silent stderr even on TTY',
                 'redirected':'no terminal control sequences','integrity_failure':'no completed installation',
                 'download_recovery':'three interruptions resume successfully; eight attempts bounded; next invocation resumes retained partial',

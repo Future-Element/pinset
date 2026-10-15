@@ -76,7 +76,7 @@ class MigrationTests(unittest.TestCase):
     def fake_cli(self, root, *arguments):
         self.calls.append(arguments)
         if arguments == ("self", "info"):
-            return {"protocol": "pinset/3", "version": "3.0.5"}
+            return {"protocol": "pinset/3", "version": migration.DEFAULT_VERSION}
         if arguments == ("self", "repair"):
             self.home.joinpath("v3").mkdir(parents=True, exist_ok=True)
             self.home.joinpath("v3/.pinset-home.json").write_text('{"protocol":"pinset/3"}')
@@ -518,7 +518,8 @@ class UpgradeTests(unittest.TestCase):
         (self.old_bin / "node").symlink_to(self.old_shim)
         (self.old_bin / "dotnet").symlink_to(self.old_shim)
         self.foreign = self.executable(self.old_bin / "custom", b"user executable")
-        self.new_cli = self.executable(self.source_bin / "pinset", b"#!/bin/sh\nprintf 'pinset 3.0.5\\n'\n")
+        self.new_cli = self.executable(self.source_bin / "pinset",
+            f"#!/bin/sh\nprintf 'pinset {migration.DEFAULT_VERSION}\\n'\n".encode())
         self.new_shim = self.executable(self.source_bin / "pinset-shim", b"new shim bytes")
         save(self.home / "state/projects/one.toml", {"schema": 1, "config": str(self.project / "pinset.toml")})
         self.home.joinpath("installs/node/old/bin").mkdir(parents=True)
@@ -538,7 +539,7 @@ class UpgradeTests(unittest.TestCase):
     def fake_cli(self, upgrader, root, *arguments):
         self.calls.append(arguments)
         if arguments == ("self", "info"):
-            return {"protocol": "pinset/3", "version": "3.0.5"}
+            return {"protocol": "pinset/3", "version": migration.DEFAULT_VERSION}
         if arguments == ("self", "repair"):
             directory = upgrader.v3 / "bin"
             directory.mkdir(parents=True, exist_ok=True)
@@ -566,7 +567,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertIn(("install",), self.calls)
         self.assertIn(("check", "--deep"), self.calls)
         self.assertLess(self.calls.index(("self", "repair")), self.calls.index(("install",)))
-        self.assertEqual(migration.Upgrader.binary_version(self.old_cli), "3.0.5")
+        self.assertEqual(migration.Upgrader.binary_version(self.old_cli), migration.DEFAULT_VERSION)
         self.assertIn(str(upgrader.v3 / "bin/node"), (self.old_bin / "node").read_text())
         self.assertFalse((self.old_bin / "dotnet").exists())
         self.assertEqual(self.foreign.read_bytes(), b"user executable")
@@ -688,7 +689,7 @@ class UpgradeTests(unittest.TestCase):
         upgrader.args.pinset = None
         def download(_url, target):
             if target.name == "SHA256SUMS":
-                target.write_text("0" * 64 + "  pinset-v3.0.5-linux-x86_64.zip\n")
+                target.write_text("0" * 64 + f"  pinset-v{migration.DEFAULT_VERSION}-linux-x86_64.zip\n")
             else:
                 target.write_bytes(b"corrupt ZIP")
         with tempfile.TemporaryDirectory() as temporary, patch.object(upgrader, "download", side_effect=download), \
@@ -702,7 +703,7 @@ class UpgradeTests(unittest.TestCase):
                 archive.writestr("pinset-shim", b"shim")
             content = stream.getvalue()
             if target.name == "SHA256SUMS":
-                target.write_text(hashlib.sha256(content).hexdigest() + "  pinset-v3.0.5-linux-x86_64.zip\n")
+                target.write_text(hashlib.sha256(content).hexdigest() + f"  pinset-v{migration.DEFAULT_VERSION}-linux-x86_64.zip\n")
             else:
                 target.write_bytes(content)
         with tempfile.TemporaryDirectory() as temporary, patch.object(upgrader, "download", side_effect=unsafe_download), \
@@ -719,15 +720,15 @@ class UpgradeTests(unittest.TestCase):
             archive.writestr("pinset-shim", self.new_shim.read_bytes())
         content = stream.getvalue()
         def download(url, target):
-            self.assertTrue(url.startswith("https://github.com/Future-Element/pinset/releases/download/v3.0.5/"))
+            self.assertTrue(url.startswith(f"https://github.com/Future-Element/pinset/releases/download/v{migration.DEFAULT_VERSION}/"))
             if target.name == "SHA256SUMS":
-                target.write_text(hashlib.sha256(content).hexdigest() + "  pinset-v3.0.5-linux-x86_64.zip\n")
+                target.write_text(hashlib.sha256(content).hexdigest() + f"  pinset-v{migration.DEFAULT_VERSION}-linux-x86_64.zip\n")
             else:
                 target.write_bytes(content)
         with patch.object(upgrader, "download", side_effect=download), \
                 patch.object(upgrader, "release_platform", return_value="linux-x86_64"):
             self.apply(upgrader)
-        self.assertEqual(migration.Upgrader.binary_version(self.old_cli), "3.0.5")
+        self.assertEqual(migration.Upgrader.binary_version(self.old_cli), migration.DEFAULT_VERSION)
         self.assertTrue(upgrader.cleanup_complete)
 
     def test_unknown_existing_v3_configuration_and_changed_receipts_block_cleanup(self):
@@ -943,7 +944,7 @@ class RealCliTests(unittest.TestCase):
             "--v3-home", str(destination), "--legacy-pinset", str(old_cli), "--pinset", binary,
             "--offline", "--apply"], cwd=self.root, env=environment, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(migration.Upgrader.binary_version(old_cli), "3.0.5")
+        self.assertEqual(migration.Upgrader.binary_version(old_cli), migration.DEFAULT_VERSION)
         routed = subprocess.check_output([str(old_bin / "node"), "--version"],
             cwd=self.project, env=environment)
         self.assertEqual(routed.strip(), b"v22.12.0")
