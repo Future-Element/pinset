@@ -186,10 +186,7 @@ impl GoMetadataClient {
         let mut url = self.metadata_base_url.clone();
         url.set_query(Some("mode=json&include=all"));
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::GoMetadataRequest {
                 url: display_url.clone(),

@@ -309,10 +309,7 @@ impl JavaMetadataClient {
 
     fn download(&self, url: &Url) -> Result<String> {
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url.clone())
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url.clone()))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::JavaMetadataRequest {
                 url: display_url.clone(),

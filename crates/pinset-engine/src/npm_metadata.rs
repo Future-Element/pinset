@@ -453,8 +453,7 @@ impl NpmMetadataClient {
         if let Some(accept) = accept {
             request = request.header(ACCEPT, accept);
         }
-        let mut response = request
-            .send()
+        let mut response = crate::http_client::send_metadata_get(request)
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::NpmMetadataRequest {
                 url: display_url.clone(),

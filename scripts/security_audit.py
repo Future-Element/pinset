@@ -1,9 +1,19 @@
 """Run the full advisory scan; narrowly document an unreachable private-RSA advisory."""
-import datetime, json, os, subprocess
+import datetime, json, os, subprocess, sys, time
 from pathlib import Path
 
-process=subprocess.run(['cargo','audit','--deny','warnings','--json'],stdout=subprocess.PIPE,text=True)
-report=json.loads(process.stdout)
+for attempt in range(3):
+    process=subprocess.run(['cargo','audit','--deny','warnings','--json'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    if process.stdout.strip():
+        report=json.loads(process.stdout)
+        break
+    print(process.stderr,file=sys.stderr,end='')
+    # Retry only the advisory database transport failure. A valid scan result,
+    # including findings, is evaluated once and never hidden by retries.
+    if "couldn't fetch advisory database" not in process.stderr or attempt==2:
+        raise SystemExit(process.returncode or 1)
+    time.sleep(attempt+1)
+report['database_fetch_attempts']=attempt+1
 accepted=[];failures=[]
 uses=[p for p in Path('crates').rglob('*.rs') if 'pgp::' in p.read_text() or 'rsa::' in p.read_text()]
 public_only=uses==[Path('crates/pinset-engine/src/node_trust.rs')]

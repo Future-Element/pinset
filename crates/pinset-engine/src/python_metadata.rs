@@ -386,10 +386,7 @@ impl PythonMetadataClient {
     }
 
     fn download_metadata_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        let mut response = self
-            .client
-            .get(url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::PythonMetadataRequest {
                 url: url.to_owned(),
@@ -572,15 +569,14 @@ impl PythonMetadataClient {
 
     fn download_index(&self) -> Result<String> {
         let display_url = self.fallback_metadata_url.to_string();
-        let mut response = self
-            .client
-            .get(self.fallback_metadata_url.clone())
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|source| Error::PythonMetadataRequest {
-                url: display_url.clone(),
-                source,
-            })?;
+        let mut response = crate::http_client::send_metadata_get(
+            self.client.get(self.fallback_metadata_url.clone()),
+        )
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|source| Error::PythonMetadataRequest {
+            url: display_url.clone(),
+            source,
+        })?;
         if response
             .content_length()
             .is_some_and(|length| length > MAX_PYTHON_INDEX_BYTES)
@@ -610,10 +606,7 @@ impl PythonMetadataClient {
     fn cpython_releases(&self) -> Result<Vec<CpythonRelease>> {
         let url = Url::parse(OFFICIAL_CPYTHON_RELEASES_URL).expect("official CPython API URL");
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::PythonMetadataRequest {
                 url: display_url.clone(),
@@ -678,10 +671,7 @@ impl PythonMetadataClient {
             });
         }
         let url = format!("{OFFICIAL_CPYTHON_FILES_URL}{release_id}");
-        let mut response = self
-            .client
-            .get(&url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(&url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::PythonMetadataRequest {
                 url: url.clone(),

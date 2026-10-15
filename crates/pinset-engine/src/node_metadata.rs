@@ -205,10 +205,7 @@ impl NodeMetadataClient {
 
     fn download_shasums(&self, url: Url) -> Result<String> {
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::NodeMetadataRequest {
                 url: display_url.clone(),
@@ -242,10 +239,7 @@ impl NodeMetadataClient {
 
     fn download_index(&self, url: Url) -> Result<String> {
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url)
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::NodeMetadataRequest {
                 url: display_url.clone(),

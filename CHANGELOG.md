@@ -3,6 +3,7 @@
 ## 3.0.6 - 2026-10-15
 
 - Update locked rustls to 0.23.46 to resolve four newly published TLS security advisories found during local release verification.
+- Retry transient official metadata connection failures with a bounded shared policy, preserving TLS, metadata size limits and verification failures.
 - Separate encrypted profile owners from access grants so revoking a device removes only its access and preserves owners and other grants. Require explicit owner recipients before editing legacy profiles, and validate encrypted changes before starting a transaction.
 - Verify Python's actual interpreter, SDK, isolation and versioned command bindings. Recover owned `.venv` replacement after interruption, refuse active writers and preserve foreign environments.
 - Apply locked artifact policies consistently to resolution, installation and execution. Install only requested tools and their required runtimes; allow ready commands to run independently of unrelated missing installations.

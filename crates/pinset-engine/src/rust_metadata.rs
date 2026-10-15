@@ -227,10 +227,7 @@ impl RustMetadataClient {
 
     fn download_bytes(&self, url: &Url, limit: u64) -> Result<Vec<u8>> {
         let display_url = url.to_string();
-        let mut response = self
-            .client
-            .get(url.clone())
-            .send()
+        let mut response = crate::http_client::send_metadata_get(self.client.get(url.clone()))
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|source| Error::RustMetadataRequest {
                 url: display_url.clone(),
