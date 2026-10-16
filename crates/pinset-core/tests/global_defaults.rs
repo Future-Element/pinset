@@ -121,6 +121,21 @@ fn executable(home: &Path, tool: &LockedTool) -> std::path::PathBuf {
 }
 
 #[test]
+fn default_project_policy_preserves_the_legacy_trust_fingerprint_input() {
+    let legacy = "protocol = 'pinset/3'\nschema = 3\nproject_id = 'legacy'\n";
+    let mut config: ProjectConfig = toml::from_str(legacy).unwrap();
+    let legacy_json = r#"{"protocol":"pinset/3","schema":3,"project_id":"legacy","tools":{},"platforms":[],"rust":{"profile":null,"components":[],"targets":[],"date":null},"policy":{"minimum_release_age":null,"minimum_verification":null},"environment":{"default":null,"profiles":{}}}"#;
+    assert_eq!(serde_json::to_string(&config).unwrap(), legacy_json);
+    config.policy.require_project_tools = true;
+    assert_eq!(
+        serde_json::to_value(&config).unwrap()["policy"]["require_project_tools"],
+        true
+    );
+    let restored: ProjectConfig = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+    assert!(restored.policy.require_project_tools);
+}
+
+#[test]
 fn empty_project_uses_global_defaults_without_mutating_its_lock() {
     let directory = tempfile::tempdir().unwrap();
     let context = save_context(directory.path(), false, &[]);
@@ -212,7 +227,7 @@ fn strict_project_policy_rejects_unselected_global_tools() {
     let context = save_context(directory.path(), false, &[]);
     let home = directory.path().join("home");
     let node = tool("node", "24.21.0");
-    save_context(&home.join("global"), true, &[node.clone()]);
+    save_context(&home.join("global"), true, std::slice::from_ref(&node));
     install_fixture(&home, &node);
     let mut config = context.load().unwrap();
     config.policy.require_project_tools = true;
@@ -229,10 +244,14 @@ fn strict_project_policy_rejects_unselected_global_tools() {
 fn missing_or_damaged_project_selections_and_invalid_locks_never_fall_back() {
     let directory = tempfile::tempdir().unwrap();
     let node = tool("node", "22.20.0");
-    let context = save_context(directory.path(), false, &[node.clone()]);
+    let context = save_context(directory.path(), false, std::slice::from_ref(&node));
     let home = directory.path().join("home");
     let global_node = tool("node", "24.21.0");
-    save_context(&home.join("global"), true, &[global_node.clone()]);
+    save_context(
+        &home.join("global"),
+        true,
+        std::slice::from_ref(&global_node),
+    );
     install_fixture(&home, &global_node);
     assert_eq!(
         plan_command(directory.path(), &home, &context, "node")
@@ -265,7 +284,7 @@ fn inherited_global_python_uses_its_interpreter_without_creating_a_project_venv(
     let context = save_context(directory.path(), false, &[]);
     let home = directory.path().join("home");
     let python = tool("python", "3.13.16+20261009");
-    save_context(&home.join("global"), true, &[python.clone()]);
+    save_context(&home.join("global"), true, std::slice::from_ref(&python));
     install_fixture(&home, &python);
     let plan = plan_command(directory.path(), &home, &context, "python").unwrap();
     assert_eq!(plan.source, "global");

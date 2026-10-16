@@ -150,10 +150,13 @@ impl ToolOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectPolicy {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub require_project_tools: bool,
     pub minimum_release_age: Option<String>,
     pub minimum_verification: Option<String>,
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

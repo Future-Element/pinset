@@ -13,8 +13,8 @@ export const siteConfig = {
   titleEn: "Pinset — Project Toolchains and Execution Environments",
   descriptionZh: "Pinset 锁定八种项目工具链，包括完整 OpenJDK、Python venv、Rust 和 Flutter，解释执行入口，通过明确选择切换版本。",
   descriptionEn: "Lock eight project toolchains, including complete OpenJDK, Python venv, Rust and Flutter. Explain execution paths and switch versions through explicit selections.",
-  contentUpdatedAt: "2026-10-05T00:00:00.000Z",
-  homepageUpdatedAt: "2026-10-05T00:00:00.000Z",
+  contentUpdatedAt: "2026-10-16T00:00:00.000Z",
+  homepageUpdatedAt: "2026-10-16T00:00:00.000Z",
 };
 
 export type Locale = "zh-CN" | "en";

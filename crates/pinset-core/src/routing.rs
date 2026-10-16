@@ -416,16 +416,16 @@ pub fn plan_command(
             }
         }
     }
-    if let Some(name) = managed {
-        if lock.tool(name).is_none() {
-            return Err(failure(
-                "PINSET_TOOL_NOT_SELECTED",
-                format!(
-                    "{name} is not selected in this {}",
-                    if context.global { "global" } else { "project" }
-                ),
-            ));
-        }
+    if let Some(name) = managed
+        && lock.tool(name).is_none()
+    {
+        return Err(failure(
+            "PINSET_TOOL_NOT_SELECTED",
+            format!(
+                "{name} is not selected in this {}",
+                if context.global { "global" } else { "project" }
+            ),
+        ));
     }
     let mut variables = BTreeMap::new();
     let mut paths = vec![home.join("bin")];
