@@ -351,7 +351,7 @@ pub fn plan_command(
     context: &ProjectContext,
     command: &str,
 ) -> Result<CommandPlan> {
-    let (config, lock) = context.load_locked()?;
+    let (config, mut lock) = context.load_locked()?;
     let shim_pending = home.join("state/shim-refresh/transaction.json");
     if shim_pending.exists() {
         let status: serde_json::Value = serde_json::from_slice(&fs::read(shim_pending)?)?;
@@ -387,6 +387,36 @@ pub fn plan_command(
     };
     let mut required = std::collections::BTreeSet::new();
     if let Some(name) = managed {
+        required.insert(name);
+        if name == "pnpm" {
+            required.insert("node");
+        }
+    }
+    let mut inherited = std::collections::BTreeSet::new();
+    if !context.global
+        && !config.policy.require_project_tools
+        && managed.is_some_and(|name| lock.tool(name).is_none())
+    {
+        let global_root = home.join("global");
+        if global_root.join("config.toml").exists() {
+            // Validate each context independently. Only the command's missing
+            // tools are inherited; project selections and profiles stay local.
+            let global = ProjectContext::at(&global_root, true)?;
+            let (_, defaults) = global.load_locked()?;
+            for name in &required {
+                if lock.tool(name).is_none()
+                    && let Some(tool) = defaults.tool(name)
+                {
+                    config
+                        .policy
+                        .validate_tool(tool, std::time::SystemTime::now())?;
+                    lock.upsert_tool(tool.clone())?;
+                    inherited.insert(*name);
+                }
+            }
+        }
+    }
+    if let Some(name) = managed {
         if lock.tool(name).is_none() {
             return Err(failure(
                 "PINSET_TOOL_NOT_SELECTED",
@@ -395,10 +425,6 @@ pub fn plan_command(
                     if context.global { "global" } else { "project" }
                 ),
             ));
-        }
-        required.insert(name);
-        if name == "pnpm" {
-            required.insert("node");
         }
     }
     let mut variables = BTreeMap::new();
@@ -409,7 +435,8 @@ pub fn plan_command(
         let target = locked_target(tool);
         let ready = (|| {
             let receipt = read_receipt(home, tool, &target)?;
-            let venv = if tool.name == "python" && !context.global {
+            let venv = if tool.name == "python" && !context.global && !inherited.contains("python")
+            {
                 Some(validate_venv(context, &config, tool, &target, home)?)
             } else {
                 None
@@ -497,7 +524,12 @@ pub fn plan_command(
         version: None,
         install_identity: None,
         sdk: None,
-        source: if context.global { "global" } else { "project" }.into(),
+        source: if context.global || managed.is_some_and(|name| inherited.contains(name)) {
+            "global"
+        } else {
+            "project"
+        }
+        .into(),
     };
     if let Some(name) = managed {
         let (tool, target, install, sdk, receipt) = selected.get(name).ok_or_else(|| {
@@ -526,7 +558,7 @@ pub fn plan_command(
                         format!("selected Python {} does not provide {cmd}", tool.version),
                     ));
                 }
-                plan.executable = if context.global {
+                plan.executable = if context.global || inherited.contains("python") {
                     interpreter_path(install, target)
                 } else {
                     validate_venv(context, &config, tool, target, home)?

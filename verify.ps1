@@ -1,4 +1,4 @@
-param([ValidateSet('fast','acceptance','platform','integrations','all')][string]$Suite='fast')
+param([ValidateSet('fast','acceptance','platform','integrations','all','hotfix')][string]$Suite='fast')
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $MyInvocation.MyCommand.Path
 $image='pinset-verify:3.0'

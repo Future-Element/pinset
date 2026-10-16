@@ -150,6 +150,8 @@ impl ToolOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectPolicy {
+    #[serde(default)]
+    pub require_project_tools: bool,
     pub minimum_release_age: Option<String>,
     pub minimum_verification: Option<String>,
 }

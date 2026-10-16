@@ -14,7 +14,7 @@ Public models are `ProjectContext`, `LockedTool`, `InstallReceipt`, `CommandPlan
 
 Configuration holds only tool selectors, platforms, Rust options, artifact verification policy and public profile metadata. It never stores task definitions. Locks include exact builds, official artifact URLs, digests, verification methods and identity-affecting options. Install identity excludes the floating selector and includes exact payload identity.
 
-Every operation carries an explicit canonical project root and filesystem directory identity. Config-file parents are never used as an implicit root. Project discovery obeys Git/worktree and home boundaries, chooses the nearest independent configuration and never merges selections.
+Every operation carries an explicit canonical project root and filesystem directory identity. Config-file parents are never used as an implicit root. Project discovery obeys Git/worktree and home boundaries and chooses the nearest independent configuration without inheriting parent selections. Routing overlays only the requested tool and required runtime selections missing from the project with exact global defaults; project selections take priority and project policy still applies. Setting `require_project_tools = true` in `[policy]` disables this global fallback. The overlay is read-only and never rewrites the project configuration or lock.
 
 ## Transactions and concurrency
 
@@ -32,7 +32,7 @@ Managed CLI/router and alias publication stages files and preserves backups on t
 
 ## Execution and evidence
 
-Shims and `exec` use core's route plan and never install or download. Managed entries missing from a project fail. Absolute or explicit external commands are native executions, not sandboxed processes. Child PATH includes managed shims to enforce subsequent managed entry routing. Java uses one JDK root; Python/pip share one owned environment; pnpm uses selected Node; Go sets `GOTOOLCHAIN=local`; Rust uses its exact SDK.
+Shims and `exec` use core's route plan and never install or download. Managed entries prefer project selections, then global defaults unless the project requires explicit selections. Project-selected tools never fall back when their lock, payload or runtime is invalid. An inherited pnpm uses a project-selected Node when available, otherwise the global Node; the resulting combination must satisfy runtime requirements and project policy. Invalid project state remains an error. Absolute or explicit external commands are native executions, not sandboxed processes. Child PATH includes managed shims to enforce subsequent managed entry routing. Java uses one JDK root; Python/pip share one owned environment; pnpm uses selected Node; Go sets `GOTOOLCHAIN=local`; Rust uses its exact SDK.
 
 Every route validates the current configuration policy against the lock. Availability checks cover the requested tool and required runtimes, so an unrelated missing SDK does not block a usable entry. Python routing checks `pyvenv.cfg`, package isolation and the interpreter's actual base SDK; versioned Python/pip aliases and child PATH use that same environment. Explicit Python probes report executable, environment prefix, base prefix and base executable as well as version. Windows bare managed commands are matched without case sensitivity, and native exit codes remain full-width through both the CLI and its private process worker.
 

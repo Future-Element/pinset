@@ -27,13 +27,13 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
     ["安装 Pinset 后，还需要配置 Shell 吗？", "需要。Pinset 不会自动修改 Shell 配置文件。按照 self shell 命令文档，为 Bash、Zsh、Fish 或 PowerShell 配置初始化，让项目命令路由到 Pinset 管理的版本。"],
     ["能和团队、CI 使用相同的版本吗？", "将 .pinset/config.toml 和 .pinset/lock.toml 提交到仓库，团队成员和 CI 使用 pinset install 安装锁定的工具。项目所需平台必须有对应的可用制品。"],
     ["支持哪些操作系统？", "支持 Windows、macOS 和 Linux，具体架构取决于工具的上游发行包。例如 Flutter 上游没有可用于当前安装模型的 Linux ARM64 SDK，Pinset 会明确提示不支持。"],
-    ["Pinset 会自动使用系统里的运行时吗？", "默认不会。项目默认不继承全局版本，也不静默回退到系统 PATH。which --explain 可以解释最终选择。"],
+    ["Pinset 会自动使用系统里的运行时吗？", "命令优先使用项目选择，未选择的工具使用 Pinset 全局默认，并继续校验项目策略。可用 require_project_tools 开启严格项目模式；不会静默回退到系统 PATH。which --explain 可以解释最终选择。"],
   ] : [
     ["What is Pinset?", "Pinset manages project toolchains, locks exact versions, and records actual execution evidence. It uses .pinset/config.toml to declare project tools and policy, and .pinset/lock.toml to record exact versions, platform artifacts, and integrity metadata."],
     ["Do I need to set up my shell after installation?", "Yes. Pinset does not edit shell profiles automatically. Follow the self shell command reference for Bash, Zsh, Fish, or PowerShell so project commands route to Pinset-managed versions."],
     ["Can my team and CI use the same versions?", "Commit .pinset/config.toml and .pinset/lock.toml, then run pinset install on another machine or in CI. Each required platform must have a supported runtime artifact."],
     ["Which operating systems are supported?", "Pinset supports Windows, macOS, and Linux. Architecture support depends on each tool's upstream releases. For example, Flutter does not provide a Linux ARM64 SDK compatible with the current installation model, so Pinset reports an unsupported target."],
-    ["Does Pinset fall back to system runtimes?", "Not by default. Projects do not silently inherit global versions or fall back to system PATH. which --explain show how a command was resolved."],
+    ["Does Pinset fall back to system runtimes?", "Commands prefer project selections, then Pinset global defaults for omitted tools, while enforcing project policy. Enable require_project_tools for strict project routing. There is no silent fallback to system PATH. which --explain shows how a command was resolved."],
   ];
   const jsonLd = {
     "@context": "https://schema.org",

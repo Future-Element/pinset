@@ -1,5 +1,10 @@
 # Change Log
 
+## 3.0.7 - 2026-10-16
+
+- Package alongside the Pinset 3.0.7 global fallback and managed shim refresh fixes.
+- No extension behavior change; full extension-host acceptance was not repeated for this focused CLI hotfix.
+
 ## 3.0.6 - 2026-10-15
 
 - Keep nested folders from overwriting a parent project's SDK settings and bind each root independently in multi-root workspaces.

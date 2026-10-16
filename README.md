@@ -29,7 +29,7 @@ pinset exec -- ./mvnw verify
 
 Commit configuration, lock and encrypted profiles. Ignore only `.pinset/local/` and `.venv/`. Global state lives under `PINSET_HOME/v3/` (default `~/.pinset/v3/`). The CLI neither imports nor removes old files and data. For a 2.x upgrade, use the [standalone upgrade script](docs/migration-v2-to-v3.md): it installs 3.x, migrates exact versions, verifies environments, switches command entries and cleans up legacy files with recovery backups. It is not a Pinset command.
 
-Project discovery stops at the nearest Git repository, including worktrees. Non-Git discovery stops at the home directory; outside it, only the specified directory is checked. The nearest project is independent and never merges parent or global selections. Missing project tools fail explicitly. Global defaults apply only outside a project or through an explicit global command.
+Project discovery stops at the nearest Git repository, including worktrees. Non-Git discovery stops at the home directory; outside it, only the specified directory is checked. The nearest project is independent of parent configurations. Commands prefer explicit project selections and use the global default for an omitted tool, so `init` alone does not hide an existing global pnpm. Required runtimes prefer the project's own selection; otherwise they use the global default. Project policy still applies to inherited tools. Set `require_project_tools = true` in `[policy]` to reject omitted tools. Invalid project configuration, locks or explicit selections fail instead of falling back.
 
 ## Installation and execution
 
@@ -59,10 +59,10 @@ Interrupted venv replacement and managed command publication are also recoverabl
 
 The Rust workspace has five crates: pure `pinset-core`, mutating `pinset-engine`, encrypted `pinset-env`, thin `pinset-cli`, and read-only `pinset-shim`. Eight Providers share the installer, cache, extraction, locking and transaction services. XZ decoding uses pure Rust.
 
-All checks run in **local Docker** through `verify.ps1 -Suite fast|acceptance|platform|integrations|all` or `./verify.sh <suite>`. The original checkout is mounted read-only; fresh identities, trust, projects and venvs are created per run. See [verification](scripts/docker/README.md) and [architecture](docs/architecture.md).
+All checks run in **local Docker** through `verify.ps1 -Suite fast|acceptance|platform|integrations|all|hotfix` or `./verify.sh <suite>`. The original checkout is mounted read-only; fresh identities, trust, projects and venvs are created per run. See [verification](scripts/docker/README.md) and [architecture](docs/architecture.md).
 
 By user request, large Flutter/Android SDK download tests are exempt: actual Flutter execution and APK builds remain unverified. Metadata, locks, routing and Android evidence contracts are required; reports and the release gate record this boundary explicitly.
 
-CI is manual publication only: validate a clean commit-bound local `all` report, compile four platform artifacts, package the extension, generate checksums/SBOM/provenance and publish. It does not run tests, lint, scans, independent typechecks or probes. Linux x64 is the native runtime acceptance platform; Linux ARM64 runs under QEMU. Windows x64 and macOS ARM64 native behavior remains explicitly outside Docker acceptance.
+CI is manual publication only: validate a clean commit-bound local `all` or explicitly authorized `hotfix` report, compile four platform artifacts, package the extension, generate checksums/SBOM/provenance and publish. It does not run tests, lint, scans, independent typechecks or probes. The focused hotfix suite records its fixed checks and all unrun acceptance explicitly. In full acceptance, Linux x64 is the native runtime platform and Linux ARM64 runs under QEMU. Windows x64 and macOS ARM64 native behavior remains outside Docker acceptance.
 
 MIT license. Report security issues privately as described in [SECURITY.md](SECURITY.md).

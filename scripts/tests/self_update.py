@@ -209,6 +209,28 @@ def verify_self_update(source, fixture, current_version):
             assert current['already_current'] and snapshot() == before
             assert not any(path.endswith('.zip') for _, _, path in state['requests'][first_request:]), 'same version downloaded binaries'
             if index == 0:
+                # Reproduce an upgraded pair with public entries still hard-linked
+                # to the old router and a legacy registry without a CLI digest.
+                registry_path = home/'v3/state/shims.json'
+                registry = json.loads(registry_path.read_text())
+                old_router = BIN.parent/'pinset-shim'
+                for name in registry['commands']:
+                    staged = bin_dir/('.stale-'+name)
+                    shutil.copy2(old_router, staged)
+                    staged.replace(bin_dir/name)
+                registry['digest'] = hashlib.sha256(old_router.read_bytes()).hexdigest()
+                registry.pop('cli_digest', None)
+                registry_path.write_text(json.dumps(registry))
+                first_request = len(state['requests'])
+                repaired = json.loads(run(command, env=env, cwd=project, timeout=120))
+                assert repaired['already_current']
+                refreshed = json.loads(registry_path.read_text())
+                current_digest = hashlib.sha256((bin_dir/'pinset-shim').read_bytes()).hexdigest()
+                assert refreshed['digest'] == current_digest
+                assert refreshed['cli_digest'] == hashlib.sha256((bin_dir/'pinset').read_bytes()).hexdigest()
+                for name in refreshed['commands']:
+                    assert hashlib.sha256((bin_dir/name).read_bytes()).hexdigest() == current_digest
+                assert not any(path.endswith('.zip') for _, _, path in state['requests'][first_request:]), 'same-version repair downloaded binaries'
                 # Run the newer image with a prepared journal restoring an older
                 # pair. Recovery must hand off to that older CLI before router
                 # version validation and remain safe to repeat.
@@ -250,4 +272,5 @@ def verify_self_update(source, fixture, current_version):
             'rest_api': 'blocked; zero requests', 'release_switch': 'version pinned after HEAD',
             'redirects': 'official CDN accepted; foreign/downgraded/pre-release rejected',
             'network_errors': 'access, rate limit, not found and missing platform distinguished; bounded retries',
-            'same_version': 'no binary download or local writes', 'stale_latest': 'automatic downgrade rejected'}
+            'same_version': 'no binary download; healthy entries unchanged; stale public entries repaired',
+            'stale_latest': 'automatic downgrade rejected'}

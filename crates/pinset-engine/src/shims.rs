@@ -221,6 +221,38 @@ fn publish(source: &Path, target: &Path) -> Result<()> {
         else { error.into() }
     })
 }
+fn copy_staged_binary(source: &Path, target: &Path) -> Result<()> {
+    fs::copy(source, target).map_err(|error| {
+        service_error(
+            "PINSET_SHIM_IO",
+            format!(
+                "cannot stage {} as {}: {error}",
+                source.display(),
+                target.display()
+            ),
+        )
+    })?;
+    // Windows FlushFileBuffers requires a writable handle, even when the
+    // completed copy only needs to be flushed before publication.
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(target)
+        .map_err(|error| {
+            service_error(
+                "PINSET_SHIM_IO",
+                format!(
+                    "cannot open staged binary {} for flushing: {error}",
+                    target.display()
+                ),
+            )
+        })?;
+    file.sync_all().map_err(|error| {
+        service_error(
+            "PINSET_SHIM_IO",
+            format!("cannot flush staged binary {}: {error}", target.display()),
+        )
+    })
+}
 fn finish(
     home: &Path,
     journal: &mut Refresh,
@@ -515,8 +547,7 @@ impl Services {
         let directory = staging(&bin, &journal);
         fs::create_dir(&directory)?;
         for (source, name) in [(source_cli, "source-cli"), (source_shim, "source-shim")] {
-            fs::copy(source, directory.join(name))?;
-            fs::File::open(directory.join(name))?.sync_all()?;
+            copy_staged_binary(source, &directory.join(name))?;
         }
         for entry in &journal.entries {
             if entry.before.is_some() {
@@ -793,6 +824,46 @@ mod tests {
                 Some(&registry.digest)
             );
         }
+        assert!(!transaction_path(&home).exists());
+    }
+    #[test]
+    fn refreshes_legacy_aliases_when_the_cli_and_router_are_already_replaced() {
+        let (temporary, home, journal) = fixture();
+        fs::remove_file(transaction_path(&home)).unwrap();
+        let directory = staging(&home.join("bin"), &journal);
+        let cli = home.join("bin").join(cli_name(&current_target()));
+        let shim = home.join("bin").join(shim_name(&current_target()));
+        fs::copy(directory.join("source-cli"), &cli).unwrap();
+        fs::copy(directory.join("source-shim"), &shim).unwrap();
+        let mut before = journal.before.clone().unwrap();
+        before.cli_digest = None;
+        write_json(&home.join("state/shims.json"), &before).unwrap();
+
+        let service = service(&home, temporary.path());
+        service.install_shims_from(&cli, &shim).unwrap();
+        let registry = registry_at(&home.join("state/shims.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(registry.digest, digest(b"new-shim"));
+        assert_eq!(registry.cli_digest, Some(digest(b"new-cli")));
+        for command in registry.commands.keys() {
+            assert_eq!(
+                fingerprint(
+                    &home
+                        .join("bin")
+                        .join(executable_name(command, &current_target()))
+                )
+                .unwrap()
+                .as_ref(),
+                Some(&registry.digest)
+            );
+        }
+        // Repeated installation and repair must retain the now-matching entries.
+        service.install_shims_from(&cli, &shim).unwrap();
+        assert_eq!(
+            registry_at(&home.join("state/shims.json")).unwrap(),
+            Some(registry)
+        );
         assert!(!transaction_path(&home).exists());
     }
     #[test]

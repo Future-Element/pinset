@@ -250,6 +250,9 @@ impl Services {
             );
         }
         if version == pinset_version() {
+            // The CLI/router pair may already be current while public command
+            // shims still belong to an older or interrupted installation.
+            self.self_repair(false)?;
             return Ok(
                 json!({"protocol":PROTOCOL,"version":version,"already_current":true,"restart_required":false}),
             );

@@ -20,7 +20,7 @@ pinset exec -- ./mvnw verify
 
 提交 `.pinset/config.toml`、`.pinset/lock.toml` 和 `.pinset/env/<profile>.env`；只忽略 `.pinset/local/` 与根目录 `.venv/`。全局数据位于 `PINSET_HOME/v3/`，默认 `~/.pinset/v3/`。CLI 不自动接管或删除旧数据。2.x 升级可使用[独立升级脚本](docs/migration-v2-to-v3.zh-CN.md)：安装 3.x、迁移精确版本、验证环境、切换命令入口，再清理旧文件并保留恢复备份；该脚本不接入 pinset 命令。
 
-Git 项目最多向上查找到最近仓库根，支持 worktree；非 Git 项目最多查找到主目录，主目录之外只检查指定目录。最近项目配置独立生效，不合并父配置或全局配置。项目缺少受管工具选择时明确拒绝执行；无项目时才使用明确设置的全局默认。
+Git 项目最多向上查找到最近仓库根，支持 worktree；非 Git 项目最多查找到主目录，主目录之外只检查指定目录。最近项目独立于父配置。命令优先使用项目明确选择的版本，未选择的工具使用全局默认，因此仅执行 `init` 不会屏蔽已有的全局 pnpm。运行时依赖优先使用项目选择，否则使用全局默认；继承的工具仍受项目策略约束。在 `[policy]` 设置 `require_project_tools = true` 可要求工具必须由项目选择。项目配置、锁或明确选择损坏时仍报错，不静默回退。
 
 `use` 解析官方制品并事务更新选择和锁；`install` 严格按现有锁安装。缓存和离线安装继续校验摘要。`remove` 只取消选择；SDK 由保守引用保护的 `clean` 清理。shim 与 `exec` 不自动安装工具，不发起隐式下载。原生工具自身的联网与显式外部 toolchain 不属于执行沙箱。
 
@@ -46,8 +46,8 @@ profile 按值使用 age 加密。私钥只存在系统凭据库或显式 `PINSE
 
 五个 Rust crate 分离只读模型、引擎、加密环境、CLI 与 shim，八个 Provider 共用安装、下载、缓存、解压和事务服务。XZ 采用纯 Rust 解码。
 
-所有格式、lint、安全扫描、测试、独立 typecheck 和运行验收均使用本地 Docker：`verify.ps1 -Suite fast|acceptance|platform|integrations|all`；Unix 用 `./verify.sh <suite>`。原仓库只读挂载，测试使用容器副本。详见[验收入口](scripts/docker/README.md)。
+所有格式、lint、安全扫描、测试、独立 typecheck 和运行验收均使用本地 Docker：`verify.ps1 -Suite fast|acceptance|platform|integrations|all|hotfix`；Unix 用 `./verify.sh <suite>`。原仓库只读挂载，测试使用容器副本。详见[验收入口](scripts/docker/README.md)。
 
 按用户要求，Flutter/Android 大型 SDK 下载测试免测，实际 Flutter 运行和 APK 构建仍标记为未验收。元数据、锁、路由及 Android 证据契约仍须通过；本地报告和发布门禁明确保留这一边界。
 
-CI 仅手动发布：核验绑定干净 commit 的本地 all 报告，编译四平台、打包扩展、生成 checksum/SBOM/来源证明并发布，不调用测试。Linux x64 原生验收，ARM64 使用 QEMU；Windows/macOS 原生行为明确不计入 Docker 验收。
+CI 仅手动发布：核验绑定干净 commit 的本地 all 报告，或用户明确授权的 hotfix 定向报告，编译四平台、打包扩展、生成 checksum/SBOM/来源证明并发布，不调用测试。hotfix 固定运行相关检查，明确记录未重跑的验收范围。完整验收使用 Linux x64 原生运行、ARM64 QEMU；Windows/macOS 原生行为不计入 Docker 验收。

@@ -1,5 +1,5 @@
 """Install/archive/Action/release metadata contracts, entirely inside local Docker."""
-import functools, hashlib, http.server, json, os, subprocess, tempfile, threading, zipfile
+import copy, functools, hashlib, http.server, json, os, subprocess, tempfile, threading, zipfile
 from pathlib import Path
 from support import BIN, run, report
 
@@ -74,7 +74,8 @@ assert re.findall(r'^### `([^`]+)`',english,re.M)==re.findall(r'^### `([^`]+)`',
 sysroot=str(root/'scripts');import sys;sys.path.insert(0,sysroot)
 from release_gate import validate, source_fingerprint
 from check_release_assets import fetch_draft_release, validate_assets
-from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
+from verification_policy import (LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS,
+    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED)
 try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,tag)
 except ValueError:pass
 else:raise AssertionError('release gate accepted non-local report')
@@ -89,6 +90,29 @@ metadata={'protocol':'pinset-verification/3','suite':'all','execution':'local-do
   'arm64_execution':'QEMU emulation','unverified':['Windows native runtime','macOS native runtime',LARGE_ARTIFACT_BOUNDARY],
   'runtime_exemptions':RUNTIME_EXEMPTIONS}
 assert validate(metadata,source,tag)==commit
+# Focused hotfix publication retains exact source/lock/image identity and the
+# actual required commands, while refusing to imply unrun all-suite coverage.
+hotfix={**metadata,'suite':'hotfix','hotfix_scope':HOTFIX_SCOPE,
+    'suites':{'hotfix':{'status':'passed'}},
+    'commands':[{'label':label,'argv':argv,'cwd':'/workspace','exit_code':0} for label,argv in HOTFIX_COMMANDS],
+    'evidence_files':{name:{'sha256':'2'*64,'bytes':1} for name in HOTFIX_EVIDENCE},
+    'unverified':HOTFIX_UNVERIFIED+[LARGE_ARTIFACT_BOUNDARY],'arm64_execution':'Not run for this hotfix'}
+assert validate(hotfix,source,tag)==commit
+for failure in ['scope','suite','command','argv','cwd','failed','evidence','boundary','arm64','dirty']:
+    invalid=copy.deepcopy(hotfix)
+    if failure=='scope':invalid['hotfix_scope']='unrelated change'
+    elif failure=='suite':invalid['suites']['all']={'status':'passed'}
+    elif failure=='command':invalid['commands'].pop()
+    elif failure=='argv':invalid['commands'][0]['argv']=['true']
+    elif failure=='cwd':invalid['commands'][0]['cwd']='/source'
+    elif failure=='failed':invalid['commands'][0]['exit_code']=1
+    elif failure=='evidence':invalid['evidence_files'].pop('rust-contracts.log')
+    elif failure=='boundary':invalid['unverified'].pop(0)
+    elif failure=='arm64':invalid['arm64_execution']='QEMU emulation'
+    elif failure=='dirty':invalid['source_clean']=False
+    try:validate(invalid,source,tag)
+    except ValueError:pass
+    else:raise AssertionError('hotfix gate accepted '+failure)
 # Git-declared text must have the same fingerprint on Windows and Linux,
 # including files outside the usual source-extension list. Binary changes matter.
 fingerprint_root=fixture/'fingerprint-source';fingerprint_root.mkdir()
@@ -126,7 +150,6 @@ draft={'tag_name':tag,'draft':True,'prerelease':'-' in tag,'assets':[
     {'name':path.name,'state':'uploaded','size':path.stat().st_size,'digest':'sha256:'+hashlib.sha256(path.read_bytes()).hexdigest()}
     for path in draft_dir.iterdir()]}
 assert validate_assets(draft,draft_dir,tag)['complete_assets']==11
-import copy
 # Model GitHub's draft visibility: tag queries fail, the authenticated inventory
 # is paginated, and the selected draft must still match when read by its ID.
 selected_draft={**draft,'id':73}

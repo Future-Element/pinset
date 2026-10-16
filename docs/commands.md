@@ -8,6 +8,8 @@ Global options: `-C/--cwd`, `--lang auto|en|zh-CN`, `--json`, `--help`, `--versi
 
 ### `init`
 
+Initialization keeps existing global defaults available for tools the project does not select. Commands prefer explicit project versions; inherited tools and their runtime dependencies remain subject to project policy. Set `require_project_tools = true` in `[policy]` for strict project-only routing. Invalid project state or unavailable explicitly selected tools still fail.
+
 Create a new project identity and configuration in the specified directory. No native version files are imported.
 
 ```text

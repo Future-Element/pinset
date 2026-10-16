@@ -2,11 +2,12 @@ import datetime,hashlib,json,os,shutil,subprocess,sys,time,traceback
 from pathlib import Path
 sys.path.insert(0,'/source/scripts')
 from release_gate import source_fingerprint
-from verification_policy import LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS
+from verification_policy import (LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS,
+    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED)
 
 source=Path('/source');workspace=Path('/workspace');reports=Path('/reports')/('verify-v3-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
 suite=sys.argv[1]
-if suite not in ['fast','acceptance','platform','integrations','all']:raise SystemExit('unknown suite')
+if suite not in ['fast','acceptance','platform','integrations','all','hotfix']:raise SystemExit('unknown suite')
 # A reused container keeps caches, but each run gets fresh local state and credentials.
 if workspace.is_symlink() or workspace.is_mount():raise SystemExit('workspace must be a private container directory')
 local=Path('/run/pinset-verification')
@@ -50,6 +51,7 @@ def run(args,label,timeout=3600,env=None):
     start=time.monotonic();filename=reports/(label+'.log');print('RUN',label,flush=True)
     command={'label':label,'argv':args,'cwd':str(Path.cwd())}
     with filename.open('wb') as output:
+        output.write((json.dumps(command,sort_keys=True)+'\n').encode());output.flush()
         try:
             process=subprocess.run(args,stdout=output,stderr=subprocess.STDOUT,timeout=timeout,env=env)
             code=process.returncode
@@ -74,6 +76,11 @@ def acceptance():
     run(['cargo','build','--workspace','--bins','--locked'],'acceptance-binaries')
     snapshot_binaries()
     run(['python3','scripts/tests/acceptance.py'],'real-sdk-acceptance',timeout=14_400)
+
+def hotfix():
+    for label,args in HOTFIX_COMMANDS:
+        run(args,label)
+        if label=='binaries':snapshot_binaries()
 def platform():
     run(['bash','scripts/tests/platform.sh'],'platform',timeout=7200)
 def integrations():
@@ -90,9 +97,9 @@ def integrations():
     run(['pnpm','--dir','website','build'],'website-package')
     run(['pnpm','--dir','website','validate:seo'],'website-seo')
     run(['dbus-run-session','--','bash','scripts/tests/integrations.sh'],'runtime-integrations',timeout=14_400)
-functions={'fast':fast,'acceptance':acceptance,'platform':platform,'integrations':integrations}
+functions={'fast':fast,'acceptance':acceptance,'platform':platform,'integrations':integrations,'hotfix':hotfix}
 try:
-    for name in functions if suite=='all' else [suite]:
+    for name in ['fast','acceptance','platform','integrations'] if suite=='all' else [suite]:
         start=time.monotonic()
         try:functions[name]();results[name]={'status':'passed','seconds':round(time.monotonic()-start,2)}
         except Exception as error:results[name]={'status':'failed','seconds':round(time.monotonic()-start,2),'error':str(error)};traceback.print_exc()
@@ -104,10 +111,13 @@ finally:
     changes=[line for line in changes.splitlines() if not line[3:].startswith(('output/','.pinset/'))]
     image=os.environ.get('PINSET_VERIFY_IMAGE_DIGEST','')
     report={'protocol':'pinset-verification/3','execution':'local-docker','container_id':os.environ.get('PINSET_VERIFY_CONTAINER_ID',''),'container_reused':True,'suite':suite,'commit':commit,'source_clean':not changes,'source_fingerprint':start_fingerprint,'lock_sha256':start_lock,'image_digests':{'verify':image,'rust':'sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3','node':'sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553'},'commands':commands,'suites':results,'unverified':['Windows x86_64 native runtime; only target compilation and path/credential contracts','macOS aarch64 native runtime; only target compilation and path/credential contracts'],'arm64_execution':'QEMU emulation; no native ARM64 host'}
+    if suite=='hotfix':
+        report.update({'hotfix_scope':HOTFIX_SCOPE,'unverified':list(HOTFIX_UNVERIFIED),'arm64_execution':'Not run for this hotfix'})
     required={'fast':['contracts.json','distribution.json','cargo-security.json'],
       'acceptance':['real-sdks.json','frozen-selectors.json','python-regressions.json','toolchain-regressions.json','venv-recovery.json'],
       'platform':['platform.json','frozen-selectors.json'],
-      'integrations':['integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json','environment-access.json']}
+      'integrations':['integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json','environment-access.json'],
+      'hotfix':HOTFIX_EVIDENCE}
     report['runtime_exemptions']=RUNTIME_EXEMPTIONS
     report['unverified'].append(LARGE_ARTIFACT_BOUNDARY)
     report['evidence_files']={}

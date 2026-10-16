@@ -804,14 +804,24 @@ impl Services {
                 &self.cwd, &self.home, &c, cmd,
             )?)?);
         }
-        let (_, lock) = self.load(&c)?;
+        let (config, lock) = self.load(&c)?;
+        let mut names = lock
+            .tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let global_root = self.home.join("global");
+        if !c.global
+            && !config.policy.require_project_tools
+            && global_root.join("config.toml").exists()
+        {
+            let global = ProjectContext::at(&global_root, true)?;
+            let (_, defaults) = global.load_locked()?;
+            names.extend(defaults.tools.into_iter().map(|tool| tool.name));
+        }
         let mut plans = vec![];
-        for tool in &lock.tools {
-            let cmd = if tool.name == "rust" {
-                "rustc"
-            } else {
-                &tool.name
-            };
+        for name in &names {
+            let cmd = if name == "rust" { "rustc" } else { name };
             plans.push(plan_command(&self.cwd, &self.home, &c, cmd)?);
         }
         Ok(json!({"protocol":PROTOCOL,"commands":plans}))

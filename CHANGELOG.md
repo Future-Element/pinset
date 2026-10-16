@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.7 - 2026-10-16
+
+- Use the global selection for tools omitted from a project's configuration. Keep explicit project selections and invalid project state strict, and route each tool with its matching runtime dependencies.
+- Refresh stale managed command shims during installation, self repair and same-version self update so CLI updates do not leave commands on an incompatible broker version.
+- Open staged shim files with write access before flushing them on Windows, fixing `Access is denied (os error 5)` after reusing installations in `use` and `install`.
+- Record this hotfix's focused local Docker checks explicitly, retaining source identity and release integrity gates without claiming unrun SDK, platform, dependency audit or editor acceptance.
+- 项目未选择的工具使用全局默认版本；项目明确选择的版本及其运行时依赖保持严格校验，损坏配置不会静默回退。
+- 安装、自修复及同版本自更新时刷新过期命令入口，避免 CLI 已更新而 pnpm、Node 等入口仍使用旧 broker 协议。
+- 修复 Windows 使用只读句柄刷新暂存入口导致的拒绝访问，`use`、`install` 复用安装后不再因此报 `os error 5`。
+
 ## 3.0.6 - 2026-10-15
 
 - Update locked rustls to 0.23.46 to resolve four newly published TLS security advisories found during local release verification.
