@@ -289,7 +289,7 @@ impl Services {
             ],
             aliases: vec![],
         })?;
-        let current = std::env::current_exe()?;
+        let current = crate::self_update::resolve_cli_executable(&std::env::current_exe()?)?;
         let destination = current.parent().unwrap();
         self.validate_new_cli(
             &result

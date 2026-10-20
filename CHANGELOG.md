@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.8 - 2026-10-20
+
+- Resolve the running CLI's symbolic links before locating its paired shim and preparing self-update, recovery or repair. A command such as `~/.local/bin/pinset` now maintains the actual installation it points to.
+- Keep the focused local Docker hotfix checks and explicitly unverified SDK, platform, integration and dependency-audit boundaries.
+- 自更新、恢复与修复前先解析 CLI 符号链接，再按真实程序位置查找配套 shim；`~/.local/bin/pinset` 等链接入口维护其实际指向的安装。
+
 ## 3.0.7 - 2026-10-16
 
 - Use the global selection for tools omitted from a project's configuration. Keep explicit project selections and invalid project state strict, and route each tool with its matching runtime dependencies.

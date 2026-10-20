@@ -14,7 +14,7 @@ LARGE_ARTIFACT_BOUNDARY = 'Flutter SDK execution and Android APK build unverifie
 
 # This is the explicitly requested reduced scope for this class of hotfix,
 # not all-suite acceptance. Publication still requires the user's authorization.
-HOTFIX_SCOPE = 'Global tool defaults, matching runtime dependencies, stale managed shims and Windows shim flush repair'
+HOTFIX_SCOPE = 'Resolve symlinked CLI entries to their real executable for self-update, recovery and managed shim repair'
 HOTFIX_COMMANDS = [
     ('format', ['cargo','fmt','--all','--','--check']),
     ('lint', ['cargo','clippy','--workspace','--all-targets','--locked','--','-D','warnings']),

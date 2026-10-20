@@ -9,8 +9,8 @@ python3 scripts/migrate_v2_to_v3.py
 # Complete upgrade, including global selections and all registered 2.x projects
 python3 scripts/migrate_v2_to_v3.py --apply
 
-# Choose an exact official release; default recommendation: 3.0.7
-python3 scripts/migrate_v2_to_v3.py --apply --version 3.0.7
+# Choose an exact official release; default recommendation: 3.0.8
+python3 scripts/migrate_v2_to_v3.py --apply --version 3.0.8
 
 # Include an unregistered project; --project is repeatable
 python3 scripts/migrate_v2_to_v3.py --apply --project /path/to/project

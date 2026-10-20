@@ -1,5 +1,9 @@
 # Change Log
 
+## 3.0.8 - 2026-10-20
+
+- Package alongside the Pinset 3.0.8 symbolic-link CLI maintenance fix; no extension behavior change.
+
 ## 3.0.7 - 2026-10-16
 
 - Package alongside the Pinset 3.0.7 global fallback and managed shim refresh fixes.

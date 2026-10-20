@@ -231,6 +231,30 @@ def verify_self_update(source, fixture, current_version):
                 for name in refreshed['commands']:
                     assert hashlib.sha256((bin_dir/name).read_bytes()).hexdigest() == current_digest
                 assert not any(path.endswith('.zip') for _, _, path in state['requests'][first_request:]), 'same-version repair downloaded binaries'
+                # A launcher can live elsewhere without a neighboring router;
+                # maintenance must use the real pair and preserve that link.
+                launchers = fixture/'launchers'
+                launchers.mkdir()
+                launcher = launchers/'pinset'
+                launcher.symlink_to(bin_dir/'pinset')
+                link_target = os.readlink(launcher)
+                pair_digests = {name: hashlib.sha256((bin_dir/name).read_bytes()).hexdigest()
+                                for name in ['pinset', 'pinset-shim']}
+                first_request = len(state['requests'])
+                for action in [['repair'], ['update', version]]:
+                    result = json.loads(run([launcher, '-C', project, '--json', 'self']+action,
+                                            env=env, cwd=project, timeout=120))
+                    assert result['repaired' if action[0] == 'repair' else 'already_current']
+                    assert launcher.is_symlink() and os.readlink(launcher) == link_target
+                    assert not (launchers/'pinset-shim').exists()
+                    for name, expected in pair_digests.items():
+                        assert hashlib.sha256((bin_dir/name).read_bytes()).hexdigest() == expected
+                    registry = json.loads(registry_path.read_text())
+                    assert registry['cli_digest'] == pair_digests['pinset']
+                    assert registry['digest'] == pair_digests['pinset-shim']
+                    for name in registry['commands']:
+                        assert hashlib.sha256((bin_dir/name).read_bytes()).hexdigest() == registry['digest']
+                assert not any(path.endswith('.zip') for _, _, path in state['requests'][first_request:]), 'symlink maintenance downloaded binaries'
                 # Run the newer image with a prepared journal restoring an older
                 # pair. Recovery must hand off to that older CLI before router
                 # version validation and remain safe to repeat.
@@ -273,4 +297,5 @@ def verify_self_update(source, fixture, current_version):
             'redirects': 'official CDN accepted; foreign/downgraded/pre-release rejected',
             'network_errors': 'access, rate limit, not found and missing platform distinguished; bounded retries',
             'same_version': 'no binary download; healthy entries unchanged; stale public entries repaired',
+            'symlink_launcher': 'repair and same-version update preserve the link and real pair; no adjacent router',
             'stale_latest': 'automatic downgrade rejected'}

@@ -17,6 +17,17 @@ const REQUEST_ATTEMPTS: u32 = 3;
 const MAX_REDIRECTS: usize = 5;
 const MAX_RETRY_WAIT: u64 = 5;
 
+pub(crate) fn resolve_cli_executable(executable: &Path) -> Result<PathBuf> {
+    // macOS may report a launcher symlink as current_exe(). Resolve the file
+    // before deriving its companion and installation directory.
+    executable.canonicalize().map_err(|error| {
+        service_error(
+            "PINSET_CLI_PATH",
+            format!("cannot resolve CLI {}: {error}", executable.display()),
+        )
+    })
+}
+
 pub(crate) struct UpdateRelease {
     pub version: String,
     pub archive_name: String,
@@ -525,7 +536,8 @@ impl Services {
                 ));
             }
             let mut journal: BinaryJournal = read_json(&path)?;
-            let parent = std::env::current_exe()?.parent().unwrap().canonicalize()?;
+            let current = resolve_cli_executable(&std::env::current_exe()?)?;
+            let parent = current.parent().unwrap().to_path_buf();
             if journal.protocol != PROTOCOL
                 || journal.destination != parent
                 || !journal.backup.starts_with(&parent)
@@ -729,6 +741,45 @@ mod tests {
             assert!(release_checksum(&sums, name).is_err());
         }
     }
+    #[test]
+    #[cfg(unix)]
+    fn linked_cli_updates_the_real_pair_and_preserves_the_launcher() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let installed = root.path().join("installed");
+        let launchers = root.path().join("launchers");
+        let source = root.path().join("new");
+        for directory in [&installed, &launchers, &source] {
+            fs::create_dir(directory).unwrap();
+        }
+        let names = vec!["pinset".into(), "pinset-shim".into()];
+        for name in &names {
+            fs::write(installed.join(name), format!("old-{name}")).unwrap();
+            fs::write(source.join(name), format!("new-{name}")).unwrap();
+        }
+        let launcher = launchers.join("pinset");
+        let link = Path::new("../installed/pinset");
+        symlink(link, &launcher).unwrap();
+
+        // Model the unresolved executable path returned by macOS. The router
+        // lives beside the real CLI, without a copy beside this launcher.
+        let cli = resolve_cli_executable(&launcher).unwrap();
+        let directory = cli.parent().unwrap();
+        assert_eq!(directory, installed.canonicalize().unwrap());
+        assert!(directory.join("pinset-shim").is_file());
+        assert!(!launchers.join("pinset-shim").exists());
+        replace_binary_pair(&source, directory, root.path(), &names).unwrap();
+        for name in names {
+            assert_eq!(
+                fs::read_to_string(installed.join(&name)).unwrap(),
+                format!("new-{name}")
+            );
+        }
+        assert_eq!(fs::read_link(&launcher).unwrap(), link);
+        assert_eq!(fs::read_to_string(launcher).unwrap(), "new-pinset");
+    }
+
     #[test]
     fn successful_pair_keeps_both_backups_and_committed_journal() {
         let root = tempfile::tempdir().unwrap();

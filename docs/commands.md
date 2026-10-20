@@ -239,6 +239,8 @@ pinset self repair [--plan]
 
 Update from an official Pinset 3 release after checking its platform checksum.
 
+Symbolic-link CLI entries resolve to the real executable before locating the paired shim or updating and repairing the installation.
+
 Without a version, Pinset reads the official `/releases/latest` redirect and accepts only a stable Pinset 3 tag. An explicit version skips latest discovery and may select a prerelease. Neither path uses the GitHub REST API or requires a token. All subsequent downloads use the resolved exact version directory, even if a newer release appears during the update.
 
 The release's `SHA256SUMS` selects the platform ZIP, preferring `pinset-v<version>-<platform>.zip` and accepting the existing fixed platform name. Each recognized entry must contain one valid SHA-256 checksum; missing, duplicated or malformed entries abort the update. The downloaded CLI must report the exact selected version before the CLI/shim pair is replaced. `--plan` reads the redirect and checksum file without downloading binaries or writing local state. An already installed version does not download binaries, and automatic updates reject an older latest release; an explicit version can select a downgrade.

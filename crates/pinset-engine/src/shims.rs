@@ -388,7 +388,7 @@ fn cleanup_completed(bin: &Path) -> Result<()> {
 }
 impl Services {
     pub fn install_shims(&self) -> Result<()> {
-        let cli = std::env::current_exe()?;
+        let cli = crate::self_update::resolve_cli_executable(&std::env::current_exe()?)?;
         let shim = cli
             .parent()
             .ok_or_else(|| service_error("PINSET_SHIM_MISSING", "missing adjacent router"))?
