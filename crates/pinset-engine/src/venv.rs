@@ -516,6 +516,7 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().join("project");
         fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let service = Services {
             cwd: root.clone(),
             home: temporary.path().join("home/v3"),
