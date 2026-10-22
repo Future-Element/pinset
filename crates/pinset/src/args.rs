@@ -16,6 +16,15 @@ pub struct Cli {
 pub enum Commands {
     /// Create a new project identity in the specified directory.
     Init,
+    /// Review and import existing toolchain version declarations.
+    Import {
+        /// Show the resolved migration plan without writing files.
+        #[arg(long)]
+        plan: bool,
+        /// Confirm the displayed plan without an interactive prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Select tools and resolve their official artifacts.
     Use {
         #[arg(required=true,num_args=1..)]
@@ -66,6 +75,9 @@ pub enum Commands {
     },
     /// Inspect configuration and installations; probes require explicit opt-in.
     Check {
+        /// Output a stable JSON report for CI and scripts.
+        #[arg(long, value_enum, default_value = "text")]
+        format: CheckFormat,
         #[arg(long)]
         global: bool,
         #[arg(long)]
@@ -98,6 +110,23 @@ pub enum Commands {
         #[command(subcommand)]
         command: SelfCommand,
     },
+}
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckFormat {
+    Text,
+    Json,
+}
+impl Cli {
+    pub fn json_output(&self) -> bool {
+        self.json
+            || matches!(
+                self.command,
+                Commands::Check {
+                    format: CheckFormat::Json,
+                    ..
+                }
+            )
+    }
 }
 #[derive(ValueEnum, Debug, Clone)]
 pub enum BuildTarget {

@@ -1,51 +1,131 @@
-name: Setup Pinset
-description: Install Pinset 3, install the project's exact lock, and expose managed commands on PATH.
+name: setup-pinset
+description: Install Pinset, restore and cache the project's locked tools, and verify the resulting toolchain.
 author: Future Element
+branding:
+  icon: package
+  color: blue
 inputs:
   version:
-    description: Exact Pinset 3 release version
+    description: Exact Pinset 3 release version, or latest for the latest stable release
     required: false
-    default: 3.0.8
+    default: latest
   install:
-    description: Install artifacts from .pinset/lock.toml
+    description: Restore tools from the project lock and run verification (false installs only Pinset)
     required: false
     default: "true"
+  cache:
+    description: Cache only PINSET_HOME/v3/installs for this platform and exact lock
+    required: false
+    default: "true"
+  skip-check:
+    description: Skip the deep integrity and executable version checks after restoring tools
+    required: false
+    default: "false"
   working-directory:
     description: Project directory or a directory inside its Pinset project boundary
     required: false
     default: .
+  token:
+    description: GitHub token used only to resolve the latest public Pinset release
+    required: false
+    default: ${{ github.token }}
+outputs:
+  version:
+    description: Resolved exact Pinset version, without a leading v
+    value: ${{ steps.prepare.outputs.version }}
+  cache-hit:
+    description: Whether the exact tool installation cache was restored
+    value: ${{ steps.cache.outputs.cache-hit || 'false' }}
+  check-report:
+    description: Absolute JSON report path, or empty when verification is skipped
+    value: ${{ steps.prepare.outputs.check-report }}
 runs:
   using: composite
   steps:
+    - name: Prepare Pinset setup
+      id: prepare
+      shell: bash
+      env:
+        PINSET_ACTION_VERSION: ${{ inputs.version }}
+        PINSET_ACTION_INSTALL: ${{ inputs.install }}
+        PINSET_ACTION_CACHE: ${{ inputs.cache }}
+        PINSET_ACTION_SKIP_CHECK: ${{ inputs.skip-check }}
+        PINSET_PROJECT_DIRECTORY: ${{ inputs.working-directory }}
+        PINSET_GITHUB_TOKEN: ${{ inputs.token }}
+      run: node "${GITHUB_ACTION_PATH}/scripts/action/prepare.mjs"
     - name: Install Pinset on Unix
       if: runner.os != 'Windows'
       shell: bash
       env:
-        PINSET_VERSION: ${{ inputs.version }}
-        PINSET_INSTALL_DIR: ${{ runner.temp }}/pinset-v3/bin
+        PINSET_VERSION: ${{ steps.prepare.outputs.version }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
       run: |
         set -euo pipefail
-        [[ "$PINSET_VERSION" =~ ^3\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo 'An exact Pinset 3 release is required' >&2; exit 1; }
         bash "${GITHUB_ACTION_PATH}/install.sh" --version "$PINSET_VERSION" --install-dir "$PINSET_INSTALL_DIR"
-        printf '%s\n' "${PINSET_HOME:-$HOME/.pinset}/v3/bin" >> "$GITHUB_PATH"
+        printf '%s\n' "$PINSET_HOME/v3/bin" >> "$GITHUB_PATH"
         printf '%s\n' "$PINSET_INSTALL_DIR" >> "$GITHUB_PATH"
     - name: Install Pinset on Windows
       if: runner.os == 'Windows'
       shell: pwsh
       env:
-        PINSET_VERSION: ${{ inputs.version }}
-        PINSET_INSTALL_DIR: ${{ runner.temp }}/pinset-v3/bin
+        PINSET_VERSION: ${{ steps.prepare.outputs.version }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
       run: |
         $ErrorActionPreference = 'Stop'
-        if ($env:PINSET_VERSION -notmatch '^3\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$') { throw 'An exact Pinset 3 release is required' }
         & (Join-Path $env:GITHUB_ACTION_PATH 'install.ps1') -Version $env:PINSET_VERSION -InstallDir $env:PINSET_INSTALL_DIR
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        $base = if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }
-        Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $base 'v3/bin')
+        Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:PINSET_HOME 'v3/bin')
         Add-Content -LiteralPath $env:GITHUB_PATH -Value $env:PINSET_INSTALL_DIR
-    - name: Install locked project artifacts
-      if: inputs.install == 'true'
+    - name: Cache locked tool installations
+      id: cache
+      if: inputs.install == 'true' && inputs.cache == 'true'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: ${{ steps.prepare.outputs.cache-directory }}
+        key: ${{ steps.prepare.outputs.cache-key }}
+        enableCrossOsArchive: false
+    - name: Restore locked tools on Unix
+      if: inputs.install == 'true' && runner.os != 'Windows'
       shell: bash
       env:
-        PINSET_PROJECT_DIRECTORY: ${{ inputs.working-directory }}
-      run: pinset -C "$PINSET_PROJECT_DIRECTORY" install
+        PINSET_PROJECT_DIRECTORY: ${{ steps.prepare.outputs.project-directory }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
+      run: |
+        set -euo pipefail
+        "$PINSET_INSTALL_DIR/pinset" -C "$PINSET_PROJECT_DIRECTORY" install
+    - name: Restore locked tools on Windows
+      if: inputs.install == 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PINSET_PROJECT_DIRECTORY: ${{ steps.prepare.outputs.project-directory }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & (Join-Path $env:PINSET_INSTALL_DIR 'pinset.exe') -C $env:PINSET_PROJECT_DIRECTORY install
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Verify locked tools on Unix
+      if: inputs.install == 'true' && inputs.skip-check != 'true' && runner.os != 'Windows'
+      shell: bash
+      env:
+        PINSET_PROJECT_DIRECTORY: ${{ steps.prepare.outputs.project-directory }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
+        PINSET_CHECK_REPORT: ${{ steps.prepare.outputs.check-report }}
+      run: |
+        set -euo pipefail
+        status=0
+        "$PINSET_INSTALL_DIR/pinset" -C "$PINSET_PROJECT_DIRECTORY" check --deep --probe --format json > "$PINSET_CHECK_REPORT" || status=$?
+        cat "$PINSET_CHECK_REPORT"
+        exit "$status"
+    - name: Verify locked tools on Windows
+      if: inputs.install == 'true' && inputs.skip-check != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PINSET_PROJECT_DIRECTORY: ${{ steps.prepare.outputs.project-directory }}
+        PINSET_INSTALL_DIR: ${{ steps.prepare.outputs.install-directory }}
+        PINSET_CHECK_REPORT: ${{ steps.prepare.outputs.check-report }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & (Join-Path $env:PINSET_INSTALL_DIR 'pinset.exe') -C $env:PINSET_PROJECT_DIRECTORY check --deep --probe --format json > $env:PINSET_CHECK_REPORT
+        $checkStatus = $LASTEXITCODE
+        Get-Content -LiteralPath $env:PINSET_CHECK_REPORT
+        if ($checkStatus -ne 0) { exit $checkStatus }

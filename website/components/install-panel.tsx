@@ -17,8 +17,8 @@ export function InstallPanel({ locale }: { locale: Locale }) {
   const release = useLatestReleaseVersion();
   return (
     <div className="installPanel" id="install">
-      <div className="installHeading"><strong>{zh ? "安装 Pinset" : "Install Pinset"} <LatestReleaseVersion fallback={zh ? "3.0 开发版" : "3.0 development"} prefix="v" /></strong><span>MIT · {zh ? "免费开源" : "Free & open source"}</span></div>
-      {!release && <p>{zh ? "尚未检测到 3.0 发布制品。以下安装命令在 3.0 发布后可用，当前请查看源码与开发文档。" : "No 3.0 release artifact was detected. These installation commands become available after publication; see the source and development documentation meanwhile."}</p>}
+      <div className="installHeading"><strong>{zh ? "安装 Pinset" : "Install Pinset"} <LatestReleaseVersion fallback={zh ? "最新稳定版" : "latest stable"} prefix="v" /></strong><span>MIT · {zh ? "免费开源" : "Free & open source"}</span></div>
+      {!release && <p>{zh ? "版本信息暂未载入。安装脚本默认获取最新稳定版，也可以在 GitHub 查看发布记录。" : "Release details have not loaded. The installer fetches the latest stable release by default; you can also view releases on GitHub."}</p>}
       <div className="platformSwitch" role="group" aria-label={zh ? "操作系统" : "Operating system"}>
         <button type="button" aria-pressed={platform === "unix"} onClick={() => setPlatform("unix")}>macOS / Linux</button>
         <button type="button" aria-pressed={platform === "windows"} onClick={() => setPlatform("windows")}>Windows</button>

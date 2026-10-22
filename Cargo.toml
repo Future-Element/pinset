@@ -11,7 +11,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.97"
-version = "3.0.8"
+version = "3.0.9"
 authors = ["Future Element"]
 
 [workspace.dependencies]
@@ -22,7 +22,7 @@ clap = { version = "4.5", features = ["derive"] }
 flate2 = "1"
 hex = "0.4"
 md5 = "0.8"
-keyring = "4.1.6"
+keyring-core = "1.0.0"
 fs4 = "1.1.0"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 pgp = { version = "0.19.0", default-features = false }
@@ -39,9 +39,14 @@ thiserror = "2"
 toml = "0.9"
 url = "2.5"
 uuid = { version = "1.18.1", features = ["v4"] }
-zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 zeroize = "1"
 lzma-rust2 = { version = "0.20.1", default-features = false, features = ["std", "xz", "encoder"] }
+
+# Upstream replaces the retired basic-toml parser with maintained toml. Remove
+# this pinned patch once the next i18n-config release includes that change.
+[patch.crates-io]
+i18n-config = { git = "https://github.com/kellpossible/cargo-i18n", rev = "2ce7b1dfe9a8cc224288bf50cbc2a67a6de863c4" }
 
 # Real SDK acceptance uses debug CLI binaries; keep bulk hashing and pure-Rust
 # XZ decoding fast without changing application debug assertions or tests.

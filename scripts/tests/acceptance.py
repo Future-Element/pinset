@@ -183,7 +183,7 @@ def lifecycle():
     root=project('lifecycle');select_tool(root,'java@17')
     sdk=Path(data(root,'which','java')['sdk']);release=sdk/'release';original=release.read_bytes()
     changed=bytearray(original);changed[-1]=32 if changed[-1]!=32 else 10;release.write_bytes(changed)
-    assert data(root,'check','--deep')['report']['checks'][0]['installed'] is False
+    assert data(root,'check','--deep',expected=1)['report']['checks'][0]['installed'] is False
     data(root,'install','--offline','--repair',timeout=600)
     assert release.read_bytes()==original
     assert data(root,'check','--deep')['report']['checks'][0]['installed']

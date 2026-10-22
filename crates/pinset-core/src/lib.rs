@@ -2,6 +2,7 @@
 mod config;
 mod environment_protocol;
 mod error;
+mod generic;
 mod integrity;
 mod model;
 mod policy;
@@ -11,6 +12,7 @@ mod work_directory;
 pub use config::*;
 pub use environment_protocol::*;
 pub use error::*;
+pub use generic::*;
 pub use integrity::*;
 pub use model::*;
 pub use policy::*;

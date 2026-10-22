@@ -1,5 +1,10 @@
 # Change Log
 
+## 3.0.9 - 2026-10-22
+
+- Package alongside Pinset 3.0.9 import, generic binary Provider, CI support and command documentation improvements.
+- Show complete structured reports when tool checks return a failing status, while retaining errors for invalid configuration and failed processes.
+
 ## 3.0.8 - 2026-10-20
 
 - Package alongside the Pinset 3.0.8 symbolic-link CLI maintenance fix; no extension behavior change.

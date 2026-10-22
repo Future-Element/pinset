@@ -25,11 +25,13 @@ pub fn start() -> i32 {
                 error.kind(),
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
             );
-            if !display && raw.iter().any(|arg| arg == "--json") {
-                println!(
-                    "{}",
-                    serde_json::json!({"protocol":pinset_core::PROTOCOL,"error":{"code":"PINSET_ARGUMENT_INVALID","message":error.to_string()}})
-                );
+            if !display && requested_json(&raw) {
+                let mut value = serde_json::json!({"protocol":pinset_core::PROTOCOL,"error":{"code":"PINSET_ARGUMENT_INVALID","message":error.to_string()}});
+                if raw.iter().any(|arg| arg == "check") {
+                    value["schema_version"] = 1.into();
+                    value["passed"] = false.into();
+                }
+                println!("{}", value);
             } else {
                 let _ = error.print();
             }
@@ -48,20 +50,26 @@ pub fn start() -> i32 {
             0
         }
         Ok(Output::Report(value)) => {
-            if cli.json {
+            if cli.json_output() {
                 println!("{}", serde_json::to_string(&value).unwrap());
             } else {
                 print!("{}", crate::presentation::report(&value, chinese));
             }
-            0
+            if matches!(cli.command, Commands::Check { .. }) && value["passed"] != true {
+                1
+            } else {
+                0
+            }
         }
         Err(error) => {
             let code = error.code();
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"protocol":pinset_core::PROTOCOL,"error":{"code":code,"message":error.to_string()}})
-                );
+            if cli.json_output() {
+                let mut value = serde_json::json!({"protocol":pinset_core::PROTOCOL,"error":{"code":code,"message":error.to_string()}});
+                if matches!(cli.command, Commands::Check { .. }) {
+                    value["schema_version"] = 1.into();
+                    value["passed"] = false.into();
+                }
+                println!("{}", value);
             } else {
                 if chinese {
                     eprint!("操作失败：");
@@ -81,11 +89,48 @@ fn report(value: Value) -> Result<Output> {
     Ok(Output::Report(value))
 }
 fn dispatch(cli: &Cli, chinese: bool) -> Result<Output> {
-    let progress =
-        crate::progress::ProgressDisplay::new(!cli.json && io::stderr().is_terminal(), chinese);
+    let progress = crate::progress::ProgressDisplay::new(
+        !cli.json_output() && io::stderr().is_terminal(),
+        chinese,
+    );
     let service = Services::new(&cli.cwd)?.with_progress_reporter(progress.reporter());
     match &cli.command {
         Commands::Init => report(service.init()?),
+        Commands::Import { plan, yes } => {
+            let prepared = service.plan_import()?;
+            let preview = prepared.report();
+            // JSON stays one document on stdout. Without --yes it is a read-only plan.
+            if *plan || (cli.json && !*yes) {
+                return report(preview);
+            }
+            if cli.json {
+                eprintln!("{}", serde_json::to_string(&preview).unwrap());
+            } else {
+                print!("{}", crate::presentation::report(&preview, chinese));
+                io::stdout().flush()?;
+            }
+            if prepared.needs_write() && !*yes {
+                eprint!(
+                    "{}",
+                    if chinese {
+                        "将以上结果写入配置和锁文件？[y/N] "
+                    } else {
+                        "Write this plan to config and lock files? [y/N] "
+                    }
+                );
+                io::stderr().flush()?;
+                let mut answer = String::new();
+                io::stdin().read_line(&mut answer)?;
+                if !matches!(
+                    answer.trim().to_ascii_lowercase().as_str(),
+                    "y" | "yes" | "是"
+                ) {
+                    return report(serde_json::json!({"protocol":pinset_core::PROTOCOL,
+                        "operation":"import","plan":false,"applied":false,"cancelled":true}));
+                }
+            }
+            report(service.apply_import(prepared)?)
+        }
         Commands::Use {
             tools,
             global,
@@ -126,6 +171,7 @@ fn dispatch(cli: &Cli, chinese: bool) -> Result<Output> {
             }
         }
         Commands::Check {
+            format: _,
             global,
             deep,
             probe,
@@ -253,6 +299,19 @@ fn dispatch(cli: &Cli, chinese: bool) -> Result<Output> {
             }
         },
     }
+}
+fn requested_json(raw: &[String]) -> bool {
+    // Do not interpret arguments forwarded to a child process.
+    let args = raw
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .collect::<Vec<_>>();
+    args.iter().any(|arg| arg.as_str() == "--json")
+        || (args.iter().any(|arg| arg.as_str() == "check")
+            && (args.iter().any(|arg| arg.as_str() == "--format=json")
+                || args
+                    .windows(2)
+                    .any(|pair| pair[0] == "--format" && pair[1] == "json")))
 }
 fn output_text(cli: &Cli, text: String) -> Result<Output> {
     if cli.json {

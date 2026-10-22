@@ -69,6 +69,22 @@ impl Services {
             let receipt = read_receipt(&self.home, tool, &platform);
             let mut check = EnvironmentCheck {
                 tool: tool.name.clone(),
+                expected_version: tool.version.clone(),
+                actual_version: None,
+                artifact_digest: ArtifactDigestCheck {
+                    expected: tool
+                        .artifact(&platform)
+                        .map(|artifact| {
+                            artifact
+                                .artifact_integrity()
+                                .map(|digest| digest.canonical())
+                        })
+                        .transpose()?,
+                    receipt_matches_lock: receipt.is_ok(),
+                    payload_verified: None,
+                    passed: receipt.is_ok(),
+                },
+                passed: false,
                 configured: true,
                 installed: receipt.is_ok(),
                 bound: false,
@@ -79,6 +95,24 @@ impl Services {
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "exact installation receipt matches".into()),
             };
+            if deep && let Ok(receipt) = &receipt {
+                match check_payload(&self.home, tool, &platform, receipt) {
+                    Ok(matches) => {
+                        check.artifact_digest.payload_verified = Some(matches);
+                        if !matches {
+                            check.installed = false;
+                            check.detail =
+                                "installation payload digest, size or file count changed".into();
+                        }
+                    }
+                    Err(error) => {
+                        check.artifact_digest.payload_verified = Some(false);
+                        check.installed = false;
+                        check.detail = error.to_string();
+                    }
+                }
+                check.artifact_digest.passed = check.artifact_digest.payload_verified == Some(true);
+            }
             let command = if tool.name == "rust" {
                 "rustc"
             } else {
@@ -87,81 +121,62 @@ impl Services {
             let plan_result = plan_command(&self.cwd, &self.home, &c, command);
             if let Ok(plan) = plan_result {
                 check.bound = true;
-                if deep {
-                    let root = install_directory(&self.home, tool, &platform);
-                    let (count, size) = install_payload_statistics(&root)?;
-                    let r = receipt.as_ref().unwrap();
-                    // Receipt itself is excluded by the install statistics routine.
-                    if (tool.name != "flutter" && (count != r.file_count || size != r.total_size))
-                        || install_payload_fingerprint(&root, &tool.name)? != r.payload_digest
-                    {
-                        check.installed = false;
-                        check.detail = "installation payload size or file count changed".into();
-                    }
-                    if tool.name == "java" {
-                        let sdk = sdk_root(&root, "java", &platform);
-                        for entry in ["release", "include/jni.h"] {
-                            if !sdk.join(entry).exists() {
-                                check.installed = false;
-                                check.detail = format!("JDK missing {entry}");
-                            }
-                        }
-                    }
-                }
                 if probe && check.installed {
                     let args=match tool.name.as_str(){"python"=>vec!["-I".into(),"-c".into(),"import sys,site,json; print(json.dumps(dict(version=sys.version.split()[0], executable=sys.executable, prefix=sys.prefix, base_prefix=sys.base_prefix, base_executable=sys._base_executable, user_site=site.ENABLE_USER_SITE)))".into()],"java"=>vec!["-version".into()],"go"=>vec!["version".into()],_=>vec!["--version".into()]};
                     let mut cmd = prepare_command(&plan, &args, &self.cwd, BTreeMap::new());
                     cmd.env("PINSET_NO_ENV", "1");
                     let output =
-                        crate::process_tree::run(cmd, Duration::from_secs(30), Some(1024 * 1024))
-                            .map_err(|e| service_error("PINSET_PROBE_FAILED", e.to_string()))?;
-                    let observed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                    let version = if tool.name == "python" {
-                        serde_json::from_str::<Value>(&observed)
-                            .ok()
-                            .and_then(|v| v["version"].as_str().map(str::to_owned))
-                    } else if tool.name == "java" {
-                        java_probe_version(&observed)
-                    } else {
-                        observed
-                            .split_whitespace()
-                            .find(|s| {
-                                s.trim_start_matches(['v', 'g', 'o'])
-                                    .starts_with(char::is_numeric)
-                            })
-                            .map(|s| s.trim_start_matches('v').to_owned())
+                        crate::process_tree::run(cmd, Duration::from_secs(30), Some(1024 * 1024));
+                    let (code, observed) = match output {
+                        Ok(output) => (
+                            output.code,
+                            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                        ),
+                        Err(error) => (-1, format!("PINSET_PROBE_FAILED: {error}")),
                     };
+                    let version = (code != -1)
+                        .then(|| probe_version(&tool.name, &observed))
+                        .flatten();
                     let exact = version.as_deref().is_some_and(|v| {
                         if tool.name == "rust" {
                             rust_probe_matches(tool, &observed)
                         } else if tool.name == "python" {
                             tool.version.split('+').next() == Some(v)
                                 && python_probe_matches(tool, &plan, &c, &observed)
-                        } else if tool.name == "java" {
-                            v == tool.version
+                        } else if tool.is_generic() {
+                            v == tool.version.strip_prefix('v').unwrap_or(&tool.version)
                         } else {
-                            v == tool.version || v.trim_start_matches("go") == tool.version
+                            v == tool.version
                         }
                     });
-                    check.actually_verified = output.code == 0 && exact;
+                    check.actual_version = version;
+                    check.actually_verified = code == 0 && exact;
                     report.evidence.push(ExecutionEvidence {
                         host: current_target(),
                         command: command.into(),
                         executable: plan.executable,
                         version: tool.version.clone(),
-                        observed,
+                        observed: observed.clone(),
                         timestamp: now(),
                         success: check.actually_verified,
                         scope: "explicit-entry-probe".into(),
                     });
                     if !check.actually_verified {
-                        check.detail =
-                            "probe failed or the observed version differs from the lock".into();
+                        check.detail = if code == -1 {
+                            observed.clone()
+                        } else {
+                            "probe failed or the observed version differs from the lock".into()
+                        };
                     }
                 }
             } else {
                 check.detail = plan_result.unwrap_err().to_string();
             }
+            check.passed = check.configured
+                && check.installed
+                && check.bound
+                && check.artifact_digest.passed
+                && (!probe || check.actually_verified);
             report.checks.push(check);
         }
         let java = if config.tools.contains_key("java") {
@@ -174,7 +189,8 @@ impl Services {
         } else {
             None
         };
-        let value = json!({"protocol":PROTOCOL,"report":report,"java":java,"android":android,"target":target,"build_target":target.map(|requested|json!({"target":requested,"host":current_target(),"build_observed":false,"scope":"selected toolchain and prerequisites; no application build performed"}))});
+        let passed = report.checks.iter().all(|check| check.passed);
+        let value = json!({"protocol":PROTOCOL,"schema_version":1,"passed":passed,"report":report,"java":java,"android":android,"target":target,"build_target":target.map(|requested|json!({"target":requested,"host":current_target(),"build_observed":false,"scope":"selected toolchain and prerequisites; no application build performed"}))});
         if probe {
             write_json(
                 &self.home.join("state/evidence").join(format!(
@@ -186,6 +202,46 @@ impl Services {
             )?;
         }
         Ok(value)
+    }
+}
+
+fn check_payload(
+    home: &Path,
+    tool: &LockedTool,
+    platform: &str,
+    receipt: &InstallReceipt,
+) -> Result<bool> {
+    let root = install_directory(home, tool, platform);
+    let (count, size) = install_payload_statistics(&root)?;
+    // Mutable Flutter state is excluded by its fingerprint routine.
+    let mut matches = (tool.name == "flutter"
+        || (count == receipt.file_count && size == receipt.total_size))
+        && install_payload_fingerprint(&root, &tool.name)? == receipt.payload_digest;
+    if tool.name == "java" {
+        let sdk = sdk_root(&root, "java", platform);
+        matches &= ["release", "include/jni.h"]
+            .iter()
+            .all(|entry| sdk.join(entry).exists());
+    }
+    Ok(matches)
+}
+
+fn probe_version(tool: &str, observed: &str) -> Option<String> {
+    match tool {
+        "python" => serde_json::from_str::<Value>(observed)
+            .ok()
+            .and_then(|value| value["version"].as_str().map(str::to_owned)),
+        "java" => java_probe_version(observed),
+        _ => observed.split_whitespace().find_map(|token| {
+            let version = if tool == "go" {
+                token.strip_prefix("go").unwrap_or(token)
+            } else {
+                token.trim_start_matches('v')
+            };
+            version
+                .starts_with(char::is_numeric)
+                .then(|| version.to_owned())
+        }),
     }
 }
 
@@ -267,6 +323,31 @@ pub fn java_probe_version(output: &str) -> Option<String> {
 #[cfg(test)]
 mod probe_tests {
     use super::*;
+    #[test]
+    fn normalizes_observed_versions_without_claiming_unparseable_output() {
+        assert_eq!(
+            probe_version("go", "go version go1.26.0 linux/amd64"),
+            Some("1.26.0".into())
+        );
+        assert_eq!(probe_version("node", "v22.12.0"), Some("22.12.0".into()));
+        assert_eq!(
+            probe_version("terraform", "Terraform v1.9.0\non linux_amd64"),
+            Some("1.9.0".into())
+        );
+        assert_eq!(
+            probe_version("rust", "rustc 1.97.1-nightly (123456abc 2026-07-15)"),
+            Some("1.97.1-nightly".into())
+        );
+        assert_eq!(
+            probe_version("python", r#"{"version":"3.14.0"}"#),
+            Some("3.14.0".into())
+        );
+        assert_eq!(
+            probe_version("example", "unsupported flag: --version"),
+            None
+        );
+        assert_eq!(probe_version("python", "Python failed to initialize"), None);
+    }
     #[test]
     fn rust_probe_rejects_another_nightly_with_the_same_release_number() {
         let mut tool = LockedTool {

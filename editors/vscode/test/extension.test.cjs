@@ -4,7 +4,8 @@ const Module = require('node:module');
 const path = require('node:path');
 
 test('trust gates processes, binding keeps language-server JDK separate, commands use v3', async () => {
-  const callbacks = new Map(), updates = [], errors = [], calls = [];
+  const callbacks = new Map(), updates = [], errors = [], calls = [], outputLines = [];
+  let cliFailure;
   let trusted = false;
   let settingsText='{\n // preserve comments\n "java.jdt.ls.java.home":"/external/server-jdk"\n}';
   const file=p=>({scheme:"file",fsPath:p,toString:()=>p});
@@ -17,7 +18,7 @@ test('trust gates processes, binding keeps language-server JDK separate, command
         update:async (key,value)=>updates.push([section+'.'+key,value])}),
       textDocuments:[],fs:{readFile:async()=>Buffer.from(settingsText),createDirectory:async()=>{},writeFile:async (_uri,data)=>{settingsText=Buffer.from(data).toString();}},
       createFileSystemWatcher:()=>({dispose(){},onDidCreate:event,onDidChange:event,onDidDelete:event}),onDidGrantWorkspaceTrust:event},
-    window:{activeTextEditor:undefined,createOutputChannel:()=>({appendLine(){},show(){},dispose(){}}),
+    window:{activeTextEditor:undefined,createOutputChannel:()=>({appendLine(value){outputLines.push(value);},show(){},dispose(){}}),
       createStatusBarItem:()=>({show(){},dispose(){}}),showErrorMessage:async e=>errors.push(e),onDidChangeActiveTextEditor:event},
     commands:{registerCommand:(name,action)=>{callbacks.set(name,action);return event();}},
     Uri:{file,joinPath:(uri,...parts)=>file(path.join(uri.fsPath,...parts))},StatusBarAlignment:{Left:1},ConfigurationTarget:{Workspace:2,WorkspaceFolder:3},
@@ -27,7 +28,8 @@ test('trust gates processes, binding keeps language-server JDK separate, command
     const value=args.includes('which')?{protocol:'pinset/3',commands:[{protocol:'pinset/3',tool:'java',sdk:'/locked/jdk',version:'21.0.12+1',project:'/project',executable:'/locked/jdk/bin/java'},
       {protocol:'pinset/3',tool:'flutter',sdk:'/locked/flutter',project:'/project',version:'3.35.4',executable:'/locked/flutter/bin/flutter'}]}
       :{protocol:'pinset/3',report:{checks:[{tool:'java',installed:true,bound:true,actually_verified:false,detail:'bound'}]}};
-    queueMicrotask(()=>done(null,JSON.stringify(value),''));return {on(){}};
+    const failure=cliFailure;
+    queueMicrotask(()=>done(failure?Object.assign(new Error('CLI failed'),{code:failure.code}):null,JSON.stringify(failure?.value??value),''));return {on(){}};
   }};
   const original=Module._load;
   Module._load=function(name,...args){return name==='vscode'?vscode:name==='node:child_process'?child:original.call(this,name,...args);};
@@ -55,4 +57,14 @@ test('trust gates processes, binding keeps language-server JDK separate, command
   await callbacks.get('pinset.install')();
   assert(calls.some(({args,options})=>args.includes('install')&&options.timeout===1_800_000));
   assert(calls.every(({args,options})=>args.includes('--json')&&args.includes('-C')&&options.windowsHide===true));
+  const failedReport={protocol:'pinset/3',schema_version:1,passed:false,report:{checks:[{tool:'node',installed:false,bound:false,actually_verified:false,detail:'not installed'}]}};
+  cliFailure={code:1,value:failedReport};
+  assert.deepEqual(await callbacks.get('pinset.check')(),failedReport);
+  assert.equal(JSON.parse(outputLines.at(-1)).passed,false);
+  assert.deepEqual(await callbacks.get('pinset.probe')(),failedReport);
+  await assert.rejects(callbacks.get('pinset.install')(),/passed/);
+  cliFailure={code:1,value:{protocol:'pinset/3',passed:false,error:{code:'PINSET_LOCK_MISSING',message:'lock missing'}}};
+  await assert.rejects(callbacks.get('pinset.check')(),/PINSET_LOCK_MISSING/);
+  cliFailure={code:2,value:failedReport};
+  await assert.rejects(callbacks.get('pinset.check')(),/passed/);
 });

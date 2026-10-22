@@ -47,9 +47,8 @@ fn validate_registry(registry: &Registry) -> Result<()> {
             .as_ref()
             .is_some_and(|digest| !valid_digest(digest))
         || registry.commands.iter().any(|(name, tool)| {
-            validate_managed_command_name(&normalized_command_name(name, &current_target()))
+            validate_registered_command(&normalized_command_name(name, &current_target()), tool)
                 .is_err()
-                || !TOOLS.contains(&tool.as_str())
         })
     {
         return Err(service_error(
@@ -433,11 +432,29 @@ impl Services {
         let state = self.home.join("state/shims.json");
         let before = registry_at(&state)?;
         let mut commands = public_commands();
+        let mut generic_commands = BTreeMap::new();
         if let Some(prior) = &before {
             commands.extend(prior.commands.keys().cloned());
+            generic_commands.extend(
+                prior
+                    .commands
+                    .iter()
+                    .filter(|(_, tool)| !TOOLS.contains(&tool.as_str()))
+                    .map(|(command, tool)| (command.clone(), tool.clone())),
+            );
         }
-        for tool in ["java", "python"] {
-            let installs = self.home.join("installs").join(tool);
+        let mut inventory_tools = vec!["java".to_owned(), "python".to_owned()];
+        if self.home.join("installs").is_dir() {
+            for entry in fs::read_dir(self.home.join("installs"))? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if entry.file_type()?.is_dir() && validate_generic_name(&name).is_ok() {
+                    inventory_tools.push(name);
+                }
+            }
+        }
+        for tool in inventory_tools {
+            let installs = self.home.join("installs").join(&tool);
             if !installs.is_dir() {
                 continue;
             }
@@ -468,10 +485,20 @@ impl Services {
                                     .filter(|name| validate_managed_command_name(name).is_ok())
                                     .cloned(),
                             );
-                        } else if semver::Version::parse(&receipt.version)
-                            .is_ok_and(|version| version.major == 3)
+                        } else if tool == "python"
+                            && semver::Version::parse(&receipt.version)
+                                .is_ok_and(|version| version.major == 3)
                         {
                             commands.extend(python_version_commands(&receipt.version));
+                        } else if validate_generic_name(&tool).is_ok()
+                            && receipt.commands.len() == 1
+                            && receipt
+                                .commands
+                                .get(&tool)
+                                .is_some_and(|path| validate_generic_path(path).is_ok())
+                        {
+                            commands.push(tool.clone());
+                            generic_commands.insert(tool.clone(), tool.clone());
                         }
                     }
                 }
@@ -490,7 +517,10 @@ impl Services {
             commands: commands
                 .into_iter()
                 .map(|command| {
-                    let tool = command_tool(&command).unwrap_or("java").to_owned();
+                    let tool = generic_commands
+                        .get(&command)
+                        .cloned()
+                        .unwrap_or_else(|| command_tool(&command).unwrap_or("java").to_owned());
                     (command, tool)
                 })
                 .collect(),

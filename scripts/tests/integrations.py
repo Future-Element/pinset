@@ -126,7 +126,7 @@ def flutter_contracts():
     assert (root/'.pinset/lock.toml').read_bytes()==before
     for command in ['flutter','dart']:
         assert data(root,'which',command,expected=1)['error']['code']=='PINSET_INSTALL_MISSING'
-    checked=data(root,'check','--target','android')
+    checked=data(root,'check','--target','android',expected=1)
     assert not checked['android']['verified'] and not checked['android']['flutter']['actual_jdk_observed']
     assert not any(item['actually_verified'] for item in checked['report']['checks'])
     report('flutter-contracts',status='passed',scope='Official metadata and read-only command/lock contracts; no SDK execution',

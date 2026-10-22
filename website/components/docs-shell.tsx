@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommandNavigationGroup } from "@/lib/commands";
+import type { GuideNavigation } from "@/lib/guides";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig } from "@/lib/site";
 import { Brand } from "./brand";
 import { LatestReleaseProvider } from "./latest-release";
 
-export function DocsShell({ children, groups, locale, landing = false }: { children: React.ReactNode; groups: CommandNavigationGroup[]; locale: Locale; landing?: boolean }) {
+export function DocsShell({ children, groups, guides, locale, landing = false }: { children: React.ReactNode; groups: CommandNavigationGroup[]; guides: GuideNavigation[]; locale: Locale; landing?: boolean }) {
   const pathname = usePathname();
   const prefix = localePrefix(locale);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -24,10 +25,13 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
 
   const results = useMemo(() => {
     const value = query.trim().toLowerCase();
-    const commands = groups.flatMap((group) => group.commands);
-    if (!value) return commands.slice(0, 8);
-    return commands.filter((command) => `${command.title} ${command.description}`.toLowerCase().includes(value)).slice(0, 12);
-  }, [groups, query]);
+    const entries = [
+      ...guides.map((guide) => ({ ...guide, label: guide.title, href: `${prefix}/docs/${guide.slug}` })),
+      ...groups.flatMap((group) => group.commands).map((command) => ({ ...command, label: `pinset ${command.title}`, href: `${prefix}/docs/commands/${command.slug}` })),
+    ];
+    if (!value) return entries.slice(0, 8);
+    return entries.filter((entry) => `${entry.label} ${entry.description}`.toLowerCase().includes(value)).slice(0, 12);
+  }, [groups, guides, prefix, query]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -105,20 +109,19 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
     }
   };
 
-  return (
-    <LatestReleaseProvider>
+  const content = (
     <div className={`siteFrame ${landing ? "landingFrame" : "docsFrame"}`} lang={locale}>
       <a className="skipLink" href="#main-content">{zh ? "跳至正文" : "Skip to content"}</a>
       <header className="topbar">
         <Brand href={prefix || "/"} />
         <nav className="topnav" aria-label={zh ? "主导航" : "Primary navigation"}>
           {landing ? <><a href="#features">{zh ? "功能" : "Features"}</a><a href="#providers">{zh ? "支持的工具" : "Toolchains"}</a></> : <Link href={prefix || "/"}>{zh ? "首页" : "Home"}</Link>}
-          <Link className={pathname.includes("/commands") ? "active" : ""} href={`${prefix}/docs/commands`} scroll={false}>{zh ? "命令" : "Commands"}</Link>
+          <Link className={pathname.includes("/docs/") ? "active" : ""} href={`${prefix}/docs/commands`} scroll={false}>{zh ? "文档" : "Docs"}</Link>
         </nav>
         <div className="topActions">
-          <button className="searchButton" type="button" onClick={() => setSearchOpen(true)} aria-label={zh ? "搜索命令" : "Search commands"}>
+          <button className="searchButton" type="button" onClick={() => setSearchOpen(true)} aria-label={zh ? "搜索文档" : "Search docs"}>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m14.3 14.3 3.2 3.2m-1.7-8.2a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" /></svg>
-            <span>{zh ? "搜索命令" : "Search commands"}</span><kbd>⌘K</kbd>
+            <span>{zh ? "搜索文档" : "Search docs"}</span><kbd>⌘K</kbd>
           </button>
           <Link className="languageLink" href={otherLocaleHref} hrefLang={locale === "en" ? "zh-CN" : "en"}>{locale === "en" ? "中文" : "EN"}</Link>
           <a className="iconLink" href={siteConfig.repository} target="_blank" rel="noreferrer" aria-label="GitHub">
@@ -134,6 +137,7 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
             <div className="navHeading">{zh ? "文档" : "Documentation"}</div>
             <Link className={pathname === prefix || pathname === `${prefix}/` ? "navLink active" : "navLink"} href={prefix || "/"} onClick={() => setMenuOpen(false)}>{zh ? "介绍" : "Introduction"}</Link>
             <Link className={pathname === `${prefix}/docs/commands` ? "navLink active" : "navLink"} href={`${prefix}/docs/commands`} scroll={false} onClick={() => setMenuOpen(false)}>{zh ? "命令索引" : "Command index"}</Link>
+            {guides.map((guide) => <Link key={guide.slug} className={pathname === `${prefix}/docs/${guide.slug}` ? "navLink active" : "navLink"} href={`${prefix}/docs/${guide.slug}`} scroll={false} onClick={() => setMenuOpen(false)}>{guide.title}</Link>)}
           </div>
           {landing && <div className="navGroup"><a className="navLink" href="#features" onClick={() => setMenuOpen(false)}>{zh ? "功能" : "Features"}</a><a className="navLink" href="#providers" onClick={() => setMenuOpen(false)}>{zh ? "支持的工具" : "Toolchains"}</a><a className="navLink" href="#getting-started" onClick={() => setMenuOpen(false)}>{zh ? "开始使用" : "Get started"}</a><a className="navLink" href="#faq" onClick={() => setMenuOpen(false)}>FAQ</a></div>}
           {!landing && groups.map((group) => (
@@ -141,7 +145,7 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
               <div className="navHeading">{group.title}</div>
               {group.commands.map((command) => {
                 const href = `${prefix}/docs/commands/${command.slug}`;
-                return <Link className={pathname === href ? "navLink active" : "navLink"} href={href} key={command.slug} scroll={false} onClick={() => setMenuOpen(false)}><code>{command.title}</code></Link>;
+                return <Link className={pathname === href ? "navLink active" : "navLink"} href={href} title={command.description} key={command.slug} scroll={false} onClick={() => setMenuOpen(false)}><code>{command.title}</code></Link>;
               })}
             </div>
           ))}
@@ -153,22 +157,22 @@ export function DocsShell({ children, groups, locale, landing = false }: { child
       <main className="mainContent" id="main-content" tabIndex={-1}>{children}</main>
 
       {searchOpen && (
-        <div className="searchOverlay" role="dialog" aria-modal="true" aria-label={zh ? "搜索命令" : "Search commands"}>
+        <div className="searchOverlay" role="dialog" aria-modal="true" aria-label={zh ? "搜索文档" : "Search docs"}>
           <button className="searchBackdrop" type="button" onClick={() => setSearchOpen(false)} aria-label={zh ? "关闭搜索" : "Close search"} />
           <div className="searchPanel" ref={searchPanelRef}>
             <div className="searchField">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m14.3 14.3 3.2 3.2m-1.7-8.2a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" /></svg>
-              <input ref={inputRef} aria-label={zh ? "搜索全部 Pinset 命令" : "Search all Pinset commands"} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? "搜索全部 Pinset 命令…" : "Search all Pinset commands…"} />
+              <input ref={inputRef} aria-label={zh ? "搜索 Pinset 文档" : "Search Pinset docs"} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? "搜索命令、用途或指南…" : "Search commands, purposes, or guides…"} />
               <button className="closeSearch" type="button" onClick={() => setSearchOpen(false)} aria-label={zh ? "关闭搜索" : "Close search"}>ESC</button>
             </div>
             <div className="searchResults">
-              {results.map((command) => <Link href={`${prefix}/docs/commands/${command.slug}`} key={command.slug} scroll={false} onClick={() => setSearchOpen(false)}><code>pinset {command.title}</code><span>{command.description}</span></Link>)}
-              {!results.length && <p>{zh ? "没有找到相关命令。" : "No matching commands."}</p>}
+              {results.map((entry) => <Link href={entry.href} key={entry.href} scroll={false} onClick={() => setSearchOpen(false)}><code>{entry.label}</code><span>{entry.description}</span></Link>)}
+              {!results.length && <p>{zh ? "没有找到相关文档。" : "No matching documentation."}</p>}
             </div>
           </div>
         </div>
       )}
     </div>
-    </LatestReleaseProvider>
   );
+  return landing ? <LatestReleaseProvider>{content}</LatestReleaseProvider> : content;
 }

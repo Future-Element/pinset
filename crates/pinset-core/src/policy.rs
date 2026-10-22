@@ -172,6 +172,7 @@ pub fn verification_method(value: &str) -> Option<VerificationMethod> {
         | "python-org-https-sha256"
         | "python-build-standalone-versions-sha256"
         | "adoptium-api-sha256"
+        | "generic-https-sha256"
         | "rust-v2-manifest-sha256" => Some(VerificationMethod::HttpsChecksum),
         _ => None,
     }

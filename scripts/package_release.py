@@ -11,5 +11,8 @@ with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as output:
         info=zipfile.ZipInfo(name+suffix);info.external_attr=(0o100755<<16);info.compress_type=zipfile.ZIP_DEFLATED;output.writestr(info,path.read_bytes())
 metadata=json.loads(subprocess.check_output(['cargo','metadata','--format-version','1','--locked'],text=True))
 components=[{'type':'library','name':p['name'],'version':p['version'],'purl':f"pkg:cargo/{p['name']}@{p['version']}",'licenses':[{'expression':p['license']}] if p.get('license') else []} for p in metadata['packages']]
+for package,component in zip(metadata['packages'],components):
+    if (package.get('source') or '').startswith('git+'):
+        component['properties']=[{'name':'cargo:source','value':package['source']}]
 sbom={'bomFormat':'CycloneDX','specVersion':'1.6','version':1,'metadata':{'component':{'type':'application','name':'pinset','version':version}},'components':components}
 (destination/f'pinset-{target}.sbom.json').write_text(json.dumps(sbom,sort_keys=True,separators=(',',':')))

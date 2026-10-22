@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.9 - 2026-10-22
+
+- Import existing tool version declarations with a reviewable migration plan, exact version resolution, conflict reporting and preservation of existing selections.
+- Add a generic binary Provider for public HTTPS archives and native executables, recording platform URLs and SHA-256 digests in the lock and installing only from that lock.
+- Provide the official setup-pinset GitHub Action with exact/latest Pinset selection, tool installation caching, locked restoration and mandatory checks unless explicitly skipped.
+- Add stable JSON check reports with expected and observed versions, receipt and payload integrity results, overall status and failing exit codes.
+- Rewrite the bilingual command reference around purpose, usage, examples, effects and troubleshooting; group commands by task and add concepts, custom CLI and CI guides.
+- Update TLS and ZIP dependencies, replace retired credential-store transport dependencies while retaining the OS credential stores, and pin the upstream maintained TOML parser fix with its source revision recorded in release SBOMs.
+- 新增存量版本文件导入、通用二进制 Provider，以及带缓存和按锁还原的官方 GitHub Action。
+- 检查结果支持稳定 JSON 输出；官网中英文命令文档补齐用途、场景、示例、参数及错误处理。
+
 ## 3.0.8 - 2026-10-20
 
 - Resolve the running CLI's symbolic links before locating its paired shim and preparing self-update, recovery or repair. A command such as `~/.local/bin/pinset` now maintains the actual installation it points to.

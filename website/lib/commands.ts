@@ -34,14 +34,16 @@ function stripInlineMarkdown(value: string) {
   return value.replace(/[`*_~]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").trim();
 }
 
-function commandSlug(command: string) {
+export function commandSlug(command: string) {
   return command.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/\./g, "-").replace(/^-|-$/g, "");
 }
 
-function firstDescription(markdown: string, fallback: string) {
-  const purpose = markdown.match(/\|\s*(?:用途|Purpose)\s*\|\s*([^|]+)\|/i)?.[1];
-  if (purpose) return stripInlineMarkdown(purpose);
-  return fallback;
+function extractPurpose(markdown: string, command: string) {
+  const [paragraph, ...body] = markdown.split(/\n\s*\n/);
+  if (!paragraph || /^(?:#{1,6}\s|```|\||[-*>]\s)/.test(paragraph) || /^(?:pinset .+ 命令参考[。.]?|Reference for pinset .+)$/i.test(paragraph)) {
+    throw new Error(`pinset ${command}: start the command document with a purpose paragraph`);
+  }
+  return { description: stripInlineMarkdown(paragraph.replace(/\s+/g, " ")), markdown: body.join("\n\n").trim() };
 }
 
 export function getCommandDocs(locale: Locale): CommandDoc[] {
@@ -59,8 +61,7 @@ export function getCommandDocs(locale: Locale): CommandDoc[] {
       group: current.group,
       slug: commandSlug(current.title),
       title: current.title,
-      markdown,
-      description: firstDescription(markdown, locale === "en" ? `Reference for pinset ${current.title}.` : `pinset ${current.title} 命令参考。`),
+      ...extractPurpose(markdown, current.title),
     });
   };
 

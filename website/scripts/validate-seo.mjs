@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { validateDocs } from "./validate-docs.mjs";
 
 const origin = (process.env.NEXT_PUBLIC_SITE_URL || "https://pinset.future-element.com").replace(/\/$/, "");
 const root = await readFile(path.join("out", "index.html"), "utf8");
@@ -80,9 +81,17 @@ for (const entry of htmlFiles) {
   for (const node of jsonLdNodes(html)) {
     if (node["@type"] === "TechArticle" && node.url !== canonical) throw new Error(`${label}: article URL mismatch`);
   }
-  if (expectedPath.includes("/docs/commands/")) {
+  if (expectedPath.includes("/docs/") && !expectedPath.endsWith("/commands")) {
     const breadcrumbs = jsonLdNodes(html).find((node) => node["@type"] === "BreadcrumbList");
     if (breadcrumbs?.itemListElement?.at(-1)?.item !== canonical) throw new Error(`${label}: missing canonical breadcrumb`);
+  }
+  const current = new URL(expectedPath, origin);
+  for (const match of html.matchAll(/<a\b[^>]*href="([^"]+)"/g)) {
+    const target = new URL(match[1].replaceAll("&amp;", "&"), current);
+    if (target.origin !== current.origin) continue;
+    const targetFile = target.pathname === "/" ? "index.html" : `${target.pathname.slice(1)}.html`;
+    const targetHtml = await readFile(path.join("out", targetFile), "utf8");
+    if (target.hash && !targetHtml.includes(`id="${decodeURIComponent(target.hash.slice(1))}"`)) throw new Error(`${label}: broken internal anchor ${target.href}`);
   }
 }
 
@@ -104,17 +113,11 @@ for (const [label, html] of [["zh", root], ["en", english]]) {
   if ("softwareVersion" in software) throw new Error(`${label}: release version must not be frozen into structured data`);
   requireText(html, 'href="https://github.com/Future-Element/pinset/releases/latest"', label);
   requireText(html, "data-latest-release-version", label);
-  if (/PINSET \d+\.\d+\.\d+|Pinset v?\d+\.\d+\.\d+/.test(html)) throw new Error(`${label}: release version is frozen into static HTML`);
+  const releaseLink = html.match(/<a class="releaseLink"[^>]*>([\s\S]*?)<\/a>/)?.[1];
+  if (!releaseLink || /PINSET \d+\.\d+\.\d+|Pinset v?\d+\.\d+\.\d+/.test(releaseLink)) throw new Error(`${label}: homepage release label must remain dynamic`);
   requireText(html, 'id="faq"', label);
   requireText(html, 'src="/brand/pinset-mark.svg"', label);
   if (html.includes('\\"markdown\\":')) throw new Error(`${label}: full command bodies leaked into navigation data`);
-  const current = new URL(label === "en" ? "/en" : "/", origin);
-  for (const match of html.matchAll(/<a\b[^>]*href="([^"]+)"/g)) {
-    const target = new URL(match[1].replaceAll("&amp;", "&"), current);
-    if (target.origin !== current.origin) continue;
-    const targetFile = target.pathname === "/" ? "index.html" : `${target.pathname.slice(1)}.html`;
-    const targetHtml = await readFile(path.join("out", targetFile), "utf8");
-    if (target.hash && !targetHtml.includes(`id="${decodeURIComponent(target.hash.slice(1))}"`)) throw new Error(`${label}: broken internal anchor ${target.href}`);
-  }
 }
 console.log(`SEO validated: ${htmlFiles.length} pages, unique titles and canonicals, bilingual alternates, h1, descriptions, sitemap, robots, JSON-LD, and new logo assets.`);
+await validateDocs();

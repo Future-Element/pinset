@@ -46,6 +46,9 @@ fn route(output: &mut String, value: &Value, zh: bool) {
     }
 }
 pub fn report(value: &Value, zh: bool) -> String {
+    if value["operation"] == "import" {
+        return import_report(value, zh);
+    }
     let mut output = String::new();
     if value["plan"] == true {
         let _ = writeln!(
@@ -78,7 +81,7 @@ pub fn report(value: &Value, zh: bool) -> String {
                 yes(&check["bound"], zh),
                 yes(&check["actually_verified"], zh)
             );
-            if check["bound"] != true || check["installed"] != true {
+            if check["passed"] == false || check["bound"] != true || check["installed"] != true {
                 let _ = writeln!(output, "  {}", string(&check["detail"]));
             }
         }
@@ -128,6 +131,12 @@ pub fn report(value: &Value, zh: bool) -> String {
                 yes(&value["android"]["verified"], zh)
             );
         }
+        let _ = writeln!(
+            output,
+            "{}: {}",
+            if zh { "检查通过" } else { "Check passed" },
+            yes(&value["passed"], zh)
+        );
         return output;
     }
     if value["command"].is_string() {
@@ -236,6 +245,138 @@ pub fn report(value: &Value, zh: bool) -> String {
     }
     if output.is_empty() {
         let _ = writeln!(output, "{}", if zh { "已完成" } else { "Done" });
+    }
+    output
+}
+
+fn import_report(value: &Value, zh: bool) -> String {
+    if value["cancelled"] == true {
+        return if zh {
+            "已取消导入，未写入文件。\n"
+        } else {
+            "Import cancelled; no files written.\n"
+        }
+        .into();
+    }
+    let mut output = String::new();
+    let _ = writeln!(
+        output,
+        "{}",
+        match (zh, value["plan"] == true) {
+            (true, true) => "迁移计划（尚未写入）",
+            (false, true) => "Import plan (no files written)",
+            (true, false) => "导入结果",
+            (false, false) => "Import result",
+        }
+    );
+    let _ = writeln!(
+        output,
+        "{}: {}",
+        if zh { "项目" } else { "Project" },
+        string(&value["project"])
+    );
+    for (key, en, cn) in [
+        ("imports", "Import", "导入"),
+        ("retained", "Keep existing", "保留已有选择"),
+        (
+            "unsupported",
+            "No matching Provider (skipped)",
+            "无对应 Provider（跳过）",
+        ),
+        ("conflicts", "Conflicts (skipped)", "冲突（跳过）"),
+        ("unresolved", "Cannot resolve (skipped)", "无法解析（跳过）"),
+    ] {
+        let Some(items) = value[key].as_array().filter(|items| !items.is_empty()) else {
+            continue;
+        };
+        let _ = writeln!(output, "{}:", if zh { cn } else { en });
+        for item in items {
+            let _ = write!(output, "  {}", string(&item["tool"]));
+            if let Some(version) = item["version"]
+                .as_str()
+                .or_else(|| item["requested"].as_str())
+            {
+                let _ = write!(output, "@{version}");
+            }
+            if item["resolved"] == true {
+                let _ = write!(
+                    output,
+                    " ({})",
+                    if zh {
+                        "已解析为确切版本"
+                    } else {
+                        "resolved to an exact version"
+                    }
+                );
+            }
+            if let Some(selector) = item["selector"].as_str().filter(|_| key == "retained") {
+                let _ = write!(output, " ({selector})");
+            }
+            let _ = writeln!(output);
+            if let Some(declarations) = item["declarations"].as_array() {
+                for declaration in declarations {
+                    let _ = writeln!(
+                        output,
+                        "    {}: {}",
+                        string(&declaration["source"]),
+                        string(&declaration["requested"])
+                    );
+                }
+            } else if let Some(source) = item["source"].as_str() {
+                let _ = writeln!(output, "    {source}");
+            }
+            if let Some(reason) = item["reason"].as_str() {
+                let reason = match (zh, reason) {
+                    (true, "existing_selection") => "与已有选择冲突，保留已有选择",
+                    (false, "existing_selection") => {
+                        "conflicts with the existing selection; keep existing"
+                    }
+                    (true, "incompatible_sources") => "多个来源的版本声明不兼容",
+                    (false, "incompatible_sources") => {
+                        "source version declarations are incompatible"
+                    }
+                    (true, "existing_rust_options") => "与已有 Rust 选项冲突",
+                    (false, "existing_rust_options") => "conflicts with existing Rust options",
+                    (_, other) => other,
+                };
+                let _ = writeln!(output, "    {reason}");
+            }
+        }
+    }
+    if value["requires_write"] == false {
+        let _ = writeln!(
+            output,
+            "{}",
+            if zh {
+                "没有需要写入的更改。"
+            } else {
+                "No changes to write."
+            }
+        );
+    } else {
+        let _ = writeln!(
+            output,
+            "{}: {}\n{}: {}",
+            if zh { "配置" } else { "Config" },
+            string(&value["config"]),
+            if zh { "精确锁" } else { "Lock" },
+            string(&value["lock"])
+        );
+        let _ = writeln!(
+            output,
+            "{}",
+            if value["applied"] == true {
+                if zh {
+                    "配置和锁文件已写入。使用 pinset install 安装工具。"
+                } else {
+                    "Config and lock written. Run pinset install to install tools."
+                }
+            } else if zh {
+                "确认后只写入配置和锁文件，不安装工具。"
+            } else {
+                "Confirmation writes config and lock only; tools are not installed."
+            }
+        );
     }
     output
 }

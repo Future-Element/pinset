@@ -1,5 +1,6 @@
 use crate::{
-    Lockfile, PROTOCOL, Result, WorkDirectoryIdentity, failure, validate_id, validate_tool,
+    GenericTool, Lockfile, PROTOCOL, Result, WorkDirectoryIdentity, failure,
+    validate_generic_version, validate_id, validate_tool,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +18,8 @@ pub struct ProjectConfig {
     pub project_id: String,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub generic: BTreeMap<String, GenericTool>,
     #[serde(default)]
     pub platforms: Vec<String>,
     #[serde(default, rename = "rust")]
@@ -33,6 +36,7 @@ impl ProjectConfig {
             schema: 3,
             project_id: id,
             tools: BTreeMap::new(),
+            generic: BTreeMap::new(),
             platforms: vec![],
             rust_options: ToolOptions::default(),
             policy: ProjectPolicy::default(),
@@ -48,8 +52,14 @@ impl ProjectConfig {
         }
         validate_id(&self.project_id)?;
         self.policy.validate()?;
+        for (name, definition) in &self.generic {
+            definition.validate(name)?;
+        }
         for (name, selector) in &self.tools {
-            validate_tool(name)?;
+            self.validate_selection_name(name)?;
+            if self.generic.contains_key(name) {
+                validate_generic_version(selector)?;
+            }
             if selector.is_empty() {
                 return Err(failure(
                     "PINSET_SELECTOR_REQUIRED",
@@ -103,6 +113,7 @@ impl ProjectConfig {
                 .tool(name)
                 .ok_or_else(|| failure("PINSET_LOCK_MISMATCH", format!("{name} is not locked")))?;
             if &tool.requested != selector
+                || (self.generic.contains_key(name) != tool.is_generic())
                 || (name == "rust" && tool.options != self.rust_options.lock_options())
             {
                 return Err(failure(
@@ -114,6 +125,13 @@ impl ProjectConfig {
                 .validate_tool(tool, std::time::SystemTime::now())?;
         }
         Ok(())
+    }
+    pub fn validate_selection_name(&self, name: &str) -> Result<()> {
+        if self.generic.contains_key(name) {
+            crate::validate_generic_name(name)
+        } else {
+            validate_tool(name)
+        }
     }
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -9,7 +9,7 @@ os.environ['HOME'] = str(home.parent)
 root = project('contracts')
 help_text = run([BIN, '--help'])
 commands = [line.split()[0] for line in help_text.split('Commands:')[1].split('Options:')[0].splitlines() if line.startswith('  ')]
-assert commands == ['init','use','remove','install','list','which','check','exec','env','clean','self'], commands
+assert commands == ['init','import','use','remove','install','list','which','check','exec','env','clean','self'], commands
 for obsolete in ['upgrade','task','workspace','doctor','setup','providers','bundle','migrate','shim','__env-resolve']:
     assert subprocess.run([BIN, obsolete, '--help'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
 assert data(root, 'use', 'java', expected=1)['error']['code'] == 'PINSET_SELECTOR_REQUIRED'
@@ -23,6 +23,8 @@ def fingerprint():
 before = fingerprint()
 check = data(root,'check')
 assert check['report']['checks'] == [] and 'user_command_verified' not in check
+assert check['schema_version'] == 1 and check['passed'] is True
+assert json.loads(cli(root,'check','--format','json',native=True)) == check
 data(root,'install','--plan');data(root,'remove','java','--plan');data(root,'clean','cache','--plan');data(root,'self','repair','--plan')
 assert fingerprint() == before, 'read-only checks or previews wrote state'
 assert '/.pinset/local/' in (root/'.gitignore').read_text()
@@ -59,6 +61,43 @@ assert data(editable,'use','java@21','--no-install','--plan',expected=1)['error'
 foreign_lock.unlink()
 data(editable,'remove','java')
 assert tomllib.loads(editable_config.read_text())['tools']=={}
+
+# Import planning, explicit confirmation and cancellation never resolve unsupported tools.
+import_empty=Path(tempfile.mkdtemp(prefix='pinset-import-empty-'))
+missing=data(import_empty,'import','--plan',expected=1)
+assert missing['error']['code']=='PINSET_IMPORT_NO_SOURCES'
+for source in ['.tool-versions','package.json','.nvmrc','.node-version','go.mod','rust-toolchain.toml','.python-version']:
+    assert source in missing['error']['message']
+assert not (import_empty/'.pinset').exists()
+(import_empty/'package.json').write_text('{"engines":{"ruby":"3.3"},"packageManager":"yarn@1.22.22"}')
+preview=data(import_empty,'import','--plan')
+assert {entry['tool'] for entry in preview['unsupported']}=={'ruby','yarn'}
+assert preview['requires_write'] is False and not (import_empty/'.pinset').exists()
+def confirmed_import(root):
+    process=subprocess.run([BIN,'-C',root,'--json','import','--yes'],cwd=root,text=True,capture_output=True,timeout=60)
+    assert process.returncode==0,process.stdout+process.stderr
+    assert json.loads(process.stderr)['plan'] is True
+    return json.loads(process.stdout)
+assert confirmed_import(import_empty)['applied'] is False
+confirm=project('import-confirm')
+(confirm/'package.json').write_text('{"engines":{"ruby":"3.3"}}')
+confirmation_files=lambda:[(str(p),hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(confirm.rglob('*')) if p.is_file()]
+before_confirmation=confirmation_files()
+assert data(confirm,'import')['confirmation_required'] is True
+assert data(confirm,'import','--plan')['plan'] is True
+assert confirmation_files()==before_confirmation
+for answer in ['n\n','\n','']:
+    declined=cli(confirm,'--lang','en','import',native=True,stdin=answer)
+    assert 'Import plan' in declined and 'Import cancelled' in declined
+    assert confirmation_files()==before_confirmation
+accepted=cli(confirm,'--lang','en','import',native=True,stdin='yes\n')
+assert accepted.index('Import plan') < accepted.index('Config and lock written')
+assert (confirm/'.pinset/lock.toml').is_file()
+assert tomllib.loads((confirm/'.pinset/config.toml').read_text())['tools']=={}
+assert (confirm/'package.json').read_text()=='{"engines":{"ruby":"3.3"}}'
+repeat=confirmation_files()
+assert confirmed_import(confirm)['applied'] is False
+assert confirmation_files()==repeat
 outside = Path('/opt') / ('pinset-contract-'+str(os.getpid()));outside.mkdir()
 try:
     assert data(outside,'check',expected=1)['error']['code'] == 'PINSET_SELECTION_MISSING'
@@ -107,4 +146,6 @@ first=json.loads(first_journal.read_text());first['old_config']='';first_journal
 assert data(repair,'self','repair')['transactions']==['repair-first-global']
 assert not (global_context/'config.toml').exists()
 assert subprocess.run([BIN,'-C',root,'env','access','request','--ci'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode != 0
-report('contracts', public_commands=commands)
+from generic import verify_generic_tools
+generic_tools=verify_generic_tools()
+report('contracts', public_commands=commands, generic=generic_tools)

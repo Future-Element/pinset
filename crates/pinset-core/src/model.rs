@@ -129,7 +129,11 @@ impl Lockfile {
         self.tools.iter().find(|t| t.name == name)
     }
     pub fn upsert_tool(&mut self, tool: LockedTool) -> Result<()> {
-        validate_tool(&tool.name)?;
+        if tool.is_generic() {
+            crate::validate_generic_name(&tool.name)?;
+        } else {
+            validate_tool(&tool.name)?;
+        }
         self.remove_tool(&tool.name);
         self.tools.push(tool);
         self.tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -148,7 +152,11 @@ impl Lockfile {
         validate_id(&self.project_id)?;
         let mut names = std::collections::BTreeSet::new();
         for tool in &self.tools {
-            validate_tool(&tool.name)?;
+            if tool.is_generic() {
+                crate::validate_generic_lock(tool)?;
+            } else {
+                validate_tool(&tool.name)?;
+            }
             if !names.insert(&tool.name) || tool.version.is_empty() || tool.artifacts.is_empty() {
                 return Err(failure(
                     "PINSET_LOCK_INVALID",
@@ -163,7 +171,9 @@ impl Lockfile {
                 if !targets.insert(&a.target) || a.target.contains(['/', '\\']) {
                     return Err(failure("PINSET_LOCK_INVALID", "invalid platform"));
                 }
-                validate_official_url(&tool.name, &a.canonical_url)?;
+                if !tool.is_generic() {
+                    validate_official_url(&tool.name, &a.canonical_url)?;
+                }
                 a.artifact_integrity()?;
                 for overlay in &a.overlays {
                     validate_official_url(&tool.name, &overlay.canonical_url)?;
@@ -195,6 +205,9 @@ pub struct LockedTool {
     pub artifacts: Vec<LockedArtifact>,
 }
 impl LockedTool {
+    pub fn is_generic(&self) -> bool {
+        self.provider == crate::GENERIC_PROVIDER
+    }
     pub fn artifact(&self, target: &str) -> Option<&LockedArtifact> {
         self.artifacts.iter().find(|a| a.target == target)
     }
@@ -432,7 +445,6 @@ pub struct ExecutionEvidence {
     pub scope: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EnvironmentReport {
     pub protocol: String,
     pub project: Option<PathBuf>,
@@ -440,14 +452,25 @@ pub struct EnvironmentReport {
     pub evidence: Vec<ExecutionEvidence>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EnvironmentCheck {
     pub tool: String,
+    pub expected_version: String,
+    pub actual_version: Option<String>,
+    pub artifact_digest: ArtifactDigestCheck,
+    pub passed: bool,
     pub configured: bool,
     pub installed: bool,
     pub bound: bool,
     pub actually_verified: bool,
     pub detail: String,
+}
+/// Additive JSON check contract: `None` means the payload was not inspected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactDigestCheck {
+    pub expected: Option<String>,
+    pub receipt_matches_lock: bool,
+    pub payload_verified: Option<bool>,
+    pub passed: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -65,9 +65,20 @@ for forbidden in ['cargo test','cargo clippy','cargo audit','npm test','npm audi
 assert list((root/'.github/workflows').glob('*.yml'))==[root/'.github/workflows/release.yml']
 assert workflow.index('--draft --latest=false') < workflow.index('python3 scripts/check_release_assets.py') < workflow.index('--draft=false --latest=')
 action=(root/'action.yml').read_text()
-assert 'pinset -C "$PINSET_PROJECT_DIRECTORY" install' in action
-assert all(old not in action for old in ['upgrade prepare','env trust','cache:','task','workspace:'])
+assert action.startswith('name: setup-pinset\n') and 'default: latest' in action
+assert 'actions/cache@caa296126883cff596d87d8935842f9db880ef25' in action
+assert 'path: ${{ steps.prepare.outputs.cache-directory }}' in action
+assert 'key: ${{ steps.prepare.outputs.cache-key }}' in action and 'restore-keys:' not in action
+assert 'enableCrossOsArchive: false' in action
+assert '"$PINSET_INSTALL_DIR/pinset" -C "$PINSET_PROJECT_DIRECTORY" install' in action
+assert "(Join-Path $env:PINSET_INSTALL_DIR 'pinset.exe') -C $env:PINSET_PROJECT_DIRECTORY install" in action
+assert action.count('check --deep --probe --format json') == 2
+assert "inputs.skip-check != 'true'" in action and 'exit "$status"' in action
+assert 'if ($checkStatus -ne 0) { exit $checkStatus }' in action
+assert all(old not in action for old in ['upgrade prepare','env trust','task','workspace:'])
 assert '--body-file' not in action
+action_checks=json.loads(run(['node','scripts/tests/setup_action.mjs']))
+assert action_checks['status']=='passed'
 english=(root/'docs/commands.md').read_text();chinese=(root/'docs/commands.zh-CN.md').read_text()
 import re
 assert re.findall(r'^### `([^`]+)`',english,re.M)==re.findall(r'^### `([^`]+)`',chinese,re.M)
@@ -189,4 +200,4 @@ from self_update import verify_self_update
 from progress import verify_progress
 progress = verify_progress(fixture)
 updates = verify_self_update(root, fixture, version)
-report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates)
+report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks)

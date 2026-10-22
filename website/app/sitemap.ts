@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { getCommandDocs } from "@/lib/commands";
+import { guideSlugs } from "@/lib/guides";
 import { languageAlternates, siteConfig, siteUrl } from "@/lib/site";
 
 export const dynamic = "force-static";
@@ -19,5 +20,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${siteUrl}/en/docs/commands/${slug}`, lastModified: updated, changeFrequency: "weekly" as const, priority: 0.7, alternates: { languages: languageAlternates(`${siteUrl}/docs/commands/${slug}`, `${siteUrl}/en/docs/commands/${slug}`) } },
   ]);
 
-  return [...roots, ...commands];
+  const guides = guideSlugs.flatMap((slug) => [
+    { url: `${siteUrl}/docs/${slug}`, lastModified: updated, changeFrequency: "weekly" as const, priority: 0.75, alternates: { languages: languageAlternates(`${siteUrl}/docs/${slug}`, `${siteUrl}/en/docs/${slug}`) } },
+    { url: `${siteUrl}/en/docs/${slug}`, lastModified: updated, changeFrequency: "weekly" as const, priority: 0.7, alternates: { languages: languageAlternates(`${siteUrl}/docs/${slug}`, `${siteUrl}/en/docs/${slug}`) } },
+  ]);
+  return [...roots, ...commands, ...guides];
 }

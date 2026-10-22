@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { commandNavigation, type CommandGroup } from "@/lib/commands";
+import { guideNavigation } from "@/lib/guides";
 import { localePrefix, siteConfig, siteUrl, type Locale } from "@/lib/site";
 import { Brand } from "./brand";
 import { CodeBlock } from "./code-block";
@@ -75,14 +76,23 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
     ["02", "Know why a version runs", "Each project has independent selections and exact installations. Inspect the source, routing, and diagnostics behind every selection.", "pinset which --explain", "which"],
     ["03", "Run project commands with the selected environment", "Upgrade or switch versions with use, then build and test with your project commands. exec and shims use the same locked environment.", "pinset exec -- ./mvnw verify", "exec"],
   ];
+  const workflows = zh ? [
+    ["01", "老项目也能接进来", "扫描 .tool-versions、package.json 等版本文件，先查看迁移计划，确认后导入。已有的版本选择会保留。", "pinset import", "/docs/commands/import"],
+    ["02", "把常用 CLI 一起管起来", "为 Terraform 等工具配置 HTTPS 下载规则，锁定版本和 SHA-256。安装与命令路由沿用同一套流程。", "自定义 CLI 指南", "/docs/generic-tools"],
+    ["03", "在 CI 里还原并检查", "setup-pinset 安装 Pinset、缓存工具、按锁还原并检查。check 的 JSON 报告可以留给后续脚本和归档。", "GitHub Action 与 JSON 报告", "/docs/ci"],
+  ] : [
+    ["01", "Bring existing projects along", "Scan .tool-versions, package.json, and other version files. Review the plan before importing, while keeping your existing Pinset selections.", "pinset import", "/docs/commands/import"],
+    ["02", "Manage your other CLI tools", "Describe an HTTPS download for tools such as Terraform. Lock the version and SHA-256, then use the same installation and command routing.", "Custom CLI guide", "/docs/generic-tools"],
+    ["03", "Restore and check in CI", "setup-pinset installs Pinset, caches tools, restores the lockfile, and checks the result. Save check's JSON report for scripts and build artifacts.", "GitHub Action and JSON reports", "/docs/ci"],
+  ];
 
   return (
-    <DocsShell groups={commandNavigation(groups)} locale={locale} landing>
+    <DocsShell groups={commandNavigation(groups)} guides={guideNavigation(locale)} locale={locale} landing>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <div className="landingPage">
         <section className="landingHero">
           <div className="heroCopy">
-            <a className="releaseLink" href={siteConfig.repository + "/releases/latest"}><span>PINSET <LatestReleaseVersion fallback={zh ? "3.0 开发版" : "3.0 DEVELOPMENT"} /></span>{zh ? "查看版本更新" : "Explore the release"} <span aria-hidden="true">↗</span></a>
+            <a className="releaseLink" href={siteConfig.repository + "/releases/latest"}><span>PINSET <LatestReleaseVersion fallback={zh ? "最新发布" : "LATEST RELEASE"} /></span>{zh ? "查看版本更新" : "Explore the release"} <span aria-hidden="true">↗</span></a>
             <h1>{zh ? <>多语言开发，<br /><em>一处锁定。</em></> : <>Every runtime.<br /><em>Right in place.</em></>}</h1>
             <p className="heroDescription">{zh ? "锁定项目工具链，确认实际执行环境，用选定版本运行项目命令。" : "Pinset manages project toolchains, locks exact versions, and records actual execution evidence. Lock the toolchain, inspect execution evidence, and run project commands with the selected versions."}</p>
             <InstallPanel locale={locale} />
@@ -106,10 +116,14 @@ export function HomePage({ locale, groups }: { locale: Locale; groups: CommandGr
             <article><span className="stepNumber">03</span><div><h3>{zh ? "把同一套环境交给团队和 CI" : "Bring your team and CI along."}</h3><p>{zh ? "提交 .pinset/config.toml 与 .pinset/lock.toml；在新机器上按锁文件安装。" : "Commit .pinset/config.toml and .pinset/lock.toml, then install the locked toolchain on the next machine."}</p><CodeBlock locale={locale} label={zh ? "新机器 / CI" : "New machine / CI"}>{"pinset install"}</CodeBlock></div></article>
           </div>
         </section>
+        <section className="landingSection" id="workflows">
+          <div className="sectionIntro"><span className="eyebrow">{zh ? "接入你的工作流" : "FIT YOUR WORKFLOW"}</span><h2>{zh ? "从已有项目，到自动化构建。" : "From an existing project to an automated build."}</h2><p>{zh ? "迁移版本声明、管理更多 CLI，再把同一套工具链带到 CI。" : "Import version declarations, manage more CLI tools, and bring the same toolchain to CI."}</p></div>
+          <div className="featureGrid">{workflows.map(([number, title, description, label, href]) => <article key={number}><span className="featureNumber">{number} /</span><h3>{title}</h3><p>{description}</p><Link href={prefix + href}><span>{label}</span><span>↗</span></Link></article>)}</div>
+        </section>
         <section className="landingSection" id="providers">
           <div className="sectionIntro sectionIntroSplit"><div><span className="eyebrow">TOOLCHAINS</span><h2>{zh ? <>不止一种语言。<br /><span>只需一种工作方式。</span></> : <>More than one language.<br /><span>Just one workflow.</span></>}</h2></div><p>{zh ? "管理八种工具链，包括完整 OpenJDK。各工具保留自己的命令，Pinset 负责把它们放在正确的位置。" : "Manage eight toolchains, including the complete OpenJDK. Each tool keeps its commands. Pinset puts them in the right place."}</p></div>
           <div className="toolchainGrid">{providers.map(([name, commands], index) => <div key={name}><span className="toolchainIndex">{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><code>{commands}</code></div>)}</div>
-          <p className="supportNote">{zh ? "支持 Windows、macOS、Linux。具体架构支持取决于各工具上游发行包。" : "Available on Windows, macOS, and Linux. Architecture support depends on each tool's upstream releases."} <a href={siteConfig.repository + "#supported-providers"}>{zh ? "查看支持矩阵" : "View the support matrix"} ↗</a></p>
+          <p className="supportNote">{zh ? "支持 Windows、macOS、Linux。具体架构支持取决于各工具上游发行包。" : "Available on Windows, macOS, and Linux. Architecture support depends on each tool's upstream releases."} <a href={siteConfig.repository + "#supported-providers"}>{zh ? "查看支持矩阵" : "View the support matrix"} ↗</a> · <Link href={prefix + "/docs/generic-tools"}>{zh ? "管理其他 CLI 工具" : "Manage other CLI tools"} →</Link></p>
         </section>
         <section className="boundarySection landingSection" id="boundaries"><div><span className="eyebrow">{zh ? "可验证，才可依赖" : "CONFIDENCE THROUGH VERIFICATION"}</span><h2>{zh ? <>每个版本有来源。<br />每条边界有声明。</> : <>A source for every version.<br />A policy for every boundary.</>}</h2><p>{zh ? "完整性校验、显式项目策略和诊断命令，让“为什么运行这个版本”有据可查。" : "Integrity checks, explicit project policy, and diagnostics make “why this version?” a question you can answer."}</p></div><div className="verificationList">{[
           ["pinset check", zh ? "检查锁文件中的完整性信息" : "Audit integrity metadata in the lockfile", "check"],

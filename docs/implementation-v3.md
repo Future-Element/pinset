@@ -5,7 +5,7 @@ This branch implements the breaking Pinset 3.0 design. Publication is separate f
 Implemented scope:
 
 - Five crates with pure core models/routing, one engine installer/cache/transaction path, encrypted environment services, thin CLI and a paired read-only shim/private broker.
-- Eight compiled-in Providers, eleven public command families, strict `pinset/3` models, `.pinset/config.toml` and `lock.toml`, v3 home and bounded project discovery.
+- Eight compiled-in Providers plus declarative generic HTTPS binaries, twelve public command families, strict `pinset/3` models, `.pinset/config.toml` and `lock.toml`, v3 home and bounded project discovery. `import` reviews native declarations and adds only missing selections after confirmation. Generic locks contain exact URLs, SHA-256 digests, formats and platform executable paths; installation does not re-resolve them.
 - Standard-library root `.venv` ownership/package isolation without uv; Rust channel/date/profile/components/targets; complete untrimmed Temurin JDK inventory and Java runtime/compiler/target evidence separation.
 - Read-only checks, explicit probes, conservative reference-aware cleanup, locked installation, safe repair and concurrent state guards.
 - Age profiles, real OS credential-store integration, authorization, fingerprint-bound trust and child-process secret exclusion.

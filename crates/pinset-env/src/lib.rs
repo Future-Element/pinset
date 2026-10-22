@@ -1,5 +1,7 @@
 //! Encrypted project environments, local identities, and explicit project trust.
 
+mod keyring;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,

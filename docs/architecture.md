@@ -5,14 +5,14 @@
 | pinset-core | Strict models, read-only project discovery, lock/receipt matching, route plans and public reports | No HTTP, crypto, credentials or writes |
 | pinset-engine | Official metadata, install/cache/extraction, local bindings, transactions and maintenance | core, env |
 | pinset-env | Per-value age, identities, system credentials, authorization and project trust | core |
-| pinset-cli | Eleven command families, input, output and service dispatch | engine, core |
+| pinset-cli | Twelve command families, input, output and service dispatch | engine, core |
 | pinset-shim | Read-only route and native process launch; version-matched private broker | core |
 
-The eight Providers are compiled into engine. They describe official metadata, artifacts and required entries; one installer implements download verification, safe extraction, content-addressed cache, locks, staging and commit. XZ uses `lzma-rust2`; no liblzma build dependency is used.
+The eight built-in Providers are compiled into engine. They describe official metadata, artifacts and required entries; declarative `[generic.<name>]` definitions add precompiled HTTPS binaries with explicit versions, URL templates, platform mappings and executable paths. One installer implements download verification, safe extraction, content-addressed cache, locks, staging and commit. Generic installation additionally requires a native executable for its locked platform and never runs package installers. XZ uses `lzma-rust2`; no liblzma build dependency is used.
 
 Public models are `ProjectContext`, `LockedTool`, `InstallReceipt`, `CommandPlan`, `EnvironmentReport`, `ExecutionEvidence` and `TransactionJournal`. TOML files require `protocol = "pinset/3"` and `schema = 3`. Unknown fields and previous protocols fail. JSON reports use the same protocol and stable `PINSET_*` errors.
 
-Configuration holds only tool selectors, platforms, Rust options, artifact verification policy and public profile metadata. It never stores task definitions. Locks include exact builds, official artifact URLs, digests, verification methods and identity-affecting options. Install identity excludes the floating selector and includes exact payload identity.
+Configuration holds tool selectors, declarative generic downloads, platforms, Rust options, artifact verification policy and public profile metadata. It never stores task definitions or build/install commands. Locks include exact builds, artifact URLs, digests, verification methods and identity-affecting options. Built-in artifacts retain their official host restrictions; generic artifacts use separately validated public HTTPS URLs and SHA-256 digests observed during selection. Install identity excludes the floating selector and includes exact payload identity. Generic locks also contain each platform's executable path; installation reads the lock without re-rendering configuration templates.
 
 Every operation carries an explicit canonical project root and filesystem directory identity. Config-file parents are never used as an implicit root. Project discovery obeys Git/worktree and home boundaries and chooses the nearest independent configuration without inheriting parent selections. Routing overlays only the requested tool and required runtime selections missing from the project with exact global defaults; project selections take priority and project policy still applies. Setting `require_project_tools = true` in `[policy]` disables this global fallback. The overlay is read-only and never rewrites the project configuration or lock.
 

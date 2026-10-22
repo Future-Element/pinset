@@ -138,7 +138,7 @@ impl Services {
                 let (name, version) = spec.split_once('@').ok_or_else(|| {
                     service_error("PINSET_EXACT_REQUIRED", "clean installs accepts tool@exact")
                 })?;
-                validate_tool(name)?;
+                validate_tool_name(name)?;
                 if version.is_empty()
                     || ["latest", "lts", "stable", "current", "nightly"].contains(&version)
                 {

@@ -6,7 +6,7 @@ import { languageAlternates, siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Command reference",
-  description: "Complete Pinset CLI command reference: syntax, parameters, state changes, JSON, exit codes, and errors.",
+  description: "Find Pinset commands by task: start a project, select and restore tool versions, check your environment, manage secrets, and clean installations. Includes examples, results, and options.",
   alternates: {
     canonical: "/en/docs/commands",
     languages: languageAlternates("/docs/commands", "/en/docs/commands"),
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: "/en/docs/commands",
     title: "Pinset command reference",
-    description: "Complete Pinset CLI command reference: syntax, state changes, JSON, exit codes, and errors.",
+    description: "Find the Pinset command for your task, learn when to use it, and see what happens when it runs.",
     images: [openGraphImage],
   },
   twitter: {

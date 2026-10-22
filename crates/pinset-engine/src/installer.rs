@@ -61,12 +61,14 @@ impl ArtifactFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactSourceKind {
     Official,
+    Generic,
 }
 
 impl ArtifactSourceKind {
     fn receipt_name(self) -> &'static str {
         match self {
             Self::Official => "official",
+            Self::Generic => "generic",
         }
     }
 }
@@ -194,6 +196,8 @@ pub struct Installer {
     offline: bool,
     install_identity: Option<String>,
     repair: bool,
+    binary_path: Option<PathBuf>,
+    require_native: bool,
 }
 
 #[derive(Debug)]
@@ -233,6 +237,8 @@ impl Installer {
             offline: false,
             install_identity: None,
             repair: false,
+            binary_path: None,
+            require_native: false,
         })
     }
 
@@ -242,6 +248,18 @@ impl Installer {
     ) -> Self {
         self.progress_reporter = ProgressReporter::new(reporter);
         self
+    }
+
+    pub(crate) fn install_generic(&self, request: &InstallRequest) -> Result<InstallOutcome> {
+        let mut installer = Self::new(self.limits)?;
+        installer.client = crate::generic_provider::https_client(self.limits.request_timeout)?;
+        installer.progress_reporter = self.progress_reporter.clone();
+        installer.offline = self.offline;
+        installer.install_identity = self.install_identity.clone();
+        installer.repair = self.repair;
+        installer.binary_path = request.required_paths.first().cloned();
+        installer.require_native = true;
+        installer.install(request)
     }
 
     pub fn with_offline(mut self, offline: bool) -> Self {
@@ -400,6 +418,14 @@ impl Installer {
         )?;
         validate_required_paths(&staging_dir, &request.required_paths)?;
         ensure_executable_paths(&staging_dir, &request.executable_paths)?;
+        if self.require_native {
+            for path in &request.executable_paths {
+                crate::generic_provider::validate_native_executable(
+                    &staging_dir.join(path),
+                    &request.target,
+                )?;
+            }
+        }
         create_install_aliases(&staging_dir, &request.aliases)?;
         self.report_phase(InstallPhase::CheckingInstallation);
         write_receipt(
@@ -525,7 +551,13 @@ impl Installer {
             ArtifactFormat::Binary => {
                 debug_assert_eq!(strip_components, 0);
                 debug_assert!(include_prefixes.is_empty());
-                let output_path = staging_dir.join("binary");
+                let output_path =
+                    staging_dir.join(self.binary_path.as_deref().unwrap_or(Path::new("binary")));
+                fs::create_dir_all(
+                    output_path
+                        .parent()
+                        .expect("binary path has a staging parent"),
+                )?;
                 fs::copy(&selected.path, &output_path).map_err(|source| {
                     Error::ExtractArchiveEntry {
                         entry: "binary".to_owned(),
@@ -1087,7 +1119,10 @@ impl Installer {
             let mut entry = archive
                 .by_index(index)
                 .map_err(|source| Error::ReadZipEntry { index, source })?;
-            let entry_name = entry.name().to_owned();
+            let entry_name = entry
+                .name()
+                .map_err(|source| Error::ReadZipEntry { index, source })?
+                .into_owned();
             let archived_path = entry
                 .enclosed_name()
                 .ok_or_else(|| Error::UnsafeArchiveEntry {

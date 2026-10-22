@@ -128,6 +128,7 @@ kbd { min-width: 24px; height: 20px; display: inline-flex; align-items: center; 
 .directoryList b { padding-right: 10px; color: #a7afbc; font-weight: 500; }
 
 .markdownBody { padding: 42px 0 60px; color: var(--ink-soft); }
+.markdownBody > :first-child { margin-top: 0; }
 .markdownBody h2, .markdownBody h3, .markdownBody h4 { color: var(--ink); letter-spacing: -.025em; scroll-margin-top: 80px; }
 .markdownBody h2 { margin: 42px 0 13px; font-size: 25px; }
 .markdownBody h3 { margin: 35px 0 11px; font-size: 18px; }
@@ -437,6 +438,24 @@ kbd { min-width: 24px; height: 20px; display: inline-flex; align-items: center; 
 .closeSearch { padding: 4px 8px; border: 1px solid var(--line); background: white; color: var(--muted); font-size: 10px; cursor: pointer; }
 .docsFrame .directoryList code { font-size: 12px; }
 .docsFrame .directoryList span { font-size: 12px; line-height: 1.65; }
+.starterSection { padding-top: 32px; }
+.starterSection > h2 { margin: 0 0 16px; font-size: 17px; }
+.starterFlows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.starterFlows article { min-width: 0; padding: 20px; }
+.starterFlows article + article { border-left: 1px solid var(--line); }
+.starterFlows h3 { margin: 0 0 9px; font-size: 14px; line-height: 1.5; }
+.starterFlows p { margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.starterFlows article > div { display: flex; flex-wrap: wrap; gap: 8px; color: var(--brand-dark); font-size: 11px; line-height: 1.8; }
+.starterFlows article > div > span { display: flex; gap: 8px; }
+.starterFlows a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.flowArrow { color: var(--muted); }
+.guideLinks { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 20px 0 0; font-size: 12px; line-height: 1.7; }
+.guideLinks span { color: var(--muted); }
+.guideLinks a { color: var(--brand-dark); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 1100px) {
+  .starterFlows { grid-template-columns: 1fr; }
+  .starterFlows article + article { border-left: 0; border-top: 1px solid var(--line); }
+}
 @media (max-width: 900px) {
   .docsFrame .sidebar:not(.open) { visibility: hidden; }
 }

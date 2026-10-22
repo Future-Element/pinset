@@ -208,9 +208,9 @@ struct ShimRegistry {
     cli_digest: Option<String>,
     commands: BTreeMap<String, String>,
 }
-fn registered_command_tool(home: &Path, command: &str) -> Result<Option<&'static str>> {
+fn registered_command_tool(home: &Path, command: &str) -> Result<Option<String>> {
     if let Some(tool) = command_tool(command) {
-        return Ok(Some(tool));
+        return Ok(Some(tool.into()));
     }
     let text = match fs::read_to_string(home.join("state/shims.json")) {
         Ok(text) => text,
@@ -226,11 +226,10 @@ fn registered_command_tool(home: &Path, command: &str) -> Result<Option<&'static
             .cli_digest
             .as_ref()
             .is_some_and(|hash| hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()))
-        || registry.commands.iter().any(|(name, tool)| {
-            validate_managed_command_name(name).is_err()
-                || matches!(name.as_str(), "pinset" | "pinset-shim")
-                || !TOOLS.contains(&tool.as_str())
-        })
+        || registry
+            .commands
+            .iter()
+            .any(|(name, tool)| validate_registered_command(name, tool).is_err())
     {
         return Err(failure(
             "PINSET_SHIM_STATE",
@@ -240,7 +239,7 @@ fn registered_command_tool(home: &Path, command: &str) -> Result<Option<&'static
     Ok(registry
         .commands
         .get(command.trim_end_matches(".exe"))
-        .and_then(|name| TOOLS.iter().copied().find(|tool| *tool == name)))
+        .cloned())
 }
 pub fn public_commands() -> Vec<String> {
     let mut out = JAVA_COMMANDS
@@ -376,17 +375,24 @@ pub fn plan_command(
         .unwrap_or(command);
     let normalized = normalized_command_name(base, &current_target());
     let managed = if Path::new(command).components().count() == 1 {
-        registered_command_tool(home, &normalized)?.or_else(|| {
-            lock.tool("java")
-                .and_then(|tool| read_receipt(home, tool, &locked_target(tool)).ok())
-                .filter(|receipt| receipt.commands.contains_key(&normalized))
-                .map(|_| "java")
-        })
+        registered_command_tool(home, &normalized)?
+            .or_else(|| {
+                lock.tool("java")
+                    .and_then(|tool| read_receipt(home, tool, &locked_target(tool)).ok())
+                    .filter(|receipt| receipt.commands.contains_key(&normalized))
+                    .map(|_| "java".into())
+            })
+            .or_else(|| {
+                config
+                    .generic
+                    .contains_key(&normalized)
+                    .then(|| normalized.clone())
+            })
     } else {
         None
     };
     let mut required = std::collections::BTreeSet::new();
-    if let Some(name) = managed {
+    if let Some(name) = managed.as_deref() {
         required.insert(name);
         if name == "pnpm" {
             required.insert("node");
@@ -395,7 +401,9 @@ pub fn plan_command(
     let mut inherited = std::collections::BTreeSet::new();
     if !context.global
         && !config.policy.require_project_tools
-        && managed.is_some_and(|name| lock.tool(name).is_none())
+        && managed
+            .as_deref()
+            .is_some_and(|name| lock.tool(name).is_none())
     {
         let global_root = home.join("global");
         if global_root.join("config.toml").exists() {
@@ -416,7 +424,7 @@ pub fn plan_command(
             }
         }
     }
-    if let Some(name) = managed
+    if let Some(name) = managed.as_deref()
         && lock.tool(name).is_none()
     {
         return Err(failure(
@@ -524,14 +532,18 @@ pub fn plan_command(
         version: None,
         install_identity: None,
         sdk: None,
-        source: if context.global || managed.is_some_and(|name| inherited.contains(name)) {
+        source: if context.global
+            || managed
+                .as_deref()
+                .is_some_and(|name| inherited.contains(name))
+        {
             "global"
         } else {
             "project"
         }
         .into(),
     };
-    if let Some(name) = managed {
+    if let Some(name) = managed.as_deref() {
         let (tool, target, install, sdk, receipt) = selected.get(name).ok_or_else(|| {
             failure(
                 "PINSET_TOOL_NOT_SELECTED",
@@ -546,100 +558,104 @@ pub fn plan_command(
         plan.install_identity = Some(tool.installation_version(target));
         plan.sdk = Some(sdk.clone());
         let cmd = normalized.as_str();
-        match (name, cmd) {
-            ("python", _) => {
-                if versioned_python_command(cmd)
-                    && !python_version_commands(&tool.version)
-                        .iter()
-                        .any(|name| name == cmd)
-                {
-                    return Err(failure(
-                        "PINSET_COMMAND_UNAVAILABLE",
-                        format!("selected Python {} does not provide {cmd}", tool.version),
-                    ));
+        if tool.is_generic() {
+            plan.executable = install.join(generic_executable(tool, target)?);
+        } else {
+            match (name, cmd) {
+                ("python", _) => {
+                    if versioned_python_command(cmd)
+                        && !python_version_commands(&tool.version)
+                            .iter()
+                            .any(|name| name == cmd)
+                    {
+                        return Err(failure(
+                            "PINSET_COMMAND_UNAVAILABLE",
+                            format!("selected Python {} does not provide {cmd}", tool.version),
+                        ));
+                    }
+                    plan.executable = if context.global || inherited.contains("python") {
+                        interpreter_path(install, target)
+                    } else {
+                        validate_venv(context, &config, tool, target, home)?
+                    };
+                    if cmd.starts_with("pip") {
+                        plan.prefix = vec!["-m".into(), "pip".into()];
+                    }
                 }
-                plan.executable = if context.global || inherited.contains("python") {
-                    interpreter_path(install, target)
-                } else {
-                    validate_venv(context, &config, tool, target, home)?
-                };
-                if cmd.starts_with("pip") {
-                    plan.prefix = vec!["-m".into(), "pip".into()];
+                ("node", "npm" | "npx") => {
+                    plan.executable = command_directory(install, name, target)
+                        .join(executable_name("node", target));
+                    let script = if cmd == "npm" {
+                        "npm-cli.js"
+                    } else {
+                        "npx-cli.js"
+                    };
+                    let npm = if target.starts_with("windows-") {
+                        install.join("node_modules/npm/bin")
+                    } else {
+                        install.join("lib/node_modules/npm/bin")
+                    };
+                    plan.prefix.push(npm.join(script).display().to_string());
                 }
-            }
-            ("node", "npm" | "npx") => {
-                plan.executable =
-                    command_directory(install, name, target).join(executable_name("node", target));
-                let script = if cmd == "npm" {
-                    "npm-cli.js"
-                } else {
-                    "npx-cli.js"
-                };
-                let npm = if target.starts_with("windows-") {
-                    install.join("node_modules/npm/bin")
-                } else {
-                    install.join("lib/node_modules/npm/bin")
-                };
-                plan.prefix.push(npm.join(script).display().to_string());
-            }
-            ("pnpm", _) => {
-                let (node, nt, ni, _, _) = selected
-                    .get("node")
-                    .ok_or_else(|| failure("PINSET_DEPENDENCY_REQUIRED", "pnpm requires Node"))?;
-                let entry = pnpm_entry_path(tool, target)?;
-                let legacy = entry == Path::new("bin/pnpm.cjs");
-                if entry.starts_with("bin") {
-                    plan.executable =
-                        command_directory(ni, "node", nt).join(executable_name("node", nt));
-                    plan.prefix.push(install.join(entry).display().to_string());
-                } else {
+                ("pnpm", _) => {
+                    let (node, nt, ni, _, _) = selected.get("node").ok_or_else(|| {
+                        failure("PINSET_DEPENDENCY_REQUIRED", "pnpm requires Node")
+                    })?;
+                    let entry = pnpm_entry_path(tool, target)?;
+                    let legacy = entry == Path::new("bin/pnpm.cjs");
+                    if entry.starts_with("bin") {
+                        plan.executable =
+                            command_directory(ni, "node", nt).join(executable_name("node", nt));
+                        plan.prefix.push(install.join(entry).display().to_string());
+                    } else {
+                        plan.executable = install.join(entry);
+                    }
+                    if legacy {
+                        // pnpm also uses this value for engines checks. Request the
+                        // running locked interpreter so it skips Node provisioning.
+                        plan.prefix
+                            .push(format!("--config.use-node-version={}", node.version));
+                    } else {
+                        // Modern pnpm renamed both policies and removed use-node-version.
+                        plan.prefix.extend([
+                            "--pm-on-fail=error".into(),
+                            "--config.runtime-on-fail=error".into(),
+                        ]);
+                    }
+                    if cmd == "pnpx" {
+                        plan.prefix.push("dlx".into());
+                    }
+                }
+                ("flutter", "dart") => {
+                    plan.executable = install
+                        .join("bin/cache/dart-sdk/bin")
+                        .join(executable_name("dart", target));
+                }
+                ("java", _) => {
+                    let entry = receipt.commands.get(cmd).ok_or_else(|| {
+                        failure(
+                            "PINSET_COMMAND_UNAVAILABLE",
+                            format!(
+                                "Temurin {} does not provide {cmd} on {target}",
+                                tool.version
+                            ),
+                        )
+                    })?;
                     plan.executable = install.join(entry);
                 }
-                if legacy {
-                    // pnpm also uses this value for engines checks. Request the
-                    // running locked interpreter so it skips Node provisioning.
-                    plan.prefix
-                        .push(format!("--config.use-node-version={}", node.version));
-                } else {
-                    // Modern pnpm renamed both policies and removed use-node-version.
-                    plan.prefix.extend([
-                        "--pm-on-fail=error".into(),
-                        "--config.runtime-on-fail=error".into(),
-                    ]);
+                ("bun", "bunx") => {
+                    plan.executable = command_directory(install, name, target)
+                        .join(executable_name("bun", target));
+                    plan.prefix.push("x".into());
                 }
-                if cmd == "pnpx" {
-                    plan.prefix.push("dlx".into());
+                _ => {
+                    let filename = if name == "flutter" && target.starts_with("windows-") {
+                        format!("{cmd}.bat")
+                    } else {
+                        executable_name(cmd, target)
+                    };
+                    plan.executable = command_directory(install, name, target).join(filename);
                 }
-            }
-            ("flutter", "dart") => {
-                plan.executable = install
-                    .join("bin/cache/dart-sdk/bin")
-                    .join(executable_name("dart", target));
-            }
-            ("java", _) => {
-                let entry = receipt.commands.get(cmd).ok_or_else(|| {
-                    failure(
-                        "PINSET_COMMAND_UNAVAILABLE",
-                        format!(
-                            "Temurin {} does not provide {cmd} on {target}",
-                            tool.version
-                        ),
-                    )
-                })?;
-                plan.executable = install.join(entry);
-            }
-            ("bun", "bunx") => {
-                plan.executable =
-                    command_directory(install, name, target).join(executable_name("bun", target));
-                plan.prefix.push("x".into());
-            }
-            _ => {
-                let filename = if name == "flutter" && target.starts_with("windows-") {
-                    format!("{cmd}.bat")
-                } else {
-                    executable_name(cmd, target)
-                };
-                plan.executable = command_directory(install, name, target).join(filename);
             }
         }
         if !plan.executable.is_file()

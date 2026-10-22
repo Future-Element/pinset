@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { CommandDoc, CommandGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig, siteUrl } from "@/lib/site";
-import { LatestReleaseVersion } from "./latest-release";
 import { Markdown } from "./markdown";
 
 export function CommandPage({ locale, groups, command }: { locale: Locale; groups: CommandGroup[]; command: CommandDoc }) {
@@ -47,12 +46,12 @@ export function CommandPage({ locale, groups, command }: { locale: Locale; group
           <p>{command.description}</p>
           <a className="editLink" href={`${siteConfig.repository}/blob/main/docs/${locale === "en" ? "commands.md" : "commands.zh-CN.md"}`} target="_blank" rel="noreferrer">{zh ? "在 GitHub 查看源文档" : "View source on GitHub"} ↗</a>
         </header>
-        <Markdown source={command.markdown} />
+        <Markdown source={command.markdown} commandSections />
         <nav className="pager" aria-label={zh ? "命令分页" : "Command pagination"}>
           {previous ? <Link className="previous" href={`${prefix}/docs/commands/${previous.slug}`} scroll={false}><small>{zh ? "上一个" : "Previous"}</small><code>← pinset {previous.title}</code></Link> : <span />}
           {next ? <Link className="next" href={`${prefix}/docs/commands/${next.slug}`} scroll={false}><small>{zh ? "下一个" : "Next"}</small><code>pinset {next.title} →</code></Link> : <span />}
         </nav>
-        <div className="pageMeta"><span>{path}</span><span>Pinset <LatestReleaseVersion fallback={zh ? "最新版本" : "latest"} /></span></div>
+        <div className="pageMeta"><span>{path}</span><span>{zh ? "适用版本" : "Documented version"} · Pinset {siteConfig.docsVersion}</span></div>
       </article>
     </>
   );

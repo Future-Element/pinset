@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 
 type Plan = { protocol: string; tool: string; executable: string; sdk: string; version: string; project: string | null; environment?: Record<string,string> };
-type Report = { protocol: string; report: { checks: { tool: string; installed: boolean; bound: boolean; actually_verified: boolean; detail: string }[] } };
+type Report = { protocol: string; passed?: boolean; report: { checks: { tool: string; installed: boolean; bound: boolean; actually_verified: boolean; detail: string }[] } };
 let status: vscode.StatusBarItem;
 let output: vscode.OutputChannel;
 
@@ -23,8 +23,19 @@ async function invoke<T>(args: string[]): Promise<T> {
   const executable = cli();
   const result = await new Promise<string>((resolve, reject) => {
     const child = execFile(executable, ["-C", directory, "--json", ...args], { cwd: directory, timeout: args[0] === "install" ? 1_800_000 : args.includes("--probe") ? 300_000 : 60_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-      if (error) reject(new Error(stdout.trim() || stderr.trim() || error.message));
-      else resolve(stdout);
+      if (error) {
+        // A failed tool check still carries the complete structured report.
+        // Keep it visible while treating process and configuration errors as errors.
+        let failed: unknown;
+        try { failed = JSON.parse(stdout); } catch { /* Preserve the original CLI error. */ }
+        if (args[0] === "check" && error.code === 1 && failed && typeof failed === "object"
+          && "protocol" in failed && failed.protocol === "pinset/3"
+          && "schema_version" in failed && failed.schema_version === 1
+          && "passed" in failed && failed.passed === false
+          && "report" in failed && failed.report && typeof failed.report === "object"
+          && "checks" in failed.report && Array.isArray(failed.report.checks)) resolve(stdout);
+        else reject(new Error(stdout.trim() || stderr.trim() || error.message));
+      } else resolve(stdout);
     });
     child.on("error", reject);
   });
@@ -37,7 +48,7 @@ async function refresh(): Promise<void> {
   try {
     const report = await invoke<Report>(["check"]);
     const checks = report.report.checks;
-    status.text = `$(tools) Pinset ${checks.length}`;
+    status.text = `${report.passed === false ? "$(warning)" : "$(tools)"} Pinset ${checks.length}`;
     status.tooltip = checks.map(c => `${c.tool}: ${c.bound ? "bound" : c.installed ? "installed" : "not installed"}${c.actually_verified ? ", observed" : ""}`).join("\n");
   } catch (error) { status.text = "$(warning) Pinset"; status.tooltip = String(error); }
 }

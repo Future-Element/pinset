@@ -325,7 +325,7 @@ impl Services {
             let (tool, selector) = spec.split_once('@').ok_or_else(|| {
                 service_error("PINSET_SELECTOR_REQUIRED", "use requires tool@selector")
             })?;
-            validate_tool(tool)?;
+            config.validate_selection_name(tool)?;
             if selector.is_empty() || !names.insert(tool) {
                 return Err(service_error(
                     "PINSET_SELECTION_DUPLICATE",
@@ -344,7 +344,7 @@ impl Services {
                 index: index + 1,
                 total,
             });
-            let mut tool = self.resolve(name, selector, &config)?;
+            let mut tool = self.resolve_selection(name, selector, &config, !plan)?;
             self.progress.report(ProgressEvent::Resolved {
                 tool: name.to_owned(),
                 version: tool.version.clone(),
@@ -383,20 +383,33 @@ impl Services {
         selector: &str,
         config: &ProjectConfig,
     ) -> Result<LockedTool> {
-        let mut tool = match name {
-            "node" => NodeMetadataClient::official()?.resolve_tool(selector)?,
-            "go" => GoMetadataClient::official()?.resolve_tool(selector)?,
-            "python" => PythonMetadataClient::official()?.resolve_tool(selector)?,
-            "java" => JavaMetadataClient::official()?.resolve_tool(selector)?,
-            "rust" => RustMetadataClient::official()?
-                .resolve_tool_with_options(selector, Some(&config.rust_options))?,
-            "flutter" => FlutterMetadataClient::official()?.resolve_tool(selector)?,
-            "pnpm" | "bun" => {
-                let c = NpmMetadataClient::official()?;
-                let version = c.resolve_version_selector(name, selector)?;
-                c.resolve_tool(name, &version)?
+        self.resolve_selection(name, selector, config, false)
+    }
+    fn resolve_selection(
+        &self,
+        name: &str,
+        selector: &str,
+        config: &ProjectConfig,
+        cache: bool,
+    ) -> Result<LockedTool> {
+        let mut tool = if let Some(definition) = config.generic.get(name) {
+            self.resolve_generic(name, selector, definition, &config.platforms, cache)?
+        } else {
+            match name {
+                "node" => NodeMetadataClient::official()?.resolve_tool(selector)?,
+                "go" => GoMetadataClient::official()?.resolve_tool(selector)?,
+                "python" => PythonMetadataClient::official()?.resolve_tool(selector)?,
+                "java" => JavaMetadataClient::official()?.resolve_tool(selector)?,
+                "rust" => RustMetadataClient::official()?
+                    .resolve_tool_with_options(selector, Some(&config.rust_options))?,
+                "flutter" => FlutterMetadataClient::official()?.resolve_tool(selector)?,
+                "pnpm" | "bun" => {
+                    let c = NpmMetadataClient::official()?;
+                    let version = c.resolve_version_selector(name, selector)?;
+                    c.resolve_tool(name, &version)?
+                }
+                _ => return Err(service_error("PINSET_TOOL_UNKNOWN", name)),
             }
-            _ => return Err(service_error("PINSET_TOOL_UNKNOWN", name)),
         };
         tool.requested = selector.into();
         let platforms = if config.platforms.is_empty() {
@@ -438,7 +451,7 @@ impl Services {
         }
         let mut seen = std::collections::BTreeSet::new();
         for name in names {
-            validate_tool(name)?;
+            config.validate_selection_name(name)?;
             if !seen.insert(name) {
                 return Err(service_error(
                     "PINSET_SELECTION_DUPLICATE",
@@ -532,17 +545,27 @@ impl Services {
                 .with_repair(repair)
                 .with_install_identity(tool.installation_version(&target));
             let sources = OfficialSources;
-            let result = match tool.name.as_str() {
-                "node" => install_locked_node(&installer, &self.home, &sources, tool, &target),
-                "go" => install_locked_go(&installer, &self.home, &sources, tool, &target),
-                "python" => install_locked_python(&installer, &self.home, &sources, tool, &target),
-                "flutter" => {
-                    install_locked_flutter(&installer, &self.home, &sources, tool, &target)
+            let result = if tool.is_generic() {
+                crate::generic_provider::install_locked_generic(
+                    &installer, &self.home, tool, &target,
+                )
+            } else {
+                match tool.name.as_str() {
+                    "node" => install_locked_node(&installer, &self.home, &sources, tool, &target),
+                    "go" => install_locked_go(&installer, &self.home, &sources, tool, &target),
+                    "python" => {
+                        install_locked_python(&installer, &self.home, &sources, tool, &target)
+                    }
+                    "flutter" => {
+                        install_locked_flutter(&installer, &self.home, &sources, tool, &target)
+                    }
+                    "java" => install_locked_java(&installer, &self.home, tool, &target),
+                    "rust" => install_locked_rust(&installer, &self.home, tool, &target),
+                    "pnpm" | "bun" => {
+                        install_locked_npm_tool(&installer, &self.home, tool, &target)
+                    }
+                    _ => unreachable!(),
                 }
-                "java" => install_locked_java(&installer, &self.home, tool, &target),
-                "rust" => install_locked_rust(&installer, &self.home, tool, &target),
-                "pnpm" | "bun" => install_locked_npm_tool(&installer, &self.home, tool, &target),
-                _ => unreachable!(),
             };
             let outcome = result?;
             if tool.name == "java" {
@@ -727,7 +750,7 @@ impl Services {
         roots.insert(c.root.display().to_string(), c.config_path.clone());
         write_json(&file, &roots)
     }
-    fn gitignore(&self, c: &ProjectContext) -> Result<()> {
+    pub(crate) fn gitignore(&self, c: &ProjectContext) -> Result<()> {
         if c.global {
             return Ok(());
         }
@@ -763,7 +786,7 @@ impl Services {
     }
     pub fn list(&self, name: Option<&str>) -> Result<Value> {
         if let Some(n) = name {
-            validate_tool(n)?;
+            validate_tool_name(n)?;
         }
         let context = self.context(false).ok();
         let lock = context

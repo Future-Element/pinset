@@ -1,7 +1,10 @@
+import packageInfo from "../package.json";
+
 export const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://pinset.future-element.com").replace(/\/$/, "");
 
 export const siteConfig = {
   name: "Pinset",
+  docsVersion: packageInfo.version,
   alternateName: "Pinset Runtime Manager",
   repository: "https://github.com/Future-Element/pinset",
   organization: {
@@ -11,10 +14,10 @@ export const siteConfig = {
   },
   titleZh: "Pinset — 项目工具链与执行环境",
   titleEn: "Pinset — Project Toolchains and Execution Environments",
-  descriptionZh: "Pinset 锁定八种项目工具链，包括完整 OpenJDK、Python venv、Rust 和 Flutter，解释执行入口，通过明确选择切换版本。",
-  descriptionEn: "Lock eight project toolchains, including complete OpenJDK, Python venv, Rust and Flutter. Explain execution paths and switch versions through explicit selections.",
-  contentUpdatedAt: "2026-10-20T00:00:00.000Z",
-  homepageUpdatedAt: "2026-10-16T00:00:00.000Z",
+  descriptionZh: "Pinset 锁定八种项目工具链和自定义 CLI，导入已有版本声明，通过 GitHub Action 还原并检查环境。版本、下载来源和执行入口清晰可查。",
+  descriptionEn: "Lock eight built-in toolchains and custom CLI tools, import existing version files, and restore and check environments with GitHub Actions. Inspect versions, downloads, and command routing.",
+  contentUpdatedAt: "2026-10-22T00:00:00.000Z",
+  homepageUpdatedAt: "2026-10-22T00:00:00.000Z",
 };
 
 export type Locale = "zh-CN" | "en";
