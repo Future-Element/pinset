@@ -54,7 +54,9 @@ def verify_toolchain_regressions(runtime, python_project):
         data(project_root,'install','node','--offline',env=env)
         assert not (project_root/'.venv').exists(), 'Node install created an unrelated Python environment'
         assert native(project_root,'node','--version',env=env).strip()=='v'+node['version']
-        checked=data(project_root,'check',env=env)['report']['checks']
+        partial=data(project_root,'check',expected=1,env=env)
+        assert partial['passed'] is False,partial
+        checked=partial['report']['checks']
         assert next(c for c in checked if c['tool']=='node')['bound']
         for name in ['python','flutter']:
             item=next(c for c in checked if c['tool']==name)

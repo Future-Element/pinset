@@ -129,6 +129,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: python3 scripts/check_release_assets.py
+      - name: Verify archive provenance before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for archive in dist/*.zip; do
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-digest "$(git rev-parse HEAD)"
+          done
       - name: Publish the complete release
         env:
           GH_TOKEN: ${{ github.token }}
