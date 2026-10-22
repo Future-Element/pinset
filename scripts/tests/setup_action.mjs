@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { findProject, prepare, resolveVersion } from '../action/prepare.mjs';
 
-const fixture = mkdtempSync(path.join(tmpdir(), 'pinset-setup-action-'));
+const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'pinset-setup-action-')));
 let checks = 0;
 function check(value, expected) {
   assert.deepEqual(value, expected);
