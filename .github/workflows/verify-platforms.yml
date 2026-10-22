@@ -99,13 +99,23 @@ jobs:
           fs.mkdirSync('output/ci-platform', { recursive: true });
           fs.writeFileSync('output/ci-platform/host.json', JSON.stringify(actual, null, 2) + '\n');
           fs.appendFileSync(process.env.GITHUB_ENV, `PINSET_HOME=${path.join(process.env.RUNNER_TEMP, 'pinset-platform-home')}\n`);
+          // Pinset adds tool shims to PATH. Keep the harness on the host runtimes.
+          fs.appendFileSync(process.env.GITHUB_ENV, `PINSET_CI_NODE=${process.execPath.replaceAll('\\', '/')}\n`);
           console.log(JSON.stringify(actual));
           assert.ok(['source', 'release'].includes(process.env.PINSET_CI_MODE), 'unknown verification mode');
           assert.equal(process.platform, process.env.PINSET_CI_PLATFORM, 'runner operating system differs');
           assert.equal(process.arch, process.env.PINSET_CI_ARCH, 'runner process architecture differs');
           assert.equal(process.env.RUNNER_ARCH, process.env.PINSET_CI_RUNNER_ARCH, 'runner host architecture differs');
           JS
-          "${{ matrix.python }}" -c "import sys; assert sys.version_info >= (3,11), 'Python 3.11 or newer is required'; print(sys.version)"
+          "${{ matrix.python }}" - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          assert sys.version_info >= (3, 11), 'Python 3.11 or newer is required'
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
+              stream.write(f'PINSET_CI_PYTHON={Path(sys.executable).as_posix()}\n')
+          print(sys.version)
+          PY
       - name: Install the pinned native Rust toolchain
         if: inputs.mode == 'source'
         run: rustup toolchain install 1.97.1 --profile minimal
@@ -131,7 +141,7 @@ jobs:
           PINSET_CI_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          node --input-type=module <<'JS'
+          "$PINSET_CI_NODE" --input-type=module <<'JS'
           import fs from 'node:fs';
           import path from 'node:path';
           const cli = process.env.PINSET_CI_MODE === 'source'
@@ -146,11 +156,27 @@ jobs:
           PINSET_CI_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          "${{ matrix.python }}" scripts/tests/ci_platform.py --cli "$PINSET_CI_CLI" --output output/ci-platform --expected-target "$PINSET_CI_TARGET"
+          "$PINSET_CI_PYTHON" scripts/tests/ci_platform.py --cli "$PINSET_CI_CLI" --output output/ci-platform --expected-target "$PINSET_CI_TARGET"
+      - name: Restore the host Node runtime for the next Action invocation
+        if: inputs.mode == 'release'
+        run: |
+          "$PINSET_CI_NODE" --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          fs.appendFileSync(process.env.GITHUB_PATH, path.dirname(process.execPath) + '\n');
+          JS
+      - name: Check out the resolved public Action tag
+        if: inputs.mode == 'release'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Future-Element/pinset
+          ref: v${{ steps.bootstrap.outputs.version }}
+          path: output/published-action
+          persist-credentials: false
       - name: Restore and verify the smoke project with the official Action
         id: action
         if: inputs.mode == 'release'
-        uses: ./
+        uses: ./output/published-action
         with:
           # Pin the exact bootstrap version even if latest changes during a job.
           version: ${{ steps.bootstrap.outputs.version }}
