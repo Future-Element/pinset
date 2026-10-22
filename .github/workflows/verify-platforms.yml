@@ -65,7 +65,6 @@ jobs:
       run:
         shell: bash
     env:
-      PINSET_HOME: ${{ runner.temp }}/pinset-platform-home
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -86,6 +85,7 @@ jobs:
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           import os from 'node:os';
+          import path from 'node:path';
           const actual = {
             target: process.env.PINSET_CI_TARGET,
             runner_label: process.env.PINSET_CI_RUNNER_LABEL,
@@ -98,6 +98,7 @@ jobs:
           };
           fs.mkdirSync('output/ci-platform', { recursive: true });
           fs.writeFileSync('output/ci-platform/host.json', JSON.stringify(actual, null, 2) + '\n');
+          fs.appendFileSync(process.env.GITHUB_ENV, `PINSET_HOME=${path.join(process.env.RUNNER_TEMP, 'pinset-platform-home')}\n`);
           console.log(JSON.stringify(actual));
           assert.ok(['source', 'release'].includes(process.env.PINSET_CI_MODE), 'unknown verification mode');
           assert.equal(process.platform, process.env.PINSET_CI_PLATFORM, 'runner operating system differs');
