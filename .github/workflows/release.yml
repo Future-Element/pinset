@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing v3 tag matching the clean local all or authorized hotfix report
+        description: Existing v3 tag matching the clean local all, x64 or authorized hotfix report
         required: true
       local-report:
         description: Exact compact JSON from the matching local Docker verification report

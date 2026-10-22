@@ -1,13 +1,14 @@
-import datetime,hashlib,json,os,shutil,subprocess,sys,time,traceback
+import datetime,hashlib,json,os,re,shutil,subprocess,sys,time,traceback
 from pathlib import Path
 sys.path.insert(0,'/source/scripts')
 from release_gate import source_fingerprint
 from verification_policy import (LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS,
-    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED)
+    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED,
+    X64_SCOPE, X64_ARM64_EXECUTION, X64_UNVERIFIED)
 
 source=Path('/source');workspace=Path('/workspace');reports=Path('/reports')/('verify-v3-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
 suite=sys.argv[1]
-if suite not in ['fast','acceptance','platform','integrations','all','hotfix']:raise SystemExit('unknown suite')
+if suite not in ['fast','acceptance','platform','integrations','all','x64','hotfix']:raise SystemExit('unknown suite')
 # A reused container keeps caches, but each run gets fresh local state and credentials.
 if workspace.is_symlink() or workspace.is_mount():raise SystemExit('workspace must be a private container directory')
 local=Path('/run/pinset-verification')
@@ -27,6 +28,17 @@ if home.exists():
         elif entry.is_dir() and not entry.is_symlink():shutil.rmtree(entry)
         else:entry.unlink()
 reports.mkdir(parents=True,exist_ok=False)
+sdk_baseline=None
+if baseline_path:=os.environ.pop('PINSET_VERIFY_SDK_SELECTIONS',None):
+    baseline_raw=Path(baseline_path).read_bytes()
+    baseline=json.loads(baseline_raw)
+    if not isinstance(baseline,dict) or not baseline:raise ValueError('SDK baseline must be a nonempty selector-to-exact-version object')
+    for selector,exact in baseline.items():
+        if not isinstance(selector,str) or not isinstance(exact,str) or '@' not in selector or '@' not in exact:raise ValueError('invalid SDK baseline entry')
+        tool,version=exact.split('@',1)
+        if selector.split('@',1)[0]!=tool or not re.fullmatch(r'[a-z][a-z0-9_-]*',tool) or not re.fullmatch(r'[0-9][A-Za-z0-9_.+\-]*|nightly-\d{4}-\d{2}-\d{2}',version):raise ValueError('SDK baseline entries must name exact versions of the same tool')
+    (reports/'frozen-selectors.json').write_text(json.dumps(baseline,sort_keys=True,indent=2))
+    sdk_baseline={'path':baseline_path,'sha256':hashlib.sha256(baseline_raw).hexdigest(),'selections':baseline}
 start_commit=subprocess.check_output(['git','-c','safe.directory=/source','rev-parse','HEAD'],cwd=source,text=True).strip()
 start_fingerprint=source_fingerprint(source)
 start_lock=hashlib.sha256((source/'Cargo.lock').read_bytes()).hexdigest()
@@ -83,6 +95,9 @@ def hotfix():
         if label=='binaries':snapshot_binaries()
 def platform():
     run(['bash','scripts/tests/platform.sh'],'platform',timeout=7200)
+
+def windows():
+    run(['python3','scripts/tests/windows_checks.py'],'windows-target',timeout=3600)
 def integrations():
     run(['cargo','build','--workspace','--bins','--locked'],'integration-binaries')
     snapshot_binaries()
@@ -97,9 +112,10 @@ def integrations():
     run(['pnpm','--dir','website','build'],'website-package')
     run(['pnpm','--dir','website','validate:seo'],'website-seo')
     run(['dbus-run-session','--','bash','scripts/tests/integrations.sh'],'runtime-integrations',timeout=14_400)
-functions={'fast':fast,'acceptance':acceptance,'platform':platform,'integrations':integrations,'hotfix':hotfix}
+functions={'fast':fast,'acceptance':acceptance,'platform':platform,'windows':windows,'integrations':integrations,'hotfix':hotfix}
 try:
-    for name in ['fast','acceptance','platform','integrations'] if suite=='all' else [suite]:
+    selected=['fast','acceptance','platform','integrations'] if suite=='all' else ['fast','acceptance','windows','integrations'] if suite=='x64' else [suite]
+    for name in selected:
         start=time.monotonic()
         try:functions[name]();results[name]={'status':'passed','seconds':round(time.monotonic()-start,2)}
         except Exception as error:results[name]={'status':'failed','seconds':round(time.monotonic()-start,2),'error':str(error)};traceback.print_exc()
@@ -111,11 +127,15 @@ finally:
     changes=[line for line in changes.splitlines() if not line[3:].startswith(('output/','.pinset/'))]
     image=os.environ.get('PINSET_VERIFY_IMAGE_DIGEST','')
     report={'protocol':'pinset-verification/3','execution':'local-docker','container_id':os.environ.get('PINSET_VERIFY_CONTAINER_ID',''),'container_reused':True,'suite':suite,'commit':commit,'source_clean':not changes,'source_fingerprint':start_fingerprint,'lock_sha256':start_lock,'image_digests':{'verify':image,'rust':'sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3','node':'sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553'},'commands':commands,'suites':results,'unverified':['Windows x86_64 native runtime; only target compilation and path/credential contracts','macOS aarch64 native runtime; only target compilation and path/credential contracts'],'arm64_execution':'QEMU emulation; no native ARM64 host'}
+    if sdk_baseline is not None:report['sdk_baseline']=sdk_baseline
+    if suite=='x64':
+        report.update({'x64_scope':X64_SCOPE,'unverified':list(X64_UNVERIFIED),'arm64_execution':X64_ARM64_EXECUTION})
     if suite=='hotfix':
         report.update({'hotfix_scope':HOTFIX_SCOPE,'unverified':list(HOTFIX_UNVERIFIED),'arm64_execution':'Not run for this hotfix'})
     required={'fast':['contracts.json','distribution.json','cargo-security.json'],
       'acceptance':['real-sdks.json','frozen-selectors.json','python-regressions.json','toolchain-regressions.json','venv-recovery.json'],
       'platform':['platform.json','frozen-selectors.json'],
+      'windows':['windows-target.json'],
       'integrations':['integrations.json','editor-host.json','flutter-contracts.json','frozen-selectors.json','environment-access.json'],
       'hotfix':HOTFIX_EVIDENCE}
     report['runtime_exemptions']=RUNTIME_EXEMPTIONS
@@ -135,4 +155,4 @@ finally:
     security=reports/'cargo-security.json'
     if security.is_file():report['security_applicability_exceptions']=json.loads(security.read_text()).get('applicability_exceptions',[])
     raw=json.dumps(report,sort_keys=True,separators=(',',':')).encode();(reports/'report.json').write_bytes(raw);(reports/'report.sha256').write_text(hashlib.sha256(raw).hexdigest()+'\n');print('REPORT',reports/'report.json',flush=True)
-raise SystemExit(0 if all(r['status']=='passed' for r in results.values()) and len(results)==(4 if suite=='all' else 1) else 1)
+raise SystemExit(0 if all(r['status']=='passed' for r in results.values()) and len(results)==(4 if suite in ['all','x64'] else 1) else 1)

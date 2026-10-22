@@ -86,7 +86,8 @@ sysroot=str(root/'scripts');import sys;sys.path.insert(0,sysroot)
 from release_gate import validate, source_fingerprint
 from check_release_assets import fetch_draft_release, validate_assets
 from verification_policy import (LARGE_ARTIFACT_BOUNDARY, RUNTIME_EXEMPTIONS,
-    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED)
+    HOTFIX_SCOPE, HOTFIX_COMMANDS, HOTFIX_EVIDENCE, HOTFIX_UNVERIFIED,
+    X64_SCOPE, X64_ARM64_EXECUTION, X64_SUITES, X64_COMMANDS, X64_EVIDENCE, X64_UNVERIFIED)
 try:validate({'protocol':'pinset-verification/3','suite':'all','execution':'CI'},root,tag)
 except ValueError:pass
 else:raise AssertionError('release gate accepted non-local report')
@@ -124,6 +125,41 @@ for failure in ['scope','suite','command','argv','cwd','failed','evidence','boun
     try:validate(invalid,source,tag)
     except ValueError:pass
     else:raise AssertionError('hotfix gate accepted '+failure)
+# User-authorized x64 verification remains its own complete scope, with no
+# ARM64/QEMU or macOS execution implied or accepted in its command evidence.
+x64={**metadata,'suite':'x64','x64_scope':X64_SCOPE,
+    'suites':{name:{'status':'passed'} for name in X64_SUITES},
+    'commands':[{'label':label,'argv':argv,'cwd':'/workspace','exit_code':0} for label,argv in X64_COMMANDS],
+    'evidence_files':{name:{'sha256':'2'*64,'bytes':1} for name in X64_EVIDENCE},
+    'unverified':X64_UNVERIFIED+[LARGE_ARTIFACT_BOUNDARY],'arm64_execution':X64_ARM64_EXECUTION}
+assert validate(x64,source,tag)==commit
+# A previously reviewed exact SDK baseline is optional report metadata.
+assert validate({**x64,'sdk_baseline':{'path':'/reports/reviewed/frozen-selectors.json',
+    'sha256':'3'*64,'selections':{'java@21':'java@21.0.12.1+1'}}},source,tag)==commit
+for failure in ['scope','suite','extra-suite','command','argv','cwd','failed','evidence',
+                'evidence-bytes','evidence-digest','boundary','arm64','arm-command',
+                'mac-command','dirty','all-claim','hotfix-claim']:
+    invalid=copy.deepcopy(x64)
+    if failure=='scope':invalid['x64_scope']='all-platforms'
+    elif failure=='suite':invalid['suites'].pop('windows')
+    elif failure=='extra-suite':invalid['suites']['platform']={'status':'passed'}
+    elif failure=='command':invalid['commands'].pop()
+    elif failure=='argv':invalid['commands'][0]['argv']=['true']
+    elif failure=='cwd':invalid['commands'][0]['cwd']='/source'
+    elif failure=='failed':invalid['commands'][0]['exit_code']=1
+    elif failure=='evidence':invalid['evidence_files'].pop('windows-target.json')
+    elif failure=='evidence-bytes':invalid['evidence_files']['real-sdks.json']['bytes']=0
+    elif failure=='evidence-digest':invalid['evidence_files']['windows-target.json']['sha256']='invalid'
+    elif failure=='boundary':invalid['unverified'].pop(0)
+    elif failure=='arm64':invalid['arm64_execution']='QEMU emulation'
+    elif failure=='arm-command':invalid['commands'].append({'label':'arm64','argv':['qemu-aarch64-static','pinset'],'cwd':'/workspace','exit_code':0})
+    elif failure=='mac-command':invalid['commands'].append({'label':'macos','argv':['cargo','check','--target','aarch64-apple-darwin'],'cwd':'/workspace','exit_code':0})
+    elif failure=='dirty':invalid['source_clean']=False
+    elif failure=='all-claim':invalid['suite']='all'
+    elif failure=='hotfix-claim':invalid['suite']='hotfix'
+    try:validate(invalid,source,tag)
+    except ValueError:pass
+    else:raise AssertionError('x64 gate accepted '+failure)
 # Git-declared text must have the same fingerprint on Windows and Linux,
 # including files outside the usual source-extension list. Binary changes matter.
 fingerprint_root=fixture/'fingerprint-source';fingerprint_root.mkdir()

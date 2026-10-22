@@ -1,4 +1,7 @@
-param([ValidateSet('fast','acceptance','platform','integrations','all','hotfix')][string]$Suite='fast')
+param(
+    [ValidateSet('fast','acceptance','platform','integrations','all','x64','hotfix')][string]$Suite='fast',
+    [string]$SdkSelections
+)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $MyInvocation.MyCommand.Path
 $image='pinset-verify:3.0'
@@ -39,5 +42,13 @@ if (-not $container.State.Running) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 Write-Host "Reusing $containerName ($($container.Id.Substring(0,12)))"
-docker exec --env "PINSET_VERIFY_IMAGE_DIGEST=$($container.Image)" --env "PINSET_VERIFY_CONTAINER_ID=$($container.Id)" $containerName bash /source/scripts/docker/verify.sh $Suite
+$verificationArgs=@('exec','--env',"PINSET_VERIFY_IMAGE_DIGEST=$($container.Image)",'--env',"PINSET_VERIFY_CONTAINER_ID=$($container.Id)")
+if ($SdkSelections) {
+    $selectionPath=(Resolve-Path -LiteralPath $SdkSelections).Path
+    $selectionRelative=[IO.Path]::GetRelativePath($root,$selectionPath).Replace('\','/')
+    if ($selectionRelative -eq '..' -or $selectionRelative.StartsWith('../') -or [IO.Path]::IsPathRooted($selectionRelative)) { throw 'SDK selections must be inside the repository or its output directory.' }
+    $verificationArgs+=@('--env',"PINSET_VERIFY_SDK_SELECTIONS=/source/$selectionRelative")
+}
+$verificationArgs+=@($containerName,'bash','/source/scripts/docker/verify.sh',$Suite)
+docker @verificationArgs
 exit $LASTEXITCODE
