@@ -62,7 +62,11 @@ workflow=(root/'.github/workflows/release.yml').read_text()
 assert 'workflow_dispatch:' in workflow
 for forbidden in ['cargo test','cargo clippy','cargo audit','npm test','npm audit','typecheck','verify.sh','release-preflight']:
     assert forbidden not in workflow,forbidden
-assert list((root/'.github/workflows').glob('*.yml'))==[root/'.github/workflows/release.yml']
+assert {path.name for path in (root/'.github/workflows').glob('*.yml')}=={'release.yml','verify-platforms.yml'}
+manual=(root/'.github/workflows/verify-platforms.yml').read_text()
+assert 'workflow_dispatch:' in manual
+assert not __import__('re').search(r'(?m)^  (push|pull_request|schedule|workflow_call|workflow_run|release):',manual)
+assert all(target in manual for target in ['linux-x86_64','linux-aarch64','windows-x86_64','macos-aarch64'])
 assert workflow.index('--draft --latest=false') < workflow.index('python3 scripts/check_release_assets.py') < workflow.index('--draft=false --latest=')
 action=(root/'action.yml').read_text()
 assert action.startswith('name: setup-pinset\n') and 'default: latest' in action

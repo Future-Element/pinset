@@ -1,0 +1,168 @@
+name: Verify native Pinset platforms
+run-name: Native platform verification (${{ inputs.mode }})
+
+# Deliberately independent from pushes, tags and the publication workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Test checked-out source, or an already published Pinset release
+        type: choice
+        options:
+          - source
+          - release
+        default: source
+        required: true
+      version:
+        description: Exact Pinset version or latest (release mode only)
+        type: string
+        default: latest
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-native-${{ github.ref }}-${{ inputs.mode }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Native ${{ matrix.target }} (${{ inputs.mode }})
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            platform: linux
+            arch: x64
+            runner-arch: X64
+            python: python3
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+            platform: linux
+            arch: arm64
+            runner-arch: ARM64
+            python: python3
+          - os: windows-2025
+            target: windows-x86_64
+            platform: win32
+            arch: x64
+            runner-arch: X64
+            python: python
+          # GitHub documents macos-15 as ARM64. This is also the native label
+          # used by the repository's successful macos-aarch64 release jobs.
+          - os: macos-15
+            target: macos-aarch64
+            platform: darwin
+            arch: arm64
+            runner-arch: ARM64
+            python: python3
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PINSET_HOME: ${{ runner.temp }}/pinset-platform-home
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Record and assert the native runner architecture
+        env:
+          PINSET_CI_MODE: ${{ inputs.mode }}
+          PINSET_CI_TARGET: ${{ matrix.target }}
+          PINSET_CI_PLATFORM: ${{ matrix.platform }}
+          PINSET_CI_ARCH: ${{ matrix.arch }}
+          PINSET_CI_RUNNER_ARCH: ${{ matrix.runner-arch }}
+          PINSET_CI_RUNNER_LABEL: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import os from 'node:os';
+          const actual = {
+            target: process.env.PINSET_CI_TARGET,
+            runner_label: process.env.PINSET_CI_RUNNER_LABEL,
+            runner_arch: process.env.RUNNER_ARCH,
+            platform: process.platform,
+            architecture: process.arch,
+            machine: os.machine(),
+            node: process.version,
+            execution: 'native-github-hosted-runner',
+          };
+          fs.mkdirSync('output/ci-platform', { recursive: true });
+          fs.writeFileSync('output/ci-platform/host.json', JSON.stringify(actual, null, 2) + '\n');
+          console.log(JSON.stringify(actual));
+          assert.ok(['source', 'release'].includes(process.env.PINSET_CI_MODE), 'unknown verification mode');
+          assert.equal(process.platform, process.env.PINSET_CI_PLATFORM, 'runner operating system differs');
+          assert.equal(process.arch, process.env.PINSET_CI_ARCH, 'runner process architecture differs');
+          assert.equal(process.env.RUNNER_ARCH, process.env.PINSET_CI_RUNNER_ARCH, 'runner host architecture differs');
+          JS
+          "${{ matrix.python }}" -c "import sys; assert sys.version_info >= (3,11), 'Python 3.11 or newer is required'; print(sys.version)"
+      - name: Install the pinned native Rust toolchain
+        if: inputs.mode == 'source'
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Run native Rust workspace tests
+        if: inputs.mode == 'source'
+        run: cargo +1.97.1 test --workspace --locked
+      - name: Build the native CLI and router
+        if: inputs.mode == 'source'
+        run: cargo +1.97.1 build --locked -p pinset-cli -p pinset-shim
+      - name: Check setup-pinset preparation contracts on Node 24
+        if: inputs.mode == 'source'
+        run: node scripts/tests/setup_action.mjs
+      - name: Install the published CLI with setup-pinset
+        id: bootstrap
+        if: inputs.mode == 'release'
+        uses: ./
+        with:
+          version: ${{ inputs.version }}
+          install: 'false'
+      - name: Select the actual CLI entry
+        id: cli
+        env:
+          PINSET_CI_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const cli = process.env.PINSET_CI_MODE === 'source'
+            ? path.resolve('target/debug', process.platform === 'win32' ? 'pinset.exe' : 'pinset')
+            : 'pinset';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `cli=${cli}\n`);
+          JS
+      - name: Exercise the native toolchain and JSON checks
+        id: smoke
+        env:
+          PINSET_CI_CLI: ${{ steps.cli.outputs.cli }}
+          PINSET_CI_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          "${{ matrix.python }}" scripts/tests/ci_platform.py --cli "$PINSET_CI_CLI" --output output/ci-platform --expected-target "$PINSET_CI_TARGET"
+      - name: Restore and verify the smoke project with the official Action
+        id: action
+        if: inputs.mode == 'release'
+        uses: ./
+        with:
+          # Pin the exact bootstrap version even if latest changes during a job.
+          version: ${{ steps.bootstrap.outputs.version }}
+          working-directory: ${{ steps.smoke.outputs.project }}
+          cache: 'true'
+      - name: Upload platform reports and project lock
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-${{ inputs.mode }}-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            output/ci-platform/*.json
+            output/ci-platform/config.toml
+            output/ci-platform/lock.toml
+            ${{ steps.action.outputs.check-report }}
