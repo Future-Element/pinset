@@ -1,12 +1,12 @@
 {
-    "version": "3.0.9",
+    "version": "3.1.0",
     "description": "Lock project toolchains and explain their execution paths",
     "homepage": "https://pinset.future-element.com",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-windows-x86_64.zip",
-            "hash": "f26ed89fcdf060447d6b7721f54f2ab7ce612682967ab080cc1a7574999c4c1a"
+            "url": "https://github.com/Future-Element/pinset/releases/download/v3.1.0/pinset-v3.1.0-windows-x86_64.zip",
+            "hash": "7acc489f6ae0b76acd13ce87ae6bb407cc1947a1891353f33564b70b80122e88"
         }
     },
     "pre_install": [

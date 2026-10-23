@@ -2,23 +2,23 @@
 class Pinset < Formula
   desc "Lock project toolchains and explain their execution paths"
   homepage "https://pinset.future-element.com"
-  version "3.0.9"
+  version "3.1.0"
   license "MIT"
 
   on_macos do
     depends_on arch: :arm64
-    url "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-macos-aarch64.zip"
-    sha256 "ee3525301737e225b197b7ec9b8670a9fdb39bc79b01571beb957099e5b22e6c"
+    url "https://github.com/Future-Element/pinset/releases/download/v3.1.0/pinset-v3.1.0-macos-aarch64.zip"
+    sha256 "220a7b49ec01844ba1b350573e6b2a9c3402e605913589935c49d54ece585392"
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-linux-x86_64.zip"
-      sha256 "2bc89cbee5b40191ab37f71914e90c03c5ac304411d52832cbac20ab7fa39de4"
+      url "https://github.com/Future-Element/pinset/releases/download/v3.1.0/pinset-v3.1.0-linux-x86_64.zip"
+      sha256 "b706eb54f49c16781f20e2aa08dd3e3be6c443cffdfc59ec2ca25e7dd6282fa6"
     end
     on_arm do
-      url "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-linux-aarch64.zip"
-      sha256 "bdf79ed9fd904a544f2cad1a10589880afdaa8bdc57cd265afeff55a85b95667"
+      url "https://github.com/Future-Element/pinset/releases/download/v3.1.0/pinset-v3.1.0-linux-aarch64.zip"
+      sha256 "51ffc935983d5ed9e0e221422d108ce8e4128d74bb8dbd3c6e317610662fe3df"
     end
   end
 
@@ -42,7 +42,7 @@ class Pinset < Formula
 
   test do
     ENV["PINSET_HOME"] = testpath/"home"
-    assert_match "pinset 3.0.9", shell_output("#{bin}/pinset --version")
+    assert_match "pinset 3.1.0", shell_output("#{bin}/pinset --version")
     assert_path_exists bin/"pinset-shim"
     system bin/"pinset", "self", "repair"
     assert_path_exists testpath/"home/v3/bin/pinset-shim"

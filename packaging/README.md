@@ -1,14 +1,14 @@
 # 分发渠道维护
 
-本目录保存可审核的渠道文件。当前样例固定为已经公开的 **Pinset 3.0.9**，不是本地后续功能的发布包。准备时已实际下载四个平台 ZIP，重算 SHA-256，并确认每包只含位于同一目录的 `pinset` 和 `pinset-shim` 两个程序。WinGet 三文件已通过本机 `winget validate`；Scoop 官方 `checkver.ps1` 已实际返回 `pinset: 3.0.9`，官方 autoupdate helper 也生成了正确的现有下载地址。这些检查不等于经所有渠道完成安装验收。
+本目录保存可审核的渠道文件，当前版本为已公开的 **Pinset 3.1.0**。生成时已实际下载四个平台 ZIP，重算 SHA-256，并确认每包只含位于同一目录的 `pinset` 和 `pinset-shim` 两个程序。Homebrew 已在 Linux x64 Docker 中、Scoop 已在隔离的 Windows x64 目录中完成真实安装、从 3.0.9 升级、托管入口刷新和工具路由验证；两者均用公开资产通过了真实 GitHub attestation 验证。WinGet 清单已通过本机 `winget validate`，实际 WinGet 安装仍以上游验证为准。
 
 | 渠道 | 文件与发布位置 | 当前状态 |
 | --- | --- | --- |
-| Homebrew | `homebrew/pinset.rb`；[官方 tap](https://github.com/Future-Element/homebrew-tap) 的 `Formula/pinset.rb` | 已公开；`brew install Future-Element/tap/pinset` |
-| Scoop | `scoop/pinset.json`；[官方 bucket](https://github.com/Future-Element/scoop-bucket) 的 `bucket/pinset.json` | 已公开；支持直接使用公开 manifest URL 一条命令安装 |
-| WinGet | `winget/manifests/f/FutureElement/Pinset/3.0.9/` 下三个文件 | 尚未向 `microsoft/winget-pkgs` 提交；须通过上游审核和合并 |
+| Homebrew | `homebrew/pinset.rb`；[官方 tap](https://github.com/Future-Element/homebrew-tap) 的 `Formula/pinset.rb` | 3.1.0 已公开；`brew install Future-Element/tap/pinset` |
+| Scoop | `scoop/pinset.json`；[官方 bucket](https://github.com/Future-Element/scoop-bucket) 的 `bucket/pinset.json` | 3.1.0 已公开；支持直接使用公开 manifest URL 一条命令安装 |
+| WinGet | `winget/manifests/f/FutureElement/Pinset/3.1.0/` 下三个文件 | [收录 PR #460148](https://github.com/microsoft/winget-pkgs/pull/460148) 已提交，CLA 已通过，等待上游验证和审核合并 |
 | aqua | `aqua/registry.yaml` 和 `aqua/pkg.yaml` | [标准注册表收录 PR #63088](https://github.com/aquaproj/aqua-registry/pull/63088) 已提交，等待审核合并 |
-| GitHub Actions | 仓库根目录 `action.yml` | [setup-pinset 已在 Marketplace 上架](https://github.com/marketplace/actions/setup-pinset)，当前显示 v3.0.9 |
+| GitHub Actions | 仓库根目录 `action.yml` | [setup-pinset 已在 Marketplace 上架](https://github.com/marketplace/actions/setup-pinset)，最新为 v3.1.0；使用 `Future-Element/pinset@v3.1.0` |
 
 当前资产支持 Linux x64/ARM64、macOS ARM64、Windows x64；没有 macOS Intel 或 Windows ARM64 包。Formula、Scoop 和 WinGet 限制不支持的架构，aqua 列出四种明确环境并关闭模拟运行回退。每个渠道均保留真正相邻的 CLI/router；不能只把 CLI 复制到包外的单独目录。
 
@@ -22,7 +22,7 @@ python scripts/generate_channels.py --verify-archives
 
 脚本读取 `release.json` 的 `published`，只接受匹配的公开稳定 Pinset 3 release，下载其 SHA256SUMS，并核对校验清单和四个 ZIP 的 GitHub asset digest。`--verify-archives` 还会下载并重算四个 ZIP 的摘要，检查两个根目录程序。结果默认写入 `output/channels/`；它不会覆盖本目录、提交 Git、更新远端仓库、提交 PR、发布包或安装任何工具。
 
-将 `output/channels/packaging/` 中审阅后的文件手动更新到本目录。发布新版本时必须先有真实公开资产，再生成新的版本文件；不要把 3.0.9 样例描述为尚未发布功能的安装包。WinGet 新版本应保留独立版本目录。生成证据在 `output/channels/evidence/`，不会充当外部渠道已发布的证明。
+将 `output/channels/packaging/` 中审阅后的文件手动更新到本目录。发布新版本时必须先有真实公开资产，再生成新的版本文件。WinGet 新版本应保留独立版本目录。生成证据在 `output/channels/evidence/`，不会充当外部渠道已发布的证明。
 
 可提供 `--release-metadata PATH --checksums PATH` 使用固定快照离线生成。这时信任的是调用者提供的元数据快照；摘要一致不等同于签名验证。离线回归使用固定的最小 3.0.9 fixture：
 
@@ -69,7 +69,7 @@ $pinsetChannelCli = Join-Path (scoop prefix pinset) 'pinset.exe'
 本地 manifest 检查：
 
 ```powershell
-winget validate --manifest packaging/winget/manifests/f/FutureElement/Pinset/3.0.9 --disable-interactivity
+winget validate --manifest packaging/winget/manifests/f/FutureElement/Pinset/3.1.0 --disable-interactivity
 ```
 
 ### aqua
@@ -84,7 +84,7 @@ PINSET_CHANNEL_CLI="$(aqua which pinset)"
 
 在 PowerShell 中同样先保存 `aqua which pinset` 的结果，再以该路径执行。应在包含选定 Pinset 版本的 aqua 配置目录下操作；不要用普通 `which pinset`，因为它可能找到 Pinset home 的旧副本。
 
-向 aqua 上游提交时，按[贡献指南](https://github.com/aquaproj/aqua-registry/blob/main/docs/add_package.md)在个人 fork 运行 `argd s Future-Element/pinset`，把候选配置与脚手架输出核对，再运行 `argd t`、签名提交并提 PR。本目录候选不能冒充已经执行过脚手架或已经获得上游接收。
+向 aqua 上游提交时，按[贡献指南](https://github.com/aquaproj/aqua-registry/blob/main/docs/add_package.md)在个人 fork 运行 `argd s Future-Element/pinset`，把候选配置与脚手架输出核对，再运行 `argd t`、签名提交并提 PR。PR #63088 已执行这些步骤，且通过 Conftest、格式检查及 Linux/Windows x64 原生安装和托管入口升级验证；其他平台仅验证下载解包。PR 中还按上游格式维护历史版本布局，本目录候选不替代上游配置，也不表示已获收录。
 
 ## 卸载和保留数据
 
