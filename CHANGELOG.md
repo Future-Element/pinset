@@ -5,6 +5,7 @@
 - Verify public GitHub Release build attestations for generic tools, retain offline-verifiable bundles in the lock, reject signature downgrades per platform, and distinguish verified signatures from first-use digest pinning in checks.
 - Add reviewable Homebrew, Scoop, WinGet and aqua manifests with a release-bound generator and explicit publication status; link the existing setup-pinset Marketplace listing.
 - Refresh managed entries from read-only package binaries without changing their source permissions.
+- Update the website to Next.js 16.4.1 to include the current security fixes.
 - Version management-command JSON reports, make installation inventories deterministic, add installed tool details and document a JSON-only agent workflow with fail-stop handling.
 - Add bilingual AI coding agent and Volta migration guides to the website and repository, including the independent npm pin and Volta inheritance boundaries.
 
