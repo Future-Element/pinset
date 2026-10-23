@@ -35,6 +35,20 @@ Project discovery stops at the nearest Git repository, including worktrees. Non-
 
 ## Installation and execution
 
+Install from the official [Homebrew tap](https://github.com/Future-Element/homebrew-tap):
+
+```sh
+brew install Future-Element/tap/pinset
+```
+
+Or use the official [Scoop bucket](https://github.com/Future-Element/scoop-bucket) on Windows x64:
+
+```powershell
+scoop install https://raw.githubusercontent.com/Future-Element/scoop-bucket/main/bucket/pinset.json
+```
+
+See [distribution channels](packaging/README.md) for updates, managed entries and WinGet/aqua submission status.
+
 `use` resolves official artifacts and updates configuration and lock together. `install` uses the existing lock without resolving versions. Offline cache hits still verify digests. `remove` removes selections; `clean` removes unreferenced installations conservatively. `exec` and shims do not install tools or initiate downloads.
 
 Java installs the complete Temurin **JDK**, including version-specific public tools, sources, headers, modules, native libraries, certificates and licenses. It is a first-class Provider for standalone applications, servers, wrappers, debugging and diagnostics. Flutter Android is a separate integration. Project wrappers and dependencies remain project-owned. IDE project JDK and language-server runtime JDK are separate settings.

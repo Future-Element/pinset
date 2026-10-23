@@ -4,10 +4,10 @@
 
 | 渠道 | 文件与发布位置 | 当前状态 |
 | --- | --- | --- |
-| Homebrew | `homebrew/pinset.rb`；发布到真实 tap 的 `Formula/pinset.rb` | tap 尚未公开，本仓文件不代表 `brew install` 已可用 |
-| Scoop | `scoop/pinset.json`；发布到真实 bucket 的 `bucket/pinset.json` 或公开 manifest URL | bucket 尚未公开，不提供假定可用的 bucket 地址 |
+| Homebrew | `homebrew/pinset.rb`；[官方 tap](https://github.com/Future-Element/homebrew-tap) 的 `Formula/pinset.rb` | 已公开；`brew install Future-Element/tap/pinset` |
+| Scoop | `scoop/pinset.json`；[官方 bucket](https://github.com/Future-Element/scoop-bucket) 的 `bucket/pinset.json` | 已公开；支持直接使用公开 manifest URL 一条命令安装 |
 | WinGet | `winget/manifests/f/FutureElement/Pinset/3.0.9/` 下三个文件 | 尚未向 `microsoft/winget-pkgs` 提交；须通过上游审核和合并 |
-| aqua | `aqua/registry.yaml` 和 `aqua/pkg.yaml` | 本地 registry 候选，尚未提交标准注册表 |
+| aqua | `aqua/registry.yaml` 和 `aqua/pkg.yaml` | [标准注册表收录 PR #63088](https://github.com/aquaproj/aqua-registry/pull/63088) 已提交，等待审核合并 |
 | GitHub Actions | 仓库根目录 `action.yml` | [setup-pinset 已在 Marketplace 上架](https://github.com/marketplace/actions/setup-pinset)，当前显示 v3.0.9 |
 
 当前资产支持 Linux x64/ARM64、macOS ARM64、Windows x64；没有 macOS Intel 或 Windows ARM64 包。Formula、Scoop 和 WinGet 限制不支持的架构，aqua 列出四种明确环境并关闭模拟运行回退。每个渠道均保留真正相邻的 CLI/router；不能只把 CLI 复制到包外的单独目录。

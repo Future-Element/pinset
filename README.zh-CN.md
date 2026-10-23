@@ -16,6 +16,22 @@ pinset use java@25
 pinset exec -- ./mvnw verify
 ```
 
+## 安装
+
+通过官方 [Homebrew tap](https://github.com/Future-Element/homebrew-tap) 安装：
+
+```sh
+brew install Future-Element/tap/pinset
+```
+
+Windows x64 可通过官方 [Scoop bucket](https://github.com/Future-Element/scoop-bucket) 安装：
+
+```powershell
+scoop install https://raw.githubusercontent.com/Future-Element/scoop-bucket/main/bucket/pinset.json
+```
+
+升级、托管入口及 WinGet/aqua 收录进度见[分发渠道维护](packaging/README.md)。
+
 ## 文件和执行边界
 
 提交 `.pinset/config.toml`、`.pinset/lock.toml` 和 `.pinset/env/<profile>.env`；只忽略 `.pinset/local/` 与根目录 `.venv/`。全局数据位于 `PINSET_HOME/v3/`，默认 `~/.pinset/v3/`。已有 `.tool-versions`、`.nvmrc`、`package.json` 等版本文件的项目可先用 `pinset import --plan` 查看计划，再用 `pinset import` 确认迁移；只补缺失选择并生成确切锁，保留已有选择和来源文件，工具另用 `pinset install` 安装。2.x 升级可使用[独立升级脚本](docs/migration-v2-to-v3.zh-CN.md)：安装 3.x、迁移精确版本、验证环境、切换命令入口，再清理旧文件并保留恢复备份；该脚本不接入 pinset 命令。

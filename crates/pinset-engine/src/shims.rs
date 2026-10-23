@@ -221,36 +221,59 @@ fn publish(source: &Path, target: &Path) -> Result<()> {
     })
 }
 fn copy_staged_binary(source: &Path, target: &Path) -> Result<()> {
-    fs::copy(source, target).map_err(|error| {
-        service_error(
-            "PINSET_SHIM_IO",
-            format!(
-                "cannot stage {} as {}: {error}",
-                source.display(),
-                target.display()
-            ),
-        )
-    })?;
-    // Windows FlushFileBuffers requires a writable handle, even when the
-    // completed copy only needs to be flushed before publication.
+    // Acquire the writable handle before fs::copy preserves read-only package
+    // permissions. Windows also requires this handle for FlushFileBuffers;
+    // OpenOptions shares read/write/delete access with the copy operation.
     let file = fs::OpenOptions::new()
         .write(true)
+        .create_new(true)
         .open(target)
         .map_err(|error| {
             service_error(
                 "PINSET_SHIM_IO",
                 format!(
-                    "cannot open staged binary {} for flushing: {error}",
+                    "cannot create staged binary {} for flushing: {error}",
                     target.display()
                 ),
             )
         })?;
-    file.sync_all().map_err(|error| {
-        service_error(
-            "PINSET_SHIM_IO",
-            format!("cannot flush staged binary {}: {error}", target.display()),
-        )
-    })
+    let result = fs::copy(source, target)
+        .map_err(|error| {
+            service_error(
+                "PINSET_SHIM_IO",
+                format!(
+                    "cannot stage {} as {}: {error}",
+                    source.display(),
+                    target.display()
+                ),
+            )
+        })
+        .and_then(|_| {
+            file.sync_all().map_err(|error| {
+                service_error(
+                    "PINSET_SHIM_IO",
+                    format!("cannot flush staged binary {}: {error}", target.display()),
+                )
+            })
+        });
+    drop(file);
+    if let Err(error) = result {
+        // create_new established ownership of this path. Remove only our
+        // failed staging file, leaving package sources and live entries alone.
+        if let Err(cleanup) = fs::remove_file(target)
+            && cleanup.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(service_error(
+                "PINSET_SHIM_IO",
+                format!(
+                    "{error}; cannot remove failed staged binary {}: {cleanup}",
+                    target.display()
+                ),
+            ));
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 fn finish(
     home: &Path,
@@ -598,6 +621,119 @@ impl Services {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn staging_never_overwrites_an_existing_target() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("source");
+        let target = temporary.path().join("target");
+        fs::write(&source, b"package binary").unwrap();
+        fs::write(&target, b"existing data").unwrap();
+        let error = copy_staged_binary(&source, &target).unwrap_err();
+        assert_eq!(error.code(), "PINSET_SHIM_IO");
+        assert_eq!(fs::read(target).unwrap(), b"existing data");
+        assert_eq!(fs::read(source).unwrap(), b"package binary");
+    }
+    #[test]
+    fn failed_staging_removes_the_created_target() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("missing");
+        let target = temporary.path().join("target");
+        let error = copy_staged_binary(&source, &target).unwrap_err();
+        assert_eq!(error.code(), "PINSET_SHIM_IO");
+        assert!(!target.exists());
+        assert!(!source.exists());
+    }
+    #[test]
+    #[cfg(unix)]
+    fn readonly_channel_binaries_refresh_without_changing_source_permissions() {
+        use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+        // Docker runs as root. Exercise the actual 0555 write restriction in
+        // a child process rather than letting root conceal the regression.
+        if unsafe { libc::geteuid() } == 0 {
+            let scratch = tempfile::Builder::new()
+                .prefix("pinset-unprivileged-repair-")
+                .tempdir_in("/tmp")
+                .unwrap();
+            fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o1777)).unwrap();
+            let executable = scratch.path().join("readonly-repair-test");
+            fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            let marker = scratch.path().join("completed");
+            let status = std::process::Command::new(&executable)
+                .args([
+                    "--exact",
+                    "shims::tests::readonly_channel_binaries_refresh_without_changing_source_permissions",
+                    "--nocapture",
+                ])
+                .current_dir(scratch.path())
+                .env("TMPDIR", scratch.path())
+                .env("PINSET_TEST_READONLY_REPAIR_MARKER", &marker)
+                .uid(65534)
+                .gid(65534)
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "unprivileged read-only channel repair failed"
+            );
+            assert_eq!(fs::read(marker).unwrap(), b"passed");
+            return;
+        }
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let services = service(&home, temporary.path());
+        for (version, cli_bytes, shim_bytes) in [
+            ("first", &b"first-cli"[..], &b"first-shim"[..]),
+            ("second", &b"second-cli"[..], &b"second-shim"[..]),
+        ] {
+            let package = temporary.path().join(version);
+            fs::create_dir(&package).unwrap();
+            let cli = package.join("pinset");
+            let shim = package.join("pinset-shim");
+            for (source, bytes) in [(&cli, cli_bytes), (&shim, shim_bytes)] {
+                fs::write(source, bytes).unwrap();
+                fs::set_permissions(source, fs::Permissions::from_mode(0o555)).unwrap();
+            }
+            services.install_shims_from(&cli, &shim).unwrap();
+            services.install_shims_from(&cli, &shim).unwrap();
+            for (source, name, bytes) in [
+                (&cli, "pinset", cli_bytes),
+                (&shim, "pinset-shim", shim_bytes),
+            ] {
+                assert_eq!(fs::read(source).unwrap(), bytes);
+                assert_eq!(
+                    fs::metadata(source).unwrap().permissions().mode() & 0o777,
+                    0o555
+                );
+                assert_eq!(fs::read(home.join("bin").join(name)).unwrap(), bytes);
+            }
+            let registry = registry_at(&home.join("state/shims.json"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(registry.cli_digest, Some(digest(cli_bytes)));
+            assert_eq!(registry.digest, digest(shim_bytes));
+            for command in registry.commands.keys() {
+                let path = home.join("bin").join(command);
+                assert_eq!(fs::read(&path).unwrap(), shim_bytes);
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o555
+                );
+            }
+            assert!(!transaction_path(&home).exists());
+            assert!(fs::read_dir(home.join("bin")).unwrap().all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".pinset-shims-")
+            }));
+        }
+        if let Some(marker) = std::env::var_os("PINSET_TEST_READONLY_REPAIR_MARKER") {
+            fs::write(marker, b"passed").unwrap();
+        }
+    }
     fn fixture() -> (tempfile::TempDir, PathBuf, Refresh) {
         let temporary = tempfile::tempdir().unwrap();
         let home = temporary.path().join("home");

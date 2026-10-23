@@ -258,9 +258,8 @@ kbd { min-width: 24px; height: 20px; display: inline-flex; align-items: center; 
 .installHeading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; font-size: 12px; }
 .installHeading strong span { color: var(--muted); font-size: 11px; margin-left: 5px; font-weight: 400; }
 .installHeading > span { color: var(--muted); font-size: 10px; }
-.platformSwitch { display: flex; gap: 0; }
-.platformSwitch button { border: 1px solid var(--line); border-bottom: 0; padding: 6px 14px; background: white; font-size: 11px; cursor: pointer; color: var(--ink-soft); }
-.platformSwitch button + button { border-left: 0; }
+.platformSwitch { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.platformSwitch button { border: 1px solid var(--line); padding: 6px 14px; background: white; font-size: 11px; white-space: nowrap; cursor: pointer; color: var(--ink-soft); }
 .platformSwitch button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: white; }
 .installCommand { display: flex; gap: 12px; align-items: flex-start; padding: 18px 14px; background: var(--ink); color: #f8f8fa; min-height: 95px; }
 .installCommand pre { margin: 0; flex: 1; min-width: 0; font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -415,6 +414,7 @@ kbd { min-width: 24px; height: 20px; display: inline-flex; align-items: center; 
   .heroCopy h1 { font-size: clamp(39px, 10vw, 58px); margin-top: 24px; }
   .heroDescription { font-size: 15px; }
   .releaseLink { font-size: 10px; gap: 9px; }
+  .platformSwitch button { padding: 6px 10px; }
   .installCommand { gap: 9px; padding: 14px 12px; }
   .installCommand pre { font-size: 11px; }
   .installHeading > span { font-size: 9px; }
