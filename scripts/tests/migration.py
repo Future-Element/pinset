@@ -785,7 +785,8 @@ class UpgradeTests(unittest.TestCase):
             upgrader.stage_v3(Path(temporary).resolve())
             self.assertEqual(upgrader.binary_version(upgrader.args.pinset), "3.1.0")
         download.assert_not_called()
-        upgrader = self.upgrader("--version", "3.1.0")
+        major, minor, patch_version = map(int, migration.DEFAULT_VERSION.split("."))
+        upgrader = self.upgrader("--version", f"{major}.{minor}.{patch_version + 1}")
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(migration.MigrationError, "does not match --version"):
                 upgrader.stage_v3(Path(temporary).resolve())
