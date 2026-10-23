@@ -100,6 +100,7 @@ impl Services {
                 ));
             }
             let sha256 = hex::encode(hasher.finalize());
+            let attestation = crate::github_attestation::fetch(&client, &url, &sha256)?;
             if cache {
                 temporary.flush()?;
                 import_download_cache_with_integrity(
@@ -128,7 +129,12 @@ impl Services {
                 integrity: None,
                 format: definition.format,
                 archive_root: String::new(),
-                verification: GENERIC_VERIFICATION.into(),
+                verification: if attestation.is_some() {
+                    GENERIC_GITHUB_VERIFICATION.into()
+                } else {
+                    GENERIC_VERIFICATION.into()
+                },
+                attestation,
                 overlays: vec![],
             });
         }
@@ -160,6 +166,9 @@ pub(crate) fn install_locked_generic(
             "generic tool has no locked artifact for this platform",
         )
     })?;
+    if let Some(evidence) = &artifact.attestation {
+        crate::github_attestation::verify(&artifact.canonical_url, &artifact.sha256, evidence)?;
+    }
     let entry = generic_executable(tool, target)?;
     let request = InstallRequest {
         pinset_home: home.into(),

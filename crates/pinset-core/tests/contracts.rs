@@ -61,7 +61,7 @@ fn no_parent_or_global_config_merge() {
     assert!(c.load().unwrap().tools.is_empty());
 }
 fn locked() -> LockedTool {
-    LockedTool{name:"java".into(),requested:"21".into(),version:"21.0.8+9".into(),provider:"adoptium-temurin".into(),released_at:None,metadata:Default::default(),options:Default::default(),artifacts:vec![LockedArtifact{target:"linux-x86_64".into(),canonical_url:"https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz".into(),artifact_path:"OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz".into(),sha256:"aa".repeat(32),integrity:None,format:LockedArtifactFormat::TarGz,archive_root:"jdk-21.0.8+9".into(),verification:"adoptium-api-sha256".into(),overlays:vec![]}]}
+    LockedTool{name:"java".into(),requested:"21".into(),version:"21.0.8+9".into(),provider:"adoptium-temurin".into(),released_at:None,metadata:Default::default(),options:Default::default(),artifacts:vec![LockedArtifact{target:"linux-x86_64".into(),canonical_url:"https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz".into(),artifact_path:"OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz".into(),sha256:"aa".repeat(32),integrity:None,format:LockedArtifactFormat::TarGz,archive_root:"jdk-21.0.8+9".into(),verification:"adoptium-api-sha256".into(),attestation:None,overlays:vec![]}]}
 }
 #[test]
 fn installation_identity_includes_build_platform_digest_options() {

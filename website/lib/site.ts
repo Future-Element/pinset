@@ -16,8 +16,8 @@ export const siteConfig = {
   titleEn: "Pinset — Project Toolchains and Execution Environments",
   descriptionZh: "Pinset 锁定八种项目工具链和自定义 CLI，导入已有版本声明，通过 GitHub Action 还原并检查环境。版本、下载来源和执行入口清晰可查。",
   descriptionEn: "Lock eight built-in toolchains and custom CLI tools, import existing version files, and restore and check environments with GitHub Actions. Inspect versions, downloads, and command routing.",
-  contentUpdatedAt: "2026-10-22T00:00:00.000Z",
-  homepageUpdatedAt: "2026-10-22T00:00:00.000Z",
+  contentUpdatedAt: "2026-10-23T00:00:00.000Z",
+  homepageUpdatedAt: "2026-10-23T00:00:00.000Z",
 };
 
 export type Locale = "zh-CN" | "en";

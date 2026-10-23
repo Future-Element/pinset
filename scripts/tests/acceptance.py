@@ -223,6 +223,10 @@ def switch_versions():
 if __name__=='__main__':
     roots=[]
     try:
+        from github_attestation import verify_github_attestations
+        github_attestations=verify_github_attestations()
+        from agent_json_contract import verify_agent_json
+        agent_json=verify_agent_json(BIN, pipeline=True)
         for feature in ['8','11','17','21','25','latest']:roots.append(java(feature))
         python_projects=python();runtime_projects=runtimes()
         from toolchain_regressions import verify_toolchain_regressions
@@ -231,6 +235,8 @@ if __name__=='__main__':
         report('venv-recovery',status='passed',results=verify_venv_recovery(python_projects[0]))
         switch_versions();lifecycle()
         report('real-sdks',status='passed',manifest=manifest,java_versions=[lock['version'] for _,lock,_ in roots],
+               github_attestations=github_attestations,
+               agent_json=agent_json,
                gui_scope='JDK inventory only here; actual GUI starts belong to integrations')
     except Exception:
         report('real-sdks',manifest=manifest,status='failed');raise

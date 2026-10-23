@@ -264,6 +264,7 @@ mod tests {
                     format: LockedArtifactFormat::TarGz,
                     archive_root: "package".into(),
                     verification: "npm-registry-signature-sha512".into(),
+                    attestation: None,
                     overlays: vec![LockedArtifactOverlay {
                         canonical_url: "https://registry.npmjs.org/pnpm/-/pnpm-12.9.1.tgz".into(),
                         artifact_path: "wrapper.tgz".into(),

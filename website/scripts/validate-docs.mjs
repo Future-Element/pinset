@@ -64,7 +64,7 @@ export async function validateDocs() {
       assert.ok(rendered.includes("<table>") || /无专用参数|No (?:command-specific|dedicated) (?:options|parameters)/i.test(body), `${locale}/${doc.slug}: missing parameter table or explicit no-options note`);
       assert.ok(html.includes(`Pinset ${version}`), `${locale}/${doc.slug}: missing documented version`);
     }
-    for (const guide of ["concepts", "generic-tools", "ci"]) {
+    for (const guide of ["concepts", "generic-tools", "ci", "agents", "migrate-from-volta"]) {
       const html = withoutComments(await readFile(path.join("out", prefix, "docs", `${guide}.html`), "utf8"));
       const guideSource = await readFile(path.join("..", "docs", `${guide}${locale === "en" ? "" : ".zh-CN"}.md`), "utf8");
       const paragraphs = guideSource.trim().split(/\r?\n\s*\r?\n/).slice(1);
@@ -78,5 +78,5 @@ export async function validateDocs() {
     }
   }
   assert.deepEqual(sets[0], sets[1], "bilingual command URLs must match");
-  console.log("Documentation validated: 29 bilingual commands, four groups, shared purpose summaries, detail templates, version labels, starter flows, and three bilingual guides.");
+  console.log("Documentation validated: 29 bilingual commands, four groups, shared purpose summaries, detail templates, version labels, starter flows, and five bilingual guides.");
 }

@@ -202,6 +202,7 @@ impl JavaMetadataClient {
                     },
                     archive_root: plan.archive_root,
                     verification: JAVA_VERIFICATION.to_owned(),
+                    attestation: None,
                     overlays: Vec::new(),
                 })
             })

@@ -9,8 +9,8 @@ python3 scripts/migrate_v2_to_v3.py
 # 完成升级，默认包含全局选择及所有 2.x 登记项目
 python3 scripts/migrate_v2_to_v3.py --apply
 
-# 指定发布版本；默认推荐版本为 3.0.9
-python3 scripts/migrate_v2_to_v3.py --apply --version 3.0.9
+# 指定发布版本；默认推荐版本为 3.1.0
+python3 scripts/migrate_v2_to_v3.py --apply --version 3.1.0
 
 # 补充未登记项目；--project 可重复
 python3 scripts/migrate_v2_to_v3.py --apply --project /path/to/project

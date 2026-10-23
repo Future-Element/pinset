@@ -32,8 +32,66 @@ fn tool() -> LockedTool {
             format: LockedArtifactFormat::Zip,
             archive_root: String::new(),
             verification: GENERIC_VERIFICATION.into(),
+            attestation: None,
             overlays: vec![],
         }],
+    }
+}
+
+#[test]
+fn attestation_claims_require_matching_evidence_and_cannot_downgrade() {
+    let unsigned = tool();
+    let mut signed = unsigned.clone();
+    let artifact = &mut signed.artifacts[0];
+    artifact.canonical_url =
+        "https://github.com/owner/terraform/releases/download/v1.9.0/tool.zip".into();
+    artifact.verification = GENERIC_GITHUB_VERIFICATION.into();
+    assert!(validate_generic_lock(&signed).is_err());
+    signed.artifacts[0].attestation = Some(GitHubAttestation {
+        repository: "owner/terraform".into(),
+        bundle: "{}".into(),
+    });
+    // Core validates the evidence contract only; engine must verify the bundle.
+    validate_generic_lock(&signed).unwrap();
+    assert_eq!(
+        tool_verification_strength(&signed).unwrap(),
+        VerificationStrength::SignedChecksum
+    );
+    assert!(validate_verification_transition(&signed, &unsigned).is_err());
+    let mut mixed = signed.clone();
+    let mut second = unsigned.artifacts[0].clone();
+    second.target = "windows-x86_64".into();
+    mixed.artifacts.push(second);
+    mixed
+        .options
+        .insert("executable:windows-x86_64".into(), "terraform.exe".into());
+    let mut weakened = mixed.clone();
+    weakened.artifacts[0].attestation = None;
+    weakened.artifacts[0].verification = GENERIC_VERIFICATION.into();
+    validate_generic_lock(&weakened).unwrap();
+    assert!(validate_verification_transition(&mixed, &weakened).is_err());
+    signed.artifacts[0].attestation.as_mut().unwrap().repository = "other/terraform".into();
+    assert!(validate_generic_lock(&signed).is_err());
+    signed.artifacts[0].attestation.as_mut().unwrap().repository = "owner/terraform".into();
+    signed.artifacts[0].verification = GENERIC_VERIFICATION.into();
+    assert!(validate_generic_lock(&signed).is_err());
+}
+
+#[test]
+fn release_identity_cannot_be_borrowed_from_other_download_hosts_or_paths() {
+    assert_eq!(
+        github_release_repository("https://github.com/owner/tool/releases/download/v1/tool.zip"),
+        Some("owner/tool".into())
+    );
+    for url in [
+        "https://github.com.evil.example/owner/tool/releases/download/v1/tool.zip",
+        "https://github.com/owner/tool/archive/refs/tags/v1.zip",
+        "https://github.com/owner%2Fother/tool/releases/download/v1/tool.zip",
+        "https://github.com/owner/tool/releases/download/v1/tool.zip/extra",
+        "https://github.com:444/owner/tool/releases/download/v1/tool.zip",
+        "https://release-assets.githubusercontent.com/path/tool.zip",
+    ] {
+        assert!(github_release_repository(url).is_none(), "{url}");
     }
 }
 

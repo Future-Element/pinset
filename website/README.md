@@ -1,6 +1,6 @@
 # Pinset website
 
-Next.js App Router product website and command reference. Chinese and English homepages include installation commands, project examples, supported tools, and a quickstart. Command pages are generated at build time from the canonical bilingual documents in `../docs/commands*.md`; the core concepts, custom CLI, and CI guides come from their matching bilingual files in `../docs/`.
+Next.js App Router product website and command reference. Chinese and English homepages include installation commands, project examples, supported tools, and a quickstart. Command pages are generated at build time from the canonical bilingual documents in `../docs/commands*.md`; the core concepts, custom CLI, CI, AI coding agent and Volta migration guides come from their matching bilingual files in `../docs/`.
 
 The visual direction uses large typography, clear section borders, and an installation-first layout informed by [Bun's website](https://bun.sh/), with Pinset's own indigo palette, logo, and product content. No Bun graphics or fonts are included.
 
@@ -32,7 +32,7 @@ pnpm validate:seo
 
 The export validator checks all indexable pages for unique titles, self-referencing canonical URLs, Chinese/English/x-default alternates, one h1, descriptions, crawlability, sitemap coverage, structured data, generated logo image dimensions, and working internal links. It checks all 29 bilingual command pages for purpose summaries, four command groups, detail templates, visible parameter tables, version labels, starter flows, and guide links. The homepage keeps a dynamic release version. `NEXT_PUBLIC_SITE_URL` must match the build origin when validating a custom origin. Homepage and command-document modification dates are maintained separately in `lib/site.ts`.
 
-For each `### \`command\`` section, the first normal paragraph is the canonical purpose summary used in directory cards, search, page subtitles, and metadata. The body starts at the next paragraph. A missing purpose is a build error. Four `##` headings define navigation groups. Keep examples and implementation details below the purpose. Relative links to the command, concepts, custom CLI, and CI Markdown sources are mapped to the matching localized website routes.
+For each `### \`command\`` section, the first normal paragraph is the canonical purpose summary used in directory cards, search, page subtitles, and metadata. The body starts at the next paragraph. A missing purpose is a build error. Four `##` headings define navigation groups. Keep examples and implementation details below the purpose. Relative links to the command and all five guide Markdown sources are mapped to the matching localized website routes.
 
 Main content is exported as HTML. Interactive installation controls and project examples use small client components; navigation receives summaries rather than all command bodies. Homepage structured data describes the free software without inventing ratings or reviews. These checks validate the build, not search rankings, indexing, or deployment.
 

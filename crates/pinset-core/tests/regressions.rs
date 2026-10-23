@@ -26,6 +26,7 @@ fn tool(name: &str, version: &str, verification: &str) -> LockedTool {
             format: LockedArtifactFormat::TarGz,
             archive_root: name.into(),
             verification: verification.into(),
+            attestation: None,
             overlays: vec![],
         }],
     }

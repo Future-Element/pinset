@@ -31,7 +31,7 @@ pub fn start() -> i32 {
                     value["schema_version"] = 1.into();
                     value["passed"] = false.into();
                 }
-                println!("{}", value);
+                println!("{}", json_document(&value));
             } else {
                 let _ = error.print();
             }
@@ -51,7 +51,7 @@ pub fn start() -> i32 {
         }
         Ok(Output::Report(value)) => {
             if cli.json_output() {
-                println!("{}", serde_json::to_string(&value).unwrap());
+                println!("{}", json_document(&value));
             } else {
                 print!("{}", crate::presentation::report(&value, chinese));
             }
@@ -69,7 +69,7 @@ pub fn start() -> i32 {
                     value["schema_version"] = 1.into();
                     value["passed"] = false.into();
                 }
-                println!("{}", value);
+                println!("{}", json_document(&value));
             } else {
                 if chinese {
                     eprint!("操作失败：");
@@ -84,6 +84,11 @@ enum Output {
     Report(Value),
     Text(String),
     Native(i32),
+}
+fn json_document(value: &Value) -> String {
+    let mut value = value.clone();
+    value["schema_version"] = 1.into();
+    serde_json::to_string(&value).expect("JSON reports are serializable")
 }
 fn report(value: Value) -> Result<Output> {
     Ok(Output::Report(value))
@@ -104,7 +109,7 @@ fn dispatch(cli: &Cli, chinese: bool) -> Result<Output> {
                 return report(preview);
             }
             if cli.json {
-                eprintln!("{}", serde_json::to_string(&preview).unwrap());
+                eprintln!("{}", json_document(&preview));
             } else {
                 print!("{}", crate::presentation::report(&preview, chinese));
                 io::stdout().flush()?;

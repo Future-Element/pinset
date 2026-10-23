@@ -84,6 +84,7 @@ impl Services {
                     payload_verified: None,
                     passed: receipt.is_ok(),
                 },
+                source_verification: None,
                 passed: false,
                 configured: true,
                 installed: receipt.is_ok(),
@@ -95,6 +96,38 @@ impl Services {
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "exact installation receipt matches".into()),
             };
+            if tool.is_generic()
+                && let Some(artifact) = tool.artifact(&platform)
+            {
+                let result = artifact
+                    .attestation
+                    .as_ref()
+                    .map(|evidence| {
+                        crate::github_attestation::verify(
+                            &artifact.canonical_url,
+                            &artifact.sha256,
+                            evidence,
+                        )
+                    })
+                    .transpose();
+                let passed = result.is_ok();
+                check.source_verification = Some(SourceVerificationCheck {
+                    status: if !passed {
+                        "invalid"
+                    } else if artifact.attestation.is_some() {
+                        "signature-verified"
+                    } else {
+                        "digest-only"
+                    }
+                    .into(),
+                    method: artifact.verification.clone(),
+                    repository: artifact.attestation.as_ref().map(|e| e.repository.clone()),
+                    passed,
+                });
+                if let Err(error) = result {
+                    check.detail = error.to_string();
+                }
+            }
             if deep && let Ok(receipt) = &receipt {
                 match check_payload(&self.home, tool, &platform, receipt) {
                     Ok(matches) => {
@@ -121,7 +154,13 @@ impl Services {
             let plan_result = plan_command(&self.cwd, &self.home, &c, command);
             if let Ok(plan) = plan_result {
                 check.bound = true;
-                if probe && check.installed {
+                if probe
+                    && check.installed
+                    && check
+                        .source_verification
+                        .as_ref()
+                        .is_none_or(|source| source.passed)
+                {
                     let args=match tool.name.as_str(){"python"=>vec!["-I".into(),"-c".into(),"import sys,site,json; print(json.dumps(dict(version=sys.version.split()[0], executable=sys.executable, prefix=sys.prefix, base_prefix=sys.base_prefix, base_executable=sys._base_executable, user_site=site.ENABLE_USER_SITE)))".into()],"java"=>vec!["-version".into()],"go"=>vec!["version".into()],_=>vec!["--version".into()]};
                     let mut cmd = prepare_command(&plan, &args, &self.cwd, BTreeMap::new());
                     cmd.env("PINSET_NO_ENV", "1");
@@ -176,6 +215,10 @@ impl Services {
                 && check.installed
                 && check.bound
                 && check.artifact_digest.passed
+                && check
+                    .source_verification
+                    .as_ref()
+                    .is_none_or(|source| source.passed)
                 && (!probe || check.actually_verified);
             report.checks.push(check);
         }

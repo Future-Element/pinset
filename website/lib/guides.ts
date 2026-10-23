@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locale } from "./site";
 
-export const guideSlugs = ["concepts", "generic-tools", "ci"] as const;
+export const guideSlugs = ["concepts", "generic-tools", "ci", "agents", "migrate-from-volta"] as const;
 export type GuideSlug = typeof guideSlugs[number];
 export type GuideDoc = { slug: GuideSlug; title: string; description: string; markdown: string; filename: string };
 export type GuideNavigation = Pick<GuideDoc, "slug" | "title" | "description">;

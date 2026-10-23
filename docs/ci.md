@@ -1,6 +1,6 @@
 # CI with setup-pinset
 
-Install Pinset in GitHub Actions, restore the committed toolchain lock, and fail the job if installation or verification fails. The repository-root `setup-pinset` Action is available from v3.0.9; examples pin that release. The `version` input defaults to the latest stable Pinset 3 release.
+Install Pinset in GitHub Actions, restore the committed toolchain lock, and fail the job if installation or verification fails. The repository-root `setup-pinset` Action is available from v3.0.9; examples pin v3.1.0. The `version` input defaults to the latest stable Pinset 3 release.
 
 [简体中文](ci.zh-CN.md) · [Command reference](commands.md)
 
@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v3.0.9
+      - uses: Future-Element/pinset@v3.1.0
         id: pinset
         # version defaults to latest; set an exact release for reproducible CI.
       - run: pinset exec -- node --version
@@ -43,9 +43,9 @@ Commit `.pinset/config.toml` and `.pinset/lock.toml` before running the workflow
 Boolean inputs accept `true` or `false`. Installation, lock restoration and requested checks each fail the workflow on an error. Skipping checks is explicit:
 
 ```yaml
-- uses: Future-Element/pinset@v3.0.9
+- uses: Future-Element/pinset@v3.1.0
   with:
-    version: '3.0.9'
+    version: '3.1.0'
     working-directory: packages/api
     skip-check: 'true'
 ```
@@ -63,7 +63,7 @@ By default, setup runs `pinset check --deep --probe --format json`, prints the r
 Archive the report even when a tool check fails:
 
 ```yaml
-- uses: Future-Element/pinset@v3.0.9
+- uses: Future-Element/pinset@v3.1.0
   id: pinset
 - uses: actions/upload-artifact@v4
   if: ${{ always() && steps.pinset.outputs.check-report != '' }}
@@ -119,6 +119,7 @@ The following excerpt illustrates one successful tool with deep inspection and a
 | `artifact_digest.receipt_matches_lock` | Boolean. An installation receipt is valid and agrees with the exact lock, including artifact digests. A missing/invalid receipt is `false`. |
 | `artifact_digest.payload_verified` | Boolean or `null`. Installed payload matches its receipt when `--deep` can inspect it; `null` means it was not inspected. |
 | `artifact_digest.passed` | Boolean. The requested receipt and payload integrity checks pass. |
+| `source_verification` | Present for generic tools. `status` is `signature-verified`, `digest-only`, or `invalid`; `method`, `repository` and `passed` describe the locked source evidence. |
 | `report.checks[].passed` | Boolean. The tool is installed and bound, and its requested deep inspection/version probe passes. |
 
 `expected_version` preserves the locked version; `actual_version` is parsed from the probe. Generic tag `v` prefixes, Python build markers and Rust nightly identities may be normalized by their tool-specific rules. Read `passed` and `actually_verified` instead of requiring the two version strings to be byte-for-byte identical.
@@ -126,6 +127,8 @@ The following excerpt illustrates one successful tool with deep inspection and a
 Without `--probe`, `actual_version` is `null` and `actually_verified` is `false`. Without `--deep`, `payload_verified` is `null`. A plain check remains read-only: it does not start tools, access the network or write evidence. `--probe` explicitly writes observation evidence under the Pinset home.
 
 Downloaded artifacts are verified against the lock during installation. The check report distinguishes receipt/lock agreement from installed payload verification; it does not claim to rehash an original archive that may no longer be present. Java wrapper and Android observations remain separate evidence and do not certify a project build.
+
+For attested generic GitHub Releases, plain `check` also cryptographically verifies the locked bundle offline. `digest-only` means only the first downloaded bytes were pinned, with no publisher signature verified. Invalid source evidence fails the tool check and prevents its version probe. See [custom CLI tools](generic-tools.md) for scope and policy behavior.
 
 A tool check failure still prints the complete report and exits 1. An operational error, such as a missing lock, exits 1 with the same protocol/schema version and `passed: false`, plus an `error` object containing `code` and `message`. Redirect stdout to archive a standalone report:
 

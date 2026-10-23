@@ -318,6 +318,7 @@ impl NpmMetadataClient {
                         format: LockedArtifactFormat::TarGz,
                         archive_root: "package".into(),
                         verification: SIGNATURE_VERIFICATION.into(),
+                        attestation: None,
                         overlays: vec![LockedArtifactOverlay {
                             canonical_url: canonical_url.clone(),
                             artifact_path: artifact_path.clone(),
@@ -341,6 +342,7 @@ impl NpmMetadataClient {
                         format: LockedArtifactFormat::TarGz,
                         archive_root: "package".into(),
                         verification: SIGNATURE_VERIFICATION.into(),
+                        attestation: None,
                         overlays: vec![],
                     })
                     .collect()
@@ -385,6 +387,7 @@ impl NpmMetadataClient {
                 format: LockedArtifactFormat::TarGz,
                 archive_root: "package".to_owned(),
                 verification: SIGNATURE_VERIFICATION.to_owned(),
+                attestation: None,
                 overlays: vec![],
             });
         }

@@ -80,7 +80,13 @@ pinset check --deep --probe --format json
 
 离线安装要求本地已有有效安装或完整缓存，不能凭空取得产物。检查中的收据摘要匹配和安装内容指纹检查分别有明确字段，见 [CI 指南](ci.zh-CN.md#json-检查契约)。
 
-首次 HTTPS 下载得到的内容决定锁定摘要，保证后续使用相同内容，不等于验证发布方签名。通用工具的校验强度为 checksum，不能满足 signed-checksum 要求；没有可用发布时间时，也不能满足依赖该时间的最短发布年龄策略。项目策略不会因工具是通用类型而被跳过。
+对于公开的 `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>` 地址，首次选择还会按下载文件的 SHA-256 查询 GitHub 构建 attestation。存在对应证据时，必须通过签名、证书链、签名时间、透明日志、制品摘要与来源仓库身份验证；bundle 和仓库身份随各平台产物写入锁。安装与 `check` 使用锁内证据离线复验，缓存命中或已有安装也不跳过证据验证。
+
+其他 HTTPS 来源，或已确认不存在构建 attestation 的公开 GitHub 产物，仍由首次下载建立锁定摘要。这是“仅摘要固定”，不等于验证发布方签名。GitHub 查询失败、限流和无效证据均停止解析，不会静默回退为无签名下载。已有签名记录不能降级为仅摘要。
+
+通用工具的检查新增 `source_verification`：`status` 为 `signature-verified`、`digest-only` 或 `invalid`；`method` 记录验证方法，存在 GitHub 证据时 `repository` 记录仓库身份，`passed` 表示来源检查是否通过。该字段与 `artifact_digest`（收据和安装内容完整性）、`actually_verified`（明确运行的版本探针）分别表达不同证据。文本报告显示“已验签名”或“仅摘要固定”。
+
+具备有效 attestation 的通用产物可满足 `signed-checksum` 策略，仅摘要产物不能满足。现有摘要锁继续保持原验证级别，直到明确执行新的 `use` 解析并记录证据；`install` 不更新锁，也不联网获取新 attestation。没有可用发布时间时，通用工具仍不能满足最短发布年龄策略。私有 GitHub 仓库、Enterprise 主机、其他 provenance 格式及自定义信任根不在本场景支持范围内。
 
 ## 命令入口和范围
 

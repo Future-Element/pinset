@@ -1,6 +1,6 @@
 # Pinset 3
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [Command reference](docs/commands.md)
+[English](README.md) · [简体中文](README.zh-CN.md) · [Command reference](docs/commands.md) · [AI coding agents](docs/agents.md)
 
 Pinset locks project toolchains and explains their execution paths. Select, upgrade or switch versions with `use`, then build and test using your project commands. The 3.0 source tree introduces a breaking protocol; a source version does not imply a published release.
 
@@ -59,11 +59,17 @@ Upgrade and switch versions directly with `use`; select an earlier exact version
 
 Interrupted venv replacement and managed command publication are also recoverable. Repair retains a live venv writer's files and asks you to retry after it exits. Managed binaries are atomically replaced; unknown external entries are never adopted. VS Code bindings require the actual project root to be an opened folder, including independent folders in a multi-root workspace.
 
+## Migrating from Volta
+
+Follow the [Volta migration guide](docs/migrate-from-volta.md) to import project Node and pnpm declarations, compare routes before changing PATH, and keep a rollback path. An independent `volta.npm` pin is reported as unsupported; npm comes with the selected Node distribution.
+
 ## GitHub Actions
 
-The official `setup-pinset` Action installs the requested Pinset version (latest by default), caches tool installations, restores the committed lock and checks the resulting toolchain on Linux, macOS and Windows. Managed tool entries are available to subsequent steps. See [CI setup and JSON reports](docs/ci.md) for inputs, cache behavior and report archiving.
+The official [setup-pinset Marketplace Action](https://github.com/marketplace/actions/setup-pinset) installs the requested Pinset version (latest by default), caches tool installations, restores the committed lock and checks the resulting toolchain on Linux, macOS and Windows. Managed tool entries are available to subsequent steps. See [CI setup and JSON reports](docs/ci.md) for inputs, cache behavior and report archiving.
 
 ## Development and release
+
+Homebrew, Scoop, WinGet and aqua manifests and their publication status are maintained in [distribution channels](packaging/README.md). Generate version updates from published assets with `scripts/generate_channels.py`.
 
 The Rust workspace has five crates: pure `pinset-core`, mutating `pinset-engine`, encrypted `pinset-env`, thin `pinset-cli`, and read-only `pinset-shim`. Built-in and generic Providers share the installer, cache, extraction, locking and transaction services. XZ decoding uses pure Rust.
 

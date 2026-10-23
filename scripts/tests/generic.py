@@ -113,6 +113,19 @@ def verify_generic_tools():
         count = len(requests); state['offline'] = True
         invoke(project, 'install', 'tarcli', 'rawcli', '--offline')
         assert len(requests) == count
+        # Equivalent locks may reorder tool tables; new report arrays stay sorted.
+        header, *records = lock_bytes.decode().split('[[tool]]\n')
+        assert len(records) == 3
+        try:
+            lock_path.write_text(header + ''.join('[[tool]]\n' + record for record in reversed(records)))
+            installed = invoke(project, 'install', '--offline')
+            assert installed['tools'] == ['rawcli', 'tarcli', 'zipcli'], installed
+            assert [item['tool'] for item in installed['installed_tools']] == installed['tools']
+            inventory = invoke(project, 'list')['installs']
+            key = lambda item: tuple(item[field] for field in ['tool', 'version', 'identity', 'platform', 'path'])
+            assert inventory == sorted(inventory, key=key)
+        finally:
+            lock_path.write_bytes(lock_bytes)
         for name in ['zipcli', 'tarcli', 'rawcli']:
             route = invoke(project, 'which', name, '--explain')
             assert route['provider'] == 'generic-binary' and route['version'] == '1.0.0'

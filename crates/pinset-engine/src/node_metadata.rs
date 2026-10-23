@@ -100,6 +100,7 @@ impl NodeMetadataClient {
                 },
                 archive_root: plan.archive_root,
                 verification: self.verification.clone(),
+                attestation: None,
                 overlays: Vec::new(),
             });
         }

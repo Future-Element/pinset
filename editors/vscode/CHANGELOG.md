@@ -1,5 +1,10 @@
 # Change Log
 
+## 3.1.0 - 2026-10-23
+
+- Package alongside Pinset 3.1.0 attestation verification, stable command JSON reports, distribution channels and migration guides.
+- No extension behavior change.
+
 ## 3.0.9 - 2026-10-22
 
 - Package alongside Pinset 3.0.9 import, generic binary Provider, CI support and command documentation improvements.

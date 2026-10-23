@@ -1,0 +1,39 @@
+{
+    "version": "3.0.9",
+    "description": "Lock project toolchains and explain their execution paths",
+    "homepage": "https://pinset.future-element.com",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-windows-x86_64.zip",
+            "hash": "f26ed89fcdf060447d6b7721f54f2ab7ce612682967ab080cc1a7574999c4c1a"
+        }
+    },
+    "pre_install": [
+        "if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { throw 'Pinset publishes native Windows x64 only; Windows ARM64 is not supported.' }"
+    ],
+    "bin": "pinset.exe",
+    "post_install": [
+        "& \"$dir\\pinset.exe\" self repair",
+        "if ($LASTEXITCODE -ne 0) { throw 'Pinset could not refresh managed tool entries. Run this installation with self repair after resolving the reported error.' }"
+    ],
+    "notes": [
+        "The CLI and pinset-shim.exe are installed together. Tool entries live in PINSET_HOME\\v3\\bin.",
+        "Run pinset self shell powershell to print the explicit shell setup; no profile is edited.",
+        "Use scoop update pinset for upgrades; do not use pinset self update for this Scoop installation.",
+        "Uninstalling deletes Scoop's package files. PINSET_HOME keeps copied CLI/router, tool entries, SDKs and state, so pinset may remain on PATH."
+    ],
+    "checkver": {
+        "github": "https://github.com/Future-Element/pinset"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/Future-Element/pinset/releases/download/v$version/pinset-v$version-windows-x86_64.zip"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS"
+        }
+    }
+}

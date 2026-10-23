@@ -81,6 +81,17 @@ pub fn report(value: &Value, zh: bool) -> String {
                 yes(&check["bound"], zh),
                 yes(&check["actually_verified"], zh)
             );
+            if let Some(status) = check["source_verification"]["status"].as_str() {
+                let label = match (status, zh) {
+                    ("signature-verified", true) => "已验签名",
+                    ("signature-verified", false) => "signature verified",
+                    ("digest-only", true) => "仅摘要固定",
+                    ("digest-only", false) => "digest pinned only",
+                    (_, true) => "来源验证失败",
+                    (_, false) => "source verification failed",
+                };
+                let _ = writeln!(output, "  {label}");
+            }
             if check["passed"] == false || check["bound"] != true || check["installed"] != true {
                 let _ = writeln!(output, "  {}", string(&check["detail"]));
             }
@@ -217,6 +228,9 @@ pub fn report(value: &Value, zh: bool) -> String {
     if let Some(object) = value.as_object() {
         for (key, item) in object {
             if ["protocol", "transaction", "fingerprint"].contains(&key.as_str()) {
+                continue;
+            }
+            if value["installed"] == true && ["tools", "installed_tools"].contains(&key.as_str()) {
                 continue;
             }
             match item {

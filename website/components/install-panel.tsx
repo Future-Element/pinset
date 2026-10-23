@@ -24,7 +24,7 @@ export function InstallPanel({ locale }: { locale: Locale }) {
         <button type="button" aria-pressed={platform === "windows"} onClick={() => setPlatform("windows")}>Windows</button>
       </div>
       <div className="installCommand"><span className="terminalPrompt" aria-hidden="true">$</span><pre><code>{installCommands[platform]}</code></pre><CopyButton key={platform} value={installCommands[platform]} label={zh ? "复制" : "Copy"} copiedLabel={zh ? "已复制" : "Copied"} errorLabel={zh ? "请选中命令手动复制" : "Select and copy manually"} /></div>
-      <div className="installLinks"><a href={`${siteConfig.repository}/blob/main/install.${platform === "unix" ? "sh" : "ps1"}`}>{zh ? "查看安装脚本" : "View install script"} ↗</a><Link href={`${localePrefix(locale)}/docs/commands/self-shell`}>{zh ? "接着配置 Shell" : "Then set up your shell"} →</Link></div>
+      <div className="installLinks"><a href={`${siteConfig.repository}/blob/main/install.${platform === "unix" ? "sh" : "ps1"}`}>{zh ? "查看安装脚本" : "View install script"} ↗</a><Link href={`${localePrefix(locale)}/docs/commands/self-shell`}>{zh ? "接着配置 Shell" : "Then set up your shell"} →</Link><a href="https://github.com/marketplace/actions/setup-pinset">CI: setup-pinset ↗</a></div>
     </div>
   );
 }

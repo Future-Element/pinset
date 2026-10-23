@@ -380,6 +380,7 @@ impl PythonMetadataClient {
                 format: LockedArtifactFormat::Binary,
                 archive_root: String::new(),
                 verification: PYTHON_ORG_HTTPS_VERIFICATION.to_owned(),
+                attestation: None,
                 overlays,
             }],
         }))
@@ -469,6 +470,7 @@ impl PythonMetadataClient {
                 format: install_kind.lock_format(),
                 archive_root: String::new(),
                 verification: verification.to_owned(),
+                attestation: None,
                 overlays: Vec::new(),
             }],
         })
@@ -813,6 +815,7 @@ fn lock_standalone_release(release: SupportedPythonRelease) -> Result<LockedTool
                 format: LockedArtifactFormat::TarGz,
                 archive_root: plan.archive_root,
                 verification: PYTHON_BUILD_STANDALONE_VERIFICATION.to_owned(),
+                attestation: None,
                 overlays: Vec::new(),
             })
         })

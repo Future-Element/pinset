@@ -1,6 +1,6 @@
 # Pinset 3
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [完整命令](docs/commands.zh-CN.md)
+[English](README.md) · [简体中文](README.zh-CN.md) · [完整命令](docs/commands.zh-CN.md) · [AI 编程 Agent 指南](docs/agents.zh-CN.md)
 
 Pinset 管理并锁定项目工具链，解释实际执行入口。3.0 使用全新协议，不兼容旧文件和旧命令；源码版本不代表已经发布。
 
@@ -44,11 +44,17 @@ profile 按值使用 age 加密。私钥只存在系统凭据库或显式 `PINSE
 
 升级和切换版本直接使用 `use`；切回旧版本也使用明确的版本选择。`self repair` 恢复当前项目与全局选择的中断事务，并处理 CLI/shim 更新中断，不撤销已完成的版本切换。应用依赖、源码、数据库与 IDE 进程仍由项目管理。
 
+## 从 Volta 迁移
+
+按 [Volta 迁移指南](docs/migrate-from-volta.zh-CN.md)导入项目 Node、pnpm 声明，先核对路由再切换 PATH，并保留回退路径。独立的 `volta.npm` 固定版本会报告为不支持；npm 使用所选 Node 发行包附带版本。
+
 ## GitHub Actions
 
-官方 `setup-pinset` Action 安装指定 Pinset 版本（默认最新版），缓存工具安装目录，按已提交的锁还原工具链并执行检查，支持 Linux、macOS、Windows。后续步骤可直接使用托管工具入口。输入参数、缓存和报告归档见 [CI 使用说明](docs/ci.zh-CN.md)。
+官方 [setup-pinset Marketplace Action](https://github.com/marketplace/actions/setup-pinset) 安装指定 Pinset 版本（默认最新版），缓存工具安装目录，按已提交的锁还原工具链并执行检查，支持 Linux、macOS、Windows。后续步骤可直接使用托管工具入口。输入参数、缓存和报告归档见 [CI 使用说明](docs/ci.zh-CN.md)。
 
 ## 开发与发布
+
+Homebrew、Scoop、WinGet 和 aqua 的配置与真实发布状态见[分发渠道维护](packaging/README.md)。通过 `scripts/generate_channels.py` 从已公开资产生成版本更新。
 
 五个 Rust crate 分离只读模型、引擎、加密环境、CLI 与 shim，八个 Provider 共用安装、下载、缓存、解压和事务服务。XZ 采用纯 Rust 解码。
 

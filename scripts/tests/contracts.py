@@ -148,4 +148,6 @@ assert not (global_context/'config.toml').exists()
 assert subprocess.run([BIN,'-C',root,'env','access','request','--ci'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode != 0
 from generic import verify_generic_tools
 generic_tools=verify_generic_tools()
-report('contracts', public_commands=commands, generic=generic_tools)
+from agent_json_contract import verify_agent_json
+agent_json=verify_agent_json(BIN)
+report('contracts', public_commands=commands, generic=generic_tools, agent_json=agent_json)

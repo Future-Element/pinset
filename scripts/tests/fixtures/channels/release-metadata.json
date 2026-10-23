@@ -1,0 +1,33 @@
+{
+  "tag_name": "v3.0.9",
+  "html_url": "https://github.com/Future-Element/pinset/releases/tag/v3.0.9",
+  "draft": false,
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "pinset-v3.0.9-linux-aarch64.zip",
+      "browser_download_url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-linux-aarch64.zip",
+      "digest": "sha256:bdf79ed9fd904a544f2cad1a10589880afdaa8bdc57cd265afeff55a85b95667"
+    },
+    {
+      "name": "pinset-v3.0.9-linux-x86_64.zip",
+      "browser_download_url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-linux-x86_64.zip",
+      "digest": "sha256:2bc89cbee5b40191ab37f71914e90c03c5ac304411d52832cbac20ab7fa39de4"
+    },
+    {
+      "name": "pinset-v3.0.9-macos-aarch64.zip",
+      "browser_download_url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-macos-aarch64.zip",
+      "digest": "sha256:ee3525301737e225b197b7ec9b8670a9fdb39bc79b01571beb957099e5b22e6c"
+    },
+    {
+      "name": "pinset-v3.0.9-windows-x86_64.zip",
+      "browser_download_url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/pinset-v3.0.9-windows-x86_64.zip",
+      "digest": "sha256:f26ed89fcdf060447d6b7721f54f2ab7ce612682967ab080cc1a7574999c4c1a"
+    },
+    {
+      "name": "SHA256SUMS",
+      "browser_download_url": "https://github.com/Future-Element/pinset/releases/download/v3.0.9/SHA256SUMS",
+      "digest": "sha256:de86338c31f1f90df6f40c64d19cd4d4c7e6fd8332dd7bbf6ea30b0b2354a6a2"
+    }
+  ]
+}

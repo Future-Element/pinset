@@ -5,6 +5,39 @@ use std::collections::BTreeMap;
 
 pub const GENERIC_PROVIDER: &str = "generic-binary";
 pub const GENERIC_VERIFICATION: &str = "generic-https-sha256";
+pub const GENERIC_GITHUB_VERIFICATION: &str = "generic-github-attestation-sha256";
+pub const MAX_GITHUB_ATTESTATION_BYTES: usize = 2 * 1024 * 1024;
+
+/// Only canonical public GitHub Release paths establish a repository identity.
+pub fn github_release_repository(value: &str) -> Option<String> {
+    let url = url::Url::parse(value).ok()?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let parts = url.path_segments()?.collect::<Vec<_>>();
+    if parts.len() != 6
+        || parts[2] != "releases"
+        || parts[3] != "download"
+        || parts.iter().any(|part| part.is_empty())
+    {
+        return None;
+    }
+    if parts[..2].iter().any(|part| {
+        matches!(*part, "." | "..")
+            || !part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    }) {
+        return None;
+    }
+    Some(format!("{}/{}", parts[0], parts[1]))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -211,6 +244,19 @@ pub fn validate_generic_lock(tool: &LockedTool) -> Result<()> {
     for artifact in &tool.artifacts {
         validate_generic_url(&artifact.canonical_url)?;
         generic_executable(tool, &artifact.target)?;
+        match (&artifact.attestation, artifact.verification.as_str()) {
+            (None, GENERIC_VERIFICATION) => {}
+            (Some(evidence), GENERIC_GITHUB_VERIFICATION)
+                if !evidence.bundle.is_empty()
+                    && evidence.bundle.len() <= MAX_GITHUB_ATTESTATION_BYTES
+                    && github_release_repository(&artifact.canonical_url)
+                        .is_some_and(|repo| repo.eq_ignore_ascii_case(&evidence.repository)) => {}
+            _ => {
+                return Err(invalid(
+                    "generic verification method and GitHub attestation evidence disagree",
+                ));
+            }
+        }
         if !SUPPORTED_TARGETS.contains(&artifact.target.as_str())
             || artifact.format == LockedArtifactFormat::TarXz
             || !artifact.overlays.is_empty()
@@ -218,7 +264,6 @@ pub fn validate_generic_lock(tool: &LockedTool) -> Result<()> {
             || artifact.integrity.is_some()
             || artifact.sha256.len() != 64
             || !artifact.sha256.bytes().all(|c| c.is_ascii_hexdigit())
-            || artifact.verification != GENERIC_VERIFICATION
         {
             return Err(invalid(
                 "generic lock contains an invalid platform artifact or SHA-256 digest",

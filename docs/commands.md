@@ -6,6 +6,8 @@ Built-in tools: Node, pnpm, Bun, Go, Python, Temurin OpenJDK, Rust and Flutter/D
 
 Global options: `-C/--cwd <directory>`, `--lang auto|en|zh-CN`, `--json`, `--help`, `--version`. These are omitted below; use `<command> --help` for complete syntax. Success exits `0`, operational failure exits `1`, invalid arguments exit `2`; `exec` forwards child status. Example versions and paths are illustrative. “Result” describes effects, not literal terminal output.
 
+Management reports with `--json` include `protocol: "pinset/3"` and `schema_version: 1` on success, operational failure and argument failure. Existing field names, types and meanings stay stable; consumers must accept additive fields. Keep stdout and stderr separate. See [AI coding agents](agents.md) for the import → install → check workflow and native/interactive output exceptions.
+
 ## Tool management
 
 ### `init`
@@ -59,6 +61,8 @@ Checks `.tool-versions`, `package.json` (`engines`, `volta`, `packageManager`), 
 Ranges and aliases resolve to marked exact versions through Provider metadata. Compatible declarations jointly constrain resolution; incompatible ones are skipped. `go.mod` prefers `toolchain` while checking the `go` minimum. Rust includes profile, components and targets, retaining pinned nightly dates, but cannot infer local paths or an unspecified default channel. npm, pip and standalone Dart have no separate Provider. pnpm needs a project Node selection. Declared generic tools require an explicit version or tag.
 
 Existing choices and valid lock records remain. Missing locks are generated from existing selectors. Resolution can access the network; generic previews download temporary files to compute digests. `--plan` writes no project or Pinset state. Enter `y`, `yes` or “是” to apply; Enter cancels. Source, configuration or lock changes invalidate a reviewed plan.
+
+For field mappings, npm limitations, PATH comparison and rollback, see [Migrate a Volta project](migrate-from-volta.md). `volta.extends` is ignored rather than followed.
 
 #### Parameters, exit codes and common errors
 
@@ -775,7 +779,7 @@ Use to identify the running Pinset or locate home. Project tools use `list`.
 pinset self info
 ```
 
-Output includes `version: 3.0.9`, `platform`, `home`, `cli` and eight built-in Providers. Paths/platform vary by machine.
+Output includes `version: 3.1.0`, `platform`, `home`, `cli` and eight built-in Providers. Paths/platform vary by machine.
 
 #### Behavior
 
@@ -892,7 +896,7 @@ Use to upgrade Pinset itself. Project tools use `use`; downgrades need explicit 
 
 ```sh
 pinset self update --plan
-pinset self update 3.0.9
+pinset self update 3.1.0
 ```
 
 Result: the first shows release, archive and digest. The second verifies downloads, replaces CLI/shim together and reports restart requirements.

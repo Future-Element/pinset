@@ -1,6 +1,6 @@
 # 使用 setup-pinset 接入 CI
 
-在 GitHub Actions 中安装 Pinset、按已提交的锁还原工具链，并让安装或校验失败直接阻止工作流通过。仓库根目录的官方 `setup-pinset` Action 从 v3.0.9 提供，以下示例固定该发布标签；`version` 输入默认安装最新稳定 Pinset 3。
+在 GitHub Actions 中安装 Pinset、按已提交的锁还原工具链，并让安装或校验失败直接阻止工作流通过。仓库根目录的官方 `setup-pinset` Action 从 v3.0.9 提供，以下示例固定 v3.1.0 发布标签；`version` 输入默认安装最新稳定 Pinset 3。
 
 [English](ci.md) · [完整命令](commands.zh-CN.md)
 
@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: Future-Element/pinset@v3.0.9
+      - uses: Future-Element/pinset@v3.1.0
         id: pinset
         # version 默认 latest；需要可复现 CI 时填写确切发布版本。
       - run: pinset exec -- node --version
@@ -43,9 +43,9 @@ jobs:
 布尔输入使用 `true` 或 `false`。Pinset 安装、按锁还原、本次要求的检查中任一步失败，工作流均失败。需要跳过检查时明确声明：
 
 ```yaml
-- uses: Future-Element/pinset@v3.0.9
+- uses: Future-Element/pinset@v3.1.0
   with:
-    version: '3.0.9'
+    version: '3.1.0'
     working-directory: packages/api
     skip-check: 'true'
 ```
@@ -63,7 +63,7 @@ Action 先解析、安装要求的 Pinset 发布版本，再还原工具安装�
 即使工具检查失败，也可归档报告：
 
 ```yaml
-- uses: Future-Element/pinset@v3.0.9
+- uses: Future-Element/pinset@v3.1.0
   id: pinset
 - uses: actions/upload-artifact@v4
   if: ${{ always() && steps.pinset.outputs.check-report != '' }}
@@ -119,6 +119,7 @@ Action 先解析、安装要求的 Pinset 发布版本，再还原工具安装�
 | `artifact_digest.receipt_matches_lock` | 布尔值；安装收据有效并与确切锁一致，包含产物摘要；收据缺失或无效时为 `false`。 |
 | `artifact_digest.payload_verified` | 布尔值或 `null`；`--deep` 能检查安装内容时，表示其是否与收据一致；`null` 表示未检查。 |
 | `artifact_digest.passed` | 布尔值；本次要求的收据和安装内容完整性检查通过。 |
+| `source_verification` | 通用工具提供此字段；`status` 为 `signature-verified`、`digest-only` 或 `invalid`，`method`、`repository` 和 `passed` 描述锁中的来源证据。 |
 | `report.checks[].passed` | 布尔值；工具已安装、已绑定，且本次要求的内容检查、版本探针通过。 |
 
 `expected_version` 保留锁中版本，`actual_version` 是探针解析的版本。通用工具 tag 的 `v` 前缀、Python 构建标记和 Rust nightly 可能按各自规则规范化，因此不要只用两段字符串逐字相等判断结果；读取 `passed` 和 `actually_verified`。
@@ -126,6 +127,8 @@ Action 先解析、安装要求的 Pinset 发布版本，再还原工具安装�
 未指定 `--probe` 时，`actual_version` 为 `null`、`actually_verified` 为 `false`。未指定 `--deep` 时，`payload_verified` 为 `null`。普通检查保持只读，不运行工具、联网或写入证据；`--probe` 明确允许在 Pinset home 中写入观测证据。
 
 下载产物在安装时按锁校验。检查报告区分收据与锁的一致性、安装内容与收据的一致性，不声称重新计算了可能已不存在的原始下载包摘要。Java wrapper、Android 观测属于单独证据，不表示项目构建通过。
+
+对于具备 GitHub Release attestation 的通用工具，普通 `check` 还会离线完成锁内 bundle 的密码学复验。`digest-only` 表示仅固定首次下载摘要，未验证发布方签名。来源证据无效会使工具检查失败，并阻止该工具的版本探针。支持范围和策略行为见 [自定义 CLI 指南](generic-tools.zh-CN.md)。
 
 工具检查失败仍先打印完整报告，再以状态码 1 退出。锁缺失等操作错误也以状态码 1 退出，输出同样的协议、schema 版本和 `passed: false`，并包含带 `code`、`message` 的 `error` 对象。独立运行时可重定向 stdout 归档报告：
 

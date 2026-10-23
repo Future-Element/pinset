@@ -688,6 +688,7 @@ mod tests {
                     format: LockedArtifactFormat::TarXz,
                     archive_root: name.into(),
                     verification: "fixture-sha256".into(),
+                    attestation: None,
                     overlays: vec![],
                 }],
             })

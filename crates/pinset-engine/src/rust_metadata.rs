@@ -506,6 +506,7 @@ fn resolve_manifest_tool(
             format: primary.format,
             archive_root: primary.archive_root,
             verification: RUST_VERIFICATION.to_owned(),
+            attestation: None,
             overlays,
         });
     }

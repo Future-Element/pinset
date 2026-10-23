@@ -238,6 +238,8 @@ for failure in ['missing','duplicate','incomplete','size','digest','published','
     else:raise AssertionError('publication accepted '+failure+' release metadata')
 from self_update import verify_self_update
 from progress import verify_progress
+from channels import verify_channels
 progress = verify_progress(fixture)
 updates = verify_self_update(root, fixture, version)
-report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks)
+channels = verify_channels(root)
+report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels)

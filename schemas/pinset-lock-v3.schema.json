@@ -21,16 +21,8 @@
         "type": "object",
         "properties": {
           "name": {
-            "enum": [
-              "node",
-              "pnpm",
-              "bun",
-              "go",
-              "python",
-              "java",
-              "rust",
-              "flutter"
-            ]
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"
           },
           "requested": {
             "type": "string"
@@ -131,6 +123,25 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "attestation": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+                    },
+                    "bundle": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2097152
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "bundle"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

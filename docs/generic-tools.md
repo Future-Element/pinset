@@ -80,7 +80,13 @@ pinset check --deep --probe --format json
 
 Offline installation needs a valid local install or complete cache. Receipt/lock digest agreement and installed-payload inspection have distinct report fields; see [CI](ci.md#json-check-contract).
 
-The first HTTPS download establishes the locked digest for repeatable content; it is not a publisher signature check. Generic tools have checksum verification strength and cannot satisfy signed-checksum policy. Without a release timestamp they also cannot satisfy a policy requiring a minimum release age. Generic tools do not bypass project policy.
+For public `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>` URLs, initial selection also looks up GitHub build attestations for the downloaded SHA-256. A matching attestation must pass cryptographic signature, certificate, timestamp, transparency-log, artifact-digest and source-repository verification. Its bundle and repository identity are retained with the platform artifact in the lock. Installation and `check` verify that evidence offline, including when the artifact or installation is cached.
+
+For other HTTPS sources, or a public GitHub artifact confirmed to have no build attestation, the first download establishes the locked digest. This is **digest pinning only**, not a publisher signature check. GitHub lookup failures, rate limits and invalid evidence stop selection instead of silently becoming an unsigned download. A previously signed selection cannot be downgraded to digest-only verification.
+
+Generic checks expose `source_verification`: `status` is `signature-verified`, `digest-only`, or `invalid`; `method` records the verification method, `repository` identifies the GitHub repository when present, and `passed` reports whether that source check passed. This is independent of `artifact_digest` (receipt and payload integrity) and `actually_verified` (an explicit executable version probe). Text reports show “signature verified” or “digest pinned only”.
+
+Attested generic artifacts satisfy `signed-checksum` policy; digest-only artifacts do not. Existing digest-only locks remain digest-only until an explicit new `use` resolves and records evidence; `install` never upgrades the lock or fetches new attestations. Without a release timestamp, generic tools still cannot satisfy a policy requiring a minimum release age. Private GitHub repositories, Enterprise hosts, other provenance formats and user-supplied trust roots are outside this Provider's attestation support.
 
 ## Command routing and scope
 

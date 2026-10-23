@@ -172,6 +172,12 @@ impl Lockfile {
                     return Err(failure("PINSET_LOCK_INVALID", "invalid platform"));
                 }
                 if !tool.is_generic() {
+                    if a.attestation.is_some() {
+                        return Err(failure(
+                            "PINSET_LOCK_INVALID",
+                            "GitHub attestation evidence is supported only for generic tools",
+                        ));
+                    }
                     validate_official_url(&tool.name, &a.canonical_url)?;
                 }
                 a.artifact_integrity()?;
@@ -238,8 +244,17 @@ pub struct LockedArtifact {
     pub format: LockedArtifactFormat,
     pub archive_root: String,
     pub verification: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<GitHubAttestation>,
     #[serde(default, rename = "overlay", skip_serializing_if = "Vec::is_empty")]
     pub overlays: Vec<LockedArtifactOverlay>,
+}
+/// GitHub public Release evidence, retained for offline cryptographic verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubAttestation {
+    pub repository: String,
+    pub bundle: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -457,12 +472,22 @@ pub struct EnvironmentCheck {
     pub expected_version: String,
     pub actual_version: Option<String>,
     pub artifact_digest: ArtifactDigestCheck,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_verification: Option<SourceVerificationCheck>,
     pub passed: bool,
     pub configured: bool,
     pub installed: bool,
     pub bound: bool,
     pub actually_verified: bool,
     pub detail: String,
+}
+/// Publisher verification is independent of payload checks and executable probes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceVerificationCheck {
+    pub status: String,
+    pub method: String,
+    pub repository: Option<String>,
+    pub passed: bool,
 }
 /// Additive JSON check contract: `None` means the payload was not inspected.
 #[derive(Debug, Clone, Serialize, Deserialize)]

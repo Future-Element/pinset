@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CommandGroup } from "@/lib/commands";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig } from "@/lib/site";
+import { guideNavigation } from "@/lib/guides";
 
 export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: CommandGroup[] }) {
   const zh = locale === "zh-CN";
@@ -34,9 +35,7 @@ export function CommandIndexPage({ locale, groups }: { locale: Locale; groups: C
         </section>
         <nav className="guideLinks" aria-label={zh ? "相关指南" : "Related guides"}>
           <span>{zh ? "先了解：" : "Read about:"}</span>
-          <Link href={`${prefix}/docs/concepts`}>{zh ? "基础概念" : "Core concepts"}</Link>
-          <Link href={`${prefix}/docs/generic-tools`}>{zh ? "自定义 CLI" : "Custom CLI tools"}</Link>
-          <Link href={`${prefix}/docs/ci`}>{zh ? "CI 与 GitHub Action" : "CI and GitHub Action"}</Link>
+          {guideNavigation(locale).map((guide) => <Link key={guide.slug} href={`${prefix}/docs/${guide.slug}`}>{guide.title}</Link>)}
         </nav>
         <div className="commandDirectory">
           {groups.map((group) => (

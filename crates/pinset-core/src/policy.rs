@@ -74,6 +74,7 @@ pub enum VerificationMethod {
     HttpsChecksum,
     OpenPgpSignedChecksum,
     NpmRegistrySignature,
+    GitHubAttestation,
 }
 
 impl VerificationMethod {
@@ -82,13 +83,14 @@ impl VerificationMethod {
             Self::HttpsChecksum => "https-checksum",
             Self::OpenPgpSignedChecksum => "open-pgp-signed-checksum",
             Self::NpmRegistrySignature => "npm-registry-signature",
+            Self::GitHubAttestation => "github-attestation",
         }
     }
 
     pub const fn strength(self) -> VerificationStrength {
         match self {
             Self::HttpsChecksum => VerificationStrength::Checksum,
-            Self::OpenPgpSignedChecksum | Self::NpmRegistrySignature => {
+            Self::OpenPgpSignedChecksum | Self::NpmRegistrySignature | Self::GitHubAttestation => {
                 VerificationStrength::SignedChecksum
             }
         }
@@ -166,6 +168,7 @@ pub fn verification_method(value: &str) -> Option<VerificationMethod> {
             Some(VerificationMethod::OpenPgpSignedChecksum)
         }
         "npm-registry-signature-sha512" => Some(VerificationMethod::NpmRegistrySignature),
+        crate::GENERIC_GITHUB_VERIFICATION => Some(VerificationMethod::GitHubAttestation),
         "go-download-json-sha256"
         | "flutter-release-json-sha256"
         | "python-org-api-sha256"
@@ -213,6 +216,22 @@ pub fn validate_verification_transition(previous: &LockedTool, next: &LockedTool
             previous: previous_strength.to_string(),
             next: next_strength.to_string(),
         });
+    }
+    // A tool's weakest platform must not hide a stronger platform losing proof.
+    if previous.is_generic() && next.is_generic() {
+        for artifact in &previous.artifacts {
+            if artifact.verification == crate::GENERIC_GITHUB_VERIFICATION
+                && next
+                    .artifact(&artifact.target)
+                    .is_some_and(|next| next.verification != crate::GENERIC_GITHUB_VERIFICATION)
+            {
+                return Err(Error::VerificationDowngrade {
+                    tool: format!("{} ({})", next.name, artifact.target),
+                    previous: VerificationStrength::SignedChecksum.to_string(),
+                    next: VerificationStrength::Checksum.to_string(),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -414,6 +433,7 @@ mod tests {
                 format: LockedArtifactFormat::TarGz,
                 archive_root: "example".to_owned(),
                 verification: verification.to_owned(),
+                attestation: None,
                 overlays: Vec::new(),
             }],
         }

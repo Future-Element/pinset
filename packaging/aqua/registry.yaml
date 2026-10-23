@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/aquaproj/aqua/main/json-schema/registry.json
+packages:
+  - type: github_release
+    repo_owner: Future-Element
+    repo_name: pinset
+    description: Lock project toolchains and explain their execution paths
+    asset: pinset-{{.Version}}-{{.OS}}-{{.Arch}}.zip
+    format: zip
+    version_constraint: semver(">= 3.0.9, < 4.0.0")
+    supported_envs:
+      - linux/amd64
+      - linux/arm64
+      - darwin/arm64
+      - windows/amd64
+    rosetta2: false
+    windows_arm_emulation: false
+    replacements:
+      darwin: macos
+      amd64: x86_64
+      arm64: aarch64
+    files:
+      - name: pinset
+        src: pinset
+      - name: pinset-shim
+        src: pinset-shim
+    overrides:
+      - goos: windows
+        files:
+          - name: pinset
+            src: pinset.exe
+          - name: pinset-shim
+            src: pinset-shim.exe
+    checksum:
+      type: github_release
+      asset: SHA256SUMS
+      algorithm: sha256
+    github_artifact_attestations:
+      signer_workflow: Future-Element/pinset/.github/workflows/release.yml

@@ -4,7 +4,7 @@ export function headingId(value: string) {
 
 export function docHref(href: string | undefined) {
   if (!href) return href;
-  const match = href.match(/^(?:\.\/)?(commands|concepts|generic-tools|ci)(\.zh-CN)?\.md(?:#(.*))?$/);
+  const match = href.match(/^(?:\.\/)?(commands|concepts|generic-tools|ci|agents|migrate-from-volta)(\.zh-CN)?\.md(?:#(.*))?$/);
   if (!match) return href;
   const [, page, chinese, fragment] = match;
   const prefix = chinese ? "" : "/en";

@@ -61,6 +61,7 @@ pub use npm_metadata::*;
 mod npm_runtime;
 pub use npm_runtime::*;
 mod generic_provider;
+mod github_attestation;
 mod import;
 mod services;
 pub use import::ImportPlan;

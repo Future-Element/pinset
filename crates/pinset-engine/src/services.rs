@@ -519,7 +519,19 @@ impl Services {
         let notes =
             self.bind_selected_local(&c, &current, &locked, recreate, false, Some(names))?;
         self.register(&c)?;
-        Ok(json!({"protocol":PROTOCOL,"installed":true,"notes":notes}))
+        let mut selected = installation_selection(&locked, Some(names));
+        selected.sort_by(|left, right| left.name.cmp(&right.name));
+        let tools = selected.iter().map(|tool| &tool.name).collect::<Vec<_>>();
+        let installed_tools = selected
+            .iter()
+            .map(|tool| {
+                let target = locked_target(tool);
+                json!({"tool":tool.name,"version":tool.version,"provider":tool.provider,
+                    "target":target,"install_identity":tool.installation_version(&target)})
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"protocol":PROTOCOL,"installed":true,"notes":notes,
+            "tools":tools,"installed_tools":installed_tools}))
     }
     pub fn install_sdk(
         &self,
@@ -818,6 +830,13 @@ impl Services {
                 }
             }
         }
+        entries.sort_by(|left, right| {
+            ["tool", "version", "identity", "platform", "path"]
+                .iter()
+                .map(|key| left[*key].as_str().cmp(&right[*key].as_str()))
+                .find(|order| !order.is_eq())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(json!({"protocol":PROTOCOL,"selected":lock,"installs":entries}))
     }
     pub fn which(&self, command: Option<&str>, global: bool) -> Result<Value> {

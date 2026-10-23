@@ -35,6 +35,9 @@ def verify_check_json(project, environment, requests):
             assert item['actual_version'] is None or isinstance(item['actual_version'], str), item
             for field in ['configured', 'installed', 'bound', 'actually_verified', 'passed']:
                 assert type(item[field]) is bool, (field, item)
+            source = item['source_verification']
+            assert source['status'] == 'digest-only' and source['passed'] is True, source
+            assert source['method'] == 'generic-https-sha256' and source['repository'] is None, source
             digest = item['artifact_digest']
             assert digest['expected'] == expected_digests[name], digest
             assert type(digest['receipt_matches_lock']) is bool and type(digest['passed']) is bool, digest

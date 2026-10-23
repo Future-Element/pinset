@@ -6,6 +6,8 @@
 
 通用参数：`-C/--cwd <目录>`、`--lang auto|en|zh-CN`、`--json`、`--help`、`--version`。本页省略这些通用参数，可用 `<命令> --help` 查看完整语法。除 `exec` 转发子进程状态外，成功退出码为 `0`，操作失败为 `1`，参数错误为 `2`。示例版本、路径和 ID 用于说明；标为“执行结果”的文字不是终端原样输出。
 
+管理命令的 `--json` 成功报告、操作错误和参数错误统一包含 `protocol: "pinset/3"` 与 `schema_version: 1`。已有字段名称、类型和含义保持稳定，消费者须接受新增字段；stdout 与 stderr 分开解析。import → install → check 流程与原始/交互输出例外见 [AI 编程 Agent 指南](agents.zh-CN.md)。
+
 ## 工具管理
 
 ### `init`
@@ -59,6 +61,8 @@ pinset install
 范围和别名通过 Provider 元数据解析为确切版本并标注。同一工具的兼容声明共同约束结果，不兼容声明跳过。`go.mod` 优先 `toolchain` 并检查 `go` 最低要求。Rust 同时迁移 profile、components、targets，并保留 nightly 的固定日期；本地路径和未指定的默认 channel 无法推断。npm、pip、独立 Dart 无独立 Provider；pnpm 缺少项目 Node 选择时无法导入。已声明的通用工具只接受明确版本或 tag。
 
 已有选择和有效锁始终保留；缺锁时按已有 selector 补锁。解析可能联网；通用工具预览下载到临时文件计算摘要。`--plan` 不写项目或 Pinset 状态。输入 `y`、`yes` 或“是”才写入，回车取消。审阅期间来源、配置或锁变化会要求重新生成计划。
+
+字段映射、npm 限制、PATH 对照和回退步骤见[从 Volta 迁移项目](migrate-from-volta.zh-CN.md)。`volta.extends` 会被忽略，不会追踪引用。
 
 #### 参数、退出码与常见错误
 
@@ -775,7 +779,7 @@ pinset clean installs node@22.0.0
 pinset self info
 ```
 
-输出含 `version: 3.0.9`、`platform`、`home`、`cli` 和八个内置 Provider，路径和平台因本机而异。
+输出含 `version: 3.1.0`、`platform`、`home`、`cli` 和八个内置 Provider，路径和平台因本机而异。
 
 #### 行为细节
 
@@ -892,7 +896,7 @@ venv 创建进程仍运行时不删除目录。Windows 无法原子替换运行�
 
 ```sh
 pinset self update --plan
-pinset self update 3.0.9
+pinset self update 3.1.0
 ```
 
 执行结果：第一条显示版本、平台包和摘要；第二条校验下载后成对更新 CLI/shim，报告是否需要重启。
