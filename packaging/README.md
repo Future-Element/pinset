@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | Homebrew | `homebrew/pinset.rb`；[官方 tap](https://github.com/Future-Element/homebrew-tap) 的 `Formula/pinset.rb` | 3.1.0 已公开；`brew install Future-Element/tap/pinset` |
 | Scoop | `scoop/pinset.json`；[官方 bucket](https://github.com/Future-Element/scoop-bucket) 的 `bucket/pinset.json` | 3.1.0 已公开；支持直接使用公开 manifest URL 一条命令安装 |
-| WinGet | `winget/manifests/f/FutureElement/Pinset/3.1.0/` 下三个文件 | [收录 PR #460148](https://github.com/microsoft/winget-pkgs/pull/460148) 已提交，CLA 已通过，等待上游验证和审核合并 |
-| aqua | `aqua/registry.yaml` 和 `aqua/pkg.yaml` | [标准注册表收录 PR #63088](https://github.com/aquaproj/aqua-registry/pull/63088) 已提交，等待审核合并 |
+| WinGet | `winget/manifests/f/FutureElement/Pinset/3.1.0/` 下三个文件 | [收录 PR #460148](https://github.com/microsoft/winget-pkgs/pull/460148) 的 CLA 已通过；已补充 VC++ 运行库依赖，等待上游重新验证和审核合并 |
+| aqua | `aqua/registry.yaml` 和 `aqua/pkg.yaml` | [标准注册表收录 PR #63088](https://github.com/aquaproj/aqua-registry/pull/63088) 已于 2026-10-24 合并，已进入公开标准注册表 [v4.576.0](https://github.com/aquaproj/aqua-registry/releases/tag/v4.576.0) |
 | GitHub Actions | 仓库根目录 `action.yml` | [setup-pinset 已在 Marketplace 上架](https://github.com/marketplace/actions/setup-pinset)，最新为 v3.1.0；使用 `Future-Element/pinset@v3.1.0` |
 
 当前资产支持 Linux x64/ARM64、macOS ARM64、Windows x64；没有 macOS Intel 或 Windows ARM64 包。Formula、Scoop 和 WinGet 限制不支持的架构，aqua 列出四种明确环境并关闭模拟运行回退。每个渠道均保留真正相邻的 CLI/router；不能只把 CLI 复制到包外的单独目录。
@@ -64,6 +64,8 @@ $pinsetChannelCli = Join-Path (scoop prefix pinset) 'pinset.exe'
 
 使用现有 ZIP 的 nested portable 模式，两个 EXE 保持原名。官方 [PortableFlow 实现](https://github.com/microsoft/winget-cli/blob/bc1e9ff8b982798ab346b61416b76ae738038e57/src/AppInstallerCLICore/Workflows/PortableFlow.cpp#L204-L256) 将 ZIP 顶层条目放入同一个 `TargetInstallLocation`，nested entries 只建立命令别名，不会将两个程序拆到不同目录。无需另造脚本 installer。
 
+两个 Windows 程序均导入 `VCRUNTIME140.dll`，因此 manifest 声明 `Microsoft.VCRedist.2015+.x64` 包依赖，让 WinGet 在缺少运行库时先安装官方 VC++ x64 运行库。在开发机器上直接运行成功，不能代替干净系统的依赖验证。
+
 升级后，通过 WinGet 的安装记录或命令链接找到包管理器目录中的真实 `pinset.exe`，确认旁边有 `pinset-shim.exe`，再使用该绝对路径执行 `self repair` 和 `self shell powershell`。默认用户安装且链接创建成功时，可以检查 `%LOCALAPPDATA%\Microsoft\WinGet\Links\pinset.exe` 的 `Target`；如果用了自定义 portable 根目录或链接创建回退，按实际安装记录定位。不要直接以 PATH 中的第一个 `pinset` 代替这个真实路径。
 
 本地 manifest 检查：
@@ -84,7 +86,7 @@ PINSET_CHANNEL_CLI="$(aqua which pinset)"
 
 在 PowerShell 中同样先保存 `aqua which pinset` 的结果，再以该路径执行。应在包含选定 Pinset 版本的 aqua 配置目录下操作；不要用普通 `which pinset`，因为它可能找到 Pinset home 的旧副本。
 
-向 aqua 上游提交时，按[贡献指南](https://github.com/aquaproj/aqua-registry/blob/main/docs/add_package.md)在个人 fork 运行 `argd s Future-Element/pinset`，把候选配置与脚手架输出核对，再运行 `argd t`、签名提交并提 PR。PR #63088 已执行这些步骤，且通过 Conftest、格式检查及 Linux/Windows x64 原生安装和托管入口升级验证；其他平台仅验证下载解包。PR 中还按上游格式维护历史版本布局，本目录候选不替代上游配置，也不表示已获收录。
+向 aqua 上游提交时，按[贡献指南](https://github.com/aquaproj/aqua-registry/blob/main/docs/add_package.md)在个人 fork 运行 `argd s Future-Element/pinset`，把候选配置与脚手架输出核对，再运行 `argd t`、签名提交并提 PR。PR #63088 已执行这些步骤并获合并，且通过 Conftest、格式检查及 Linux/Windows x64 原生安装和托管入口升级验证；其他平台仅验证下载解包。上游按其格式维护历史版本布局，应以[标准注册表中的配置](https://github.com/aquaproj/aqua-registry/tree/main/pkgs/Future-Element/pinset)为准。
 
 ## 卸载和保留数据
 

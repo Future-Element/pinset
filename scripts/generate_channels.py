@@ -189,6 +189,9 @@ PackageVersion: {version}
 InstallerType: zip
 NestedInstallerType: portable
 UpgradeBehavior: install
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Microsoft.VCRedist.2015+.x64
 Commands:
   - pinset
 # The archive is kept in one package directory; aliases point to these original names.
