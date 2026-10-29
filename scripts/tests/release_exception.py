@@ -186,7 +186,7 @@ class ReleaseExceptionTests(unittest.TestCase):
             self.documents[endpoint] = previous
 
     def test_generated_output_is_not_a_source_change(self):
-        path = self.root / 'output/report.json'
+        path = self.root / 'output/report with spaces.json'
         path.parent.mkdir()
         path.write_text('{"real_evidence":true}\n')
         self.assertEqual(self.validate(), self.report['commit'])
