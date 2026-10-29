@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.1 - 2026-10-29
+
+- Build both Windows x86_64 executables with the static MSVC C runtime and package the pair from the explicit MSVC target directory, avoiding a separate Visual C++ Redistributable prerequisite for the Pinset programs.
+- Add independent PE import and delay-import checks for both executables, packaging regressions, and a clean Windows/WinGet acceptance procedure. Native Windows and clean-machine acceptance remain required before publishing this candidate.
+- Windows 两个程序统一使用 MSVC 静态 CRT，并同步构建、打包与验证路径；此候选版本尚未发布，干净 Windows 与 WinGet 安装卸载验收仍待执行。
+
 ## 3.1.0 - 2026-10-23
 
 - Verify public GitHub Release build attestations for generic tools, retain offline-verifiable bundles in the lock, reject signature downgrades per platform, and distinguish verified signatures from first-use digest pinning in checks.

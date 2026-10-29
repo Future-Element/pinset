@@ -121,10 +121,29 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: Run native Rust workspace tests
         if: inputs.mode == 'source'
-        run: cargo +1.97.1 test --workspace --locked
+        run: |
+          target=()
+          if [[ "$RUNNER_OS" == Windows ]]; then target=(--target x86_64-pc-windows-msvc); fi
+          cargo +1.97.1 test --workspace --locked "${target[@]}"
       - name: Build the native CLI and router
         if: inputs.mode == 'source'
-        run: cargo +1.97.1 build --locked -p pinset-cli -p pinset-shim
+        run: |
+          target=()
+          if [[ "$RUNNER_OS" == Windows ]]; then target=(--release --target x86_64-pc-windows-msvc); fi
+          cargo +1.97.1 build --locked -p pinset-cli -p pinset-shim "${target[@]}"
+      - name: Inspect the Windows release pair imports
+        if: inputs.mode == 'source' && runner.os == 'Windows'
+        run: '"$PINSET_CI_PYTHON" scripts/check_windows_imports.py --binary-dir target/x86_64-pc-windows-msvc/release --output output/ci-platform/windows-imports.json'
+      - name: Package the inspected Windows candidate
+        if: inputs.mode == 'source' && runner.os == 'Windows'
+        run: |
+          "$PINSET_CI_PYTHON" - <<'PY'
+          import os, subprocess, sys, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text(encoding='utf-8'))['workspace']['package']['version']
+          subprocess.run([sys.executable, 'scripts/package_release.py'], check=True,
+                         env=dict(os.environ, PINSET_RELEASE_VERSION=version, PINSET_RELEASE_TARGET='windows-x86_64'))
+          PY
       - name: Check setup-pinset preparation contracts on Node 24
         if: inputs.mode == 'source'
         run: node scripts/tests/setup_action.mjs
@@ -144,8 +163,9 @@ jobs:
           "$PINSET_CI_NODE" --input-type=module <<'JS'
           import fs from 'node:fs';
           import path from 'node:path';
+          const directory = process.platform === 'win32' ? 'target/x86_64-pc-windows-msvc/release' : 'target/debug';
           const cli = process.env.PINSET_CI_MODE === 'source'
-            ? path.resolve('target/debug', process.platform === 'win32' ? 'pinset.exe' : 'pinset')
+            ? path.resolve(directory, process.platform === 'win32' ? 'pinset.exe' : 'pinset')
             : 'pinset';
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `cli=${cli}\n`);
           JS
@@ -193,3 +213,13 @@ jobs:
             output/ci-platform/config.toml
             output/ci-platform/lock.toml
             ${{ steps.action.outputs.check-report }}
+      - name: Preserve the inspected Windows candidate
+        if: always() && inputs.mode == 'source' && runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-source-candidate
+          if-no-files-found: warn
+          path: |
+            dist/pinset-v*-windows-x86_64.zip
+            dist/pinset-windows-x86_64.sbom.json
+            output/ci-platform/windows-imports.json

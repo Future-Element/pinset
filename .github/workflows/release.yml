@@ -57,8 +57,13 @@ jobs:
         run: |
           docker build --file scripts/docker/Dockerfile.release --tag pinset-release .
           docker run --rm --env PINSET_RELEASE_VERSION --volume "${PWD}:/workspace" pinset-release
-      - name: Compile native Windows and macOS release binaries
-        if: runner.os != 'Linux'
+      - name: Compile Windows release binaries with the static MSVC runtime
+        if: runner.os == 'Windows'
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target x86_64-pc-windows-msvc
+          cargo +1.97.1 build --release --locked --target x86_64-pc-windows-msvc -p pinset-cli -p pinset-shim
+      - name: Compile native macOS release binaries
+        if: runner.os == 'macOS'
         run: |
           rustup toolchain install 1.97.1 --profile minimal
           cargo +1.97.1 build --release --locked -p pinset-cli -p pinset-shim

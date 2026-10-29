@@ -1,0 +1,4 @@
+# Use an explicit --target for MSVC builds so host build scripts and proc macros
+# keep their host runtime. cc/cmake dependencies receive crt-static via Cargo.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
