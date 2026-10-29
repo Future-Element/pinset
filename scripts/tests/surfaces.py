@@ -241,9 +241,11 @@ from progress import verify_progress
 from channels import verify_channels
 from release_packaging import verify_packaging
 from windows_imports import verify_windows_imports
+from release_exception import verify_release_exception
 progress = verify_progress(fixture)
 updates = verify_self_update(root, fixture, version)
 channels = verify_channels(root)
 packaging = verify_packaging()
 windows_imports = verify_windows_imports()
-report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels,packaging=packaging,windows_imports=windows_imports)
+release_exception = verify_release_exception()
+report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels,packaging=packaging,windows_imports=windows_imports,release_exception=release_exception)

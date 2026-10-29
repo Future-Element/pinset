@@ -3,10 +3,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing v3 tag matching the clean local all, x64 or authorized hotfix report
+        description: Existing v3 tag matching the local report or authorized 3.1.1 exception
         required: true
       local-report:
-        description: Exact compact JSON from the matching local Docker verification report
+        description: Exact compact local Docker report JSON or the explicit 3.1.1 exception record
         required: true
       report-sha256:
         description: SHA-256 of the exact local report JSON
@@ -110,7 +110,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Generate release checksums and preserve local verification evidence
+      - name: Generate release checksums and preserve verification or exception evidence
         env:
           PINSET_LOCAL_REPORT: ${{ inputs.local-report }}
         run: |

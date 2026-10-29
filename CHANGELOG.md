@@ -3,8 +3,9 @@
 ## 3.1.1 - 2026-10-29
 
 - Build both Windows x86_64 executables with the static MSVC C runtime and package the pair from the explicit MSVC target directory, avoiding a separate Visual C++ Redistributable prerequisite for the Pinset programs.
-- Add independent PE import and delay-import checks for both executables, packaging regressions, and a clean Windows/WinGet acceptance procedure. Native Windows and clean-machine acceptance remain required before publishing this candidate.
-- Windows 两个程序统一使用 MSVC 静态 CRT，并同步构建、打包与验证路径；此候选版本尚未发布，干净 Windows 与 WinGet 安装卸载验收仍待执行。
+- Add independent PE import and delay-import checks for both executables, packaging regressions, and a clean Windows/WinGet acceptance procedure. Four-platform native CI passed; the Windows release pair was also downloaded and inspected byte for byte, with only Windows system DLL imports.
+- Record the user's one-time 3.1.1 direct-release exception separately from local Docker reports. Docker suites, clean Windows and WinGet installation/uninstallation remain unverified; the normal gates for other versions and the release asset/provenance checks are retained.
+- Windows 两个程序统一使用 MSVC 静态 CRT，四平台原生 CI 与实际 Windows 包导入检查通过。按用户仅限 3.1.1 的明确例外跳过本地 Docker 验收，保留干净 Windows 与 WinGet 安装卸载未验证记录。
 
 ## 3.1.0 - 2026-10-23
 

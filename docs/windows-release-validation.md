@@ -1,9 +1,28 @@
 # Windows release validation
 
-Pinset 3.1.1 is a local release candidate. Its Windows CLI and shim must both use
-the static MSVC C runtime. These instructions prepare validation; they do not
-record a successful Windows run or authorize publication. Keep 3.1.0 assets,
-channel manifests and the existing WinGet PR unchanged.
+Pinset 3.1.1's Windows CLI and shim must both use the static MSVC C runtime.
+The four-platform source CI run and the actual Windows release-pair inspection
+are recorded below. These instructions also prepare clean-machine validation;
+that validation has not been performed. Keep already-published 3.1.0 assets
+unchanged.
+
+For this version only, the user explicitly authorized direct publication without
+installing Docker or running local Docker verification. The separate
+`pinset-release-exception/1` record binds the final source to verified native CI
+and Windows artifacts, marks Docker skipped and retains all unverified items.
+It is not an `all` report. Other versions retain the ordinary release gate, and
+the draft, checksum, complete-inventory and provenance checks are unchanged.
+
+Native CI run [40873625789](https://github.com/Future-Element/pinset/actions/runs/40873625789)
+passed on implementation commit `a4e131e6673cd88e673d83f914bd2ce2ff3ac8e3`.
+The Windows job built the release pair and passed native startup, managed
+shim/private broker, deep checks and offline restoration. The downloaded ZIP's
+SHA-256 is `e0a977eb07dd90f54911013954ec99f7f711f244f796a62d25d11377c54ea331`;
+its executable hashes match the native and import reports. Direct imports are
+limited to eight Windows system DLLs for the CLI and four for the shim; both
+delay-import tables are empty. This is hosted-runner evidence, not clean Windows
+or WinGet installation/uninstallation evidence. The publication workflow rebuilds
+the final tagged source; validate those final downloaded artifacts as well.
 
 ## Build and inspect the candidate
 
