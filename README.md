@@ -1,8 +1,8 @@
 # Pinset 3
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [Command reference](docs/commands.md) · [AI coding agents](docs/agents.md)
+[English](README.md) · [简体中文](README.zh-CN.md) · [Website](https://pinset.future-element.com) · [Main repository](https://github.com/Future-Element/pinset) · [Command reference](docs/commands.md) · [AI coding agents](docs/agents.md)
 
-Pinset locks project toolchains and explains their execution paths. Select, upgrade or switch versions with `use`, then build and test using your project commands. The 3.0 source tree introduces a breaking protocol; a source version does not imply a published release.
+Pinset locks project toolchains and explains their execution paths. Select, upgrade or switch versions with `use`, then build and test using your project commands. Pinset 3 introduces a breaking protocol; a source version does not imply a published release.
 
 Eight built-in Providers cover Node.js, pnpm, Bun, Go, Python, complete Temurin OpenJDK, Rust, and Flutter/Dart. npm comes with Node; pip comes with a project-root standard-library `.venv`; Dart comes with Flutter. Pinset does not run tasks or orchestrate workspaces.
 
@@ -35,6 +35,17 @@ Project discovery stops at the nearest Git repository, including worktrees. Non-
 
 ## Installation and execution
 
+Get installation commands for the current release from the [website](https://pinset.future-element.com/#install), or choose an exact version from [GitHub Releases](https://github.com/Future-Element/pinset/releases/latest). See the [installation guide](docs/installation.md) for platform commands and custom directories.
+
+**Installation does not modify shell profiles or persist PATH changes.** It installs the CLI, router and Provider command entries, then prints a PATH fragment. Review and apply it yourself for the current session, for example in Bash or Zsh with the default install location:
+
+```sh
+"$HOME/.pinset/v3/bin/pinset" self shell zsh
+export PATH="$HOME/.pinset/v3/bin:$PATH"
+```
+
+`pinset self shell <bash|zsh|fish|powershell>` only prints the fragment. Optional persistence is a separate, manual choice: review the exact target profile and content, back it up, then add one guarded block yourself. The [guide](docs/installation.md#optional-persistence-after-review) lists files, repeat-safe snippets and rollback. There is no `self shell --write` command or installer profile-writing prompt in this version.
+
 Install from the official [Homebrew tap](https://github.com/Future-Element/homebrew-tap):
 
 ```sh
@@ -57,9 +68,9 @@ Python projects use one owned `.venv` created with the locked interpreter's stan
 
 Partial installs bind only the requested tools; installing pnpm also installs its locked Node dependency. An unavailable unrelated Python or Flutter selection does not prevent an installed Node entry from running. Python's versioned `python3.<minor>` and `pip3.<minor>` entries use the same project environment and reject a different selected minor. Routing rechecks the current verification policy as well as the exact lock.
 
-Shell integration is explicit: `pinset self shell bash` (also zsh, fish, powershell) prints the PATH fragment and never edits a profile. The installer verifies a platform ZIP and places the matching CLI and router together. Pinset 3 source builds can be installed locally with `pinset self repair` after compiling both binaries.
+The installer verifies a platform ZIP and places the matching CLI and router together. Pinset 3 source builds can be installed locally with `pinset self repair` after compiling both binaries.
 
-Provider command entries are always in `PINSET_HOME/v3/bin`, including when the CLI uses a custom install directory. Put this managed directory first on PATH using `pinset self shell`; earlier 2.x launchers in other directories can otherwise shadow the new entries. In PowerShell, apply the current-session fragment with `pinset self shell powershell | Out-String | Invoke-Expression`.
+Provider command entries are always in `PINSET_HOME/v3/bin`, including when the CLI uses a custom install directory. Review and apply the fragment printed by `pinset self shell` to put this directory first on PATH; earlier 2.x launchers in other directories can otherwise shadow the new entries. In PowerShell, apply the current-session fragment with `pinset self shell powershell | Out-String | Invoke-Expression`.
 
 ## Evidence and encrypted profiles
 

@@ -18,6 +18,7 @@ SHIM_PUBLISHED=0
 usage() {
     cat <<'EOF'
 Install Pinset from a GitHub Release.
+Print PATH setup instructions without modifying shell profiles.
 
 Usage:
   install.sh [--version VERSION] [--install-dir DIRECTORY]

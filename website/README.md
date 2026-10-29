@@ -15,7 +15,7 @@ pnpm dev
 
 Open <http://localhost:3000>.
 
-The homepage's available release version is resolved at runtime from the same-origin `/api/latest-release` Pages Function. Documentation shows the version of the checked-in `package.json`, so newer releases cannot silently change which version its instructions describe. To exercise that Function locally, build first and use the Pages runtime:
+The homepage's available release version is resolved at runtime from the same-origin `/api/latest-release` Pages Function, using the official GitHub latest stable v3 release redirect as its authority. It does not freeze a tag into the homepage or use the source package version as a release substitute. Documentation shows the version of the checked-in `package.json`, so newer releases cannot silently change which version its instructions describe. To exercise that Function locally, build first and use the Pages runtime:
 
 ```powershell
 pnpm build
@@ -24,11 +24,14 @@ pnpm exec wrangler pages dev out
 
 ## Validation and SEO
 
-```powershell
-pnpm typecheck
-pnpm build
-pnpm validate:seo
+```sh
+# From the repository root; validation runs only in the local Docker verifier.
+bash verify.sh integrations
 ```
+
+The integrations suite runs `pnpm test:release`, typechecks, builds and SEO checks in Docker. Release contracts cover valid and invalid upstream redirects, outages, cache expiry, malformed cache timestamps, and exact version arguments in the two script installation commands. Build and deployment scripts do not run tests.
+
+For a manual release check, compare `https://github.com/Future-Element/pinset/releases/latest` with the JSON returned by `/api/latest-release` in the Pages runtime. Both homepages should show that version after loading. Their macOS/Linux and Windows script commands must pass the same exact version; Homebrew and Scoop explain that their formula/manifest may lag. Leave a tab open for five minutes or refocus it after cache expiry to check refresh. With the API unavailable, the page uses a version-neutral fallback and the script's embedded recommendation, without claiming that a release is unpublished. No release check deploys the site.
 
 The export validator checks all indexable pages for unique titles, self-referencing canonical URLs, Chinese/English/x-default alternates, one h1, descriptions, crawlability, sitemap coverage, structured data, generated logo image dimensions, and working internal links. It checks all 29 bilingual command pages for purpose summaries, four command groups, detail templates, visible parameter tables, version labels, starter flows, and guide links. The homepage keeps a dynamic release version. `NEXT_PUBLIC_SITE_URL` must match the build origin when validating a custom origin. Homepage and command-document modification dates are maintained separately in `lib/site.ts`.
 
@@ -48,4 +51,4 @@ pnpm exec wrangler pages deploy out --project-name pinset
 
 The production site is deployed to Cloudflare Pages and served from `pinset.future-element.com`.
 
-Wrangler automatically deploys `functions/api/latest-release.js` with the static export. It validates GitHub's latest-release redirect and caches the resolved stable version at the edge for five minutes, so publishing a new GitHub Release does not require rebuilding or redeploying the website.
+Wrangler automatically deploys `functions/api/latest-release.js` with the static export. It accepts redirect statuses only to this repository's stable v3 tags and caches the resolved version at the edge for five minutes. The browser validates its own five-minute session cache and refreshes open tabs periodically and on focus; an expired result gives way to neutral fallback text if refresh fails. Thus the edge and browser caches can each delay a release update by up to five minutes. Publishing a new GitHub Release does not require rebuilding or redeploying the website.

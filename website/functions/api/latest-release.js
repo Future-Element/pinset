@@ -1,5 +1,5 @@
 const githubLatestRelease = "https://github.com/Future-Element/pinset/releases/latest";
-const releaseLocation = /^https:\/\/github\.com\/Future-Element\/pinset\/releases\/tag\/v(\d+\.\d+\.\d+)$/;
+const releaseLocation = /^https:\/\/github\.com\/Future-Element\/pinset\/releases\/tag\/v(3\.\d+\.\d+)$/;
 
 function json(body, init = {}) {
   const headers = new Headers(init.headers);
@@ -23,7 +23,9 @@ export async function onRequestGet({ request, waitUntil }) {
       headers: { "User-Agent": "Pinset-website" },
     });
     const match = upstream.headers.get("Location")?.match(releaseLocation);
-    if (!match) throw new Error(`Unexpected GitHub release redirect: ${upstream.status}`);
+    if (![301, 302, 303, 307, 308].includes(upstream.status) || !match) {
+      throw new Error(`Unexpected GitHub release redirect: ${upstream.status}`);
+    }
 
     const response = json(
       { version: match[1] },

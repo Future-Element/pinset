@@ -15,10 +15,44 @@ with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as target:
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(fixture)))
 threading.Thread(target=server.serve_forever,daemon=True).start()
 home=fixture/'home';legacy=home/'installs';legacy.mkdir(parents=True);(legacy/'preserve').write_text('old data')
-env={**os.environ,'HOME':str(fixture),'PINSET_HOME':str(home),'PINSET_INSTALL_TEST_MODE':'1',
+profile_names=['.bashrc','.bash_profile','.profile','.zshrc','.zprofile','.zshenv',
+    '.config/fish/config.fish','.config/fish/fish_variables',
+    '.config/powershell/profile.ps1','.config/powershell/Microsoft.PowerShell_profile.ps1',
+    'Documents/PowerShell/Microsoft.PowerShell_profile.ps1',
+    'Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1']
+for name in ['.bashrc','.zshrc','.config/fish/config.fish',
+             '.config/powershell/Microsoft.PowerShell_profile.ps1']:
+    path=fixture/name;path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_bytes(b'# User-owned shell settings\n# Preserve these bytes.\n')
+def profile_snapshot():
+    return {name:(fixture/name).read_bytes() if (fixture/name).exists() else None for name in profile_names}
+profiles_before=profile_snapshot()
+env={**os.environ,'HOME':str(fixture),'XDG_CONFIG_HOME':str(fixture/'.config'),
+     'PINSET_HOME':str(home),'PINSET_INSTALL_TEST_MODE':'1',
      'PINSET_TEST_RELEASE_BASE_URL':f'http://127.0.0.1:{server.server_port}'}
 try:
-    run(['bash','install.sh'],env=env)
+    # Printing integration is read-only, even before Pinset has a managed home.
+    shell_home=fixture/'uncreated-shell-home'
+    shell_env={**env,'PINSET_HOME':str(shell_home)}
+    for shell in ['bash','zsh','fish','powershell']:
+        fragment=run([BIN,'-C',fixture,'self','shell',shell],env=shell_env)
+        assert str(shell_home/'v3/bin') in fragment,fragment
+        assert run([BIN,'-C',fixture,'self','shell',shell],env=shell_env)==fragment
+        if shell=='fish':assert '--path' in fragment and '--move' in fragment,fragment
+        assert not shell_home.exists(),'printing shell integration created a Pinset home'
+        assert profile_snapshot()==profiles_before,'printing shell integration changed user profiles'
+    # Fish single quotes still interpret escaped quotes and backslashes. Keep
+    # this legal Unix home literal, including the backslash next to the quote.
+    fish_home=fixture/r"fish\'home"
+    fish_fragment=run([BIN,'-C',fixture,'self','shell','fish'],env={**env,'PINSET_HOME':str(fish_home)})
+    assert fish_fragment=="fish_add_path --path --move --prepend '"+str(fixture)+r"/fish\\\'home/v3/bin'"+'\n',fish_fragment
+    assert not fish_home.exists() and profile_snapshot()==profiles_before
+    # Initial and repeated default installs preserve existing profiles and leave
+    # absent profiles absent; all state lives in this isolated fixture HOME.
+    for _ in range(2):
+        installed=run(['bash','install.sh'],env=env)
+        assert profile_snapshot()==profiles_before,'default installation changed user profiles'
+        assert run([home/'v3/bin/pinset','self','shell','bash'],env=env).strip() in installed
     assert (home/'v3/.pinset-home.json').exists()
     assert 'pinset '+version in run([home/'v3/bin/pinset','--version'],env=env)
     assert (home/'v3/bin/javac').is_file()
@@ -26,6 +60,7 @@ try:
     (fixture/'SHA256SUMS').write_text('0'*64+'  '+archive.name+'\n')
     run(['bash','install.sh'],env=env,expected=1)
     assert (home/'v3/bin/pinset').read_bytes()==before
+    assert profile_snapshot()==profiles_before,'failed installation changed user profiles'
     run(['bash','uninstall.sh','--plan'],env=env)
     assert (home/'v3/bin/pinset').exists()
     run(['bash','uninstall.sh','--yes'],env=env)
@@ -50,6 +85,7 @@ try:
     assert discovered.splitlines()==[str(managed/'pinset'),str(managed/'bun')],discovered
     routed=run(['bash','-c',integration+'\nbun -v'],env=custom_env,cwd=fixture,expected=1)
     assert 'PINSET_SELECTION_MISSING' in routed and 'PINSET_COMMAND_INVALID' not in routed,routed
+    assert profile_snapshot()==profiles_before,'custom installation changed user profiles'
 finally:server.shutdown()
 
 # Package hooks must never call independent validation or use lifecycle hooks to hide it.
@@ -248,4 +284,4 @@ channels = verify_channels(root)
 packaging = verify_packaging()
 windows_imports = verify_windows_imports()
 release_exception = verify_release_exception()
-report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels,packaging=packaging,windows_imports=windows_imports,release_exception=release_exception)
+report('distribution',installer='real fixture binaries with checksum verification',shell_profiles='initial/repeated/failed/custom installs and all four shell printers preserve existing and absent profiles; printing creates no Pinset home',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels,packaging=packaging,windows_imports=windows_imports,release_exception=release_exception)
