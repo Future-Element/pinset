@@ -15,6 +15,12 @@ pnpm dev
 
 Open <http://localhost:3000>.
 
+### Preview analytics
+
+Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_POSTHOG_KEY` to enable PostHog locally, or set it in the Cloudflare Pages **Preview** environment before building a `*.pages.dev` preview. Leave the key empty to disable analytics entirely. `NEXT_PUBLIC_POSTHOG_HOST` defaults to `https://us.i.posthog.com`. These public variables are embedded at build time; keep real keys out of the repository and leave the production Pages environment unchanged.
+
+Only the ten explicit marketing events are captured; automatic pageviews, clicks, session replay, and feature flags are disabled. Every event includes `locale`, `path`, and `release_shown`: the latest runtime release on the landing page when available, falling back to `siteConfig.docsVersion` (from `package.json`) while loading or when `/api/latest-release` is unavailable; docs pages always use `siteConfig.docsVersion`. `landing_viewed` fires once and is not captured again when the live release resolves. `docs_nav_clicked.target` is the localized destination path and fragment. FAQ IDs (`faq-1` through `faq-5`) match across locales. Installation copy events fire only after clipboard writes succeed; other code-block copies are not tracked.
+
 The homepage's available release version is resolved at runtime from the same-origin `/api/latest-release` Pages Function, using the official GitHub latest stable v3 release redirect as its authority. It does not freeze a tag into the homepage or use the source package version as a release substitute. Documentation shows the version of the checked-in `package.json`, so newer releases cannot silently change which version its instructions describe. To exercise that Function locally, build first and use the Pages runtime:
 
 ```powershell
