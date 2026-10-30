@@ -13,6 +13,7 @@
     "dev": "next dev",
     "build": "next build",
     "validate:seo": "node scripts/validate-seo.mjs",
+    "test:release": "node --test scripts/latest-release.test.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "deploy:cloudflare": "next build && wrangler pages deploy out --project-name pinset"

@@ -1,8 +1,8 @@
 # Pinset 3
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [完整命令](docs/commands.zh-CN.md) · [AI 编程 Agent 指南](docs/agents.zh-CN.md)
+[English](README.md) · [简体中文](README.zh-CN.md) · [官网](https://pinset.future-element.com) · [主仓](https://github.com/Future-Element/pinset) · [完整命令](docs/commands.zh-CN.md) · [AI 编程 Agent 指南](docs/agents.zh-CN.md)
 
-Pinset 管理并锁定项目工具链，解释实际执行入口。3.0 使用全新协议，不兼容旧文件和旧命令；源码版本不代表已经发布。
+Pinset 管理并锁定项目工具链，解释实际执行入口。Pinset 3 使用全新协议，不兼容旧文件和旧命令；源码版本不代表已经发布。
 
 保留八个内置 Provider：Node、pnpm、Bun、Go、Python、完整 Temurin OpenJDK、Rust、Flutter/Dart。npm 随 Node，pip 随根目录标准库 `.venv`，Dart 随 Flutter。额外 CLI 可使用[通用二进制 Provider](docs/commands.zh-CN.md#通用二进制-provider)：在 `[generic.<工具名>]` 声明 HTTPS 下载模板、包格式和入口路径，再用 `use` 选择明确版本；安装按锁定地址和 SHA-256 校验，命令通过统一入口路由。没有 task、workspace 编排、源码构建或脚本安装器。
 
@@ -16,7 +16,18 @@ pinset use java@25
 pinset exec -- ./mvnw verify
 ```
 
-## 安装
+## 安装与 Shell
+
+从[官网](https://pinset.future-element.com/#install)复制当前 release 的安装命令，或在 [GitHub Releases](https://github.com/Future-Element/pinset/releases/latest) 选择精确版本。[安装指南](docs/installation.zh-CN.md)包含各平台命令和自定义目录说明。
+
+**默认安装不修改任何 shell profile，也不持久化 PATH。** 安装器放置 CLI、路由器与 Provider 命令入口，然后打印 PATH 片段；请自行检查并应用到当前会话。例如 Bash、Zsh 的默认目录：
+
+```sh
+"$HOME/.pinset/v3/bin/pinset" self shell zsh
+export PATH="$HOME/.pinset/v3/bin:$PATH"
+```
+
+`pinset self shell <bash|zsh|fish|powershell>` 只打印片段。若希望持久化，先明确确认目标文件和内容、备份，再自行在 profile 中加入一个带重复保护的区块。[指南](docs/installation.zh-CN.md#确认后可选持久化)列出文件、幂等片段与回滚步骤。当前版本没有 `self shell --write` 命令，安装器也没有写入 profile 的确认向导。
 
 通过官方 [Homebrew tap](https://github.com/Future-Element/homebrew-tap) 安装：
 

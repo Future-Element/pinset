@@ -107,6 +107,7 @@ def integrations():
     run(['npm','run','test','--prefix','editors/vscode'],'extension-unit')
     run(['npm','run','package','--prefix','editors/vscode'],'extension-package')
     run(['pnpm','--dir','website','install','--frozen-lockfile'],'website-dependencies')
+    run(['pnpm','--dir','website','test:release'],'website-release-contracts')
     run(['pnpm','--dir','website','typecheck'],'website-types')
     run(['pnpm','--dir','website','audit','--audit-level','high'],'website-security')
     run(['pnpm','--dir','website','build'],'website-package')

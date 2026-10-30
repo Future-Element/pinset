@@ -1,29 +1,16 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { cachedRelease, releaseCacheLifetime, releaseVersion } from "@/lib/latest-release";
 
 const latestReleaseApi = "/api/latest-release";
 const cacheKey = "pinset.latest-release.v3";
-const cacheLifetime = 5 * 60 * 1000;
-
-type CachedRelease = {
-  version: string;
-  fetchedAt: number;
-};
 
 const LatestReleaseContext = createContext<string | null>(null);
 
-function releaseVersion(value: unknown) {
-  if (!value || typeof value !== "object" || !("version" in value)) return null;
-  const version = (value as { version?: unknown }).version;
-  return typeof version === "string" && /^3\.\d+\.\d+(?:-rc\.\d+)?$/.test(version) ? version : null;
-}
-
 function readCachedRelease() {
   try {
-    const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null") as CachedRelease | null;
-    if (!cached || Date.now() - cached.fetchedAt >= cacheLifetime) return null;
-    return /^3\.\d+\.\d+(?:-rc\.\d+)?$/.test(cached.version) ? cached.version : null;
+    return cachedRelease(JSON.parse(sessionStorage.getItem(cacheKey) || "null"), Date.now());
   } catch {
     return null;
   }
@@ -33,33 +20,62 @@ export function LatestReleaseProvider({ children }: { children: React.ReactNode 
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    const cached = readCachedRelease();
-    if (cached) {
-      setVersion(cached);
-      return;
-    }
-
     const controller = new AbortController();
-    fetch(latestReleaseApi, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Latest release request failed with ${response.status}`);
-        return response.json();
-      })
-      .then((release) => {
-        const latest = releaseVersion(release);
-        if (!latest) return;
-        setVersion(latest);
-        try {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ version: latest, fetchedAt: Date.now() }));
-        } catch {
-          // Storage can be disabled without preventing the live version from rendering.
-        }
-      })
-      .catch(() => {
-        // Keep the version-neutral fallback when GitHub is unavailable or rate limited.
-      });
+    let pending = false;
+    let freshUntil = 0;
+    let timer: number | undefined;
+    function scheduleRefresh(delay: number) {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, Math.max(1, delay));
+    }
+    function refresh() {
+      if (pending || controller.signal.aborted) return;
+      const cached = readCachedRelease();
+      if (cached) {
+        setVersion(cached.version);
+        freshUntil = cached.fetchedAt + releaseCacheLifetime;
+        scheduleRefresh(freshUntil - Date.now());
+        return;
+      }
+      if (Date.now() < freshUntil) {
+        scheduleRefresh(freshUntil - Date.now());
+        return;
+      }
+      setVersion(null);
+      pending = true;
+      fetch(latestReleaseApi, { signal: controller.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`Latest release request failed with ${response.status}`);
+          return response.json();
+        })
+        .then((release) => {
+          const latest = releaseVersion(release);
+          if (!latest || controller.signal.aborted) return;
+          const fetchedAt = Date.now();
+          freshUntil = fetchedAt + releaseCacheLifetime;
+          setVersion(latest);
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify({ version: latest, fetchedAt }));
+          } catch {
+            // Storage can be disabled without preventing the live version from rendering.
+          }
+        })
+        .catch(() => {
+          // Keep the version-neutral fallback when GitHub is unavailable or rate limited.
+        })
+        .finally(() => {
+          pending = false;
+          if (!controller.signal.aborted) scheduleRefresh(freshUntil > Date.now() ? freshUntil - Date.now() : releaseCacheLifetime);
+        });
+    }
+    refresh();
+    window.addEventListener("focus", refresh);
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   return <LatestReleaseContext value={version}>{children}</LatestReleaseContext>;

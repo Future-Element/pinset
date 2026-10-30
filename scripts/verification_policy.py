@@ -57,6 +57,7 @@ X64_COMMANDS = [
     ('extension-unit', ['npm','run','test','--prefix','editors/vscode']),
     ('extension-package', ['npm','run','package','--prefix','editors/vscode']),
     ('website-dependencies', ['pnpm','--dir','website','install','--frozen-lockfile']),
+    ('website-release-contracts', ['pnpm','--dir','website','test:release']),
     ('website-types', ['pnpm','--dir','website','typecheck']),
     ('website-security', ['pnpm','--dir','website','audit','--audit-level','high']),
     ('website-package', ['pnpm','--dir','website','build']),
