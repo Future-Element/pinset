@@ -12,7 +12,7 @@ const AnalyticsContext = createContext<Capture>(() => {});
 export function AnalyticsProvider({ children, locale, landing }: { children: React.ReactNode; locale: Locale; landing: boolean }) {
   const path = usePathname();
   const latestRelease = useLatestReleaseVersion();
-  const releaseShown = landing ? latestRelease : siteConfig.docsVersion;
+  const releaseShown = landing ? (latestRelease ?? siteConfig.docsVersion) : siteConfig.docsVersion;
   const viewed = useRef(false);
   const capture = useCallback<Capture>((...event) => {
     captureEvent({ locale, path, release_shown: releaseShown }, ...event);
