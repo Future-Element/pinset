@@ -8,9 +8,18 @@ import type { GuideNavigation } from "@/lib/guides";
 import type { Locale } from "@/lib/site";
 import { localePrefix, siteConfig } from "@/lib/site";
 import { Brand } from "./brand";
+import { AnalyticsProvider, useAnalytics } from "./analytics-provider";
 import { LatestReleaseProvider } from "./latest-release";
 
-export function DocsShell({ children, groups, guides, locale, landing = false }: { children: React.ReactNode; groups: CommandNavigationGroup[]; guides: GuideNavigation[]; locale: Locale; landing?: boolean }) {
+type DocsShellProps = { children: React.ReactNode; groups: CommandNavigationGroup[]; guides: GuideNavigation[]; locale: Locale; landing?: boolean };
+
+export function DocsShell(props: DocsShellProps) {
+  const content = <AnalyticsProvider locale={props.locale} landing={props.landing ?? false}><DocsShellContent {...props} /></AnalyticsProvider>;
+  return props.landing ? <LatestReleaseProvider>{content}</LatestReleaseProvider> : content;
+}
+
+function DocsShellContent({ children, groups, guides, locale, landing = false }: DocsShellProps) {
+  const capture = useAnalytics();
   const pathname = usePathname();
   const prefix = localePrefix(locale);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -110,7 +119,24 @@ export function DocsShell({ children, groups, guides, locale, landing = false }:
   };
 
   const content = (
-    <div className={`siteFrame ${landing ? "landingFrame" : "docsFrame"}`} lang={locale}>
+    <div className={`siteFrame ${landing ? "landingFrame" : "docsFrame"}`} lang={locale} onClickCapture={(event) => {
+      // Delegate links so server-rendered content, docs, and search results share
+      // the same tracking without turning whole pages into client components.
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link) return;
+      const action = link.dataset.analyticsEvent;
+      if (action === "shell_setup_clicked" || action === "ci_action_clicked") {
+        capture(action);
+        return;
+      }
+      const url = new URL(link.href);
+      if (url.href.startsWith(`${siteConfig.repository}/releases`)) {
+        capture("release_link_clicked");
+      } else if (url.origin === window.location.origin) {
+        if (url.hash === "#install") capture("cta_install_clicked");
+        else if (/^(\/en)?\/docs(?:\/|$)/.test(url.pathname)) capture("docs_nav_clicked", { target: url.pathname + url.hash });
+      }
+    }}>
       <a className="skipLink" href="#main-content">{zh ? "跳至正文" : "Skip to content"}</a>
       <header className="topbar">
         <Brand href={prefix || "/"} />
@@ -174,5 +200,5 @@ export function DocsShell({ children, groups, guides, locale, landing = false }:
       )}
     </div>
   );
-  return landing ? <LatestReleaseProvider>{content}</LatestReleaseProvider> : content;
+  return content;
 }
