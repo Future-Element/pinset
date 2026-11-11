@@ -183,10 +183,23 @@ class UninstallTests(unittest.TestCase):
         self.assertEqual((external / "nested/pinset").read_text(), "keep")
 
     def test_mixed_runtime_path_and_fish_arguments_preserved(self):
-        content = f'export PYTHONPATH="{self.home}/v3/installs/python:/keep"\nfish_add_path \'{self.home}/v3/bin\' /keep\n'
+        content = f'export PYTHONPATH="{self.home}/v3/installs/python:/keep"\nfish_add_path \'{self.home}/v3/bin\' /keep\nfish_add_path --path --move --prepend \'{self.home}/v3/bin\' /keep\n'
         self.write(self.user / ".bashrc", content)
         self.run_script("--yes", expected=1)
         self.assertEqual((self.user / ".bashrc").read_text(), content)
+
+    def test_current_fish_shell_fragment_removed(self):
+        profile = self.user / ".config/fish/config.fish"
+        self.write(profile, f'fish_add_path --path --move --prepend \'{self.home}/v3/bin\'\nset -gx KEEP value\n')
+        self.run_script("--yes")
+        self.assertEqual(profile.read_text(), "set -gx KEEP value\n")
+
+    def test_unknown_fish_flags_preserved(self):
+        profile = self.user / ".config/fish/config.fish"
+        content = f'fish_add_path --append \'{self.home}/v3/bin\'\n'
+        self.write(profile, content)
+        self.run_script("--yes", expected=1)
+        self.assertEqual(profile.read_text(), content)
 
     def test_unknown_home_expression_preserved(self):
         content = 'export PINSET_HOME="${CUSTOM_HOME}/pinset"\n'

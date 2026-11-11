@@ -791,7 +791,7 @@ pinset self info
 
 ### `self shell`
 
-生成当前 shell 的 PATH 接入片段，让终端直接使用 Pinset 管理的工具命令。
+只打印 PATH 片段，不执行、不修改 shell profile、不持久化 PATH。默认安装也遵循此规则。当前没有 `--write` 参数或写入 profile 的确认向导。
 
 #### 什么时候用
 
@@ -814,7 +814,9 @@ PowerShell 当前会话使用 `pinset self shell powershell | Invoke-Expression`
 
 #### 行为细节
 
-只生成文本，不写用户 profile、不联网、不安装工具。把受管目录放在 PATH 前面；CLI 目录仍需按安装说明接入。永久生效由你保存到 shell 启动文件。
+默认目录下，检查输出后可在 Bash/Zsh 自行执行 `export PATH="$HOME/.pinset/v3/bin:$PATH"`，Fish 执行 `fish_add_path --path --move --prepend "$HOME/.pinset/v3/bin"`，PowerShell 执行打印的 `$env:PATH` 赋值。Fish 的 `--path` 避免持久化 universal 变量。自定义 `PINSET_HOME` 会改变打印目录；自定义 CLI 安装目录不改变 Provider 入口。
+
+可选持久化需要单独确认并自行编辑：明确目标 profile 文件和内容，先备份，只保留一个带重复保护的 Pinset 区块。回滚时删除该区块并新开 shell。[安装指南](https://github.com/Future-Element/pinset/blob/main/docs/installation.zh-CN.md#确认后可选持久化)列出四种 shell 的文件与幂等片段。[官网](https://pinset.future-element.com) · [主仓](https://github.com/Future-Element/pinset)。
 
 #### 参数、退出码与常见错误
 

@@ -1,0 +1,4 @@
+/.pinset/local/
+/.venv/
+__pycache__/
+*.pyc

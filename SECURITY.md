@@ -1,6 +1,28 @@
 # Security
 
-Report vulnerabilities privately through the repository's GitHub security advisory channel. Do not publish decrypted values, identity keys or host credential-store contents in issues or logs.
+## Supported versions
+
+Security fixes are applied on [`main`](https://github.com/Future-Element/pinset) and shipped in the [latest release](https://github.com/Future-Element/pinset/releases/latest). Use that release. Older tags are not supported.
+
+## Reporting a vulnerability
+
+Do not open a public GitHub issue, discussion, or pull request for an unfixed vulnerability.
+
+Report it privately with [GitHub private vulnerability reporting](https://github.com/Future-Element/pinset/security/advisories/new) (open a draft Security Advisory on this repository). Private vulnerability reporting is enabled. There is no separate security email.
+
+Include the affected component and version, how to reproduce the issue, and the impact you expect. Do not include decrypted profile values, identity keys, or host credential-store contents in the report, in issues, or in logs.
+
+## Response
+
+We acknowledge reports on a best-effort basis within 7 days. A fix and any public advisory follow after the report is confirmed. This is not a contracted response time.
+
+## Scope
+
+**In scope:** Pinset’s own code and distribution. That includes the CLI and engine, installer and uninstall scripts, verification scripts, packaging, and the [project website](https://pinset.future-element.com). How Pinset resolves, downloads, verifies, stages, and installs an artifact is in scope.
+
+**Out of scope:** Vulnerabilities in third-party tools and runtimes that Pinset installs (Node.js, pnpm, Bun, Go, Python, Temurin JDK, Rust, Flutter/Dart, and generic binaries declared by a project). Those belong to the upstream projects. Report them there.
+
+## Security properties
 
 Pinset 3 validates official artifact digests, rejects unsafe archive paths and installs through staging and atomic commits. Its receipt records the actual verification method; a checksum does not imply a verified signature. Offline cache use still validates the digest.
 

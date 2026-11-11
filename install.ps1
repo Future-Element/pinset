@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $Version = '3.1.0',
+    [string] $Version = '3.1.1',
     [string] $InstallDir = (Join-Path $(if ($env:PINSET_HOME) { $env:PINSET_HOME } else { Join-Path $env:USERPROFILE '.pinset' }) 'v3\bin')
 )
 
@@ -126,6 +126,7 @@ try {
     Write-Output "Provider command entries are in $(Join-Path $managedRoot 'bin')"
     Write-Output "Runtime payloads remain isolated under PINSET_HOME\v3\installs and are downloaded by explicit install commands."
     Write-Output "For this PowerShell session: $shellIntegration"
+    Write-Output 'Pinset does not modify shell profiles or persist PATH changes. Review the printed fragment before applying it.'
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force

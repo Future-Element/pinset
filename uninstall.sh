@@ -134,7 +134,7 @@ filter_profile() {
         if(line ~ /^[[:space:]]*(export[[:space:]]+)?(GOPATH|PYTHONPATH)[[:space:]]*=/ && index(line,":")) {print; bad=1; next}
         if(line ~ /^[[:space:]]*(export[[:space:]]+)?(JAVA_HOME|GOROOT|GOPATH|CARGO_HOME|RUSTUP_HOME|FLUTTER_ROOT|VIRTUAL_ENV|PYTHONHOME|PYTHONPATH)[[:space:]]*=/) next
         if(line ~ /^[[:space:]]*fish_add_path[[:space:]]/) {
-            value=line; sub(/^[[:space:]]*fish_add_path[[:space:]]+(--prepend[[:space:]]+)?/,"",value)
+            value=line; sub(/^[[:space:]]*fish_add_path[[:space:]]+((--path[[:space:]]+--move[[:space:]]+)?--prepend[[:space:]]+)?/,"",value)
             valid=0
             for(i=1;i<=n;i++) if(r[i]!="" && (value==sq r[i] "/bin" sq || value=="\"" r[i] "/bin\"" || value==r[i] "/bin")) valid=1
             if(valid) next

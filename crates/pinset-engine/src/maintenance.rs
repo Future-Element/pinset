@@ -223,7 +223,10 @@ impl Services {
                 "$env:PATH = '{}' + [IO.Path]::PathSeparator + $env:PATH\n",
                 bin.replace('\'', "''")
             ),
-            "fish" => format!("fish_add_path --prepend '{}'\n", bin.replace('\'', "\\'")),
+            "fish" => format!(
+                "fish_add_path --path --move --prepend '{}'\n",
+                bin.replace('\\', "\\\\").replace('\'', "\\'")
+            ),
             _ => format!("export PATH='{}':\"$PATH\"\n", bin.replace('\'', "'\\''")),
         }
     }

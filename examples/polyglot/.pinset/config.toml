@@ -1,0 +1,8 @@
+protocol = "pinset/3"
+schema = 3
+project_id = "polyglot-example"
+
+[tools]
+node = "24"
+python = "3.14"
+go = "1.25"

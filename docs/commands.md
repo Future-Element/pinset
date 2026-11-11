@@ -791,7 +791,7 @@ No command-specific options. Success exits `0`; basic environment errors exit `1
 
 ### `self shell`
 
-Generate a PATH snippet so your shell can run Pinset-managed tool commands directly.
+Print a PATH fragment without executing it, editing shell profiles or persisting PATH. Installation follows the same default. This version has no `--write` option or profile-writing wizard.
 
 #### When to use
 
@@ -814,7 +814,9 @@ For the current PowerShell session: `pinset self shell powershell | Invoke-Expre
 
 #### Behavior
 
-Generates text only, without profile writes, network or installation. Prepends the managed command directory to PATH. CLI paths still require installer setup. Save the snippet in shell startup configuration for persistent use.
+For the default directory, review the output and then manually run `export PATH="$HOME/.pinset/v3/bin:$PATH"` in Bash/Zsh, `fish_add_path --path --move --prepend "$HOME/.pinset/v3/bin"` in Fish, or the printed `$env:PATH` assignment in PowerShell. Fish's `--path` avoids persistent universal variables. A custom `PINSET_HOME` changes the printed directory; custom CLI install directories do not change Provider entries.
+
+Optional persistence requires your separate review and manual edit. Confirm the exact profile file and content, back it up, and keep one guarded Pinset block. Remove that block and open a fresh shell to roll back. The [installation guide](https://github.com/Future-Element/pinset/blob/main/docs/installation.md#optional-persistence-after-review) lists Bash/Zsh/Fish/PowerShell files and repeat-safe snippets. [Website](https://pinset.future-element.com) · [Main repository](https://github.com/Future-Element/pinset).
 
 #### Parameters, exit codes and common errors
 

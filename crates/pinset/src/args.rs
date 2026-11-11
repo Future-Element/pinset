@@ -238,6 +238,7 @@ pub enum Shell {
 #[derive(Subcommand, Debug)]
 pub enum SelfCommand {
     Info,
+    /// Print a PATH fragment without editing shell profiles.
     Shell {
         #[arg(value_enum)]
         shell: Shell,

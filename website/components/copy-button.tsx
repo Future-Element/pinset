@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export function CopyButton({ value, label = "Copy", copiedLabel = "Copied", errorLabel = "Select and copy manually" }: { value: string; label?: string; copiedLabel?: string; errorLabel?: string }) {
+export function CopyButton({ value, label = "Copy", copiedLabel = "Copied", errorLabel = "Select and copy manually", onCopied }: { value: string; label?: string; copiedLabel?: string; errorLabel?: string; onCopied?: () => void }) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -14,7 +14,9 @@ export function CopyButton({ value, label = "Copy", copiedLabel = "Copied", erro
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
       setFailed(true);
+      return;
     }
+    onCopied?.();
   }
 
   return (
