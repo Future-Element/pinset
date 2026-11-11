@@ -88,10 +88,10 @@ PINSET_CHANNEL_CLI="$(aqua which pinset)"
 
 向 aqua 上游提交时，按[贡献指南](https://github.com/aquaproj/aqua-registry/blob/main/docs/add_package.md)在个人 fork 运行 `argd s Future-Element/pinset`，把候选配置与脚手架输出核对，再运行 `argd t`、签名提交并提 PR。PR #63088 已执行这些步骤并获合并，且通过 Conftest、格式检查及 Linux/Windows x64 原生安装和托管入口升级验证；其他平台仅验证下载解包。上游按其格式维护历史版本布局，应以[标准注册表中的配置](https://github.com/aquaproj/aqua-registry/tree/main/pkgs/Future-Element/pinset)为准。
 
-## 卸载和保留数据
+## 卸载与完整清理
 
 使用对应包管理器升级和卸载其包文件。`pinset self update` 会替换解析到的 CLI/router，可能绕过包管理器清单，因此渠道安装应继续由所属包管理器升级。
 
 包管理器卸载只删除它管理的包文件。`PINSET_HOME` 中的工具、状态、复制的 CLI/router 和命令入口会保留；如果该目录仍在 PATH 前面，卸载后 `pinset` 命令仍可能可用。没有渠道 uninstaller 会递归删除整个 Pinset home。
 
-如果用户明确希望移除托管 home，使用仓库既有 [uninstall.sh](../uninstall.sh) 或 [uninstall.ps1](../uninstall.ps1)。先用 `--plan` / `-Plan` 查看目标，再按脚本交互确认；脚本验证 Pinset 3 所有权后删除 `PINSET_HOME/v3`，包括其中的 SDK、状态和命令入口。包管理器目录和用户自行添加的 shell 配置需分别处理。维护流程不自动执行这一步。
+完整清理使用 [uninstall.sh](../uninstall.sh) 或 [uninstall.ps1](../uninstall.ps1)，详见[完全卸载说明](../docs/uninstall.zh-CN.md)。先用 `--plan` / `-Plan` 查看目标，再交互确认或传入 `--yes` / `-Yes`。脚本清理已识别的托管 SDK、缓存、3.x / 2.x 状态、迁移备份、环境变量和 shell 配置，以及登记项目中的 Pinset 文件与所属虚拟环境；还会处理支持的包管理器和系统凭据。未知位置通过参数补充；出现未完成项时按报告处理后重试。维护流程不自动执行卸载。

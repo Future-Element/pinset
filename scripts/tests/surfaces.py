@@ -15,6 +15,8 @@ with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as target:
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(fixture)))
 threading.Thread(target=server.serve_forever,daemon=True).start()
 home=fixture/'home';legacy=home/'installs';legacy.mkdir(parents=True);(legacy/'preserve').write_text('old data')
+(home/'state').mkdir()
+(home/'state/global.toml').write_text('schema = 3\n[tools]\n')
 env={**os.environ,'HOME':str(fixture),'PINSET_HOME':str(home),'PINSET_INSTALL_TEST_MODE':'1',
      'PINSET_TEST_RELEASE_BASE_URL':f'http://127.0.0.1:{server.server_port}'}
 try:
@@ -29,7 +31,7 @@ try:
     run(['bash','uninstall.sh','--plan'],env=env)
     assert (home/'v3/bin/pinset').exists()
     run(['bash','uninstall.sh','--yes'],env=env)
-    assert not (home/'v3').exists() and (legacy/'preserve').read_text()=='old data'
+    assert not (home/'v3').exists() and not legacy.exists()
     external=fixture/'external/v3';external.mkdir(parents=True);(external/'preserve').write_text('outside')
     run(['bash','uninstall.sh','--yes','--pinset-home',external.parent],env=env,expected=1)
     assert (external/'preserve').exists()
@@ -242,4 +244,4 @@ from channels import verify_channels
 progress = verify_progress(fixture)
 updates = verify_self_update(root, fixture, version)
 channels = verify_channels(root)
-report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='retained',progress=progress,self_update=updates,setup_action=action_checks,channels=channels)
+report('distribution',installer='real fixture binaries with checksum verification',custom_install_path='managed v3 entries precede obsolete launchers; spaces and apostrophes preserved',old_data='owned legacy data removed by complete uninstall',progress=progress,self_update=updates,setup_action=action_checks,channels=channels)

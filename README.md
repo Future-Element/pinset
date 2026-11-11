@@ -61,6 +61,8 @@ Shell integration is explicit: `pinset self shell bash` (also zsh, fish, powersh
 
 Provider command entries are always in `PINSET_HOME/v3/bin`, including when the CLI uses a custom install directory. Put this managed directory first on PATH using `pinset self shell`; earlier 2.x launchers in other directories can otherwise shadow the new entries. In PowerShell, apply the current-session fragment with `pinset self shell powershell | Out-String | Invoke-Expression`.
 
+For complete removal of managed toolchains, state and shell/environment integration, use the [standalone uninstall scripts](docs/uninstall.md). Preview with `--plan` / `-Plan` before running the destructive cleanup.
+
 ## Evidence and encrypted profiles
 
 `check` is read-only by default. `--deep` inspects installed payloads; `--probe` explicitly runs bounded probes and records the host, executable, exact version and time. A configured binding is not an observation of an IDE, daemon, compiler override or user build.
