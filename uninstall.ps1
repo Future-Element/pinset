@@ -17,6 +17,21 @@ Set-StrictMode -Version Latest
 # Small adapters keep destructive integration tests isolated from real settings.
 function Get-PinsetEnvironment([string]$Scope) { [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]$Scope) }
 function Set-PinsetEnvironment([string]$Name,$Value,[string]$Scope) { [Environment]::SetEnvironmentVariable($Name,$Value,[EnvironmentVariableTarget]$Scope) }
+function Test-PinsetAdministrator {
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    try { ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
+    finally { $identity.Dispose() }
+}
+function Get-PinsetRunningProcesses {
+    # Process image paths are sufficient to detect resident hard-linked shims.
+    # Do not collect command lines: those can contain credentials.
+    foreach($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            $image=$process.Path
+            if($image) { [pscustomobject]@{Name=$process.ProcessName; Id=$process.Id; Path=$image} }
+        } catch { }
+    }
+}
 function Get-PinsetFullPath([string]$Path) {
     $Path=[Environment]::ExpandEnvironmentVariables($Path)
     if ($Path.StartsWith('\\?\UNC\',[StringComparison]::OrdinalIgnoreCase)) { $Path='\\'+$Path.Substring(8) }
@@ -47,17 +62,83 @@ function Assert-PinsetDeletionRoot([string]$Path) {
     }
     $full
 }
-function Remove-PinsetTree([string]$Path,[string]$Boundary) {
+function Remove-PinsetNode([string]$Path,[bool]$Directory,[bool]$Reparse) {
+    if($Reparse) {
+        if($Directory) {[IO.Directory]::Delete($Path)} else {[IO.File]::Delete($Path)}
+    } else {Remove-Item -LiteralPath $Path -Force}
+}
+function Invoke-PinsetDeleteNode([string]$Path,[bool]$Directory,[bool]$Reparse) {
+    for($attempt=1;$attempt -le 3;$attempt++) {
+        try {Remove-PinsetNode $Path $Directory $Reparse; return $true}
+        catch {
+            if($attempt -lt 3) {Start-Sleep -Milliseconds 100}
+            else {
+                $message="Cannot remove '$Path': $($_.Exception.Message) Close applications using Pinset runtimes and retry; permissions or a running hard-linked shim can prevent deletion."
+                $script:failures.Add($message); Write-Warning $message; return $false
+            }
+        }
+    }
+}
+function Save-PinsetRecoveryMetadata([string]$Path,[string]$Boundary) {
+    $item=Get-Item -LiteralPath $Path -Force
+    $candidates=@($Path)
+    if($item.PSIsContainer) {
+        $candidates=@('projects.json','identities.toml','global.toml','global.lock' | ForEach-Object {Join-Path $Path $_})
+        $registry=Join-Path $Path 'projects'
+        if(Test-Path -LiteralPath $registry -PathType Container) {[void](Assert-PinsetPath $registry); $candidates+=@(Get-ChildItem -LiteralPath $registry -Filter '*.toml' -File | ForEach-Object {$_.FullName})}
+    }
+    foreach($candidate in $candidates) {
+        if(Test-Path -LiteralPath $candidate -PathType Leaf) {
+            [void](Assert-PinsetPath $candidate)
+            $script:recoverySnapshots[$candidate]=@{Boundary=$Boundary;Bytes=[IO.File]::ReadAllBytes($candidate)}
+        }
+    }
+}
+function Restore-PinsetRecoveryMetadata {
+    foreach($entry in $script:recoverySnapshots.GetEnumerator()) {
+        $path=$entry.Key; $snapshot=$entry.Value
+        # Successfully deleted trees remain deleted. Restore only missing
+        # ownership/inventory files inside a tree that could not be removed.
+        if((Test-Path -LiteralPath $snapshot.Boundary) -and -not (Test-Path -LiteralPath $path)) {
+            try {
+                [void](Assert-PinsetDeletionRoot $snapshot.Boundary); [void](Assert-PinsetPath $path)
+                if(-not (Test-PinsetUnder $path $snapshot.Boundary)) {throw 'Recovery path escaped its original boundary'}
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path)); [IO.File]::WriteAllBytes($path,$snapshot.Bytes)
+            } catch {$script:failures.Add("Cannot retain recovery metadata '$path': $($_.Exception.Message)")}
+        }
+    }
+}
+function Remove-PinsetTree([string]$Path,[string]$Boundary,[switch]$FinalizeMetadata) {
     # One level at a time; SDK junctions/symlinks are unlinked, never traversed.
     $full=Get-PinsetFullPath $Path
     if (-not (Test-PinsetUnder $full $Boundary)) { throw "Deletion escaped boundary: $full" }
-    $item=Get-Item -LiteralPath $full -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        if ($item.PSIsContainer) { [IO.Directory]::Delete($full) } else { [IO.File]::Delete($full) }
+    try {$item=Get-Item -LiteralPath $full -Force}
+    catch {$message="Cannot inspect '$full': $($_.Exception.Message)"; $script:failures.Add($message); Write-Warning $message; return $false}
+    $reparse=[bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    # Keep ownership and project registries until every payload deletion has
+    # succeeded. A failed/racing lock must not make the next run unrecognizable.
+    if(-not $FinalizeMetadata -and -not $reparse -and $item.Name -in @('.pinset-home.json','.pinset-owner.toml','.pinset-venv.toml','.bootstrap.lock','pyvenv.cfg','config.toml','lock.toml','pinset.exe','pinset-shim.exe','state','global')) {
+        if($item.Name -notin @('pinset.exe','pinset-shim.exe','.bootstrap.lock')) {
+            try {Save-PinsetRecoveryMetadata $full $Boundary}
+            catch {$message="Cannot read recovery metadata '$full': $($_.Exception.Message)"; $script:failures.Add($message); Write-Warning $message; return $false}
+        }
+        [void]$script:deferredMetadata.Add($full); return $true
+    }
+    if ($reparse) {
+        return (Invoke-PinsetDeleteNode $full $item.PSIsContainer $true)
     } elseif ($item.PSIsContainer) {
-        foreach ($child in @(Get-ChildItem -LiteralPath $full -Force)) { Remove-PinsetTree $child.FullName $Boundary }
-        Remove-Item -LiteralPath $full -Force
-    } else { Remove-Item -LiteralPath $full -Force }
+        $success=$true
+        try {$children=@(Get-ChildItem -LiteralPath $full -Force)}
+        catch {$message="Cannot inspect directory '$full': $($_.Exception.Message)"; $script:failures.Add($message); Write-Warning $message; return $false}
+        $markers=@('.pinset-home.json','.pinset-owner.toml','.pinset-venv.toml','pyvenv.cfg','config.toml')
+        foreach ($child in ($children | Sort-Object @{Expression={if($_.Name -in $markers){1}else{0}}},Name)) {
+            if($FinalizeMetadata -and -not $success -and $child.Name -in ($markers+@('state','global','lock.toml'))) {continue}
+            if(-not (Remove-PinsetTree $child.FullName $Boundary -FinalizeMetadata:$FinalizeMetadata)) {$success=$false}
+        }
+        if(-not $success) {return $false}
+        if(-not $FinalizeMetadata -and @(Get-ChildItem -LiteralPath $full -Force).Count) {return $true}
+        return (Invoke-PinsetDeleteNode $full $true $false)
+    } else { return (Invoke-PinsetDeleteNode $full $false $false) }
 }
 function Invoke-PinsetAction([string]$Description,[scriptblock]$Action) {
     Write-Output $Description
@@ -180,10 +261,14 @@ namespace PinsetUninstall {
 }
 
 $script:failures=[Collections.Generic.List[string]]::new(); $script:unresolved=[Collections.Generic.List[string]]::new()
+$script:deferredMetadata=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$script:recoverySnapshots=@{}
 $homes=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $bins=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $owned=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $trees=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$homeMetadataTrees=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$projectStateTrees=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $files=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $projects=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $managerRoots=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -222,7 +307,7 @@ foreach ($base in $homes) {
     if (Test-Path -LiteralPath $v3) {
         [void](Assert-PinsetPath $v3); $marker=Join-Path $v3 '.pinset-home.json'; [void](Assert-PinsetPath $marker)
         if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or (Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json).protocol -ne 'pinset/3') { throw "Unowned Pinset v3 directory: $v3" }
-        [void]$trees.Add($v3); [void]$owned.Add($v3); $hasV3=$true
+        [void]$trees.Add($v3); [void]$homeMetadataTrees.Add($v3); [void]$owned.Add($v3); $hasV3=$true
         $registry=Join-Path $v3 'state\projects.json'
         if (Test-Path -LiteralPath $registry -PathType Leaf) {
             [void](Assert-PinsetPath $registry)
@@ -241,7 +326,7 @@ foreach ($base in $homes) {
     }
     if ($base -eq (Join-Path $env:LOCALAPPDATA 'Pinset') -and (Test-Path -LiteralPath $base)) { $legacy=$true }
     if ($legacy) {
-        foreach ($name in @('bin','state','installs','cache','downloads')) { $path=Join-Path $base $name; if (Test-Path -LiteralPath $path) { [void]$trees.Add((Assert-PinsetPath $path)); [void]$owned.Add($path) } }
+        foreach ($name in @('bin','state','installs','cache','downloads')) { $path=Join-Path $base $name; if (Test-Path -LiteralPath $path) { [void]$trees.Add((Assert-PinsetPath $path)); [void]$owned.Add($path); if($name -eq 'state'){[void]$homeMetadataTrees.Add($path)} } }
         $registry=Join-Path $base 'state\projects'
         if (Test-Path -LiteralPath $registry) {
             [void](Assert-PinsetPath $registry)
@@ -275,7 +360,7 @@ foreach ($root in $projects) {
         $idMatch=[regex]::Match($text,'(?m)^\s*project_id\s*=\s*"([^"]+)"\s*$')
         if ($text -notmatch '(?m)^\s*protocol\s*=\s*"pinset/3"\s*$' -or -not $idMatch.Success) { throw "Project state lacks Pinset 3 ownership: $state" }
         $projectId=$idMatch.Groups[1].Value
-        [void]$trees.Add($state); [void]$owned.Add($state)
+        [void]$trees.Add($state); [void]$projectStateTrees.Add($state); [void]$owned.Add($state)
     }
     foreach ($entry in @(Get-ChildItem -LiteralPath $root -Directory -Force | Where-Object { $_.Name -eq '.venv' -or $_.Name -like '.venv.pinset-v2-*' -or $_.Name -like '.venv.pinset-v3-failed-*' })) {
         $marker=Join-Path $entry.FullName '.pinset-owner.toml'
@@ -343,13 +428,13 @@ foreach ($scope in $scopes) {
         $name=[string]$entry.Key; $old=[string]$entry.Value; $new=$old
         if ($name -like 'PINSET_*') { $new=$null }
         else {
-            $kept=[Collections.Generic.List[string]]::new()
+            $kept=[Collections.Generic.List[string]]::new(); $removedOwnedComponent=$false
             foreach ($part in ($old -split ';')) {
                 $remove=$false; $candidate=[Environment]::ExpandEnvironmentVariables($part.Trim().Trim('"'))
                 if ($candidate -match '^(?:[A-Za-z]:[\\/]|\\\\)') { try { $candidate=Get-PinsetFullPath $candidate; foreach ($ownedRoot in $owned) { if (Test-PinsetUnder $candidate $ownedRoot) { $remove=$true; break } } } catch {} }
-                if (-not $remove) { $kept.Add($part) }
+                if ($remove) {$removedOwnedComponent=$true} else { $kept.Add($part) }
             }
-            $new=$kept -join ';'; if (-not $new -and $name -ne 'Path') { $new=$null }
+            if($removedOwnedComponent) {$new=$kept -join ';'; if (-not $new -and $name -ne 'Path') { $new=$null }}
         }
         if ($new -cne $old) { $envChanges.Add(@{Scope=$scope; Name=$name; Value=$new}) }
     }
@@ -359,6 +444,27 @@ foreach ($path in @($trees)+@($files)) { Write-Output "Remove: $path" }
 foreach ($path in $profileChanges.Keys) { Write-Output "Clean profile: $path" }
 foreach ($change in $envChanges) { Write-Output "Clean environment: $($change.Scope)/$($change.Name)" }
 Write-Output 'Remove Credential Manager services dev.pinset.identity and dev.pinset.identity.v3; unregister WinGet/Scoop Pinset when present.'
+$preflightIssues=[Collections.Generic.List[string]]::new()
+$machineChanges=@($envChanges | Where-Object {$_.Scope -eq 'Machine'})
+if($machineChanges.Count -and -not (Test-PinsetAdministrator)) {
+    $names=@($machineChanges | ForEach-Object {'Machine/'+$_.Name}) -join ', '
+    $preflightIssues.Add("Administrator PowerShell is required to update $names. Open PowerShell with 'Run as administrator' and rerun this script.")
+}
+$blockedProcesses=[Collections.Generic.List[object]]::new()
+foreach($process in @(Get-PinsetRunningProcesses)) {
+    try {$image=Get-PinsetFullPath $process.Path} catch {continue}
+    $blocked=$files.Contains($image)
+    foreach($tree in $trees) {if(Test-PinsetUnder $image $tree){$blocked=$true;break}}
+    if($blocked) {$blockedProcesses.Add($process)}
+}
+if($blockedProcesses.Count) {
+    $details=@($blockedProcesses | Sort-Object Id -Unique | ForEach-Object {"$($_.Name) (PID $($_.Id)): $($_.Path)"}) -join "`n"
+    $preflightIssues.Add("Pinset-managed programs are still running. Close their applications, development servers and terminals, then retry. Hard-linked shim aliases can keep another name such as xjc.exe locked.`n$details")
+}
+if($preflightIssues.Count) {
+    if($Plan) {foreach($issue in $preflightIssues){Write-Warning $issue}}
+    else {throw (($preflightIssues -join "`n")+"`nPreflight stopped; no uninstall changes have been made.")}
+}
 if (-not $Plan -and -not $Yes) { if ([Console]::IsInputRedirected) { throw 'Use -Yes for noninteractive execution or -Plan to preview.' }; if ((Read-Host 'Permanently remove listed Pinset data? [y/N]') -notmatch '^[yY]$') { return } }
 if (Get-Command winget -ErrorAction SilentlyContinue) {
     Invoke-PinsetAction 'Check/uninstall WinGet FutureElement.Pinset' {
@@ -383,8 +489,19 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
 Invoke-PinsetAction 'Remove Pinset Credential Manager identities' { Remove-PinsetCredentials }
 foreach ($path in $profileChanges.Keys) { $change=$profileChanges[$path]; Invoke-PinsetAction "Clean profile: $path" { [void](Assert-PinsetPath $path); [IO.File]::WriteAllText($path,$change.Text,$change.Encoding) } }
 foreach ($change in $envChanges) { Invoke-PinsetAction "Clean environment: $($change.Scope)/$($change.Name)" { Set-PinsetEnvironment $change.Name $change.Value $change.Scope } }
-foreach ($path in $files) { Invoke-PinsetAction "Remove command/file: $path" { if (Test-Path -LiteralPath $path) { [void](Assert-PinsetPath $path -AllowLeafLink); Remove-Item -LiteralPath $path -Force } } }
-foreach ($path in ($trees | Sort-Object Length -Descending)) { Invoke-PinsetAction "Remove managed directory: $path" { if (Test-Path -LiteralPath $path) { $checked=Assert-PinsetDeletionRoot $path; Remove-PinsetTree $checked $checked } } }
+foreach ($path in ($trees | Sort-Object Length -Descending)) { Invoke-PinsetAction "Remove managed payloads: $path" { if (Test-Path -LiteralPath $path) { $checked=Assert-PinsetDeletionRoot $path; [void](Remove-PinsetTree $checked $checked) } } }
+if($script:failures.Count -eq 0) {
+    # Project metadata must finalize before global registries, regardless of
+    # path length. Stop on a failure so registered roots remain discoverable.
+    $finalTrees=@($trees | Sort-Object @{Expression={if($homeMetadataTrees.Contains($_)){2}elseif($projectStateTrees.Contains($_)){1}else{0}}},@{Expression={$_.Length};Descending=$true})
+    foreach ($path in $finalTrees) {
+        Invoke-PinsetAction "Finalize managed directory: $path" { if (Test-Path -LiteralPath $path) { $checked=Assert-PinsetDeletionRoot $path; [void](Remove-PinsetTree $checked $checked -FinalizeMetadata) } }
+        if($script:failures.Count) {Restore-PinsetRecoveryMetadata; break}
+    }
+}
+if($script:failures.Count -eq 0) {
+    foreach ($path in $files) { Invoke-PinsetAction "Remove command/file: $path" { if (Test-Path -LiteralPath $path) { [void](Assert-PinsetPath $path -AllowLeafLink); [void](Invoke-PinsetDeleteNode $path $false $false) } } }
+} elseif(-not $Plan) {Write-Warning 'Remaining ownership metadata, project registries and command files were retained so the uninstall can be retried.'}
 foreach ($base in $homes) {
     if (Test-Path -LiteralPath $base) {
         if (@(Get-ChildItem -LiteralPath $base -Force).Count -eq 0) { Invoke-PinsetAction "Remove empty home: $base" { [void](Assert-PinsetDeletionRoot $base); Remove-Item -LiteralPath $base -Force } }

@@ -36,12 +36,15 @@ try {
     $registry=Join-Path $v3 'state\projects.json'; New-Item -ItemType Directory -Path (Split-Path -Parent $registry) | Out-Null
     $map=@{}; $map[$project]=Join-Path $project '.pinset\config.toml'; [IO.File]::WriteAllText($registry,($map | ConvertTo-Json))
     $env:USERPROFILE=$user; $env:LOCALAPPDATA=$local; $env:APPDATA=Join-Path $user 'AppData\Roaming'; $env:PINSET_HOME=$null
-    $script:testEnvironment=@{Process=@{}; User=@{PINSET_HOME=$homePath; Path="$v3\bin;C:\Unrelated\bin"; JAVA_HOME="$v3\installs\java"; KEEP='yes'}; Machine=@{}}
+    $script:testEnvironment=@{Process=@{EMPTY_PROCESS=''; OPAQUE='literal|opaque;  ;; '}; User=@{PINSET_HOME=$homePath; Path="$v3\bin;C:\Unrelated\bin"; JAVA_HOME="$v3\installs\java"; KEEP='yes'; PIXSO_OAUTH_MCP_TOKEN=''}; Machine=@{Path="$v3\bin;C:\Machine\bin"; EMPTY_MACHINE=''}}
     $script:testChanges=[Collections.Generic.List[object]]::new(); $script:credentialCalls=0
+    $script:testAdministrator=$false; $script:testProcesses=@()
     $replacements=@{
         'Get-PinsetEnvironment'='function Get-PinsetEnvironment([string]$Scope) { $script:testEnvironment[$Scope] }'
         'Set-PinsetEnvironment'='function Set-PinsetEnvironment([string]$Name,$Value,[string]$Scope) { $script:testChanges.Add(@{Name=$Name; Value=$Value; Scope=$Scope}); if($null -eq $Value){$script:testEnvironment[$Scope].Remove($Name)}else{$script:testEnvironment[$Scope][$Name]=$Value} }'
         'Remove-PinsetCredentials'='function Remove-PinsetCredentials { $script:credentialCalls++ }'
+        'Test-PinsetAdministrator'='function Test-PinsetAdministrator { $script:testAdministrator }'
+        'Get-PinsetRunningProcesses'='function Get-PinsetRunningProcesses { $script:testProcesses }'
     }
     $modified=$source
     foreach($fn in @($ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true) | Sort-Object {$_.Extent.StartOffset} -Descending)) {
@@ -54,6 +57,21 @@ try {
     Assert-Test (Test-Path -LiteralPath $v3) 'Plan removed SDK data'
     Assert-Test ($script:testChanges.Count -eq 0 -and $script:credentialCalls -eq 0) 'Plan mutated environment or keyring'
     Assert-Test ([IO.File]::ReadAllText($profilePath) -eq $profileText) 'Plan modified profile'
+    $preflightError=''
+    try {& ([scriptblock]::Create($modified)) -Yes | Out-Null} catch {$preflightError=$_.Exception.Message}
+    Assert-Test ($preflightError -match 'Administrator PowerShell.+Machine/Path') 'Nonadmin machine change was not rejected up front'
+    Assert-Test ($script:testChanges.Count -eq 0 -and $script:credentialCalls -eq 0 -and (Test-Path -LiteralPath $v3)) 'Nonadmin preflight allowed destructive actions'
+    Assert-Test ([IO.File]::ReadAllText($profilePath) -eq $profileText) 'Nonadmin preflight modified profile'
+    $script:testProcesses=@([pscustomobject]@{Name='node';Id=424242;Path=(Join-Path $v3 'bin\node.exe')})
+    Assert-Test (-not (Test-Path -LiteralPath $script:testProcesses[0].Path)) 'Deleted-image fixture unexpectedly exists'
+    $preflightError=''
+    try {& ([scriptblock]::Create($modified)) -Yes | Out-Null} catch {$preflightError=$_.Exception.Message}
+    Assert-Test ($preflightError -match 'Administrator PowerShell' -and $preflightError -match 'node \(PID 424242\)') 'Combined admin/busy process failure omitted an issue'
+    Assert-Test ($script:testChanges.Count -eq 0 -and $script:credentialCalls -eq 0) 'Busy deleted-image preflight mutated settings/credentials'
+    $script:testAdministrator=$true
+    & ([scriptblock]::Create($modified)) -Plan | Out-Null
+    Assert-Test ($script:testChanges.Count -eq 0 -and $script:credentialCalls -eq 0) 'Busy Plan mutated settings/credentials'
+    $script:testProcesses=@()
     & ([scriptblock]::Create($modified)) -Yes | Out-Null
     Assert-Test (-not (Test-Path -LiteralPath $v3)) 'Managed home remained'
     Assert-Test (-not (Test-Path -LiteralPath (Join-Path $project '.pinset'))) 'Registered project state remained'
@@ -65,9 +83,57 @@ try {
     Assert-Test ([IO.File]::ReadAllText($profilePath) -eq "`$env:KEEP = 'ok'`r`n") 'Profile cleanup damaged unrelated content'
     Assert-Test ($script:testEnvironment.User.Path -eq 'C:\Unrelated\bin') 'Unrelated PATH entry was damaged'
     Assert-Test ($script:testEnvironment.User.KEEP -eq 'yes') 'Unrelated variable was damaged'
+    Assert-Test ($script:testEnvironment.Process.ContainsKey('EMPTY_PROCESS') -and $script:testEnvironment.Process.EMPTY_PROCESS -ceq '') 'Unrelated empty Process variable was deleted'
+    Assert-Test ($script:testEnvironment.User.ContainsKey('PIXSO_OAUTH_MCP_TOKEN') -and $script:testEnvironment.User.PIXSO_OAUTH_MCP_TOKEN -ceq '') 'Unrelated empty User variable was deleted'
+    Assert-Test ($script:testEnvironment.Machine.ContainsKey('EMPTY_MACHINE') -and $script:testEnvironment.Machine.EMPTY_MACHINE -ceq '') 'Unrelated empty Machine variable was deleted'
+    Assert-Test ($script:testEnvironment.Process.OPAQUE -ceq 'literal|opaque;  ;; ') 'Unrelated opaque value was normalized'
+    Assert-Test (@($script:testChanges | Where-Object {$_.Name -in @('EMPTY_PROCESS','PIXSO_OAUTH_MCP_TOKEN','EMPTY_MACHINE','OPAQUE')}).Count -eq 0) 'Unrelated variable was listed for mutation'
+    Assert-Test ($script:testEnvironment.Machine.Path -ceq 'C:\Machine\bin') 'Machine PATH cleanup damaged unrelated component'
     Assert-Test (-not $script:testEnvironment.User.ContainsKey('JAVA_HOME') -and -not $script:testEnvironment.User.ContainsKey('PINSET_HOME')) 'Owned variables remained'
     & ([scriptblock]::Create($modified)) -Yes | Out-Null
     Assert-Test (Test-Path -LiteralPath (Join-Path $external 'keep')) 'Idempotent rerun damaged unrelated directory'
+    # Simulate a lock racing with a clean preflight; continue other SDK files,
+    # retain ownership/registry metadata and succeed after the handle is closed.
+    foreach($directory in @((Join-Path $v3 'bin'),(Join-Path $v3 'installs\fixture'),(Join-Path $v3 'state'))) {New-Item -ItemType Directory -Path $directory -Force | Out-Null}
+    [IO.File]::WriteAllText((Join-Path $v3 '.pinset-home.json'),'{"protocol":"pinset/3"}')
+    [IO.File]::WriteAllText((Join-Path $v3 'state\projects.json'),'{}')
+    $lockedPath=Join-Path $v3 'bin\xjc.exe'; [IO.File]::WriteAllText($lockedPath,'locked-fixture')
+    $afterLocked=Join-Path $v3 'bin\z-after-lock'; [IO.File]::WriteAllText($afterLocked,'delete sibling')
+    $otherSdk=Join-Path $v3 'installs\fixture\payload'; [IO.File]::WriteAllText($otherSdk,'delete other SDK')
+    $handle=[IO.File]::Open($lockedPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+    try {
+        $lockedError=''; try {& ([scriptblock]::Create($modified)) -Yes -WarningAction SilentlyContinue | Out-Null} catch {$lockedError=$_.Exception.Message}
+        Assert-Test ($lockedError -match 'needs attention') 'Locked leaf was reported as successful removal'
+        Assert-Test (@($script:failures | Where-Object {$_.Contains($lockedPath)}).Count -gt 0) 'Denied leaf path missing from errors'
+        Assert-Test (Test-Path -LiteralPath $lockedPath) 'Locked fixture was unexpectedly removed'
+        Assert-Test (-not (Test-Path -LiteralPath $afterLocked) -and -not (Test-Path -LiteralPath $otherSdk)) 'Locked leaf prevented sibling progress'
+        Assert-Test (Test-Path -LiteralPath (Join-Path $v3 '.pinset-home.json')) 'Failure removed home ownership marker'
+        Assert-Test (Test-Path -LiteralPath (Join-Path $v3 'state\projects.json')) 'Failure removed registered project inventory'
+    } finally {$handle.Dispose()}
+    & ([scriptblock]::Create($modified)) -Yes | Out-Null
+    Assert-Test (-not (Test-Path -LiteralPath $v3)) 'Retry after releasing file lock failed'
+    # A metadata-only failure occurs in phase two. Environments must finalize
+    # before project config and the global inventory, independent of path length.
+    $shortProject=Join-Path $fixture 'p'; $shortState=Join-Path $shortProject '.pinset'; $shortVenv=Join-Path $shortProject '.venv'
+    foreach($directory in @($shortState,$shortVenv,(Join-Path $v3 'state'),(Join-Path $v3 'bin'))) {New-Item -ItemType Directory -Path $directory -Force | Out-Null}
+    [IO.File]::WriteAllText((Join-Path $v3 '.pinset-home.json'),'{"protocol":"pinset/3"}')
+    $retryRegistry=@{}; $retryRegistry[$shortProject]=Join-Path $shortState 'config.toml'; [IO.File]::WriteAllText((Join-Path $v3 'state\projects.json'),($retryRegistry | ConvertTo-Json))
+    [IO.File]::WriteAllText((Join-Path $shortState 'config.toml'),"protocol = `"pinset/3`"`nproject_id = `"metadata-retry`"`n")
+    [IO.File]::WriteAllText((Join-Path $shortVenv '.pinset-owner.toml'),("protocol = `"pinset/3`"`nproject_id = `"metadata-retry`"`n[directory]`nroot = "+($shortProject | ConvertTo-Json -Compress)+"`n"))
+    $script:testFinalFailure=Join-Path $shortVenv 'pyvenv.cfg'; [IO.File]::WriteAllText($script:testFinalFailure,'home = fixture')
+    $retainedCommand=Join-Path $v3 'bin\pinset.exe'; [IO.File]::WriteAllText($retainedCommand,'fixture-command')
+    $modifiedAst=[Management.Automation.Language.Parser]::ParseInput($modified,[ref]$null,[ref]$null)
+    $nodeFunction=$modifiedAst.Find({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq 'Remove-PinsetNode'},$true)
+    $nodeReplacement=$nodeFunction.Extent.Text.Replace('function Remove-PinsetNode(','function Remove-PinsetNodeActual(')+"`n"+'function Remove-PinsetNode([string]$Path,[bool]$Directory,[bool]$Reparse) { if($Path -eq $script:testFinalFailure) {throw [IO.IOException]::new(''Simulated metadata access denied'')}; Remove-PinsetNodeActual $Path $Directory $Reparse }'
+    $metadataFailureSource=$modified.Replace($nodeFunction.Extent.Text,$nodeReplacement)
+    $metadataError=''; try {& ([scriptblock]::Create($metadataFailureSource)) -Yes -WarningAction SilentlyContinue | Out-Null} catch {$metadataError=$_.Exception.Message}
+    Assert-Test ($metadataError -match 'needs attention') 'Metadata failure falsely succeeded'
+    Assert-Test (Test-Path -LiteralPath (Join-Path $shortState 'config.toml')) 'Environment finalization failure deleted project config'
+    Assert-Test (Test-Path -LiteralPath (Join-Path $v3 'state\projects.json')) 'Environment finalization failure deleted global inventory'
+    Assert-Test (Test-Path -LiteralPath (Join-Path $shortVenv '.pinset-owner.toml')) 'Partial metadata deletion lost recoverable venv ownership'
+    Assert-Test (Test-Path -LiteralPath $retainedCommand) 'Metadata failure removed command before successful completion'
+    & ([scriptblock]::Create($modified)) -Yes | Out-Null
+    Assert-Test (-not (Test-Path -LiteralPath $v3) -and -not (Test-Path -LiteralPath $shortVenv)) 'Metadata-preserving retry failed'
     # Extract actual function definitions for adversarial path checks.
     foreach($fn in $ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) {Invoke-Expression $fn.Extent.Text}
     $script:unresolved=[Collections.Generic.List[string]]::new(); $script:profileBeingRead='fixture'
@@ -88,7 +154,7 @@ try {
     # Native interop compiles, but enumeration/deletion is never called in tests.
     $nativeSource=@($tokens | Where-Object {$_.Kind -eq 'HereStringLiteral' -and $_.Value -match 'namespace PinsetUninstall'})[0].Value
     if(-not ('PinsetUninstall.NativeCredentials' -as [type])) {Add-Type -TypeDefinition $nativeSource}
-    Write-Output 'Windows uninstall fixtures passed: parser, plan isolation, SDKs, registered projects, v3/v2/named venvs, encrypted profile ownership, mixed/forward-slash profile paths, PATH, unrelated vars, junction preservation, idempotence, unsafe roots and native interop compilation.'
+    Write-Output 'Windows uninstall fixtures passed: parser, nonadmin/busy preflight isolation, deleted-image process detection, empty/opaque variable preservation, locked-leaf sibling progress and metadata-preserving retry, SDKs, registered projects, owned venvs, profiles, PATH, junction preservation, idempotence, unsafe roots and native interop compilation.'
 } finally {
     foreach($name in $previous.Keys){[Environment]::SetEnvironmentVariable($name,$previous[$name],'Process')}
     # Cleanup only the verified UUID fixture; unlink junctions before recursion.

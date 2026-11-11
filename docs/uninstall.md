@@ -28,6 +28,8 @@ sh uninstall.sh --yes --pinset-home /opt/my-pinset --install-dir "$HOME/.local/b
 
 ## Windows
 
+Open PowerShell as Administrator if the plan includes `Machine/Path` or other machine environment settings. Close development tasks and background services launched through Pinset, including Node, pnpm and Java. Windows can keep shared command entries and SDKs locked while their processes run. Before changing data, the script checks elevation and lists running processes that block removal; it does not terminate them. `-Plan` remains available without elevation.
+
 Run in PowerShell. Use `curl.exe` to avoid the Windows PowerShell alias:
 
 ```powershell
@@ -53,6 +55,8 @@ Additional locations accept arrays:
 ```
 
 Remove the temporary downloaded script after running it if desired.
+
+For busy files or permission failures, resolve the reported condition, download the current script and rerun. Failed tree removal retains ownership metadata for a safe retry. Environment variables without Pinset paths, including empty values, are preserved exactly.
 
 ## Scope and verification
 

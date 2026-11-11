@@ -33,6 +33,8 @@ sh uninstall.sh --yes --pinset-home /opt/my-pinset --install-dir "$HOME/.local/b
 
 ## Windows
 
+如果清理计划包含系统级 `Machine/Path` 或其他系统环境变量，请以管理员身份打开 PowerShell。执行前关闭从 Pinset 启动的 Node、pnpm、Java 等开发任务和后台服务；Windows 的运行中程序会占用 SDK 和共享的命令入口。新版脚本会在修改数据前检查这两项条件，列出占用进程后停止，不会自动终止程序。`-Plan` 可在普通 PowerShell 中查看计划。
+
 在 PowerShell 中下载并预览。使用 `curl.exe` 避免 Windows PowerShell 的 `curl` 别名：
 
 ```powershell
@@ -68,6 +70,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Yes
 ```
 
 执行后可删除下载到临时目录的卸载脚本。
+
+遇到文件占用或权限错误时，处理报告中的条件后重新下载脚本并运行。删除过程中若有文件失败，脚本会保留该目录的所有权记录，便于安全重试；未涉及 Pinset 路径的环境变量（包括空值变量）保持原样。
 
 ## 清理范围
 
